@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Optional maintenance helper, not a dependency. src/Hkx holds verbatim copies of the packfile
+# readers that OpenCommonwealth also uses, namespace included, so a fix on either side is a clean
+# diff away from the other. Pass the path to an OpenCommonwealth checkout to pull its side over.
+#   tools/sync_hkx_readers.sh /path/to/OpenCommonwealth
+set -e
+[ -n "$1" ] || { echo "usage: $0 <path to OpenCommonwealth checkout>" >&2; exit 2; }
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="$1/Services/Hkx"
+[ -d "$SRC" ] || { echo "not found: $SRC" >&2; exit 1; }
+for f in HkxBinaryReader HkxBehaviorParser HkxTextEdit HkxDataStructures BehaviourGraphModel BehaviourGraphPlan; do
+  cp -v "$SRC/$f.cs" "$HERE/src/Hkx/$f.cs"
+done
+cp -v "$SRC/BehaviourClasses.json" "$HERE/src/Hkx/"

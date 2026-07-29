@@ -27,14 +27,17 @@ Fallout 4 file. This reads the Fallout 4 format directly.
 ./run.sh --headless file.hkx --quit-after 90    parse and print the summary, no window
 ```
 
-`run.sh` uses the Godot binary from the sibling OpenCommonwealth checkout. Point `OCW_GODOT` at a
-different one if yours lives elsewhere. It must be a **double-precision mono** build, because the
-assembly is compiled against the `4.7.1-double` packages vendored in `nuget/`; a stock single
-precision editor will refuse to load it.
+`run.sh` uses `engine/godot.linuxbsd.editor.double.x86_64.mono`, the copy that lives inside this
+project. Nothing here reaches outside its own folder at runtime. Set `BGS_GODOT` to override.
+
+The engine must be a **double-precision mono** build, because the assembly is compiled against the
+`4.7.1-double` packages vendored in `nuget/`, and a stock single-precision editor will refuse to load
+it. `engine/` is 239MB of build output so it is gitignored, not committed. On a fresh clone, drop such
+a build in `engine/` (binary plus its `GodotSharp/` folder alongside it) or point `BGS_GODOT` at one.
 
 ## Requirements
 
-- A Godot 4.7.1 double-precision mono build.
+- A Godot 4.7.1 double-precision mono build, in `engine/` or via `BGS_GODOT`.
 - .NET 8 SDK to build (`dotnet build BehaviourGraphStudio.csproj`).
 - **A Java runtime and `hkxpack-cli.jar`** for anything beyond structure. The tree and the graph come
   from the native C# reader and work without Java, but field-level editing and saving go through
@@ -43,15 +46,17 @@ precision editor will refuse to load it.
 ## Layout
 
 ```
-src/Hkx/     packfile readers, verbatim copies of OpenCommonwealth's Services/Hkx
+src/Hkx/     packfile readers, self-contained, no project references out
 src/Ui/      Ux.cs design system, GraphCanvas.cs node canvas, StudioRoot.cs the app itself
-tools/       sync_from_opencommonwealth.sh re-pulls the readers after an upstream fix
+tools/       sync_hkx_readers.sh, optional, re-pulls the readers from an OpenCommonwealth checkout
 nuget/       vendored double-precision Godot packages
+engine/      the Godot binary this tool runs on (gitignored)
 ```
 
-`src/Hkx` keeps the original `OpenCommonwealth.Services.Hkx` namespace on purpose. The files are byte
-identical to upstream, so a fix on either side is a clean diff away from the other, and
-`tools/sync_from_opencommonwealth.sh` pulls the upstream side over.
+`src/Hkx` keeps the `OpenCommonwealth.Services.Hkx` namespace on purpose. The same readers exist in
+that project, byte identical, so a fix on either side is a clean diff away from the other. That is a
+convenience, not a dependency: there is no project reference, no shared path, and nothing here reads
+from an OpenCommonwealth checkout unless you explicitly hand `tools/sync_hkx_readers.sh` a path to one.
 
 ## Known limits
 
