@@ -1,0 +1,21 @@
+; Engine configuration file.
+config_version=5
+
+[application]
+
+config/name="Behaviour Graph Studio"
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.7", "C#", "Double Precision", "Forward Plus")
+
+[display]
+
+window/size/viewport_width=1500
+window/size/viewport_height=880
+
+[dotnet]
+
+project/assembly_name="BehaviourGraphStudio"
+
+[rendering]
+
+renderer/rendering_method="forward_plus"

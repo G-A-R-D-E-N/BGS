@@ -1,0 +1,660 @@
+{
+  "schemaVersion": 1,
+  "havokVersion": "hk_2014.1.0-r1",
+  "note": "Field names and order are ground truth from Fallout 4 files via hkxpack. Types and enum option sets are cross-referenced against the two MIT Skyrim tools.",
+  "sources": {
+    "haviour": "https://github.com/Pentalimbed/Haviour (MIT) - src/hkx/hkclass.inl",
+    "skyrim-behavior-editor": "https://github.com/Jonahex/Skyrim-Behavior-Editor- (MIT) - src/hkxclasses",
+    "reverse-engineered": "derived here by diffing our binary reader against hkxpack XML of vanilla FO4 files"
+  },
+  "enums": {
+    "e_hkbBlendingTransitionEffect_EndMode": [
+      "END_MODE_NONE",
+      "END_MODE_TRANSITION_UNTIL_END_OF_FROM_GENERATOR",
+      "END_MODE_CAP_DURATION_AT_END_OF_FROM_GENERATOR"
+    ],
+    "e_hkbClipGenerator_PlaybackMode": [
+      "MODE_SINGLE_PLAY",
+      "MODE_LOOPING",
+      "MODE_USER_CONTROLLED",
+      "MODE_PING_PONG",
+      "MODE_COUNT"
+    ],
+    "e_hkbStateMachine_StartStateMode": [
+      "START_STATE_MODE_DEFAULT",
+      "START_STATE_MODE_SYNC",
+      "START_STATE_MODE_RANDOM",
+      "START_STATE_MODE_CHOOSER"
+    ],
+    "e_hkbStateMachine_StateMachineSelfTransitionMode": [
+      "SELF_TRANSITION_MODE_NO_TRANSITION",
+      "SELF_TRANSITION_MODE_TRANSITION_TO_START_STATE",
+      "SELF_TRANSITION_MODE_FORCE_TRANSITION_TO_START_STATE"
+    ],
+    "e_hkbTransitionEffect_EventMode": [
+      "EVENT_MODE_DEFAULT",
+      "EVENT_MODE_PROCESS_ALL",
+      "EVENT_MODE_IGNORE_FROM_GENERATOR",
+      "EVENT_MODE_IGNORE_TO_GENERATOR"
+    ],
+    "e_hkbTransitionEffect_SelfTransitionMode": [
+      "SELF_TRANSITION_MODE_CONTINUE_IF_CYCLIC_BLEND_IF_ACYCLIC",
+      "SELF_TRANSITION_MODE_CONTINUE",
+      "SELF_TRANSITION_MODE_RESET",
+      "SELF_TRANSITION_MODE_BLEND"
+    ]
+  },
+  "classes": {
+    "hkbStateMachineStateInfo": {
+      "signature": "0x39d76713",
+      "instances_in_fo4": 5329,
+      "fields": [
+        {
+          "name": "variableBindingSet",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "listeners",
+          "type": "array",
+          "source": "haviour"
+        },
+        {
+          "name": "enterNotifyEvents",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "exitNotifyEvents",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "transitions",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "generator",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "source": "haviour"
+        },
+        {
+          "name": "stateId",
+          "type": "int",
+          "source": "haviour"
+        },
+        {
+          "name": "probability",
+          "type": "float",
+          "source": "haviour",
+          "evidence": "constant '1.0' across 605 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "enable",
+          "type": "bool",
+          "source": "haviour"
+        }
+      ]
+    },
+    "hkbClipGenerator": {
+      "signature": "0xd4cc9f6",
+      "instances_in_fo4": 3740,
+      "fields": [
+        {
+          "name": "variableBindingSet",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "userData",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '0' across 576 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "source": "haviour"
+        },
+        {
+          "name": "animationBundleName",
+          "type": "unknown",
+          "source": "reverse-engineered",
+          "evidence": "always empty in all 575 vanilla instances seen; type undetermined"
+        },
+        {
+          "name": "animationName",
+          "type": "string",
+          "source": "haviour"
+        },
+        {
+          "name": "triggers",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "userPartitionMask",
+          "type": "int",
+          "source": "reverse-engineered",
+          "evidence": "constant '0' across 576 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "cropStartAmountLocalTime",
+          "type": "float",
+          "source": "haviour"
+        },
+        {
+          "name": "cropEndAmountLocalTime",
+          "type": "float",
+          "source": "haviour",
+          "evidence": "constant '0.0' across 576 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "startTime",
+          "type": "float",
+          "source": "haviour",
+          "evidence": "constant '0.0' across 576 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "playbackSpeed",
+          "type": "float",
+          "source": "haviour"
+        },
+        {
+          "name": "enforcedDuration",
+          "type": "float",
+          "source": "haviour"
+        },
+        {
+          "name": "userControlledTimeFraction",
+          "type": "float",
+          "source": "haviour"
+        },
+        {
+          "name": "animationBindingIndex",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '65535' across 576 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "mode",
+          "type": "enum",
+          "source": "haviour",
+          "enum": "e_hkbClipGenerator_PlaybackMode"
+        },
+        {
+          "name": "flags",
+          "type": "int",
+          "source": "haviour"
+        }
+      ]
+    },
+    "hkbVariableBindingSet": {
+      "signature": "0xe942f339",
+      "instances_in_fo4": 3488,
+      "fields": [
+        {
+          "name": "bindings",
+          "type": "array",
+          "source": "haviour"
+        },
+        {
+          "name": "indexOfBindingToEnable",
+          "type": "int",
+          "source": "haviour"
+        }
+      ]
+    },
+    "hkbVariableBindingSet::element": {
+      "signature": "",
+      "instances_in_fo4": null,
+      "fields": [
+        {
+          "name": "memberPath",
+          "type": "string",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "variableIndex",
+          "type": "int",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "bitIndex",
+          "type": "int",
+          "source": "skyrim-behavior-editor",
+          "evidence": "constant '255' across 1009 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "bindingType",
+          "type": "enum",
+          "source": "reverse-engineered",
+          "options": [
+            "BINDING_TYPE_CHARACTER_PROPERTY",
+            "BINDING_TYPE_VARIABLE"
+          ]
+        }
+      ]
+    },
+    "hkbStateMachineTransitionInfoArray": {
+      "signature": "0x704a19af",
+      "instances_in_fo4": 3351,
+      "fields": [
+        {
+          "name": "transitions",
+          "type": "array",
+          "source": "haviour"
+        }
+      ]
+    },
+    "hkbStateMachineTransitionInfoArray::element": {
+      "signature": "",
+      "instances_in_fo4": null,
+      "fields": [
+        {
+          "name": "triggerInterval",
+          "type": "struct",
+          "source": "reverse-engineered"
+        },
+        {
+          "name": "enterEventId",
+          "type": "int",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "exitEventId",
+          "type": "int",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "enterTime",
+          "type": "float",
+          "source": "skyrim-behavior-editor",
+          "evidence": "constant '0.0' across 1765 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "exitTime",
+          "type": "float",
+          "source": "skyrim-behavior-editor",
+          "evidence": "constant '0.0' across 1765 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "initiateInterval",
+          "type": "struct",
+          "source": "reverse-engineered"
+        },
+        {
+          "name": "transition",
+          "type": "ref",
+          "source": "reverse-engineered"
+        },
+        {
+          "name": "condition",
+          "type": "ref",
+          "source": "reverse-engineered"
+        },
+        {
+          "name": "eventId",
+          "type": "int",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "toStateId",
+          "type": "int",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "fromNestedStateId",
+          "type": "int",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "toNestedStateId",
+          "type": "int",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "priority",
+          "type": "int",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "flags",
+          "type": "string",
+          "source": "skyrim-behavior-editor"
+        }
+      ]
+    },
+    "hkbBlenderGeneratorChild": {
+      "signature": "0xb35bbfd3",
+      "instances_in_fo4": 2305,
+      "fields": [
+        {
+          "name": "variableBindingSet",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "generator",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "boneWeights",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "weight",
+          "type": "float",
+          "source": "haviour"
+        },
+        {
+          "name": "worldFromModelWeight",
+          "type": "float",
+          "source": "haviour"
+        }
+      ]
+    },
+    "hkbStateMachineEventPropertyArray": {
+      "signature": "0x71957c2d",
+      "instances_in_fo4": 2043,
+      "fields": [
+        {
+          "name": "events",
+          "type": "array",
+          "source": "haviour"
+        }
+      ]
+    },
+    "hkbStateMachineEventPropertyArray::element": {
+      "signature": "",
+      "instances_in_fo4": null,
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "source": "reverse-engineered"
+        },
+        {
+          "name": "payload",
+          "type": "ref",
+          "source": "reverse-engineered"
+        }
+      ]
+    },
+    "hkbClipTriggerArray": {
+      "signature": "0xf757cd66",
+      "instances_in_fo4": 1891,
+      "fields": [
+        {
+          "name": "triggers",
+          "type": "array",
+          "source": "haviour"
+        }
+      ]
+    },
+    "hkbClipTriggerArray::element": {
+      "signature": "",
+      "instances_in_fo4": null,
+      "fields": [
+        {
+          "name": "localTime",
+          "type": "float",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "event",
+          "type": "struct",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "id",
+          "type": "int",
+          "source": "reverse-engineered"
+        },
+        {
+          "name": "payload",
+          "type": "ref",
+          "source": "reverse-engineered"
+        },
+        {
+          "name": "relativeToEndOfClip",
+          "type": "bool",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "acyclic",
+          "type": "bool",
+          "source": "skyrim-behavior-editor"
+        },
+        {
+          "name": "isAnnotation",
+          "type": "bool",
+          "source": "skyrim-behavior-editor"
+        }
+      ]
+    },
+    "hkbModifierGenerator": {
+      "signature": "0xc499fc9e",
+      "instances_in_fo4": 1747,
+      "fields": [
+        {
+          "name": "variableBindingSet",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "userData",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '1' across 283 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "source": "haviour"
+        },
+        {
+          "name": "modifier",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "generator",
+          "type": "ref",
+          "source": "haviour"
+        }
+      ]
+    },
+    "hkbStateMachine": {
+      "signature": "0xa5896bcf",
+      "instances_in_fo4": 1571,
+      "fields": [
+        {
+          "name": "variableBindingSet",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "userData",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '0' across 199 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "source": "haviour"
+        },
+        {
+          "name": "eventToSendWhenStateOrTransitionChanges",
+          "type": "struct",
+          "source": "haviour"
+        },
+        {
+          "name": "startStateIdSelector",
+          "type": "ref",
+          "source": "reverse-engineered"
+        },
+        {
+          "name": "startStateId",
+          "type": "int",
+          "source": "haviour"
+        },
+        {
+          "name": "returnToPreviousStateEventId",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '-1' across 199 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "randomTransitionEventId",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '-1' across 199 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "transitionToNextHigherStateEventId",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '-1' across 199 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "transitionToNextLowerStateEventId",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '-1' across 199 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "syncVariableIndex",
+          "type": "int",
+          "source": "haviour"
+        },
+        {
+          "name": "wrapAroundStateId",
+          "type": "bool",
+          "source": "haviour"
+        },
+        {
+          "name": "maxSimultaneousTransitions",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '32' across 199 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "startStateMode",
+          "type": "enum",
+          "source": "haviour",
+          "enum": "e_hkbStateMachine_StartStateMode"
+        },
+        {
+          "name": "selfTransitionMode",
+          "type": "enum",
+          "source": "haviour",
+          "enum": "e_hkbStateMachine_StateMachineSelfTransitionMode"
+        },
+        {
+          "name": "states",
+          "type": "array",
+          "source": "haviour"
+        },
+        {
+          "name": "wildcardTransitions",
+          "type": "ref",
+          "source": "haviour"
+        }
+      ]
+    },
+    "hkbStateMachine::element": {
+      "signature": "",
+      "instances_in_fo4": null,
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '-1' across 199 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "payload",
+          "type": "ref",
+          "source": "haviour"
+        }
+      ]
+    },
+    "hkbBlendingTransitionEffect": {
+      "signature": "0x14e54c5c",
+      "instances_in_fo4": 1310,
+      "fields": [
+        {
+          "name": "variableBindingSet",
+          "type": "ref",
+          "source": "haviour"
+        },
+        {
+          "name": "userData",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '0' across 136 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "source": "haviour"
+        },
+        {
+          "name": "selfTransitionMode",
+          "type": "enum",
+          "source": "haviour",
+          "enum": "e_hkbTransitionEffect_SelfTransitionMode"
+        },
+        {
+          "name": "eventMode",
+          "type": "enum",
+          "source": "haviour",
+          "enum": "e_hkbTransitionEffect_EventMode"
+        },
+        {
+          "name": "duration",
+          "type": "float",
+          "source": "haviour"
+        },
+        {
+          "name": "toGeneratorStartTimeFraction",
+          "type": "float",
+          "source": "haviour"
+        },
+        {
+          "name": "flags",
+          "type": "string",
+          "source": "haviour"
+        },
+        {
+          "name": "endMode",
+          "type": "enum",
+          "source": "haviour",
+          "enum": "e_hkbBlendingTransitionEffect_EndMode"
+        },
+        {
+          "name": "blendCurve",
+          "type": "int",
+          "source": "haviour",
+          "evidence": "constant '0' across 136 vanilla instances; only the shape is confirmed"
+        },
+        {
+          "name": "alignmentBone",
+          "type": "int",
+          "source": "reverse-engineered",
+          "evidence": "constant '65535' across 136 vanilla instances; only the shape is confirmed"
+        }
+      ]
+    }
+  }
+}
