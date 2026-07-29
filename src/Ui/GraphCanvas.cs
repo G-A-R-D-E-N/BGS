@@ -27,6 +27,17 @@ public partial class GraphCanvas : Control
     private readonly Dictionary<string, string> _nodeToId = new();
 
     public Action<string>? ObjectSelected;
+    public Action<string, string, string>? FieldEdited;
+
+    private BehaviourGraphModel? _model;
+    private List<string> _variableNames = new();
+
+    private static readonly string[] AlwaysShow =
+    {
+        "mode", "playbackSpeed", "userControlledTimeFraction", "cropStartAmountLocalTime",
+        "cropEndAmountLocalTime", "startTime", "enable", "weight", "duration", "selectedGeneratorIndex",
+        "startStateId", "stateId", "eventId", "toStateId",
+    };
 
     public override void _Ready()
     {
@@ -74,6 +85,10 @@ public partial class GraphCanvas : Control
     public void Build(BehaviourGraphModel model)
     {
         Clear();
+        _model = model;
+        _variableNames = model.Objects
+            .FirstOrDefault(o => o.Class == "hkbBehaviorGraphStringData")?.Strings("variableNames")
+            ?? new List<string>();
 
         var root = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraph")
                    ?? model.Objects.FirstOrDefault(o => o.Class == "hkbStateMachine")
@@ -167,6 +182,56 @@ public partial class GraphCanvas : Control
 
     private static string NodeName(string id) => "obj_" + id;
 
+    private IEnumerable<string> BindingsOf(HkObject obj)
+    {
+        var set = _model?.Follow(obj, "variableBindingSet");
+        if (set == null || !set.StructLists.TryGetValue("bindings", out var rows)) yield break;
+
+        foreach (var row in rows)
+        {
+            row.TryGetValue("memberPath", out string? path);
+            row.TryGetValue("variableIndex", out string? index);
+            row.TryGetValue("bindingType", out string? kind);
+
+            string variable = index != null && int.TryParse(index, out int i)
+                              && i >= 0 && i < _variableNames.Count
+                ? _variableNames[i]
+                : $"index {index}";
+
+            string scope = kind != null && kind.Contains("CHARACTER_PROPERTY") ? " (character property)" : "";
+            yield return $"{path} driven by {variable}{scope}";
+        }
+    }
+
+    private HBoxContainer EditRow(string objectId, string field, string value)
+    {
+        var box = new HBoxContainer();
+        box.AddThemeConstantOverride("separation", Ux.Px(6));
+
+        var label = new Label { Text = field };
+        label.AddThemeColorOverride("font_color", Ux.TextMeta);
+        label.AddThemeFontSizeOverride("font_size", Ux.Px(11));
+        box.AddChild(label);
+
+        var edit = Ux.Field();
+        edit.Text = value;
+        edit.CustomMinimumSize = new Vector2(Ux.Px(110), 0);
+        edit.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+
+        string original = value;
+        void Commit()
+        {
+            if (edit.Text == original) return;
+            FieldEdited?.Invoke(objectId, field, edit.Text);
+            original = edit.Text;
+        }
+        edit.TextSubmitted += _ => Commit();
+        edit.FocusExited += Commit;
+        box.AddChild(edit);
+
+        return box;
+    }
+
     private GraphNode MakeNode(HkObject obj, List<(string Field, string Target)> outs)
     {
         string label = obj.Str("name");
@@ -197,12 +262,18 @@ public partial class GraphCanvas : Control
             node.AddChild(anim);
         }
 
-        string speed = obj.Str("playbackSpeed");
-        if (!string.IsNullOrEmpty(speed) && speed != "1.000000")
+        foreach (var binding in BindingsOf(obj))
         {
-            var row = new Label { Text = "playbackSpeed  " + speed };
-            row.AddThemeColorOverride("font_color", Ux.TextMeta);
+            var row = new Label { Text = binding };
+            row.AddThemeColorOverride("font_color", Color.FromHtml("D29922"));
             node.AddChild(row);
+        }
+
+        foreach (string field in AlwaysShow)
+        {
+            if (!obj.Scalars.TryGetValue(field, out string? value)) continue;
+            if (value.StartsWith('#')) continue;
+            node.AddChild(EditRow(obj.Id, field, value));
         }
 
         int slot = node.GetChildCount();

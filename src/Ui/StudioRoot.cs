@@ -18,6 +18,7 @@ public partial class StudioRoot : Control
     private Tree _tree = null!;
     private VBoxContainer _props = null!;
     private GraphCanvas _canvas = null!;
+    private Tree _variables = null!;
     private Button _saveButton = null!;
 
     private string _hkxPath = "";
@@ -132,7 +133,27 @@ public partial class StudioRoot : Control
 
         _canvas = new GraphCanvas { Name = "Graph" };
         _canvas.ObjectSelected += SelectObjectId;
+        _canvas.FieldEdited += ApplyDirect;
         tabs.AddChild(_canvas);
+
+        _variables = new Tree
+        {
+            Name = "Variables",
+            Columns = 4,
+            ColumnTitlesVisible = true,
+            HideRoot = true,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+        };
+        _variables.SetColumnTitle(0, "Index");
+        _variables.SetColumnTitle(1, "Variable");
+        _variables.SetColumnTitle(2, "Initial value");
+        _variables.SetColumnTitle(3, "Driven members");
+        _variables.SetColumnExpandRatio(0, 1);
+        _variables.SetColumnExpandRatio(1, 3);
+        _variables.SetColumnExpandRatio(2, 2);
+        _variables.SetColumnExpandRatio(3, 5);
+        Ux.StyleGrid(_variables);
+        tabs.AddChild(_variables);
 
         var footer = new HBoxContainer();
         footer.AddThemeConstantOverride("separation", Ux.Px(8));
@@ -158,6 +179,13 @@ public partial class StudioRoot : Control
             OpenFile(arg);
             GD.Print(_summary.Text);
             GD.Print(_status.Text);
+
+            var item = _variables.GetRoot()?.GetFirstChild();
+            while (item != null)
+            {
+                GD.Print($"var {item.GetText(0),-3} {item.GetText(1),-24} value {item.GetText(2),-10} {item.GetText(3)}");
+                item = item.GetNext();
+            }
             return;
         }
     }
@@ -308,7 +336,9 @@ public partial class StudioRoot : Control
             }
 
             SetStatus($"Editable. {_objectIds.Count} objects mapped.", Ux.TextMeta);
-            _canvas.Build(BehaviourGraphModel.Parse(_xmlText));
+            var model = BehaviourGraphModel.Parse(_xmlText);
+            _canvas.Build(model);
+            BuildVariables(model);
         }
         catch (Exception ex)
         {
@@ -372,6 +402,75 @@ public partial class StudioRoot : Control
             field.TextSubmitted += _ => Apply(owner, paramName, field, original);
             field.FocusExited += () => Apply(owner, paramName, field, original);
             box.AddChild(field);
+        }
+    }
+
+    private void BuildVariables(BehaviourGraphModel model)
+    {
+        _variables.Clear();
+        var root = _variables.CreateItem();
+
+        var strings = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraphStringData");
+        var names = strings?.Strings("variableNames") ?? new List<string>();
+
+        var values = new List<string>();
+        var valueSet = model.Objects.FirstOrDefault(o => o.Class == "hkbVariableValueSet");
+        if (valueSet != null && valueSet.StructLists.TryGetValue("wordVariableValues", out var wordRows))
+            foreach (var row in wordRows)
+                values.Add(row.TryGetValue("value", out var v) ? v : "");
+
+        var driven = new Dictionary<int, List<string>>();
+        foreach (var obj in model.Objects)
+        {
+            if (obj.Class != "hkbVariableBindingSet") continue;
+            if (!obj.StructLists.TryGetValue("bindings", out var rows)) continue;
+            foreach (var row in rows)
+            {
+                if (!row.TryGetValue("variableIndex", out var raw) || !int.TryParse(raw, out int index)) continue;
+                row.TryGetValue("memberPath", out var path);
+                if (!driven.TryGetValue(index, out var list)) driven[index] = list = new List<string>();
+                if (path != null && !list.Contains(path)) list.Add(path);
+            }
+        }
+
+        for (int i = 0; i < names.Count; i++)
+        {
+            var item = _variables.CreateItem(root);
+            item.SetText(0, i.ToString());
+            item.SetText(1, names[i]);
+            item.SetText(2, i < values.Count ? values[i] : "");
+            item.SetText(3, driven.TryGetValue(i, out var paths) ? string.Join(", ", paths) : "no variable binding in this file");
+            item.SetCustomColor(0, Ux.TextDisabled);
+            item.SetCustomColor(1, Ux.TextTitle);
+            item.SetCustomColor(2, Ux.TextCode);
+            item.SetCustomColor(3, driven.ContainsKey(i) ? Ux.TextMeta : Ux.TextDisabled);
+        }
+
+        if (names.Count == 0)
+        {
+            var item = _variables.CreateItem(root);
+            item.SetText(1, "this graph declares no variables");
+            item.SetCustomColor(1, Ux.TextDisabled);
+        }
+    }
+
+    private void ApplyDirect(string objectId, string paramName, string value)
+    {
+        if (string.IsNullOrEmpty(_xmlText))
+        {
+            SetStatus("Read-only: no text form loaded, so edits cannot be saved.", Ux.TextMuted);
+            return;
+        }
+
+        try
+        {
+            _xmlText = HkxTextEdit.SetParam(_xmlText, objectId, paramName, value);
+            SetDirty(true);
+            SetStatus($"#{objectId}.{paramName} = {value}   (unsaved)", Ux.TextCode);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message, Ux.TextMuted);
         }
     }
 

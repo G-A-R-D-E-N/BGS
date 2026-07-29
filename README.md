@@ -16,8 +16,42 @@ Fallout 4 file. This reads the Fallout 4 format directly.
   reference fields and labelled with the field that owns each link, so an edge says why it exists.
   Nodes are coloured by class family. Clip nodes show their animation path and any non-default
   playback speed inline.
-- **Editing**: select a node, edit its fields, save back to `.hkx`. The original is kept as `.bak`.
+- **Editable nodes**: the common fields (`mode`, `playbackSpeed`, `userControlledTimeFraction`,
+  crop times, `startTime`, `enable`, `weight`, ids) are text boxes on the node itself. Type, tab out,
+  and the change is staged. Every other field is editable from the properties panel in the tree view.
+  Save writes back to `.hkx` and keeps the original as `.bak`.
+- **Variable bindings on the node**: a node bound to a graph variable says so, in the form
+  `userControlledTimeFraction driven by fRadLevel`, with the variable resolved to its name.
+- **Variables tab**: every graph variable with its index, its initial value, and which node members it
+  drives. This is the list you call from code.
 - Filter by name, class or animation.
+
+## Forcing an animation frame from a variable
+
+The pattern for driving an animation by hand (a gauge needle, a watch hand, a dial) rather than
+letting it play, taken from Fallout 4's own Pip-Boy graph:
+
+```
+hkbClipGenerator  mode = MODE_USER_CONTROLLED
+                  variableBindingSet -> memberPath "userControlledTimeFraction"
+                                        variableIndex <your float variable>
+                                        bindingType BINDING_TYPE_VARIABLE
+```
+
+`userControlledTimeFraction` is 0 to 1 across the whole clip, so setting the variable to 0.25 puts the
+clip at a quarter of its length and holds it there. The animation needs no special frame data and is
+never "played", it is sampled.
+
+Verified in `Meshes\Pipboy\Behaviors\PipboyBehavior.hkx`, which declares four variables
+(`iTabSync`, `iCatSync`, `fRadioTune`, `fRadLevel`) and uses exactly this on two clips:
+
+| clip | mode | bound member | variable |
+|---|---|---|---|
+| `RadMeterTurning` | `MODE_USER_CONTROLLED` | `userControlledTimeFraction` | `fRadLevel` |
+| `TuneRadio` | `MODE_USER_CONTROLLED` | `userControlledTimeFraction` | `fRadioTune` |
+
+Open that file in the Variables tab to see it. Creating a new binding is not yet possible in the tool,
+only reading and retargeting an existing one; see the issue tracker.
 
 ## Running
 
