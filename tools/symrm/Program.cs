@@ -29,6 +29,7 @@ public static class Program
             case "unpack": return Unpack(argv);
             case "check": return Check(argv);
             case "remove": return Remove(argv);
+            case "door": return Door(argv);
             default: Usage(); return 1;
         }
     }
@@ -52,6 +53,12 @@ public static class Program
               The symbol removal round trip. Adds a variable and an event, refuses to remove one
               that is in use, removes ones that are not, repacks, reads the binary back, and
               confirms every binding and transition still resolves to the same name as before.
+
+          dotnet run --project tools/symrm/symrm.csproj -- door <SpecialCaseDoors Behavior.hkx> <out.hkx>
+              The additive door edit: two new events and two new states that give a door a way to
+              be placed already open or already closed without playing the transition, in the shape
+              DN151_DoorSeal already drives. Touches no existing transition. Repacks, reads the
+              binary back and runs the validator over the result.
         """);
 
     // Walk up for the folder holding the csproj, so the tool does not care where it is run from.
@@ -211,6 +218,117 @@ public static class Program
         foreach (var f in findings.Take(8)) Console.WriteLine("   " + f);
 
         return ok && errors == 0 ? 0 : 1;
+    }
+
+    // Adds DN151_DoorSeal's StartOpen and StartClosed to SpecialCaseDoors, which does not have them.
+    //
+    // Strictly additive. Two events, two states, two sequence generators, and four new transition
+    // entries. No existing transition is retargeted, because the same event ids are shared across
+    // every door that uses this behaviour and changing one would change all of them.
+    //
+    // Each new event enters a state that PLAYS its sequence and then moves on to the resting state
+    // when the sequence sends its end event. Worth knowing that vanilla does the opposite:
+    // SwitchDoorExLarge01 points StartOpen straight at its held pose state and reaches the playing
+    // states through Play01 instead, so there a door placed open is simply open, with no animation.
+    // Sending StartOpen here will make the door visibly open itself as the cell loads.
+    private static int Door(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm", "door");
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+        Directory.CreateDirectory(work);
+
+        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
+        var model = BehaviourGraphModel.Parse(xml);
+
+        string machine = model.Objects.First(o => o.Class == "hkbStateMachine").Id;
+        var states = StateEditor.States(model, machine);
+        Console.WriteLine($"BEFORE: {model.Objects.Count} objects, {states.Count} states, " +
+                          $"{StateEditor.Transitions(model, machine).Count} transitions, " +
+                          $"{SymbolEditor.EventNames(model).Count} events");
+
+        int StateIdNamed(string name) => states.FirstOrDefault(s => s.Name == name)?.StateId
+            ?? throw new InvalidOperationException($"this graph has no state called {name}");
+        int EventNamed(string name)
+        {
+            int i = SymbolEditor.EventNames(BehaviourGraphModel.Parse(xml)).IndexOf(name);
+            return i >= 0 ? i : throw new InvalidOperationException($"this graph declares no event called {name}");
+        }
+
+        // Reuse whatever blending effect the door's own transitions already use rather than
+        // inventing one, so the new transitions blend exactly like the existing ones.
+        string effect = FirstTransitionEffect(model, machine, xml);
+        Console.WriteLine($"  reusing transition effect {effect}");
+
+        int openedState = StateIdNamed("Opened");
+        int closedState = StateIdNamed("Closed");
+
+        foreach (var (eventName, stateName, sequence, endEvent, target) in new[]
+                 {
+                     ("StartOpen", "StartOpening", "Opening", "Opened", openedState),
+                     ("StartClosed", "StartClosing", "Closing", "Closed", closedState),
+                 })
+        {
+            xml = SymbolEditor.AddEvent(xml, eventName, out int eventId);
+            xml = GeneratorEditor.Add(xml, "sequence", stateName, sequence, "", out string generator);
+            xml = StateEditor.AddState(xml, machine, stateName, "#" + generator, out string stateObject, out int stateId);
+
+            // Out of the new state on the event the sequence itself sends when it finishes.
+            xml = StateEditor.AddTransition(xml, machine, stateObject, target, EventNamed(endEvent), effect);
+            // Into it from anywhere, which is how this graph already handles pose entry events.
+            xml = StateEditor.AddTransition(xml, machine, "", stateId, eventId, effect);
+
+            Console.WriteLine($"  {eventName,-12} event {eventId,2}  ->  state {stateId} '{stateName}' " +
+                              $"playing sequence '{sequence}'  ->  on {endEvent} to state {target}");
+        }
+
+        string xmlPath = Path.Combine(work, "edited.xml");
+        File.WriteAllText(xmlPath, xml);
+        string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(argv[2]))!);
+        File.Copy(packed, argv[2], true);
+        Console.WriteLine($"\nrepacked to {new FileInfo(argv[2]).Length} bytes at {argv[2]}");
+
+        string back = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[2], Path.Combine(work, "back")));
+        var after = BehaviourGraphModel.Parse(back);
+        string machineAfter = after.Objects.First(o => o.Class == "hkbStateMachine").Id;
+        var statesAfter = StateEditor.States(after, machineAfter);
+
+        Console.WriteLine($"AFTER:  {after.Objects.Count} objects, {statesAfter.Count} states, " +
+                          $"{StateEditor.Transitions(after, machineAfter).Count} transitions, " +
+                          $"{SymbolEditor.EventNames(after).Count} events\n");
+
+        var events = SymbolEditor.EventNames(after);
+        foreach (var s in statesAfter)
+        {
+            var generator = after.Get(s.GeneratorRef.TrimStart('#'));
+            Console.WriteLine($"  state {s.StateId,2} {s.Name,-16} {generator?.Class} '{generator?.Str("pSequence")}'");
+        }
+        Console.WriteLine();
+        foreach (var t in StateEditor.Transitions(after, machineAfter))
+            Console.WriteLine($"  {(t.Wildcard ? "wildcard" : "        ")} on {events[t.EventId],-34} -> state {t.ToStateId}");
+
+        Console.WriteLine("\n--- validator ---");
+        var findings = GraphValidator.Check(back);
+        int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
+        Console.WriteLine($"  {errors} errors, {findings.Count - errors} warnings");
+        foreach (var f in findings) Console.WriteLine("   " + f);
+        return errors == 0 ? 0 : 1;
+    }
+
+    private static string FirstTransitionEffect(BehaviourGraphModel model, string machine, string xml)
+    {
+        foreach (var state in StateEditor.States(model, machine))
+        {
+            var array = model.Get(state.TransitionsRef.TrimStart('#'));
+            if (array == null || !array.StructLists.TryGetValue("transitions", out var rows)) continue;
+            foreach (var row in rows)
+                if (row.TryGetValue("transition", out string? value) && value.StartsWith('#'))
+                    return value;
+        }
+        return "null";
     }
 
     private static void Report(string label, string xml)
