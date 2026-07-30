@@ -1,0 +1,183 @@
+using System;
+using System.Collections.Generic;
+using System.Text.RegularExpressions;
+
+namespace OpenCommonwealth.Services.Hkx;
+
+// Events and variables are addressed by index everywhere except their own name arrays, so removing
+// one has to renumber every reference above it.
+//
+// The field names below were read out of 132 vanilla behaviour files, not recalled: every hkparam
+// whose name matched event or variable was listed with its owning class, then split by hand into the
+// ones that carry an index and the ones that do not. Two traps that scan exposed:
+//
+//   BSAssignVariablesModifier.floatVariable1..20 and intVariable1..4 are values, not indices.
+//   An hkbEventProperty or hkbEvent object carries its event in a member called plainly "id", so a
+//   name-only rule misses roughly a third of the event references in a typical graph.
+public static class SymbolIndexFixup
+{
+    public static readonly HashSet<string> EventIdParams = new(StringComparer.Ordinal)
+    {
+        "eventId", "enterEventId", "exitEventId", "activateEventId", "deactivateEventId",
+        "onEventId", "offEventId", "randomTransitionEventId", "returnToPreviousStateEventId",
+        "transitionToNextHigherStateEventId", "transitionToNextLowerStateEventId",
+        "snapToTargetEventId", "useCurrentSourceBonePoseEventId", "capturePoseEventId",
+        "restoreDefaultRefPosEventId", "startMatchingEventId", "startPlayingEventId",
+        "assignmentEventIndex",
+    };
+
+    public static readonly HashSet<string> VariableIndexParams = new(StringComparer.Ordinal)
+    {
+        "variableIndex", "syncVariableIndex", "assignmentVariableIndex",
+    };
+
+    // Classes whose "id" member is an event index rather than an object id.
+    private static readonly HashSet<string> EventCarriers = new(StringComparer.Ordinal)
+    {
+        "hkbEventProperty", "hkbEvent",
+    };
+
+    // Names that look like an index but are structure: a reference, an array, or a mode enum. Listed
+    // so the unknown-name guard below stays quiet about them.
+    private static readonly HashSet<string> NotAnIndex = new(StringComparer.Ordinal)
+    {
+        "variableBindingSet", "variableNames", "variableInfos", "variableBounds",
+        "variableInitialValues", "variableMode", "wordVariableValues", "quadVariableValues",
+        "variantVariableValues", "eventNames", "eventInfos", "eventMode", "eventRanges",
+        "eventData", "eventToSendWhenStateOrTransitionChanges", "events", "event",
+        "eventToCheckFor", "eventToSend", "alarmEvent", "contactEvent", "targetOutOfLimitEvent",
+        "EventToCrossBlend", "EventToFreezeBlendValue", "TransitionInEvent", "TransitionOutEvent",
+        "numberOfEventsBeforeSend", "minimumNumberOfEventsBeforeSend", "randomizeNumberOfEvents",
+        "defaultEventMode",
+    };
+
+    private static readonly Regex Token = new(
+        @"<hkobject(?:\s+class=""(?<cls>[^""]+)"")?[^>]*?(?<selfclose>/)?>" +
+        @"|</hkobject>" +
+        @"|<hkparam name=""(?<param>[^""]+)"">(?<value>[^<\r\n]*)</hkparam>" +
+        @"|<hkparam name=""(?<open>[^""]+)""[^>]*?(?<paramclose>/)?>" +
+        @"|</hkparam>",
+        RegexOptions.Compiled);
+
+    private sealed class Site
+    {
+        public int Start;
+        public int Length;
+        public int Value;
+        public string Param = "";
+        public string OwnerClass = "";
+    }
+
+    // Every place in the file that stores an event or variable index, with the class that owns it.
+    private static List<Site> Sites(string xml, bool events, out List<string> unrecognised)
+    {
+        var found = new List<Site>();
+        var unknown = new HashSet<string>(StringComparer.Ordinal);
+        var classStack = new List<string>();
+
+        foreach (Match m in Token.Matches(xml))
+        {
+            if (m.Value.StartsWith("</hkobject", StringComparison.Ordinal))
+            {
+                if (classStack.Count > 0) classStack.RemoveAt(classStack.Count - 1);
+                continue;
+            }
+            if (m.Value.StartsWith("<hkobject", StringComparison.Ordinal))
+            {
+                if (!m.Groups["selfclose"].Success)
+                    classStack.Add(m.Groups["cls"].Success ? m.Groups["cls"].Value : "");
+                continue;
+            }
+            if (!m.Groups["param"].Success) continue;
+
+            string name = m.Groups["param"].Value;
+            string owner = "";
+            for (int i = classStack.Count - 1; i >= 0; i--)
+                if (classStack[i].Length > 0) { owner = classStack[i]; break; }
+
+            bool isEvent = EventIdParams.Contains(name)
+                           || (name == "id" && EventCarriers.Contains(owner));
+            bool isVariable = VariableIndexParams.Contains(name);
+
+            if (!isEvent && !isVariable)
+            {
+                if (LooksLikeAnIndex(name) && !NotAnIndex.Contains(name)) unknown.Add(owner + "." + name);
+                continue;
+            }
+            if (isEvent != events) continue;
+            if (!int.TryParse(m.Groups["value"].Value, out int value)) continue;
+
+            found.Add(new Site
+            {
+                Start = m.Groups["value"].Index,
+                Length = m.Groups["value"].Length,
+                Value = value,
+                Param = name,
+                OwnerClass = owner,
+            });
+        }
+
+        unrecognised = new List<string>(unknown);
+        unrecognised.Sort(StringComparer.Ordinal);
+        return found;
+    }
+
+    private static bool LooksLikeAnIndex(string name) =>
+        name.EndsWith("EventId", StringComparison.Ordinal)
+        || name.EndsWith("EventIndex", StringComparison.Ordinal)
+        || name.EndsWith("VariableIndex", StringComparison.Ordinal);
+
+    public static List<string> UnknownIndexFields(string xml)
+    {
+        Sites(xml, true, out var unknown);
+        return unknown;
+    }
+
+    // Objects that point at exactly this index, described well enough to act on.
+    public static List<string> ReferencesTo(string xml, bool events, int index)
+    {
+        var users = new List<string>();
+        foreach (var site in Sites(xml, events, out _))
+            if (site.Value == index)
+                users.Add($"{site.OwnerClass}.{site.Param}");
+        return users;
+    }
+
+    // Anything addressing a symbol the graph does not declare. -1 is the format's "none" and is not
+    // an overrun.
+    public static List<string> ReferencesAtOrAbove(string xml, bool events, int limit)
+    {
+        var users = new List<string>();
+        foreach (var site in Sites(xml, events, out _))
+            if (site.Value >= limit)
+                users.Add($"{site.OwnerClass}.{site.Param} uses index {site.Value}");
+        return users;
+    }
+
+    // Decrements every index above the removed one. Refuses if the file carries an index field this
+    // does not recognise, because renumbering around an unknown field is how a graph ends up quietly
+    // playing the wrong animation.
+    public static string ShiftDown(string xml, bool events, int removedIndex, out int rewritten)
+    {
+        var sites = Sites(xml, events, out var unknown);
+        if (unknown.Count > 0)
+            throw new InvalidOperationException(
+                "this file carries index fields that are not in the known table, so renumbering is not safe: "
+                + string.Join(", ", unknown));
+
+        rewritten = 0;
+        var edits = new List<Site>();
+        foreach (var site in sites)
+            if (site.Value > removedIndex) edits.Add(site);
+
+        // Back to front, so an earlier edit cannot move a later one's offset.
+        edits.Sort((a, b) => b.Start.CompareTo(a.Start));
+        foreach (var site in edits)
+        {
+            string replacement = (site.Value - 1).ToString();
+            xml = xml.Remove(site.Start, site.Length).Insert(site.Start, replacement);
+            rewritten++;
+        }
+        return xml;
+    }
+}

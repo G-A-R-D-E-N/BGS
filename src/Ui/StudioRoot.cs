@@ -21,6 +21,9 @@ public partial class StudioRoot : Control
     private Tree _variables = null!;
     private Tree _chain = null!;
     private Button _saveButton = null!;
+    private LineEdit _symbolName = null!;
+    private LineEdit _symbolValue = null!;
+    private Label _symbolAudit = null!;
 
     private string _hkxPath = "";
     private string _xmlPath = "";
@@ -135,26 +138,11 @@ public partial class StudioRoot : Control
         _canvas = new GraphCanvas { Name = "Graph" };
         _canvas.ObjectSelected += SelectObjectId;
         _canvas.FieldEdited += ApplyDirect;
+        _canvas.NodeAdded += AddNode;
+        _canvas.NodeDeleted += DeleteNode;
         tabs.AddChild(_canvas);
 
-        _variables = new Tree
-        {
-            Name = "Variables",
-            Columns = 4,
-            ColumnTitlesVisible = true,
-            HideRoot = true,
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-        };
-        _variables.SetColumnTitle(0, "Index");
-        _variables.SetColumnTitle(1, "Variable");
-        _variables.SetColumnTitle(2, "Initial value");
-        _variables.SetColumnTitle(3, "Driven members");
-        _variables.SetColumnExpandRatio(0, 1);
-        _variables.SetColumnExpandRatio(1, 3);
-        _variables.SetColumnExpandRatio(2, 2);
-        _variables.SetColumnExpandRatio(3, 5);
-        Ux.StyleGrid(_variables);
-        tabs.AddChild(_variables);
+        tabs.AddChild(BuildSymbolsTab());
 
         _chain = new Tree
         {
@@ -182,6 +170,10 @@ public partial class StudioRoot : Control
         _status = Ux.StatusPill("");
         _status.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         footer.AddChild(_status);
+
+        var validate = Ux.SecondaryButton("Check graph");
+        validate.Pressed += Validate;
+        footer.AddChild(validate);
 
         _saveButton = Ux.PrimaryButton("Save to .hkx");
         _saveButton.Disabled = true;
@@ -482,52 +474,261 @@ public partial class StudioRoot : Control
         AddBindingSection(objectId);
     }
 
+    private VBoxContainer BuildSymbolsTab()
+    {
+        var page = new VBoxContainer { Name = "Symbols", SizeFlagsVertical = Control.SizeFlags.ExpandFill };
+        page.AddThemeConstantOverride("separation", Ux.Px(8));
+
+        var bar = new HBoxContainer();
+        bar.AddThemeConstantOverride("separation", Ux.Px(6));
+        page.AddChild(bar);
+
+        _symbolName = Ux.Field("name");
+        _symbolName.CustomMinimumSize = new Vector2(Ux.Px(180), 0);
+        bar.AddChild(_symbolName);
+
+        _symbolValue = Ux.Field("value, for a variable");
+        _symbolValue.CustomMinimumSize = new Vector2(Ux.Px(120), 0);
+        bar.AddChild(_symbolValue);
+
+        foreach (var (label, type) in new (string, SymbolEditor.VariableType)[]
+                 {
+                     ("+ real", SymbolEditor.VariableType.Real),
+                     ("+ int", SymbolEditor.VariableType.Int32),
+                     ("+ bool", SymbolEditor.VariableType.Bool),
+                 })
+        {
+            var button = Ux.SecondaryButton(label);
+            var captured = type;
+            button.Pressed += () => AddSymbolVariable(captured);
+            bar.AddChild(button);
+        }
+
+        var addEvent = Ux.SecondaryButton("+ event");
+        addEvent.Pressed += AddSymbolEvent;
+        bar.AddChild(addEvent);
+
+        var rename = Ux.SecondaryButton("Rename");
+        rename.Pressed += RenameSymbol;
+        bar.AddChild(rename);
+
+        var setValue = Ux.SecondaryButton("Set value");
+        setValue.Pressed += SetSymbolValue;
+        bar.AddChild(setValue);
+
+        var remove = Ux.SecondaryButton("Remove");
+        remove.Pressed += RemoveSymbol;
+        bar.AddChild(remove);
+
+        _symbolAudit = Ux.StatusPill("");
+        _symbolAudit.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        bar.AddChild(_symbolAudit);
+
+        _variables = new Tree
+        {
+            Columns = 5,
+            ColumnTitlesVisible = true,
+            HideRoot = true,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+        };
+        _variables.SetColumnTitle(0, "Kind");
+        _variables.SetColumnTitle(1, "Index");
+        _variables.SetColumnTitle(2, "Name");
+        _variables.SetColumnTitle(3, "Initial value");
+        _variables.SetColumnTitle(4, "Used by");
+        _variables.SetColumnExpandRatio(0, 1);
+        _variables.SetColumnExpandRatio(1, 1);
+        _variables.SetColumnExpandRatio(2, 4);
+        _variables.SetColumnExpandRatio(3, 2);
+        _variables.SetColumnExpandRatio(4, 5);
+        Ux.StyleGrid(_variables);
+        _variables.ItemSelected += OnSymbolSelected;
+        page.AddChild(_variables);
+
+        return page;
+    }
+
     private void BuildVariables(BehaviourGraphModel model)
     {
         _variables.Clear();
         var root = _variables.CreateItem();
 
-        var strings = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraphStringData");
-        var names = strings?.Strings("variableNames") ?? new List<string>();
+        var names = SymbolEditor.VariableNames(model);
+        var types = SymbolEditor.VariableTypes(model);
+        var values = SymbolEditor.VariableValues(model);
+        var events = SymbolEditor.EventNames(model);
 
-        var values = new List<string>();
-        var valueSet = model.Objects.FirstOrDefault(o => o.Class == "hkbVariableValueSet");
-        if (valueSet != null && valueSet.StructLists.TryGetValue("wordVariableValues", out var wordRows))
-            foreach (var row in wordRows)
-                values.Add(row.TryGetValue("value", out var v) ? v : "");
-
-        var driven = new Dictionary<int, List<string>>();
-        foreach (var obj in model.Objects)
-        {
-            if (obj.Class != "hkbVariableBindingSet") continue;
-            if (!obj.StructLists.TryGetValue("bindings", out var rows)) continue;
-            foreach (var row in rows)
-            {
-                if (!row.TryGetValue("variableIndex", out var raw) || !int.TryParse(raw, out int index)) continue;
-                row.TryGetValue("memberPath", out var path);
-                if (!driven.TryGetValue(index, out var list)) driven[index] = list = new List<string>();
-                if (path != null && !list.Contains(path)) list.Add(path);
-            }
-        }
+        var counts = SymbolEditor.Audit(model);
+        _symbolAudit.Text = counts.ToString();
+        _symbolAudit.AddThemeColorOverride("font_color",
+            counts.VariablesConsistent && counts.EventsConsistent ? Ux.TextMeta : Color.FromHtml("FF5555"));
 
         for (int i = 0; i < names.Count; i++)
         {
+            var type = i < types.Count ? types[i] : SymbolEditor.VariableType.Int32;
             var item = _variables.CreateItem(root);
-            item.SetText(0, i.ToString());
-            item.SetText(1, names[i]);
-            item.SetText(2, i < values.Count ? values[i] : "");
-            item.SetText(3, driven.TryGetValue(i, out var paths) ? string.Join(", ", paths) : "no variable binding in this file");
-            item.SetCustomColor(0, Ux.TextDisabled);
-            item.SetCustomColor(1, Ux.TextTitle);
-            item.SetCustomColor(2, Ux.TextCode);
-            item.SetCustomColor(3, driven.ContainsKey(i) ? Ux.TextMeta : Ux.TextDisabled);
+            item.SetText(0, type.ToString().ToLowerInvariant());
+            item.SetText(1, i.ToString());
+            item.SetText(2, names[i]);
+            item.SetText(3, i < values.Count ? SymbolEditor.DecodeValue(type, values[i]) : "");
+            item.SetText(4, Users(_xmlText, events: false, i));
+            item.SetMetadata(0, $"v:{i}");
+            Paint(item);
         }
 
-        if (names.Count == 0)
+        for (int i = 0; i < events.Count; i++)
         {
             var item = _variables.CreateItem(root);
-            item.SetText(1, "this graph declares no variables");
-            item.SetCustomColor(1, Ux.TextDisabled);
+            item.SetText(0, "event");
+            item.SetText(1, i.ToString());
+            item.SetText(2, events[i]);
+            item.SetText(4, Users(_xmlText, events: true, i));
+            item.SetMetadata(0, $"e:{i}");
+            Paint(item);
+        }
+
+        if (names.Count == 0 && events.Count == 0)
+        {
+            var item = _variables.CreateItem(root);
+            item.SetText(2, "this graph declares no variables or events");
+            item.SetCustomColor(2, Ux.TextDisabled);
+        }
+    }
+
+    private static void Paint(TreeItem item)
+    {
+        item.SetCustomColor(0, Ux.TextMuted);
+        item.SetCustomColor(1, Ux.TextDisabled);
+        item.SetCustomColor(2, Ux.TextTitle);
+        item.SetCustomColor(3, Ux.TextCode);
+        item.SetCustomColor(4, item.GetText(4).StartsWith("nothing") ? Ux.TextDisabled : Ux.TextMeta);
+    }
+
+    private static string Users(string xml, bool events, int index)
+    {
+        if (string.IsNullOrEmpty(xml)) return "";
+        var users = SymbolIndexFixup.ReferencesTo(xml, events, index);
+        if (users.Count == 0) return "nothing references this, so it is safe to remove";
+
+        var grouped = users.GroupBy(u => u).OrderByDescending(g => g.Count())
+                           .Select(g => g.Count() > 1 ? $"{g.Key} x{g.Count()}" : g.Key);
+        return string.Join(", ", grouped.Take(4));
+    }
+
+    private void OnSymbolSelected()
+    {
+        var item = _variables.GetSelected();
+        if (item == null) return;
+        _symbolName.Text = item.GetText(2);
+        _symbolValue.Text = item.GetText(3);
+    }
+
+    private bool SelectedSymbol(out bool variable, out int index)
+    {
+        variable = false;
+        index = -1;
+        var item = _variables.GetSelected();
+        var meta = item?.GetMetadata(0) ?? default;
+        if (item == null || meta.VariantType != Variant.Type.String) return false;
+
+        string tag = (string)meta;
+        variable = tag[0] == 'v';
+        return int.TryParse(tag[2..], out index);
+    }
+
+    private void AddSymbolVariable(SymbolEditor.VariableType type)
+    {
+        EditSymbols(xml =>
+        {
+            string name = _symbolName.Text.Trim();
+            if (name.Length == 0) throw new ArgumentException("give the variable a name first");
+            xml = SymbolEditor.AddVariable(xml, name, type, out int index);
+            if (_symbolValue.Text.Trim().Length > 0)
+                xml = SymbolEditor.SetVariableValue(xml, index,
+                    SymbolEditor.EncodeValue(type, _symbolValue.Text.Trim()));
+            SetStatus($"declared {type.ToString().ToLowerInvariant()} variable '{name}' at index {index}   (unsaved)", Ux.TextCode);
+            return xml;
+        });
+    }
+
+    private void AddSymbolEvent()
+    {
+        EditSymbols(xml =>
+        {
+            string name = _symbolName.Text.Trim();
+            if (name.Length == 0) throw new ArgumentException("give the event a name first");
+            xml = SymbolEditor.AddEvent(xml, name, out int index);
+            SetStatus($"declared event '{name}' at index {index}   (unsaved)", Ux.TextCode);
+            return xml;
+        });
+    }
+
+    private void RenameSymbol()
+    {
+        if (!SelectedSymbol(out bool variable, out int index)) { SetStatus("pick a row first.", Ux.TextMuted); return; }
+        EditSymbols(xml =>
+        {
+            string name = _symbolName.Text.Trim();
+            if (name.Length == 0) throw new ArgumentException("type the new name first");
+            xml = SymbolEditor.Rename(xml, variable, index, name);
+            SetStatus($"renamed {(variable ? "variable" : "event")} {index} to '{name}'   (unsaved)", Ux.TextCode);
+            return xml;
+        });
+    }
+
+    private void SetSymbolValue()
+    {
+        if (!SelectedSymbol(out bool variable, out int index) || !variable)
+        {
+            SetStatus("pick a variable row; events have no value.", Ux.TextMuted);
+            return;
+        }
+
+        EditSymbols(xml =>
+        {
+            var types = SymbolEditor.VariableTypes(BehaviourGraphModel.Parse(xml));
+            var type = index < types.Count ? types[index] : SymbolEditor.VariableType.Int32;
+            xml = SymbolEditor.SetVariableValue(xml, index, SymbolEditor.EncodeValue(type, _symbolValue.Text.Trim()));
+            SetStatus($"variable {index} starts at {_symbolValue.Text.Trim()}   (unsaved)", Ux.TextCode);
+            return xml;
+        });
+    }
+
+    private void RemoveSymbol()
+    {
+        if (!SelectedSymbol(out bool variable, out int index)) { SetStatus("pick a row first.", Ux.TextMuted); return; }
+        EditSymbols(xml =>
+        {
+            string what = variable ? "variable" : "event";
+            xml = variable
+                ? SymbolEditor.RemoveVariable(xml, index, force: false, out var blockers)
+                : SymbolEditor.RemoveEvent(xml, index, force: false, out blockers);
+
+            if (blockers.Count > 0)
+                throw new InvalidOperationException(
+                    $"{blockers.Count} references still point at {what} {index}: " +
+                    string.Join(", ", blockers.Distinct().Take(3)));
+
+            SetStatus($"removed {what} {index}, every index above it moved down   (unsaved)", Ux.TextCode);
+            return xml;
+        });
+    }
+
+    private void EditSymbols(Func<string, string> edit)
+    {
+        if (string.IsNullOrEmpty(_xmlText)) { SetStatus("Read-only: no text form loaded.", Ux.TextMuted); return; }
+
+        try
+        {
+            _xmlText = edit(_xmlText);
+            SetDirty(true);
+            var model = BehaviourGraphModel.Parse(_xmlText);
+            _canvas.Build(model);
+            BuildVariables(model);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message.Split('\n')[0], Ux.TextMuted);
         }
     }
 
@@ -675,6 +876,79 @@ public partial class StudioRoot : Control
         {
             SetStatus(ex.Message.Split('\n')[0], Ux.TextMuted);
         }
+    }
+
+    private void AddNode(string kind, string name, string animation, string parentId)
+    {
+        if (string.IsNullOrEmpty(_xmlText)) { SetStatus("Read-only: no text form loaded.", Ux.TextMuted); return; }
+
+        try
+        {
+            _xmlText = GraphAuthor.AddNode(_xmlText, kind, name, animation, parentId, out string newId, out string note);
+            SetDirty(true);
+            SetStatus(note + $"   (#{newId}, unsaved)", Ux.TextCode);
+            RefreshAfterEdit(newId);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message.Split('\n')[0], Ux.TextMuted);
+        }
+    }
+
+    private void DeleteNode(string objectId)
+    {
+        if (string.IsNullOrEmpty(objectId)) { SetStatus("select a node in the graph first.", Ux.TextMuted); return; }
+        if (string.IsNullOrEmpty(_xmlText)) { SetStatus("Read-only: no text form loaded.", Ux.TextMuted); return; }
+
+        try
+        {
+            string cls = HkxTextEdit.ClassOf(_xmlText, objectId);
+            string after = GeneratorEditor.Remove(_xmlText, objectId, force: false, out var blockers);
+
+            if (blockers.Count > 0)
+            {
+                SetStatus($"#{objectId} is still referenced by {string.Join(", ", blockers.Take(4).Select(b => "#" + b))}" +
+                          (blockers.Count > 4 ? $" and {blockers.Count - 4} more" : "") + "; detach it first.",
+                          Ux.TextMuted);
+                return;
+            }
+
+            _xmlText = after;
+            SetDirty(true);
+            SetStatus($"removed #{objectId} {cls}   (unsaved)", Ux.TextCode);
+
+            var model = BehaviourGraphModel.Parse(_xmlText);
+            _canvas.Build(model);
+            BuildVariables(model);
+            ClearProps();
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message.Split('\n')[0], Ux.TextMuted);
+        }
+    }
+
+    // hkxpack checks shape, not meaning, so this is the only thing standing between a bad edit and
+    // finding out in game.
+    private void Validate()
+    {
+        if (string.IsNullOrEmpty(_xmlText)) { SetStatus("Nothing loaded to check.", Ux.TextMuted); return; }
+
+        var findings = GraphValidator.Check(_xmlText);
+        var errors = findings.Where(f => f.Level == GraphValidator.Level.Error).ToList();
+        var warnings = findings.Where(f => f.Level == GraphValidator.Level.Warning).ToList();
+
+        foreach (var f in findings) GD.Print("check  " + f);
+
+        if (errors.Count == 0 && warnings.Count == 0)
+        {
+            SetStatus("Checked: nothing wrong found. That is not a promise the game will load it.", Ux.TextMeta);
+            return;
+        }
+
+        string first = (errors.Count > 0 ? errors[0] : warnings[0]).ToString();
+        SetStatus($"{errors.Count} errors, {warnings.Count} warnings. First: {first}",
+                  errors.Count > 0 ? Color.FromHtml("FF5555") : Ux.TextMuted);
     }
 
     private void RefreshAfterEdit(string objectId)

@@ -28,6 +28,14 @@ public partial class GraphCanvas : Control
 
     public Action<string>? ObjectSelected;
     public Action<string, string, string>? FieldEdited;
+    public Action<string, string, string, string>? NodeAdded;
+    public Action<string>? NodeDeleted;
+
+    public string SelectedId { get; private set; } = "";
+
+    private LineEdit _newName = null!;
+    private LineEdit _newAnimation = null!;
+    private Label _parentLabel = null!;
 
     private BehaviourGraphModel? _model;
     private List<string> _variableNames = new();
@@ -48,6 +56,8 @@ public partial class GraphCanvas : Control
         column.AddThemeConstantOverride("separation", Ux.Px(6));
         AddChild(column);
 
+        column.AddChild(BuildToolbar());
+
         _notice = Ux.StatusPill("No file loaded.");
         column.AddChild(_notice);
 
@@ -61,7 +71,67 @@ public partial class GraphCanvas : Control
         };
         _graph.AddThemeStyleboxOverride("panel", Ux.Fill(Ux.Base, Ux.Border, 1, 4));
         _graph.NodeSelected += OnNodeSelected;
+        _graph.NodeDeselected += _ => SetSelection("");
         column.AddChild(_graph);
+    }
+
+    // A row of buttons rather than a dropdown: five kinds is not enough to justify a popup, and a
+    // popup is one more thing that can steal focus away from the canvas.
+    private HBoxContainer BuildToolbar()
+    {
+        var bar = new HBoxContainer();
+        bar.AddThemeConstantOverride("separation", Ux.Px(6));
+
+        _newName = Ux.Field("new node name");
+        _newName.CustomMinimumSize = new Vector2(Ux.Px(150), 0);
+        bar.AddChild(_newName);
+
+        _newAnimation = Ux.Field("animation, for a clip");
+        _newAnimation.CustomMinimumSize = new Vector2(Ux.Px(170), 0);
+        bar.AddChild(_newAnimation);
+
+        foreach (string kind in GraphAuthor.Kinds)
+        {
+            var button = Ux.SecondaryButton("+ " + kind);
+            string captured = kind;
+            button.Pressed += () => RequestAdd(captured);
+            bar.AddChild(button);
+        }
+
+        var remove = Ux.SecondaryButton("Delete");
+        remove.Pressed += () => NodeDeleted?.Invoke(SelectedId);
+        bar.AddChild(remove);
+
+        _parentLabel = Ux.FieldLabel("nothing selected, a new node will be left unattached");
+        _parentLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        bar.AddChild(_parentLabel);
+
+        return bar;
+    }
+
+    private void RequestAdd(string kind)
+    {
+        string name = _newName.Text.Trim();
+        if (name.Length == 0) name = kind + "_new";
+        NodeAdded?.Invoke(kind, name, _newAnimation.Text.Trim(), SelectedId);
+    }
+
+    private void SetSelection(string id)
+    {
+        SelectedId = id;
+        if (_parentLabel == null) return;
+
+        if (id.Length == 0)
+        {
+            _parentLabel.Text = "nothing selected, a new node will be left unattached";
+            return;
+        }
+
+        string cls = _model?.Get(id)?.Class ?? "";
+        string slot = GraphAuthor.AttachmentFor(cls);
+        _parentLabel.Text = slot.Length > 0
+            ? $"#{id} {cls}: a new node becomes {slot}"
+            : $"#{id} {cls} has no generator slot, a new node will be left unattached";
     }
 
     public void Clear()
@@ -128,6 +198,19 @@ public partial class GraphCanvas : Control
             edges[current.Id] = outgoing;
         }
 
+        // The walk above only reaches nodes something points at, so a node that was just created has
+        // nothing pointing at it and would be invisible: the tool would look like it did nothing.
+        // They go in a column past the deepest real one.
+        int orphanColumn = depth.Values.DefaultIfEmpty(0).Max() + 1;
+        foreach (var orphan in GraphAuthor.Unattached(model))
+        {
+            if (order.Count >= MaxNodes) break;
+            if (depth.ContainsKey(orphan.Id)) continue;
+            depth[orphan.Id] = orphanColumn;
+            order.Add(orphan);
+            edges[orphan.Id] = new List<(string, string)>();
+        }
+
         int drawn = 0;
         var byDepth = new Dictionary<int, int>();
 
@@ -160,10 +243,14 @@ public partial class GraphCanvas : Control
         string capped = order.Count >= MaxNodes
             ? $"  (stopped at {MaxNodes} nodes, this graph is larger)"
             : "";
+        int orphans = depth.Count(kv => kv.Value == orphanColumn);
+        string unattached = orphans > 0 ? $",  {orphans} unattached in the last column" : "";
 
         _notice.Text = $"{drawn} nodes, {edges.Values.Sum(e => e.Count)} links, " +
-                       $"{depth.Values.DefaultIfEmpty(0).Max() + 1} levels deep{capped}";
+                       $"{orphanColumn} levels deep{unattached}{capped}";
         _notice.AddThemeColorOverride("font_color", Ux.TextTitle);
+
+        SetSelection(_nodeToId.ContainsValue(SelectedId) ? SelectedId : "");
     }
 
     private static IEnumerable<string> TargetsOf(HkObject obj, string field)
@@ -307,8 +394,9 @@ public partial class GraphCanvas : Control
 
     private void OnNodeSelected(Node node)
     {
-        if (node is GraphNode g && _nodeToId.TryGetValue(g.Name, out string id))
-            ObjectSelected?.Invoke(id);
+        if (node is not GraphNode g || !_nodeToId.TryGetValue(g.Name, out string id)) return;
+        SetSelection(id);
+        ObjectSelected?.Invoke(id);
     }
 }
 

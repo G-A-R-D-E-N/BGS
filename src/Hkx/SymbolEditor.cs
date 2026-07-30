@@ -8,13 +8,22 @@ namespace OpenCommonwealth.Services.Hkx;
 // Variables and events: their names, their declared types, their initial values, and the parallel
 // arrays that have to stay the same length as each other.
 //
-// A graph keeps these in three places at once. hkbBehaviorGraphStringData holds the names,
-// hkbBehaviorGraphData holds one info element per name, and hkbVariableValueSet holds one value per
-// variable. Add a name without the other two and the engine reads a variable with no declared type.
+// A variable lives in up to four places. hkbBehaviorGraphStringData holds the name,
+// hkbBehaviorGraphData holds one variableInfos element and sometimes a variableBounds element, and
+// hkbVariableValueSet holds one value.
+//
+// variableBounds is the awkward one. Across vanilla files it is empty, or the same length as the
+// variable list, or some shorter length with no visible relationship to it: MTBehavior declares 67
+// variables and 19 bounds, and those 19 do not line up by position, with bool variables carrying a
+// max of 300 and a float variable carrying a max of 0. Nothing here edits a partial bounds array,
+// because whatever it means, a positional edit would be a guess.
 public static class SymbolEditor
 {
     // From PipboyBehavior.hkx: hkbRoleAttribute on a variableInfos element.
     private const string RoleAttributeSignature = "0xfecef669";
+
+    // From 1HM_MeleeWrappingBehavior.hkx: hkbVariableValue inside a variableBounds element.
+    private const string VariableValueSignature = "0xb99bd6a";
 
     public enum VariableType { Int32, Real, Bool }
 
@@ -31,13 +40,18 @@ public static class SymbolEditor
         public int Names;
         public int Infos;
         public int Values;
+        public int Bounds;
         public int EventNames;
         public int EventInfos;
 
-        public bool VariablesConsistent => Names == Infos && Names == Values;
+        public bool BoundsAreParallel => Bounds == Names;
+        // Vanilla ships partial bounds arrays, so only an over-long one is actually broken.
+        public bool VariablesConsistent =>
+            Names == Infos && Names == Values && Bounds <= Names;
         public bool EventsConsistent => EventNames == EventInfos;
         public override string ToString() =>
-            $"variables names={Names} infos={Infos} values={Values}   events names={EventNames} infos={EventInfos}";
+            $"variables names={Names} infos={Infos} values={Values} bounds={Bounds}   " +
+            $"events names={EventNames} infos={EventInfos}";
     }
 
     public static Counts Audit(BehaviourGraphModel model)
@@ -51,6 +65,7 @@ public static class SymbolEditor
             Names = strings?.Strings("variableNames").Count ?? 0,
             Infos = data != null && data.StructLists.TryGetValue("variableInfos", out var vi) ? vi.Count : 0,
             Values = values != null && values.StructLists.TryGetValue("wordVariableValues", out var wv) ? wv.Count : 0,
+            Bounds = data != null && data.StructLists.TryGetValue("variableBounds", out var vb) ? vb.Count : 0,
             EventNames = strings?.Strings("eventNames").Count ?? 0,
             EventInfos = data != null && data.StructLists.TryGetValue("eventInfos", out var ei) ? ei.Count : 0,
         };
@@ -158,6 +173,9 @@ public static class SymbolEditor
                 $"                    <hkparam name=\"type\">{TypeName(type)}</hkparam>\n" +
                 "                </hkobject>");
 
+        if (dataIds.Count > 0 && Audit(BehaviourGraphModel.Parse(xml)).Bounds == index)
+            xml = HkxTextEdit.ArrayAppend(xml, dataIds[0], "variableBounds", BoundsElement());
+
         var valueIds = HkxTextEdit.IdsOfClass(xml, "hkbVariableValueSet");
         if (valueIds.Count > 0)
             xml = HkxTextEdit.ArrayAppend(xml, valueIds[0], "wordVariableValues",
@@ -167,6 +185,19 @@ public static class SymbolEditor
 
         return xml;
     }
+
+    private static string BoundsElement() =>
+        "                <hkobject>\n" +
+        BoundsMember("min", "0") +
+        BoundsMember("max", "0") +
+        "                </hkobject>";
+
+    private static string BoundsMember(string name, string value) =>
+        $"                    <hkparam name=\"{name}\">\n" +
+        $"                        <hkobject class=\"hkbVariableValue\" name=\"{name}\" signature=\"{VariableValueSignature}\">\n" +
+        $"                            <hkparam name=\"value\">{value}</hkparam>\n" +
+        "                        </hkobject>\n" +
+        "                    </hkparam>\n";
 
     public static string AddEvent(string xml, string name, out int index)
     {
@@ -186,6 +217,48 @@ public static class SymbolEditor
                 "                </hkobject>");
 
         return xml;
+    }
+
+    // Removing a symbol shifts every index above it, so the parallel arrays and every reference in
+    // the file have to move in the same pass. blockers lists whatever still points at the exact
+    // index being removed; with force those references are left pointing at whatever slides into
+    // the slot, which is nearly always wrong, so the caller should show them first.
+    public static string RemoveVariable(string xml, int index, bool force, out List<string> blockers) =>
+        Remove(xml, variable: true, index, force, out blockers);
+
+    public static string RemoveEvent(string xml, int index, bool force, out List<string> blockers) =>
+        Remove(xml, variable: false, index, force, out blockers);
+
+    private static string Remove(string xml, bool variable, int index, bool force, out List<string> blockers)
+    {
+        var model = BehaviourGraphModel.Parse(xml);
+        var names = variable ? VariableNames(model) : EventNames(model);
+        if (index < 0 || index >= names.Count) throw new ArgumentOutOfRangeException(nameof(index));
+
+        blockers = SymbolIndexFixup.ReferencesTo(xml, events: !variable, index);
+        if (blockers.Count > 0 && !force) return xml;
+
+        var stringIds = HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphStringData");
+        if (stringIds.Count == 0) throw new InvalidOperationException("this file has no hkbBehaviorGraphStringData");
+        xml = HkxTextEdit.ArrayRemoveAt(xml, stringIds[0], variable ? "variableNames" : "eventNames", index);
+
+        var dataIds = HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphData");
+        if (dataIds.Count > 0)
+        {
+            var before = Audit(BehaviourGraphModel.Parse(xml));
+            xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], variable ? "variableInfos" : "eventInfos", index);
+            if (variable && before.BoundsAreParallel)
+                xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], "variableBounds", index);
+        }
+
+        if (variable)
+        {
+            var valueIds = HkxTextEdit.IdsOfClass(xml, "hkbVariableValueSet");
+            if (valueIds.Count > 0)
+                xml = HkxTextEdit.ArrayRemoveAt(xml, valueIds[0], "wordVariableValues", index);
+        }
+
+        return SymbolIndexFixup.ShiftDown(xml, events: !variable, index, out _);
     }
 
     // Renaming is index preserving on purpose. Transitions store an eventId, not a name, so a rename

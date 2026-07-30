@@ -22,9 +22,63 @@ Fallout 4 file. This reads the Fallout 4 format directly.
   Save writes back to `.hkx` and keeps the original as `.bak`.
 - **Variable bindings on the node**: a node bound to a graph variable says so, in the form
   `userControlledTimeFraction driven by fRadLevel`, with the variable resolved to its name.
-- **Variables tab**: every graph variable with its index, its initial value, and which node members it
-  drives. This is the list you call from code.
+- **Adding nodes**: select a node in the graph, type a name, and press one of the add buttons. The
+  new clip, blender, modifier or selector is attached to whatever the selection can hold it as, and
+  the toolbar says which slot that will be before you press it. With nothing selected the node is
+  created unattached, and unattached nodes are drawn in a column of their own rather than vanishing.
+  Delete refuses while anything still points at the node, and names what.
+- **Symbols tab**: every variable and event with its index, type, initial value, and what references
+  it. Add, rename, retype the value, or remove. Removing renumbers every reference above it.
+- **Chain tab**: project to character to behaviour, skeleton and animations, what is missing, and the
+  skeleton's bone list.
+- **Check graph**: looks for the mistakes hkxpack cannot, listed under Validating below.
 - Filter by name, class or animation.
+
+## Structural editing
+
+Beyond changing field values, the editing layer under `src/Hkx` can change the shape of a graph.
+Every operation below was checked by repacking with hkxpack and reading the binary back, not by
+hkxpack merely accepting the file.
+
+| What | Where | Notes |
+|---|---|---|
+| Create and delete variable bindings | `BindingEditor` | Builds `hkbVariableBindingSet`, hooks the owner, unhooks it when the set empties |
+| Add and remove states | `StateEditor` | Removing a state strips every transition pointing at its state id |
+| Add and remove transitions | `StateEditor` | Normal transitions live on the source state, wildcards on the machine |
+| Add and remove generators | `GeneratorEditor` | Clip, blender, modifier, manual selector. Deleting refuses while anything still references the object, and reports what |
+| Create a node and attach it in one step | `GraphAuthor` | Picks the right slot for the parent's class, and lists nodes nothing points at |
+| Variable values, add and rename variables and events | `SymbolEditor` | Renames preserve indices; values are 32 bit words |
+| Remove a variable or an event | `SymbolEditor`, `SymbolIndexFixup` | Renumbers every reference above it; refuses while anything points at the exact index |
+| Check a graph before repacking | `GraphValidator` | See Validating below |
+
+Things the format makes easy to get wrong, all handled here:
+
+- **A symbol lives in up to four arrays at once.** Names in `hkbBehaviorGraphStringData`, one info
+  element per name in `hkbBehaviorGraphData`, one value per variable in `hkbVariableValueSet`, and
+  sometimes a `variableBounds` element as well. Add a name without the others and the engine reads a
+  variable with no declared type. `SymbolEditor.Audit` reports every length.
+- **`variableBounds` is not reliably parallel.** It is empty in some files, the same length as the
+  variable list in others, and in `MTBehavior` it is 19 entries against 67 variables that do not line
+  up by position. Nothing here edits a partial bounds array, because a positional edit would be a
+  guess.
+- **Event ids hide under a member called `id`.** Every scalar named `*EventId` carries one, but so
+  does the plain `id` member of an `hkbEventProperty` or `hkbEvent`, and that accounts for roughly a
+  third of the event references in a typical graph. The field table in `SymbolIndexFixup` was read
+  out of 132 vanilla files rather than recalled, and an index field it does not recognise makes a
+  removal refuse rather than renumber around it.
+- **Values are words, not text.** A float goes in as its bit pattern: `0.25` is stored as
+  `1048576000`.
+- **Renames must not reorder.** Transitions reference events by `eventId`, so a rename that shuffled
+  the array would silently repoint every transition in the file.
+- **A blender does not hold generators directly.** It holds `hkbBlenderGeneratorChild` wrappers that
+  carry the weight. A raw generator reference in `children` passes hkxpack and gives the engine
+  something it cannot read.
+- **hkxpack reassigns object ids on repack.** Anything that remembers an id across a save is wrong;
+  identify by class and name.
+
+Removal was checked the hard way: on `MTBehavior`, dropping one variable moved 82 references and
+dropping one event moved 251, and after a repack every binding and every transition still resolved to
+the same name it did before.
 
 ## Forcing an animation frame from a variable
 
@@ -50,8 +104,37 @@ Verified in `Meshes\Pipboy\Behaviors\PipboyBehavior.hkx`, which declares four va
 | `RadMeterTurning` | `MODE_USER_CONTROLLED` | `userControlledTimeFraction` | `fRadLevel` |
 | `TuneRadio` | `MODE_USER_CONTROLLED` | `userControlledTimeFraction` | `fRadioTune` |
 
-Open that file in the Variables tab to see it. Creating a new binding is not yet possible in the tool,
-only reading and retargeting an existing one; see the issue tracker.
+Open that file in the Symbols tab to see it. Bindings can be created from the properties panel, and
+the variable is declared for you if it does not exist yet.
+
+## Doors, lifts and switches are driven by events, not variables
+
+The Pip-Boy pattern above is the exception, not the rule, and it is worth knowing which one a job
+needs before building against the wrong half of the format.
+
+Every animated door, lift, periscope and switch checked declares **no variables at all**. They are
+state machines driven entirely by named events, and Papyrus sends those events:
+`ObjectReference.PlayAnimation(name)` is documented as "the name of the event to send to the object's
+animation graph", and `PlayAnimationAndWait(name, endEvent)` waits for one coming back. 177 vanilla
+base scripts drive animation this way.
+
+The names line up exactly on both sides:
+
+| behaviour file | events it declares | script that sends them |
+|---|---|---|
+| `SwitchDoors\SwitchDoorExLarge01` | `Play01 Trans01 Done Play02 StartOpen StartClosed Playing SoundPlay` | `DN151_DoorSeal.psc` sends `StartOpen`, `Open`, `StartClosed`, `Close` |
+| `Vault\Doors\VltGearDoor` | `stage1 stage2 stage3 stage4 reset SoundPlay SoundPlayAt KlaxonStop GameStart` | `DN142_GearDoorConsoleScript.psc` sends `stage2`, `stage3`, `reset` |
+| `GenericBehaviors\SpecialCaseDoors` | `Open Opened Close Closed reset SoundPlay SoundPlayAt AlternateClose AlternateClosed` | the garage door family |
+
+`MuseumDoorAnim01` shows the whole shape in four states. It starts in `Closed`, whose generator is
+`Open.hkt` in `MODE_USER_CONTROLLED` with nothing bound to it, so it holds frame zero: that is the
+closed pose, not a fault. Event `Open` moves it to a `MODE_SINGLE_PLAY` of the same animation, whose
+clip trigger fires `Done` and `Trans01` at the end of the clip, and `Trans01` carries it into a
+looping `Opened`. `Close` runs the mirror of that back to `Closed`.
+
+So an unbound `MODE_USER_CONTROLLED` clip in a graph with no variables is a held rest pose and is
+normal. Check graph only mentions one when the graph does declare variables, where it might really
+have meant to bind one.
 
 ## Running
 
@@ -92,11 +175,50 @@ that project, byte identical, so a fix on either side is a clean diff away from 
 convenience, not a dependency: there is no project reference, no shared path, and nothing here reads
 from an OpenCommonwealth checkout unless you explicitly hand `tools/sync_hkx_readers.sh` a path to one.
 
+## Validating
+
+hkxpack checks shape and signatures. It does not check meaning, so it will write a file whose
+transitions point at states that do not exist, or whose event ids run off the end of the event list.
+Those load without complaint and then behave wrongly, which is the worst kind of fault to chase from
+inside the game. **Check graph** looks for:
+
+- references to objects that are not in the file
+- event or variable indices past the end of what the graph declares
+- the symbol arrays disagreeing with each other
+- two states in one machine sharing a stateId, a transition to a stateId nothing has, a startStateId
+  that does not exist
+- a state with no generator
+- a blender child that is not an `hkbBlenderGeneratorChild` wrapper
+- a clip with no animation
+- nodes nothing points at
+
+It reports nothing at all on 132 vanilla behaviour files, which is the bar a check has to clear
+before it is worth reading. Passing it is not a promise the game will load the file.
+
+Run that yourself with `tools/symrm`, which pulls the corpus out of the game archive, unpacks it,
+and checks it:
+
+```
+dotnet run --project tools/symrm/symrm.csproj -- corpus "<Data>/Fallout4 - Animations.ba2" /tmp/beh
+dotnet run --project tools/symrm/symrm.csproj -- unpack /tmp/beh 4
+dotnet run --project tools/symrm/symrm.csproj -- check  /tmp/beh/xml
+dotnet run --project tools/symrm/symrm.csproj -- remove /tmp/beh/Meshes_Actors_Character_Behaviors_MTBehavior.hkx
+```
+
+`corpus` writes 531 files. `unpack 4` takes every fourth, which is the 132 the numbers here come
+from; pass 1 for all of them, and expect it to take a while, because it runs one JVM at a time
+deliberately. `remove` is the round trip that proves a symbol removal renumbered everything it had
+to: it exits non zero if any binding or transition comes back resolving to a different name.
+
 ## Known limits
 
-- Structural editing (adding or removing states and transitions) is not implemented. Field edits only.
 - Reading is proven against all 531 vanilla behaviour files; 5292 of 5323 states resolve to a
   generator we understand and every transition resolves its event name. Numbers and method are in
   OpenCommonwealth's `docs/BEHAVIOR_GRAPH_RESEARCH.md`.
-- hkxpack will happily repack a graph the game then rejects. Nothing here validates that a saved
-  file still loads. Keep the `.bak`.
+- Every edit here has been round tripped through hkxpack and read back from the binary. **None of it
+  has been loaded by Fallout 4.** hkxpack accepting a file is not the engine accepting it. Keep the
+  `.bak`.
+- Deleting a node leaves whatever pointed at it holding null. Delete refuses while references exist,
+  but detaching by hand first and then deleting can still leave, say, a state with no generator.
+  Check graph finds that.
+- A partial `variableBounds` array is never edited, only reported. See the note in `SymbolEditor`.

@@ -14,7 +14,6 @@ public static class GeneratorEditor
         public string Class = "";
         public string Signature = "";
         public string Body = "";
-        public string ChildField = "";
     }
 
     // hkbClipGenerator            from PipboyBehavior.hkx #98
@@ -50,7 +49,6 @@ public static class GeneratorEditor
         {
             Class = "hkbBlenderGenerator",
             Signature = "0xce45c088",
-            ChildField = "children",
             Body =
                 "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
                 "            <hkparam name=\"userData\">0</hkparam>\n" +
@@ -68,7 +66,6 @@ public static class GeneratorEditor
         {
             Class = "hkbModifierGenerator",
             Signature = "0xc499fc9e",
-            ChildField = "generator",
             Body =
                 "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
                 "            <hkparam name=\"userData\">0</hkparam>\n" +
@@ -76,11 +73,28 @@ public static class GeneratorEditor
                 "            <hkparam name=\"modifier\">null</hkparam>\n" +
                 "            <hkparam name=\"generator\">{child}</hkparam>",
         },
+        // Bethesda's own generator: it plays a NiControllerSequence out of the NIF rather than a
+        // Havok animation, which is what every animated door, lift and switch is built from.
+        // pSequence is the sequence name in the mesh, and it is not always the node's own name:
+        // the garage door's "Closeing" state plays a sequence called "Closing".
+        ["sequence"] = new Kind
+        {
+            Class = "BGSGamebryoSequenceGenerator",
+            Signature = "0x4e708fb6",
+            Body =
+                "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
+                "            <hkparam name=\"userData\">0</hkparam>\n" +
+                "            <hkparam name=\"name\">{name}</hkparam>\n" +
+                "            <hkparam name=\"pSequence\">{animation}</hkparam>\n" +
+                "            <hkparam name=\"eBlendModeFunction\">BMF_NONE</hkparam>\n" +
+                "            <hkparam name=\"fPercent\">1.0</hkparam>\n" +
+                "            <hkparam name=\"eUseTimePercentage\">NOT_USING_TIME_PERCENTAGE</hkparam>\n" +
+                "            <hkparam name=\"fTimePercent\">0.0</hkparam>",
+        },
         ["selector"] = new Kind
         {
             Class = "hkbManualSelectorGenerator",
             Signature = "0xeed8d5cd",
-            ChildField = "generators",
             Body =
                 "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
                 "            <hkparam name=\"userData\">0</hkparam>\n" +
