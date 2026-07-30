@@ -265,10 +265,14 @@ public static class Program
         int openedState = StateIdNamed("Opened");
         int closedState = StateIdNamed("Closed");
 
-        foreach (var (eventName, stateName, sequence, endEvent, target) in new[]
+        // enterState is where the new event actually lands. StartOpen goes straight to the held open
+        // pose, because that is what vanilla does: SwitchDoorExLarge01 sends StartOpen to its posed
+        // state and reaches the playing states through Play01. A door placed open should be open,
+        // not open itself while the cell is still loading. StartClosed keeps the playing shape.
+        foreach (var (eventName, stateName, sequence, endEvent, target, poseEntry) in new[]
                  {
-                     ("StartOpen", "StartOpening", "Opening", "Opened", openedState),
-                     ("StartClosed", "StartClosing", "Closing", "Closed", closedState),
+                     ("StartOpen", "StartOpening", "Opening", "Opened", openedState, true),
+                     ("StartClosed", "StartClosing", "Closing", "Closed", closedState, false),
                  })
         {
             xml = SymbolEditor.AddEvent(xml, eventName, out int eventId);
@@ -277,11 +281,15 @@ public static class Program
 
             // Out of the new state on the event the sequence itself sends when it finishes.
             xml = StateEditor.AddTransition(xml, machine, stateObject, target, EventNamed(endEvent), effect);
-            // Into it from anywhere, which is how this graph already handles pose entry events.
-            xml = StateEditor.AddTransition(xml, machine, "", stateId, eventId, effect);
 
-            Console.WriteLine($"  {eventName,-12} event {eventId,2}  ->  state {stateId} '{stateName}' " +
-                              $"playing sequence '{sequence}'  ->  on {endEvent} to state {target}");
+            int enterState = poseEntry ? target : stateId;
+            // Into it from anywhere, which is how this graph already handles pose entry events.
+            xml = StateEditor.AddTransition(xml, machine, "", enterState, eventId, effect);
+
+            Console.WriteLine(poseEntry
+                ? $"  {eventName,-12} event {eventId,2}  ->  state {enterState} directly, the held pose, no animation"
+                : $"  {eventName,-12} event {eventId,2}  ->  state {stateId} '{stateName}' " +
+                  $"playing sequence '{sequence}'  ->  on {endEvent} to state {target}");
         }
 
         string xmlPath = Path.Combine(work, "edited.xml");
