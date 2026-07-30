@@ -14,7 +14,6 @@ public static class GeneratorEditor
         public string Class = "";
         public string Signature = "";
         public string Body = "";
-        public string ChildField = "";
     }
 
     // hkbClipGenerator            from PipboyBehavior.hkx #98
@@ -50,7 +49,6 @@ public static class GeneratorEditor
         {
             Class = "hkbBlenderGenerator",
             Signature = "0xce45c088",
-            ChildField = "children",
             Body =
                 "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
                 "            <hkparam name=\"userData\">0</hkparam>\n" +
@@ -68,7 +66,6 @@ public static class GeneratorEditor
         {
             Class = "hkbModifierGenerator",
             Signature = "0xc499fc9e",
-            ChildField = "generator",
             Body =
                 "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
                 "            <hkparam name=\"userData\">0</hkparam>\n" +
@@ -80,7 +77,6 @@ public static class GeneratorEditor
         {
             Class = "hkbManualSelectorGenerator",
             Signature = "0xeed8d5cd",
-            ChildField = "generators",
             Body =
                 "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
                 "            <hkparam name=\"userData\">0</hkparam>\n" +

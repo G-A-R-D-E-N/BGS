@@ -24,7 +24,42 @@ Fallout 4 file. This reads the Fallout 4 format directly.
   `userControlledTimeFraction driven by fRadLevel`, with the variable resolved to its name.
 - **Variables tab**: every graph variable with its index, its initial value, and which node members it
   drives. This is the list you call from code.
+- **Chain tab**: project to character to behaviour, skeleton and animations, what is missing, and the
+  skeleton's bone list.
 - Filter by name, class or animation.
+
+## Structural editing
+
+Beyond changing field values, the editing layer under `src/Hkx` can change the shape of a graph.
+Every operation below was checked by repacking with hkxpack and reading the binary back, not by
+hkxpack merely accepting the file.
+
+| What | Where | Notes |
+|---|---|---|
+| Create and delete variable bindings | `BindingEditor` | Builds `hkbVariableBindingSet`, hooks the owner, unhooks it when the set empties |
+| Add and remove states | `StateEditor` | Removing a state strips every transition pointing at its state id |
+| Add and remove transitions | `StateEditor` | Normal transitions live on the source state, wildcards on the machine |
+| Add and remove generators | `GeneratorEditor` | Clip, blender, modifier, manual selector. Deleting refuses while anything still references the object, and reports what |
+| Variable values, add and rename variables and events | `SymbolEditor` | Renames preserve indices; values are 32 bit words |
+
+Things the format makes easy to get wrong, all handled here:
+
+- **A symbol lives in three arrays at once.** Names in `hkbBehaviorGraphStringData`, one info element
+  per name in `hkbBehaviorGraphData`, one value per variable in `hkbVariableValueSet`. Add a name
+  without the other two and the engine reads a variable with no declared type. `SymbolEditor.Audit`
+  reports all three lengths.
+- **Values are words, not text.** A float goes in as its bit pattern: `0.25` is stored as
+  `1048576000`.
+- **Renames must not reorder.** Transitions reference events by `eventId`, so a rename that shuffled
+  the array would silently repoint every transition in the file.
+- **A blender does not hold generators directly.** It holds `hkbBlenderGeneratorChild` wrappers that
+  carry the weight. A raw generator reference in `children` passes hkxpack and gives the engine
+  something it cannot read.
+- **hkxpack reassigns object ids on repack.** Anything that remembers an id across a save is wrong;
+  identify by class and name.
+
+Not implemented: removing a variable or an event. Both would shift every index after them, and every
+transition and binding referencing a later index would need rewriting in the same pass.
 
 ## Forcing an animation frame from a variable
 
