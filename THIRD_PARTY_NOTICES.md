@@ -13,9 +13,10 @@ Reading a behaviour file needs none of this; the reader is C# and native to the 
 what turns edited XML back into a binary `.hkx`, so it is only reached when saving. Without a Java
 runtime present the tool stays read only and says so, rather than failing at the point of save.
 
-## Godot Engine
+## Avalonia
 
-The tool is a Godot application and its releases embed a Godot export template, which is MIT,
-Copyright (c) 2014-present Godot Engine contributors and Copyright (c) 2007-2014 Juan Linietsky,
-Ariel Manzur. The engine is a double precision build from `opencw1/godotcustomsource`; its own
-licence travels in that repository.
+- Upstream: https://github.com/AvaloniaUI/Avalonia
+- Licence: MIT, Copyright (c) .NET Foundation and Contributors.
+
+The window is built with Avalonia and a release embeds it along with the .NET runtime, which is
+MIT, Copyright (c) .NET Foundation and Contributors.

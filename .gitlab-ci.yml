@@ -1,13 +1,8 @@
-# Builds the standalone tool for Windows and Linux on GitLab runners, so nobody needs a
-# double-precision Godot to produce a release.
+# Builds the tool for Windows and Linux on GitLab runners.
 #
-# It cannot use a stock Godot. The assembly is compiled against the 4.7.1-double packages in
-# nuget/, and a single-precision engine refuses to load it. The editor that performs the export
-# and the export templates that get embedded both come from opencw1/godotcustomsource, which
-# builds and publishes them.
-#
-# ENGINE_VERSION pins which of those builds is used. Leave it unset and the pipeline takes the
-# latest release from that project. Pin it when a release has to be reproducible.
+# Both jobs run on the same plain Linux image. Nothing here needs a game install, a game engine, or
+# a Windows machine: the Windows build is cross compiled, because a self contained .NET publish
+# emits the target's own host binary rather than reusing the build machine's.
 
 stages:
   - test
@@ -15,114 +10,82 @@ stages:
   - release
 
 variables:
-  ENGINE_PROJECT: "opencw1%2Fgodotcustomsource"
-  DIST: "$CI_PROJECT_DIR/dist"
+  DOTNET: mcr.microsoft.com/dotnet/sdk:8.0
   PACKAGE_REGISTRY: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/behaviour-graph-studio/${CI_COMMIT_SHORT_SHA}"
 
-# Runs on every push and needs neither the engine nor Java, because the format layer is plain C#
-# and its checks build graphs in memory. A red gate here stops a broken release being cut.
-test:
+# The format layer builds graphs in memory, so this needs no game files and no Java. A red gate
+# here stops a broken release being cut.
+format:
   stage: test
-  image: mcr.microsoft.com/dotnet/sdk:8.0
+  image: $DOTNET
   script:
     - dotnet run --project tools/symrm/symrm.csproj -- test
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "push"
-    - if: $CI_PIPELINE_SOURCE == "web"
 
-.export:
-  stage: build
-  image: mcr.microsoft.com/dotnet/sdk:8.0
-  needs: [test]
-  before_script:
-    - apt-get update -qq && apt-get install -y -qq curl unzip jq >/dev/null
-    # Take the pinned engine release, or the newest one if nothing is pinned.
-    - |
-      if [ -z "$ENGINE_VERSION" ]; then
-        ENGINE_VERSION=$(curl -sf --header "JOB-TOKEN: $CI_JOB_TOKEN" \
-          "${CI_API_V4_URL}/projects/${ENGINE_PROJECT}/releases" | jq -r '.[0].tag_name')
-      fi
-      echo "engine release: $ENGINE_VERSION"
-      test -n "$ENGINE_VERSION" && test "$ENGINE_VERSION" != "null"
-    - mkdir -p engine templates
-    # The editor performs the export; the template is what ends up inside the exported binary.
-    - |
-      fetch() {
-        curl -sfL --header "JOB-TOKEN: $CI_JOB_TOKEN" \
-          "${CI_API_V4_URL}/projects/${ENGINE_PROJECT}/packages/generic/$1/${ENGINE_VERSION#engine-}/$2" -o "$3"
-      }
-      fetch godot-4.7.1-double-mono-linux64 godot-4.7.1-double-mono-linux64.zip engine/editor.zip
-      fetch "$TEMPLATE_PACKAGE" "$TEMPLATE_FILE" templates/template.zip
-    - unzip -q engine/editor.zip -d engine && unzip -q templates/template.zip -d templates
-    - chmod +x engine/godot.linuxbsd.editor.double.x86_64.mono
-    - find templates -type f -name "godot.*template_release*" -exec chmod +x {} \;
+# Builds the real window on a headless display and walks it, so a window that no longer opens fails
+# the build instead of reaching a release.
+window:
+  stage: test
+  image: $DOTNET
   script:
-    - export BGS_TEMPLATE="$(find "$CI_PROJECT_DIR/templates" -type f -name "godot.*template_release*" | head -1)"
-    - test -n "$BGS_TEMPLATE"
-    - echo "template: $BGS_TEMPLATE"
-    - dotnet build BehaviourGraphStudio.csproj -c Release
-    - mkdir -p "$OUT"
-    # The preset carries an absolute template path from whoever exported last, which is meaningless
-    # on a runner, so it is rewritten to the one just downloaded.
-    - python3 tools/set_template.py "$PRESET" "$BGS_TEMPLATE"
-    - engine/godot.linuxbsd.editor.double.x86_64.mono --headless --path . --export-release "$PRESET" || true
-    - ls -la "$OUT"
-    - test -f "$ARTIFACT"
-    # hkxpack rides along beside the binary rather than inside it: it is a jar, so the JVM has to be
-    # able to open it as a file. MIT, and its licence goes with it because the licence says so.
-    - mkdir -p "$OUT/tools"
-    - cp tools/hkxpack-cli.jar tools/hkxpack-LICENSE.txt "$OUT/tools/"
-    - cd "$(dirname "$OUT")" && zip -qr "$CI_PROJECT_DIR/$ZIP" "$(basename "$OUT")"
+    - dotnet run --project tools/uismoke/uismoke.csproj
+
+.publish:
+  stage: build
+  image: $DOTNET
+  needs: [format, window]
+  script:
+    - dotnet publish app/BehaviourStudio.csproj -c Release -r $RID -o out
+    # hkxpack rides beside the binary rather than inside it, because the JVM has to open it as a
+    # file. MIT, and its licence travels with it because the licence says so.
+    - mkdir -p out/tools
+    - cp tools/hkxpack-cli.jar tools/hkxpack-LICENSE.txt THIRD_PARTY_NOTICES.md out/tools/
+    - ls -la out
+    - test -f "out/$BINARY"
+    - mv out "BehaviourGraphStudio-$RID"
+    - apt-get update -qq && apt-get install -y -qq zip >/dev/null
+    - zip -qr "BehaviourGraphStudio-$RID.zip" "BehaviourGraphStudio-$RID"
   artifacts:
     paths:
       - "*.zip"
     expire_in: 1 week
 
-export_windows:
-  extends: .export
+linux:
+  extends: .publish
   variables:
-    PRESET: "Windows Desktop"
-    TEMPLATE_PACKAGE: "godot-4.7.1-double-mono-win64-templates"
-    TEMPLATE_FILE: "godot-4.7.1-double-mono-win64-templates.zip"
-    OUT: "$CI_PROJECT_DIR/dist/BehaviourGraphStudio"
-    ARTIFACT: "$CI_PROJECT_DIR/dist/BehaviourGraphStudio/BehaviourGraphStudio.exe"
-    ZIP: "BehaviourGraphStudio-windows-x86_64.zip"
+    RID: linux-x64
+    BINARY: BehaviourGraphStudio
 
-export_linux:
-  extends: .export
+windows:
+  extends: .publish
   variables:
-    PRESET: "Linux"
-    TEMPLATE_PACKAGE: "godot-4.7.1-double-mono-linux64-templates"
-    TEMPLATE_FILE: "godot-4.7.1-double-mono-linux64-templates.zip"
-    OUT: "$CI_PROJECT_DIR/dist/BehaviourGraphStudio-linux"
-    ARTIFACT: "$CI_PROJECT_DIR/dist/BehaviourGraphStudio-linux/BehaviourGraphStudio.x86_64"
-    ZIP: "BehaviourGraphStudio-linux-x86_64.zip"
+    RID: win-x64
+    BINARY: BehaviourGraphStudio.exe
 
-# Proves the Linux build starts and reads a real file on a machine with no Godot and no .NET
-# installed, which is the whole claim of a standalone build. The Windows one cannot be run here.
-smoke_linux:
+# Proves the Linux build runs on a machine with no .NET and no build tools, which is the whole
+# claim of a standalone binary. The Windows one cannot be run here.
+standalone:
   stage: build
   image: debian:bookworm-slim
-  needs: [export_linux]
+  needs: [linux]
   script:
     - apt-get update -qq && apt-get install -y -qq unzip default-jre-headless >/dev/null
-    - unzip -q BehaviourGraphStudio-linux-x86_64.zip -d smoke
-    - cd smoke/BehaviourGraphStudio-linux
-    - chmod +x BehaviourGraphStudio.x86_64
-    - ./BehaviourGraphStudio.x86_64 --version
-    # The bundled jar has to be the real thing, not a zero-byte file that only looks bundled.
+    - unzip -q BehaviourGraphStudio-linux-x64.zip
+    - cd BehaviourGraphStudio-linux-x64
+    - chmod +x BehaviourGraphStudio
+    - ./BehaviourGraphStudio --version
+    # The bundled jar has to be the real thing, not a zero byte file that only looks bundled.
     - test -s tools/hkxpack-LICENSE.txt
-    - java -jar tools/hkxpack-cli.jar 2>&1 | head -20
+    - java -jar tools/hkxpack-cli.jar | head -3
 
 upload:
   stage: release
   image: curlimages/curl:latest
-  needs: [export_windows, export_linux, smoke_linux]
+  needs: [linux, windows, standalone]
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - |
-      for z in BehaviourGraphStudio-windows-x86_64.zip BehaviourGraphStudio-linux-x86_64.zip; do
+      for z in BehaviourGraphStudio-linux-x64.zip BehaviourGraphStudio-win-x64.zip; do
         curl -sf --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$z" "$PACKAGE_REGISTRY/$z"
       done
 
@@ -136,10 +99,10 @@ release:
     - echo "release for $CI_COMMIT_SHORT_SHA"
   release:
     tag_name: "build-$CI_COMMIT_SHORT_SHA"
-    description: "Behaviour Graph Studio, standalone Windows and Linux builds. Neither Godot nor .NET has to be installed."
+    description: "Behaviour Graph Studio. One file, nothing to install. Saving additionally needs a Java runtime."
     assets:
       links:
-        - name: "Behaviour Graph Studio (Windows x86_64)"
-          url: "$PACKAGE_REGISTRY/BehaviourGraphStudio-windows-x86_64.zip"
         - name: "Behaviour Graph Studio (Linux x86_64)"
-          url: "$PACKAGE_REGISTRY/BehaviourGraphStudio-linux-x86_64.zip"
+          url: "$PACKAGE_REGISTRY/BehaviourGraphStudio-linux-x64.zip"
+        - name: "Behaviour Graph Studio (Windows x86_64)"
+          url: "$PACKAGE_REGISTRY/BehaviourGraphStudio-win-x64.zip"

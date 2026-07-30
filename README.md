@@ -138,44 +138,45 @@ have meant to bind one.
 
 ## Using it
 
-Download the release folder and run `BehaviourGraphStudio.exe`. **No Godot, no .NET, no build
-tools.** The engine and the project are inside the exe, and the .NET runtime sits in the
-`data_BehaviourGraphStudio_windows_x86_64` folder next to it. Ship or copy the whole folder; the exe
-on its own will not start.
+Download the release for your platform, unzip it, and run `BehaviourGraphStudio` (or
+`BehaviourGraphStudio.exe`). **Nothing to install.** It is one file with the .NET runtime inside it,
+and it does not need a game, a game engine, or an SDK. Keep the `tools/` folder next to it.
 
 Opening and reading a file needs nothing else at all. **Saving additionally needs a Java runtime**,
 because writing goes back through hkxpack. hkxpack itself ships in the release, in `tools/` beside
-the exe; Java does not, so install one if you intend to save. Without it the tool opens the file
+the binary; Java does not, so install one if you intend to save. Without it the tool opens the file
 read only and says so in the status line rather than pretending.
+
+There is a terminal mode for scripting and for proving a change without a display:
+
+```
+BehaviourGraphStudio --version
+BehaviourGraphStudio --headless /path/to/Behavior.hkx    summary, node count, symbols, validator
+```
+
+It exits non zero when the validator finds errors, so it can gate a build.
 
 ## Building it yourself
 
 ```
-tools/export.sh [outDir]        the standalone Windows release
-./run.sh                        run from source, opens empty
-./run.sh /path/to/Behavior00.hkx
-./run.sh --headless file.hkx --quit-after 90    parse and print the summary, no window
+dotnet run --project app/BehaviourStudio.csproj                    run from source
+dotnet run --project tools/symrm/symrm.csproj -- test              the format checks
+dotnet run --project tools/uismoke/uismoke.csproj                  build the window headlessly
+dotnet publish app/BehaviourStudio.csproj -c Release -r linux-x64 -o out
+dotnet publish app/BehaviourStudio.csproj -c Release -r win-x64 -o out
 ```
 
-Running from source needs a **double-precision mono** Godot build, because the assembly is compiled
-against the `4.7.1-double` packages vendored in `nuget/` and a stock single-precision editor will
-refuse to load it. `engine/` is 239MB of build output so it is gitignored: drop such a build there
-(binary plus its `GodotSharp/` folder) or point `BGS_GODOT` at one.
+A .NET 8 SDK is the only requirement, on any platform. The Windows build cross compiles from Linux,
+because a self contained publish emits the target's own host binary rather than reusing the build
+machine's.
 
-Exporting needs a `template_release` build of that same engine. `export_presets.cfg` holds a path to
-one; override it with `BGS_TEMPLATE`. `BehaviourGraphStudio.sln` exists only because Godot's C#
-exporter refuses to pack a script without a solution beside the project.
-
-Nobody has to do any of that to get a release. `.gitlab-ci.yml` builds both Windows and Linux on
-GitLab runners: it pulls the editor and the matching export templates from `opencw1/godotcustomsource`,
-exports both, drops hkxpack in beside each binary, and then unpacks the Linux one on a bare Debian
-image with no Godot and no .NET installed to prove it actually starts. Pin `ENGINE_VERSION` when a
-release has to be reproducible; leave it unset and it takes the newest engine build.
+Nobody has to do any of that to get a release. `.gitlab-ci.yml` runs the format checks and the
+window smoke test, publishes both platforms, drops hkxpack in beside each binary, then unzips the
+Linux one on a bare Debian image with no .NET and no build tools to prove it actually starts.
 
 ## Requirements
 
-- A Godot 4.7.1 double-precision mono build, in `engine/` or via `BGS_GODOT`.
-- .NET 8 SDK to build (`dotnet build BehaviourGraphStudio.csproj`).
+- .NET 8 SDK to build. Nothing to build with, to run a release.
 - **A Java runtime** for anything beyond structure. The tree and the graph come from the native C#
   reader and work without Java, but field-level editing and saving go through hkxpack. Without it the
   tool stays read-only and says so in the status line rather than pretending. hkxpack itself is
@@ -185,12 +186,16 @@ release has to be reproducible; leave it unset and it takes the newest engine bu
 ## Layout
 
 ```
-src/Hkx/     packfile readers, self-contained, no project references out
-src/Ui/      Ux.cs design system, GraphCanvas.cs node canvas, StudioRoot.cs the app itself
-tools/       sync_hkx_readers.sh, optional, re-pulls the readers from an OpenCommonwealth checkout
-nuget/       vendored double-precision Godot packages
-engine/      the Godot binary this tool runs on (gitignored)
+src/Hkx/     packfile readers and editors, self-contained, no project references out
+app/         the application: Ux.cs palette, HkGrid.cs column grid, GraphView.cs node canvas,
+             MainWindow.cs the window itself, Program.cs the terminal mode
+tools/symrm/   format checks and the corpus harness
+tools/uismoke/ builds the window on a headless display and walks it
+tools/         sync_hkx_readers.sh, optional, re-pulls the readers from an OpenCommonwealth checkout
 ```
+
+The window is Avalonia, drawing straight onto a canvas. Nothing about the tool depends on any game
+engine, and it never did anything that needed one.
 
 `src/Hkx` keeps the `OpenCommonwealth.Services.Hkx` namespace on purpose. The same readers exist in
 that project, byte identical, so a fix on either side is a clean diff away from the other. That is a
