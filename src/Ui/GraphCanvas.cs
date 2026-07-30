@@ -30,6 +30,12 @@ public partial class GraphCanvas : Control
     public Action<string, string, string>? FieldEdited;
     public Action<string, string, string, string>? NodeAdded;
     public Action<string>? NodeDeleted;
+    public Action<string, string, string>? LinkRequested;
+    public Action<string, string, string>? UnlinkRequested;
+
+    private readonly Dictionary<string, List<GraphLinks.Slot>> _outFields = new();
+    private PanelContainer _menu = null!;
+    private VBoxContainer _menuItems = null!;
 
     public string SelectedId { get; private set; } = "";
 
@@ -67,12 +73,111 @@ public partial class GraphCanvas : Control
             SizeFlagsVertical = SizeFlags.ExpandFill,
             ShowGrid = true,
             MinimapEnabled = false,
-            RightDisconnects = false,
+            RightDisconnects = true,
         };
         _graph.AddThemeStyleboxOverride("panel", Ux.Fill(Ux.Base, Ux.Border, 1, 4));
         _graph.NodeSelected += OnNodeSelected;
         _graph.NodeDeselected += _ => SetSelection("");
+        _graph.ConnectionRequest += OnConnectionRequest;
+        _graph.DisconnectionRequest += OnDisconnectionRequest;
+        _graph.ConnectionToEmpty += OnConnectionToEmpty;
+        _graph.GuiInput += OnGraphInput;
         column.AddChild(_graph);
+
+        BuildMenu();
+    }
+
+    // A plain panel rather than a PopupMenu. Every Popup derived control is backed by its own OS
+    // window that hides itself on focus loss, which makes it unusable over a canvas the user is
+    // still dragging on.
+    private void BuildMenu()
+    {
+        _menu = new PanelContainer { Visible = false, ZIndex = 100 };
+        _menu.AddThemeStyleboxOverride("panel", Ux.Fill(Ux.Card, Ux.Accent, 1, 4));
+
+        _menuItems = new VBoxContainer();
+        _menuItems.AddThemeConstantOverride("separation", Ux.Px(2));
+        _menu.AddChild(_menuItems);
+        AddChild(_menu);
+    }
+
+    private void HideMenu() => _menu.Visible = false;
+
+    private void ShowMenu(string heading, List<(string Label, Action Run)> items)
+    {
+        foreach (var child in _menuItems.GetChildren())
+        {
+            _menuItems.RemoveChild(child);
+            child.QueueFree();
+        }
+
+        var title = Ux.FieldLabel(heading);
+        title.AddThemeColorOverride("font_color", Ux.TextMuted);
+        _menuItems.AddChild(title);
+
+        foreach (var (label, run) in items)
+        {
+            var button = Ux.SecondaryButton(label);
+            button.Alignment = HorizontalAlignment.Left;
+            button.Pressed += () => { HideMenu(); run(); };
+            _menuItems.AddChild(button);
+        }
+
+        _menu.Position = GetLocalMousePosition();
+        _menu.Visible = true;
+    }
+
+    private void ShowCanvasMenu(string attachToId, string attachField)
+    {
+        var items = new List<(string, Action)>();
+        string heading = attachToId.Length > 0
+            ? $"add and connect to #{attachToId}.{attachField}"
+            : "add a node";
+
+        foreach (string kind in GraphAuthor.Kinds)
+        {
+            string captured = kind;
+            items.Add(("New " + captured, () =>
+            {
+                string name = _newName.Text.Trim();
+                if (name.Length == 0) name = captured + "_new";
+                NodeAdded?.Invoke(captured, name, _newAnimation.Text.Trim(), attachToId);
+            }));
+        }
+
+        ShowMenu(heading, items);
+    }
+
+    private void ShowNodeMenu(string objectId)
+    {
+        var obj = _model?.Get(objectId);
+        string label = obj == null ? "#" + objectId : $"#{objectId} {obj.Class}";
+        var items = new List<(string, Action)>();
+
+        foreach (string kind in GraphAuthor.Kinds)
+        {
+            string captured = kind;
+            items.Add(($"Add {captured} here", () =>
+            {
+                string name = _newName.Text.Trim();
+                if (name.Length == 0) name = captured + "_new";
+                NodeAdded?.Invoke(captured, name, _newAnimation.Text.Trim(), objectId);
+            }));
+        }
+
+        if (obj != null)
+            foreach (var slot in GraphLinks.OutSlots(_model!, obj).Where(s => s.Targets.Count > 0))
+            {
+                var captured = slot;
+                items.Add(($"Clear {captured.Field}", () =>
+                {
+                    foreach (string target in captured.Targets.ToList())
+                        UnlinkRequested?.Invoke(objectId, captured.Field, target);
+                }));
+            }
+
+        items.Add(("Delete this node", () => NodeDeleted?.Invoke(objectId)));
+        ShowMenu(label, items);
     }
 
     // A row of buttons rather than a dropdown: five kinds is not enough to justify a popup, and a
@@ -143,6 +248,8 @@ public partial class GraphCanvas : Control
         }
         _graph.ClearConnections();
         _nodeToId.Clear();
+        _outFields.Clear();
+        if (_menu != null) HideMenu();
     }
 
     public void ShowMessage(string text)
@@ -229,14 +336,17 @@ public partial class GraphCanvas : Control
 
         foreach (var obj in order)
         {
-            if (!edges.TryGetValue(obj.Id, out var outs)) continue;
-            for (int port = 0; port < outs.Count; port++)
+            string fromName = NodeName(obj.Id);
+            if (!_outFields.TryGetValue(fromName, out var fields)) continue;
+
+            for (int port = 0; port < fields.Count; port++)
             {
-                if (!_nodeToId.ContainsValue(outs[port].Target)) continue;
-                string fromName = NodeName(obj.Id);
-                string toName = NodeName(outs[port].Target);
-                if (_graph.GetNodeOrNull<GraphNode>(toName) == null) continue;
-                _graph.ConnectNode(fromName, port, toName, 0);
+                foreach (string target in fields[port].Targets)
+                {
+                    string toName = NodeName(target);
+                    if (_graph.GetNodeOrNull<GraphNode>(toName) == null) continue;
+                    _graph.ConnectNode(fromName, port, toName, 0);
+                }
             }
         }
 
@@ -369,17 +479,80 @@ public partial class GraphCanvas : Control
             node.AddChild(EditRow(obj.Id, field, value));
         }
 
+        // A port per link the class is allowed to have, not per link it already has, so an empty
+        // generator field can still be dragged from. The port index Godot reports is the position
+        // among enabled right hand slots, which is why the fields are recorded in the same order.
+        var fields = _model == null ? new List<GraphLinks.Slot>() : GraphLinks.OutSlots(_model, obj);
+        _outFields[node.Name] = fields;
+
         int slot = node.GetChildCount();
-        foreach (var (field, _) in outs)
+        foreach (var link in fields)
         {
-            var row = new Label { Text = field, HorizontalAlignment = HorizontalAlignment.Right };
-            row.AddThemeColorOverride("font_color", Ux.TextMuted);
+            string filled = link.Targets.Count switch
+            {
+                0 => "",
+                1 => "  " + (_model?.Get(link.Targets[0])?.Str("name") ?? "#" + link.Targets[0]),
+                _ => $"  {link.Targets.Count} linked",
+            };
+
+            var row = new Label
+            {
+                Text = (link.Array ? link.Field + " []" : link.Field) + filled,
+                HorizontalAlignment = HorizontalAlignment.Right,
+            };
+            row.AddThemeColorOverride("font_color", link.Targets.Count > 0 ? Ux.TextMeta : Ux.TextDisabled);
             node.AddChild(row);
             node.SetSlot(slot, false, 0, accent, true, 0, accent);
             slot++;
         }
 
+        node.GuiInput += e => OnNodeInput(e, obj.Id);
         return node;
+    }
+
+    private void OnNodeInput(InputEvent e, string objectId)
+    {
+        if (e is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Right }) return;
+        SetSelection(objectId);
+        ObjectSelected?.Invoke(objectId);
+        ShowNodeMenu(objectId);
+    }
+
+    private void OnGraphInput(InputEvent e)
+    {
+        if (e is not InputEventMouseButton { Pressed: true } click) return;
+        if (click.ButtonIndex == MouseButton.Right) ShowCanvasMenu("", "");
+        else HideMenu();
+    }
+
+    // Dropping a dragged link on empty canvas is the blueprint gesture for "make me something to
+    // connect this to", so the menu that opens attaches whatever it creates to that port.
+    private void OnConnectionToEmpty(StringName fromNode, long fromPort, Vector2 _)
+    {
+        string from = fromNode.ToString();
+        if (!_nodeToId.TryGetValue(from, out string id)) return;
+        if (!_outFields.TryGetValue(from, out var fields) || fromPort >= fields.Count) return;
+        ShowCanvasMenu(id, fields[(int)fromPort].Field);
+    }
+
+    private void OnConnectionRequest(StringName fromNode, long fromPort, StringName toNode, long toPort)
+    {
+        string from = fromNode.ToString(), to = toNode.ToString();
+        if (!_nodeToId.TryGetValue(from, out string fromId)) return;
+        if (!_nodeToId.TryGetValue(to, out string toId)) return;
+        if (!_outFields.TryGetValue(from, out var fields) || fromPort >= fields.Count) return;
+
+        LinkRequested?.Invoke(fromId, fields[(int)fromPort].Field, toId);
+    }
+
+    private void OnDisconnectionRequest(StringName fromNode, long fromPort, StringName toNode, long toPort)
+    {
+        string from = fromNode.ToString(), to = toNode.ToString();
+        if (!_nodeToId.TryGetValue(from, out string fromId)) return;
+        if (!_nodeToId.TryGetValue(to, out string toId)) return;
+        if (!_outFields.TryGetValue(from, out var fields) || fromPort >= fields.Count) return;
+
+        UnlinkRequested?.Invoke(fromId, fields[(int)fromPort].Field, toId);
     }
 
     private static Color ColourFor(string cls)

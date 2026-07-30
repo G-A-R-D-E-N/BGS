@@ -140,6 +140,8 @@ public partial class StudioRoot : Control
         _canvas.FieldEdited += ApplyDirect;
         _canvas.NodeAdded += AddNode;
         _canvas.NodeDeleted += DeleteNode;
+        _canvas.LinkRequested += (from, field, to) => Relink(from, field, to, connect: true);
+        _canvas.UnlinkRequested += (from, field, to) => Relink(from, field, to, connect: false);
         tabs.AddChild(_canvas);
 
         tabs.AddChild(BuildSymbolsTab());
@@ -892,6 +894,29 @@ public partial class StudioRoot : Control
             SetDirty(true);
             SetStatus(note + $"   (#{newId}, unsaved)", Ux.TextCode);
             RefreshAfterEdit(newId);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message.Split('\n')[0], Ux.TextMuted);
+        }
+    }
+
+    private void Relink(string fromId, string field, string toId, bool connect)
+    {
+        if (string.IsNullOrEmpty(_xmlText)) { SetStatus("Read-only: no text form loaded.", Ux.TextMuted); return; }
+
+        try
+        {
+            _xmlText = connect
+                ? GraphLinks.Connect(_xmlText, fromId, field, toId, out string note)
+                : GraphLinks.Disconnect(_xmlText, fromId, field, toId, out note);
+
+            SetDirty(true);
+            SetStatus(note + "   (unsaved)", Ux.TextCode);
+
+            var model = BehaviourGraphModel.Parse(_xmlText);
+            _canvas.Build(model);
+            BuildVariables(model);
         }
         catch (Exception ex)
         {

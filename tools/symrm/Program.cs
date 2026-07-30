@@ -30,6 +30,7 @@ public static class Program
             case "check": return Check(argv);
             case "remove": return Remove(argv);
             case "door": return Door(argv);
+            case "link": return Link(argv);
             default: Usage(); return 1;
         }
     }
@@ -218,6 +219,91 @@ public static class Program
         foreach (var f in findings.Take(8)) Console.WriteLine("   " + f);
 
         return ok && errors == 0 ? 0 : 1;
+    }
+
+    // Exercises the wiring the graph view performs when a link is dragged between two ports. The
+    // canvas cannot be driven from a script, so this drives the same calls it makes.
+    private static int Link(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm", "link");
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+        Directory.CreateDirectory(work);
+
+        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
+        var model = BehaviourGraphModel.Parse(xml);
+        Console.WriteLine($"FILE {Path.GetFileName(argv[1])}   {model.Objects.Count} objects");
+
+        Console.WriteLine("\n--- ports the canvas offers, which is a port per link the class may hold ---");
+        foreach (var obj in model.Objects.Take(60))
+        {
+            var slots = GraphLinks.OutSlots(model, obj);
+            if (slots.Count == 0) continue;
+            Console.WriteLine($"  #{obj.Id,-4} {obj.Class,-34} {string.Join("  ", slots.Select(s => $"{s}({s.Targets.Count})"))}");
+        }
+
+        string machine = model.Objects.First(o => o.Class == "hkbStateMachine").Id;
+        var blender = model.Objects.FirstOrDefault(o => o.Class == "hkbBlenderGenerator");
+        var state = model.Objects.First(o => o.Class == "hkbStateMachineStateInfo");
+
+        Console.WriteLine("\n--- create a clip with nothing pointing at it, the way a drag to empty canvas does ---");
+        xml = GeneratorEditor.Add(xml, "clip", "SymrmLinkClip", "Meshes\\Probe\\link.hkx", "", out string clip);
+        Console.WriteLine($"  clip is #{clip}");
+
+        if (blender != null)
+        {
+            xml = GraphLinks.Connect(xml, blender.Id, "children", clip, out string note);
+            Console.WriteLine($"  drag blender.children  -> {note}");
+        }
+
+        xml = GraphLinks.Connect(xml, machine, "states", clip, out string stateNote);
+        Console.WriteLine($"  drag machine.states    -> {stateNote}");
+
+        xml = GraphLinks.Connect(xml, state.Id, "generator", clip, out string genNote);
+        Console.WriteLine($"  drag state.generator   -> {genNote}");
+
+        string back = RoundTripTo(xml, Path.Combine(work, "wired"));
+        var wired = BehaviourGraphModel.Parse(back);
+        Console.WriteLine($"\nAFTER ROUND TRIP: {wired.Objects.Count} objects");
+
+        var clipAfter = wired.Objects.First(o => o.Class == "hkbClipGenerator" && o.Str("name") == "SymrmLinkClip");
+        var holders = GeneratorEditor.ReferencesTo(wired, clipAfter.Id);
+        Console.WriteLine($"  the clip survived as #{clipAfter.Id}, referenced by {holders.Count}: " +
+                          string.Join(", ", holders.Select(h => $"#{h} {wired.Get(h)?.Class}")));
+
+        var blenderAfter = wired.Objects.FirstOrDefault(o => o.Class == "hkbBlenderGenerator");
+        if (blenderAfter != null)
+        {
+            Console.WriteLine("\n--- drag the blender child off again ---");
+            string wrapper = blenderAfter.Refs("children")
+                .First(id => wired.Get(id)?.Ref("generator") == clipAfter.Id);
+            back = GraphLinks.Disconnect(back, blenderAfter.Id, "children", wrapper, out string offNote);
+            Console.WriteLine($"  {offNote}");
+        }
+
+        string final = RoundTripTo(back, Path.Combine(work, "unwired"));
+        var end = BehaviourGraphModel.Parse(final);
+        Console.WriteLine($"\nFINAL: {end.Objects.Count} objects, " +
+                          $"{end.Objects.Count(o => o.Class == "hkbBlenderGeneratorChild")} blender children left");
+
+        Console.WriteLine("\n--- validator ---");
+        var findings = GraphValidator.Check(final);
+        int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
+        Console.WriteLine($"  {errors} errors, {findings.Count - errors} warnings");
+        foreach (var f in findings.Take(8)) Console.WriteLine("   " + f);
+        return errors == 0 ? 0 : 1;
+    }
+
+    private static string RoundTripTo(string xml, string dir)
+    {
+        Directory.CreateDirectory(dir);
+        string xmlPath = Path.Combine(dir, "edited.xml");
+        File.WriteAllText(xmlPath, xml);
+        string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
+        Console.WriteLine($"repacked to {new FileInfo(packed).Length} bytes");
+        return File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, packed, Path.Combine(dir, "back")));
     }
 
     // Adds DN151_DoorSeal's StartOpen and StartClosed to SpecialCaseDoors, which does not have them.
