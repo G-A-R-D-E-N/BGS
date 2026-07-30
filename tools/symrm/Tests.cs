@@ -21,6 +21,9 @@ public static class Tests
         DetachedSubtreeStaysDrawn();
         ReplacingLinkSaysWhatItDisplaced();
         BlenderChildIsWrapped();
+        AnyNodeCanBeDeleted();
+        StructuralObjectsAreProtected();
+        PortTypesRefuseNonsense();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -106,6 +109,74 @@ public static class Tests
         Check("the child is a wrapper, not the clip", "hkbBlenderGeneratorChild", model.Get(child)?.Class);
         Check("the wrapper points at the clip", "94", model.Get(child)?.Ref("generator"));
         CheckTrue("the note mentions the wrapper", note.Contains(child));
+    }
+
+    // A node that shipped with the game is referenced by something, always. Refusing to delete
+    // while references exist therefore made vanilla nodes undeletable, which is not how a graph
+    // editor behaves. Deleting breaks the links into it instead.
+    private static void AnyNodeCanBeDeleted()
+    {
+        Console.WriteLine("\nany node can be deleted, links into it are broken first");
+
+        string xml = SmallGraph();
+        var before = BehaviourGraphModel.Parse(xml);
+        CheckTrue("the clip starts out referenced", GeneratorEditor.ReferencesTo(before, "94").Count == 1);
+
+        xml = GraphAuthor.DeleteNode(xml, "94", out string note);
+        var after = BehaviourGraphModel.Parse(xml);
+
+        Check("the object is gone", null, after.Get("94"));
+        Check("nothing else was removed", 6, after.Objects.Count);
+        Check("the state that held it survives", "A", after.Get("93")?.Str("name"));
+        Check("its generator link was cleared, not left dangling", "null", after.Get("93")?.Str("generator"));
+        CheckTrue("the note says what it cleared", note.Contains("#93"));
+        CheckTrue("no dangling reference remains", GraphValidator.Check(xml)
+            .All(f => !f.What.Contains("not in this file")));
+    }
+
+    private static void StructuralObjectsAreProtected()
+    {
+        Console.WriteLine("\nthe objects the file is built around cannot be deleted");
+
+        foreach (string id in new[] { "91" })
+        {
+            string cls = BehaviourGraphModel.Parse(SmallGraph()).Get(id)!.Class;
+            bool refused = false;
+            try { GraphAuthor.DeleteNode(SmallGraph(), id, out _); }
+            catch (InvalidOperationException) { refused = true; }
+            CheckTrue($"deleting #{id} {cls} is refused", refused);
+        }
+
+        CheckTrue("a clip is not protected", GraphAuthor.CanDelete("hkbClipGenerator"));
+        CheckTrue("a state machine is not protected", GraphAuthor.CanDelete("hkbStateMachine"));
+    }
+
+    // The canvas types its ports so GraphEdit refuses a drag that could not work. These are the
+    // pairings behind that, checked here because the canvas itself cannot be scripted.
+    private static void PortTypesRefuseNonsense()
+    {
+        Console.WriteLine("\nport types accept what fits and refuse what does not");
+
+        bool Allowed(string field, string className)
+        {
+            int from = GraphLinks.Accepts(field), to = GraphLinks.FamilyOf(className);
+            return from == to || GraphLinks.ValidPairs.Contains((from, to));
+        }
+
+        CheckTrue("a generator slot takes a clip", Allowed("generator", "hkbClipGenerator"));
+        CheckTrue("a generator slot takes a state machine", Allowed("generator", "hkbStateMachine"));
+        CheckTrue("a states array takes a state info", Allowed("states", "hkbStateMachineStateInfo"));
+        CheckTrue("a states array takes a generator to wrap", Allowed("states", "hkbClipGenerator"));
+        CheckTrue("a blender's children take a wrapper", Allowed("children", "hkbBlenderGeneratorChild"));
+        CheckTrue("a modifier slot takes a modifier", Allowed("modifier", "hkbEventDrivenModifier"));
+
+        CheckTrue("a generator slot refuses a modifier", !Allowed("generator", "hkbEventDrivenModifier"));
+        CheckTrue("a generator slot refuses a transition array",
+            !Allowed("generator", "hkbStateMachineTransitionInfoArray"));
+        CheckTrue("a modifier slot refuses a clip", !Allowed("modifier", "hkbClipGenerator"));
+        CheckTrue("a triggers slot refuses a clip", !Allowed("triggers", "hkbClipGenerator"));
+        CheckTrue("a states array refuses a trigger array",
+            !Allowed("states", "hkbClipTriggerArray"));
     }
 
     private static int Reachable(BehaviourGraphModel model)

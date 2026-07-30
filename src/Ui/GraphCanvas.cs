@@ -118,6 +118,13 @@ public partial class GraphCanvas : Control
         _graph.ConnectionToEmpty += OnConnectionToEmpty;
         _graph.GuiInput += OnGraphInput;
         _graph.EndNodeMove += RememberPositions;
+
+        // Typed ports. GraphEdit refuses a drag between two types unless they match or the pair is
+        // whitelisted, so a connection that could not work is never made in the first place rather
+        // than being written and found out about later.
+        foreach (var (from, to) in GraphLinks.ValidPairs)
+            _graph.AddValidConnectionType(from, to);
+
         column.AddChild(_graph);
 
         BuildMenu();
@@ -550,7 +557,10 @@ public partial class GraphCanvas : Control
         var header = new Label { Text = obj.Class };
         header.AddThemeColorOverride("font_color", accent);
         node.AddChild(header);
-        node.SetSlot(0, true, 0, accent, false, 0, accent);
+        // The input port carries what this object can be used as, so a slot that wants a modifier
+        // will not accept a clip.
+        int family = GraphLinks.FamilyOf(obj.Class);
+        node.SetSlot(0, true, family, accent, false, 0, accent);
 
         string animation = obj.Str("animationName");
         if (!string.IsNullOrEmpty(animation))
@@ -597,7 +607,7 @@ public partial class GraphCanvas : Control
             };
             row.AddThemeColorOverride("font_color", link.Targets.Count > 0 ? Ux.TextMeta : Ux.TextDisabled);
             node.AddChild(row);
-            node.SetSlot(slot, false, 0, accent, true, 0, accent);
+            node.SetSlot(slot, false, 0, accent, true, GraphLinks.Accepts(link.Field), accent);
             slot++;
         }
 

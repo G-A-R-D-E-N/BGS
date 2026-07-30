@@ -46,6 +46,64 @@ public static class GraphLinks
         ["BGSGamebryoSequenceGenerator"] = new(),
     };
 
+    // Port types, so the canvas can refuse a connection that would not work rather than letting it
+    // be made and finding out later. A generator slot only takes something that produces a pose; a
+    // triggers slot only takes a clip trigger array. Numbers are arbitrary, only equality matters.
+    public const int KindGenerator = 1;
+    public const int KindModifier = 2;
+    public const int KindTransitionArray = 3;
+    public const int KindStateInfo = 4;
+    public const int KindTriggerArray = 5;
+    public const int KindBlenderChild = 6;
+    public const int KindBoneWeights = 7;
+    public const int KindStates = 8;
+    public const int KindChildren = 9;
+    public const int KindOther = 99;
+
+    // What a field will accept.
+    public static int Accepts(string field) => field switch
+    {
+        "rootGenerator" or "generator" or "generators" or "pDefaultGenerator" or "pBlenderGenerator"
+            => KindGenerator,
+        "modifier" or "modifiers" => KindModifier,
+        "transitions" or "wildcardTransitions" => KindTransitionArray,
+        "states" => KindStates,
+        "children" or "layers" => KindChildren,
+        "triggers" => KindTriggerArray,
+        "boneWeights" => KindBoneWeights,
+        _ => KindOther,
+    };
+
+    // What an object can be used as.
+    public static int FamilyOf(string className) => className switch
+    {
+        "hkbStateMachineStateInfo" => KindStateInfo,
+        "hkbStateMachineTransitionInfoArray" => KindTransitionArray,
+        "hkbClipTriggerArray" => KindTriggerArray,
+        "hkbBlenderGeneratorChild" => KindBlenderChild,
+        "hkbBoneWeightArray" => KindBoneWeights,
+        "hkbLayer" => KindChildren,
+        _ when className.EndsWith("Modifier", StringComparison.Ordinal) => KindModifier,
+        _ when className.EndsWith("Generator", StringComparison.Ordinal) => KindGenerator,
+        "hkbStateMachine" => KindGenerator,
+        "hkbModifierList" => KindModifier,
+        _ => KindOther,
+    };
+
+    // Pairs that are allowed even though the two numbers differ, because the connection builds
+    // something rather than writing a bare reference. A states array takes a state info directly or
+    // a generator that gets wrapped in one; a blender's children take either the wrapper or the
+    // generator to wrap.
+    public static IEnumerable<(int From, int To)> ValidPairs => new[]
+    {
+        (KindStates, KindStateInfo),
+        (KindStates, KindGenerator),
+        (KindChildren, KindBlenderChild),
+        (KindChildren, KindGenerator),
+        (KindModifier, KindModifier),
+        (KindGenerator, KindGenerator),
+    };
+
     public static List<Slot> OutSlots(BehaviourGraphModel model, HkObject obj)
     {
         var slots = new List<Slot>();

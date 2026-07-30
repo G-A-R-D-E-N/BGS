@@ -109,6 +109,83 @@ public static class GraphAuthor
         return model.Objects.Where(o => !referenced.Contains(o.Id) && IsNode(o.Class)).ToList();
     }
 
+    // Deleting these takes the file with it: the graph header, the symbol tables and the container
+    // everything hangs off. Nothing else is protected, so a node that shipped with the game is as
+    // deletable as one just made.
+    private static readonly HashSet<string> Structural = new(StringComparer.Ordinal)
+    {
+        "hkRootLevelContainer", "hkbBehaviorGraph", "hkbBehaviorGraphData",
+        "hkbBehaviorGraphStringData", "hkbVariableValueSet", "hkbProjectData",
+        "hkbProjectStringData", "hkbCharacterData", "hkbCharacterStringData",
+    };
+
+    public static bool CanDelete(string className) => !Structural.Contains(className);
+
+    // Removes a node and breaks every link into it first, which is what a blueprint editor does.
+    // Refusing while references exist made vanilla nodes undeletable in practice, since almost
+    // everything in a shipped graph is referenced by something.
+    public static string DeleteNode(string xml, string id, out string note)
+    {
+        var model = BehaviourGraphModel.Parse(xml);
+        var target = model.Get(id) ?? throw new ArgumentException($"#{id} is not in this file");
+
+        if (!CanDelete(target.Class))
+            throw new InvalidOperationException(
+                $"#{id} is a {target.Class}, which the file is built around; deleting it would leave " +
+                "a graph the engine cannot load");
+
+        string name = target.Str("name");
+        var cleared = new List<string>();
+        var alsoGone = new List<string>();
+
+        foreach (string holderId in GeneratorEditor.ReferencesTo(model, id).ToList())
+        {
+            var holder = BehaviourGraphModel.Parse(xml).Get(holderId);
+            if (holder == null) continue;
+
+            xml = Detach(xml, holder, id);
+            cleared.Add($"#{holderId} {holder.Class}");
+
+            // A blender child exists only to hold one generator. Once that is gone it is litter the
+            // validator would report as unreachable, so it goes with it.
+            if (holder.Class == "hkbBlenderGeneratorChild")
+            {
+                xml = DeleteNode(xml, holderId, out _);
+                alsoGone.Add("#" + holderId);
+            }
+        }
+
+        var (start, length) = HkxTextEdit.ObjectBlock(xml, id);
+        if (start >= 0) xml = xml.Remove(start, length);
+
+        string extra = alsoGone.Count > 0 ? $", and its wrapper {string.Join(", ", alsoGone)}" : "";
+        note = cleared.Count == 0
+            ? $"deleted #{id} {target.Class} '{name}', which nothing referenced"
+            : $"deleted #{id} {target.Class} '{name}'{extra}, and cleared {cleared.Count} link" +
+              $"{(cleared.Count == 1 ? "" : "s")} into it from {string.Join(", ", cleared.Take(3))}";
+        return xml;
+    }
+
+    // Clears every reference to target held by this one object, whichever shape it is in.
+    private static string Detach(string xml, HkObject holder, string targetId)
+    {
+        string token = "#" + targetId;
+
+        foreach (var (field, value) in holder.Scalars.Where(p => p.Value == token).ToList())
+            xml = HkxTextEdit.SetParam(xml, holder.Id, field, "null");
+
+        foreach (var (field, list) in holder.Lists)
+        {
+            // Back to front, because removing an element renumbers the ones after it.
+            var indices = list.Select((v, i) => (v, i)).Where(p => p.v == token)
+                              .Select(p => p.i).OrderByDescending(i => i).ToList();
+            foreach (int index in indices)
+                xml = HkxTextEdit.ArrayRemoveAt(xml, holder.Id, field, index);
+        }
+
+        return xml;
+    }
+
     // Which objects the canvas should draw, and in which column.
     //
     // Walking outwards from the root alone is not enough. Retargeting a link, which is the ordinary

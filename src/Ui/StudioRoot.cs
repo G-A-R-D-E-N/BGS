@@ -932,20 +932,9 @@ public partial class StudioRoot : Control
 
         try
         {
-            string cls = HkxTextEdit.ClassOf(_xmlText, objectId);
-            string after = GeneratorEditor.Remove(_xmlText, objectId, force: false, out var blockers);
-
-            if (blockers.Count > 0)
-            {
-                SetStatus($"#{objectId} is still referenced by {string.Join(", ", blockers.Take(4).Select(b => "#" + b))}" +
-                          (blockers.Count > 4 ? $" and {blockers.Count - 4} more" : "") + "; detach it first.",
-                          Ux.TextMuted);
-                return;
-            }
-
-            _xmlText = after;
+            _xmlText = GraphAuthor.DeleteNode(_xmlText, objectId, out string note);
             SetDirty(true);
-            SetStatus($"removed #{objectId} {cls}   (unsaved)", Ux.TextCode);
+            SetStatus(note + "   (unsaved)", Ux.TextCode);
 
             var model = BehaviourGraphModel.Parse(_xmlText);
             _canvas.Build(model);
