@@ -107,10 +107,34 @@ Verified in `Meshes\Pipboy\Behaviors\PipboyBehavior.hkx`, which declares four va
 Open that file in the Symbols tab to see it. Bindings can be created from the properties panel, and
 the variable is declared for you if it does not exist yet.
 
-A binding is not the only way this is done. Fifteen of the vanilla files checked, including every
-animated door, lift and periscope, run `MODE_USER_CONTROLLED` clips with nothing bound to
-`userControlledTimeFraction` at all, so the engine has a second route into that value that this tool
-cannot see from the file. Treat an unbound user-controlled clip as normal, not as a fault.
+## Doors, lifts and switches are driven by events, not variables
+
+The Pip-Boy pattern above is the exception, not the rule, and it is worth knowing which one a job
+needs before building against the wrong half of the format.
+
+Every animated door, lift, periscope and switch checked declares **no variables at all**. They are
+state machines driven entirely by named events, and Papyrus sends those events:
+`ObjectReference.PlayAnimation(name)` is documented as "the name of the event to send to the object's
+animation graph", and `PlayAnimationAndWait(name, endEvent)` waits for one coming back. 177 vanilla
+base scripts drive animation this way.
+
+The names line up exactly on both sides:
+
+| behaviour file | events it declares | script that sends them |
+|---|---|---|
+| `SwitchDoors\SwitchDoorExLarge01` | `Play01 Trans01 Done Play02 StartOpen StartClosed Playing SoundPlay` | `DN151_DoorSeal.psc` sends `StartOpen`, `Open`, `StartClosed`, `Close` |
+| `Vault\Doors\VltGearDoor` | `stage1 stage2 stage3 stage4 reset SoundPlay SoundPlayAt KlaxonStop GameStart` | `DN142_GearDoorConsoleScript.psc` sends `stage2`, `stage3`, `reset` |
+| `GenericBehaviors\SpecialCaseDoors` | `Open Opened Close Closed reset SoundPlay SoundPlayAt AlternateClose AlternateClosed` | the garage door family |
+
+`MuseumDoorAnim01` shows the whole shape in four states. It starts in `Closed`, whose generator is
+`Open.hkt` in `MODE_USER_CONTROLLED` with nothing bound to it, so it holds frame zero: that is the
+closed pose, not a fault. Event `Open` moves it to a `MODE_SINGLE_PLAY` of the same animation, whose
+clip trigger fires `Done` and `Trans01` at the end of the clip, and `Trans01` carries it into a
+looping `Opened`. `Close` runs the mirror of that back to `Closed`.
+
+So an unbound `MODE_USER_CONTROLLED` clip in a graph with no variables is a held rest pose and is
+normal. Check graph only mentions one when the graph does declare variables, where it might really
+have meant to bind one.
 
 ## Running
 

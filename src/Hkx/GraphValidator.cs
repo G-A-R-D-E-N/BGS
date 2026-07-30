@@ -126,24 +126,26 @@ public static class GraphValidator
 
     private static void CheckClips(BehaviourGraphModel model, List<Finding> found)
     {
+        int declaredVariables = SymbolEditor.VariableNames(model).Count;
+
         foreach (var clip in model.Objects.Where(o => o.Class == "hkbClipGenerator"))
         {
             if (string.IsNullOrWhiteSpace(clip.Str("animationName")))
                 Add(found, Level.Error, $"#{clip.Id} clip '{clip.Str("name")}'", "has no animationName");
 
-            if (clip.Str("mode") == "MODE_USER_CONTROLLED")
-            {
-                var set = model.Follow(clip, "variableBindingSet");
-                bool driven = set != null && set.StructLists.TryGetValue("bindings", out var rows)
-                              && rows.Any(r => r.TryGetValue("memberPath", out var p) && p == "userControlledTimeFraction");
-                // Not an error. Vanilla's animated doors, lifts and periscopes are all
-                // MODE_USER_CONTROLLED with no binding, so the engine clearly drives the fraction
-                // some other way. Worth surfacing only because an unbound clip is also what a
-                // half-finished edit looks like.
-                if (!driven)
-                    Add(found, Level.Warning, $"#{clip.Id} clip '{clip.Str("name")}'",
-                        "is MODE_USER_CONTROLLED with no variable bound to userControlledTimeFraction");
-            }
+            // An unbound MODE_USER_CONTROLLED clip sits on frame zero, which in a door, lift or
+            // periscope graph is the point: it is the rest pose the state machine sits in until an
+            // event moves it on. Those graphs declare no variables at all, so only say something
+            // when the graph does have variables and this clip could plausibly have meant to use
+            // one. Without that condition this fires on fifteen vanilla files and means nothing.
+            if (clip.Str("mode") != "MODE_USER_CONTROLLED" || declaredVariables == 0) continue;
+
+            var set = model.Follow(clip, "variableBindingSet");
+            bool driven = set != null && set.StructLists.TryGetValue("bindings", out var rows)
+                          && rows.Any(r => r.TryGetValue("memberPath", out var p) && p == "userControlledTimeFraction");
+            if (!driven)
+                Add(found, Level.Warning, $"#{clip.Id} clip '{clip.Str("name")}'",
+                    "is MODE_USER_CONTROLLED with nothing bound to userControlledTimeFraction, so it holds frame zero");
         }
     }
 
