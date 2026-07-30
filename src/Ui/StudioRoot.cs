@@ -192,10 +192,14 @@ public partial class StudioRoot : Control
             GD.Print(_summary.Text);
             GD.Print(_status.Text);
 
+            // Column order is the symbols tree's: kind, index, name, value, users. It gained the
+            // kind column when events joined variables in that tab, and this line was still reading
+            // the old four, so every field printed one place to the left of its own label.
             var item = _variables.GetRoot()?.GetFirstChild();
             while (item != null)
             {
-                GD.Print($"var {item.GetText(0),-3} {item.GetText(1),-24} value {item.GetText(2),-10} {item.GetText(3)}");
+                GD.Print($"{item.GetText(0),-6} {item.GetText(1),-3} {item.GetText(2),-26} " +
+                         $"value {item.GetText(3),-10} {item.GetText(4)}");
                 item = item.GetNext();
             }
 
