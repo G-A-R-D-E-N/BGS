@@ -276,19 +276,25 @@ public static class Program
                  })
         {
             xml = SymbolEditor.AddEvent(xml, eventName, out int eventId);
-            xml = GeneratorEditor.Add(xml, "sequence", stateName, sequence, "", out string generator);
-            xml = StateEditor.AddState(xml, machine, stateName, "#" + generator, out string stateObject, out int stateId);
+            int enterState = target;
 
-            // Out of the new state on the event the sequence itself sends when it finishes.
-            xml = StateEditor.AddTransition(xml, machine, stateObject, target, EventNamed(endEvent), effect);
+            // A pose entry event needs no state of its own. It lands on one the door already has,
+            // and building a playing state for it would leave that state with nothing pointing at
+            // it, duplicating the Open state the graph already has.
+            if (!poseEntry)
+            {
+                xml = GeneratorEditor.Add(xml, "sequence", stateName, sequence, "", out string generator);
+                xml = StateEditor.AddState(xml, machine, stateName, "#" + generator, out string stateObject, out enterState);
+                // Out of the new state on the event the sequence itself sends when it finishes.
+                xml = StateEditor.AddTransition(xml, machine, stateObject, target, EventNamed(endEvent), effect);
+            }
 
-            int enterState = poseEntry ? target : stateId;
             // Into it from anywhere, which is how this graph already handles pose entry events.
             xml = StateEditor.AddTransition(xml, machine, "", enterState, eventId, effect);
 
             Console.WriteLine(poseEntry
-                ? $"  {eventName,-12} event {eventId,2}  ->  state {enterState} directly, the held pose, no animation"
-                : $"  {eventName,-12} event {eventId,2}  ->  state {stateId} '{stateName}' " +
+                ? $"  {eventName,-12} event {eventId,2}  ->  state {enterState} directly, the held pose, no animation, no new state"
+                : $"  {eventName,-12} event {eventId,2}  ->  state {enterState} '{stateName}' " +
                   $"playing sequence '{sequence}'  ->  on {endEvent} to state {target}");
         }
 
