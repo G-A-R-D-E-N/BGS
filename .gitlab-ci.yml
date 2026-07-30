@@ -11,27 +11,40 @@ stages:
 
 variables:
   DOTNET: mcr.microsoft.com/dotnet/sdk:8.0
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"
   PACKAGE_REGISTRY: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/behaviour-graph-studio/${CI_COMMIT_SHORT_SHA}"
+
+# The runner is one machine shared with the other projects, so packages are cached rather than
+# pulled fresh four times per pipeline.
+.dotnet:
+  image: $DOTNET
+  cache:
+    key: nuget
+    paths:
+      - .nuget/packages
+    when: always
 
 # The format layer builds graphs in memory, so this needs no game files and no Java. A red gate
 # here stops a broken release being cut.
 format:
+  extends: .dotnet
   stage: test
-  image: $DOTNET
   script:
     - dotnet run --project tools/symrm/symrm.csproj -- test
 
 # Builds the real window on a headless display and walks it, so a window that no longer opens fails
 # the build instead of reaching a release.
 window:
+  extends: .dotnet
   stage: test
-  image: $DOTNET
   script:
     - dotnet run --project tools/uismoke/uismoke.csproj
 
 .publish:
+  extends: .dotnet
   stage: build
-  image: $DOTNET
   needs: [format, window]
   script:
     - dotnet publish app/BehaviourStudio.csproj -c Release -r $RID -o out
