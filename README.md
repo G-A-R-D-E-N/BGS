@@ -136,21 +136,34 @@ So an unbound `MODE_USER_CONTROLLED` clip in a graph with no variables is a held
 normal. Check graph only mentions one when the graph does declare variables, where it might really
 have meant to bind one.
 
-## Running
+## Using it
+
+Download the release folder and run `BehaviourGraphStudio.exe`. **No Godot, no .NET, no build
+tools.** The engine and the project are inside the exe, and the .NET runtime sits in the
+`data_BehaviourGraphStudio_windows_x86_64` folder next to it. Ship or copy the whole folder; the exe
+on its own will not start.
+
+Opening and reading a file needs nothing else at all. **Editing and saving need a Java runtime and
+`hkxpack-cli.jar`**, because writing goes back through hkxpack. Without them the tool opens the file
+read only and says so in the status line rather than pretending.
+
+## Building it yourself
 
 ```
-./run.sh                                  open empty
-./run.sh /path/to/Behavior00.hkx          open a file on start
+tools/export.sh [outDir]        the standalone Windows release
+./run.sh                        run from source, opens empty
+./run.sh /path/to/Behavior00.hkx
 ./run.sh --headless file.hkx --quit-after 90    parse and print the summary, no window
 ```
 
-`run.sh` uses `engine/godot.linuxbsd.editor.double.x86_64.mono`, the copy that lives inside this
-project. Nothing here reaches outside its own folder at runtime. Set `BGS_GODOT` to override.
+Running from source needs a **double-precision mono** Godot build, because the assembly is compiled
+against the `4.7.1-double` packages vendored in `nuget/` and a stock single-precision editor will
+refuse to load it. `engine/` is 239MB of build output so it is gitignored: drop such a build there
+(binary plus its `GodotSharp/` folder) or point `BGS_GODOT` at one.
 
-The engine must be a **double-precision mono** build, because the assembly is compiled against the
-`4.7.1-double` packages vendored in `nuget/`, and a stock single-precision editor will refuse to load
-it. `engine/` is 239MB of build output so it is gitignored, not committed. On a fresh clone, drop such
-a build in `engine/` (binary plus its `GodotSharp/` folder alongside it) or point `BGS_GODOT` at one.
+Exporting needs a `template_release` build of that same engine. `export_presets.cfg` holds a path to
+one; override it with `BGS_TEMPLATE`. `BehaviourGraphStudio.sln` exists only because Godot's C#
+exporter refuses to pack a script without a solution beside the project.
 
 ## Requirements
 
