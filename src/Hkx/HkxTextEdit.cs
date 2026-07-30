@@ -146,6 +146,156 @@ public static class HkxTextEdit
         return xmlText.Substring(0, start) + updated + xmlText.Substring(start + length);
     }
 
+    public static string ClassOf(string xmlText, string id)
+    {
+        foreach (Match m in ObjectHead.Matches(xmlText))
+            if (m.Groups["id"].Value == id) return m.Groups["cls"].Value;
+        return "";
+    }
+
+    public static List<string> IdsOfClass(string xmlText, string className)
+    {
+        var ids = new List<string>();
+        foreach (Match m in ObjectHead.Matches(xmlText))
+            if (m.Groups["cls"].Value == className) ids.Add(m.Groups["id"].Value);
+        return ids;
+    }
+
+    public static string AddObject(string xmlText, string className, string signature,
+                                   string innerXml, out string newId)
+    {
+        int highest = 0;
+        foreach (Match m in ObjectHead.Matches(xmlText))
+            if (int.TryParse(m.Groups["id"].Value, out int n) && n > highest) highest = n;
+        newId = (highest + 1).ToString();
+
+        int close = xmlText.LastIndexOf("</hksection>", StringComparison.Ordinal);
+        if (close < 0) throw new InvalidOperationException("no </hksection> in this file");
+
+        string block =
+            $"        <hkobject class=\"{className}\" name=\"#{newId}\" signature=\"{signature}\">\n" +
+            innerXml.TrimEnd('\n') + "\n" +
+            "        </hkobject>\n";
+
+        return xmlText.Substring(0, close) + block + xmlText.Substring(close);
+    }
+
+    // An array param is either <hkparam name="x" numelements="0"/> when empty, or
+    // <hkparam name="x" numelements="N"> ... </hkparam>. Both shapes have to be handled.
+    public static string ArrayAppend(string xmlText, string id, string paramName, string elementXml)
+    {
+        var (start, length) = ObjectBlock(xmlText, id);
+        if (start < 0) throw new ArgumentException($"object #{id} not found");
+        string block = xmlText.Substring(start, length);
+
+        var empty = new Regex($"<hkparam name=\"{Regex.Escape(paramName)}\" numelements=\"0\"\\s*/>");
+        var mEmpty = empty.Match(block);
+        if (mEmpty.Success)
+        {
+            string replacement =
+                $"<hkparam name=\"{paramName}\" numelements=\"1\">\n{elementXml.TrimEnd('\n')}\n            </hkparam>";
+            block = block.Remove(mEmpty.Index, mEmpty.Length).Insert(mEmpty.Index, replacement);
+            return xmlText.Substring(0, start) + block + xmlText.Substring(start + length);
+        }
+
+        var open = new Regex($"<hkparam name=\"{Regex.Escape(paramName)}\" numelements=\"(?<n>\\d+)\">");
+        var mOpen = open.Match(block);
+        if (!mOpen.Success) throw new ArgumentException($"#{id} has no array parameter named {paramName}");
+
+        int count = int.Parse(mOpen.Groups["n"].Value);
+        int endTag = ArrayBodyEnd(block, mOpen.Index + mOpen.Length);
+        if (endTag < 0) throw new InvalidOperationException($"#{id}.{paramName} is not closed");
+
+        block = block.Insert(endTag, elementXml.TrimEnd('\n') + "\n            ");
+        block = open.Replace(block, $"<hkparam name=\"{paramName}\" numelements=\"{count + 1}\">", 1);
+
+        return xmlText.Substring(0, start) + block + xmlText.Substring(start + length);
+    }
+
+    public static string ArrayRemoveAt(string xmlText, string id, string paramName, int index)
+    {
+        var (start, length) = ObjectBlock(xmlText, id);
+        if (start < 0) throw new ArgumentException($"object #{id} not found");
+        string block = xmlText.Substring(start, length);
+
+        var open = new Regex($"<hkparam name=\"{Regex.Escape(paramName)}\" numelements=\"(?<n>\\d+)\">");
+        var mOpen = open.Match(block);
+        if (!mOpen.Success) throw new ArgumentException($"#{id} has no populated array named {paramName}");
+
+        int count = int.Parse(mOpen.Groups["n"].Value);
+        if (index < 0 || index >= count) throw new ArgumentOutOfRangeException(nameof(index));
+
+        int bodyStart = mOpen.Index + mOpen.Length;
+        int bodyEnd = ArrayBodyEnd(block, bodyStart);
+        if (bodyEnd < 0) throw new InvalidOperationException($"#{id}.{paramName} is not closed");
+        string body = block.Substring(bodyStart, bodyEnd - bodyStart);
+
+        var elements = SplitElements(body);
+        if (elements.Count != count)
+            throw new InvalidOperationException(
+                $"#{id}.{paramName} says {count} elements but {elements.Count} were found; refusing to edit");
+
+        elements.RemoveAt(index);
+        string newBody = elements.Count == 0 ? "\n            " : "\n" + string.Join("\n", elements) + "\n            ";
+
+        block = block.Remove(bodyStart, bodyEnd - bodyStart).Insert(bodyStart, newBody);
+        block = open.Replace(block, $"<hkparam name=\"{paramName}\" numelements=\"{count - 1}\">", 1);
+
+        return xmlText.Substring(0, start) + block + xmlText.Substring(start + length);
+    }
+
+    // Array elements contain their own <hkparam> children, so the first </hkparam> after the array's
+    // opening tag belongs to an element, not to the array. Match by depth or edits land inside the
+    // first element and hkxpack rejects the file.
+    private static int ArrayBodyEnd(string block, int bodyStart)
+    {
+        var tag = new Regex(@"<hkparam\b[^>]*?(?<selfclose>/)?>|</hkparam>");
+        int depth = 0;
+        foreach (Match m in tag.Matches(block, bodyStart))
+        {
+            if (m.Value.StartsWith("</"))
+            {
+                if (depth == 0) return m.Index;
+                depth--;
+            }
+            else if (!m.Groups["selfclose"].Success)
+            {
+                depth++;
+            }
+        }
+        return -1;
+    }
+
+    private static List<string> SplitElements(string body)
+    {
+        var result = new List<string>();
+        int depth = 0, from = -1;
+        var tag = new Regex(@"<(/?)hkobject\b[^>]*>");
+        foreach (Match m in tag.Matches(body))
+        {
+            bool closing = m.Groups[1].Value == "/";
+            if (!closing)
+            {
+                if (depth == 0) from = m.Index;
+                depth++;
+            }
+            else
+            {
+                depth--;
+                if (depth == 0 && from >= 0)
+                {
+                    result.Add(body.Substring(from, m.Index + m.Length - from));
+                    from = -1;
+                }
+            }
+        }
+        if (result.Count > 0) return result;
+
+        foreach (Match m in Regex.Matches(body, @"<hkcstring>.*?</hkcstring>", RegexOptions.Singleline))
+            result.Add(m.Value);
+        return result;
+    }
+
     private static void Run(string exe, string args, string workDir)
     {
         var psi = new ProcessStartInfo

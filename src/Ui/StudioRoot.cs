@@ -19,6 +19,7 @@ public partial class StudioRoot : Control
     private VBoxContainer _props = null!;
     private GraphCanvas _canvas = null!;
     private Tree _variables = null!;
+    private Tree _chain = null!;
     private Button _saveButton = null!;
 
     private string _hkxPath = "";
@@ -155,6 +156,25 @@ public partial class StudioRoot : Control
         Ux.StyleGrid(_variables);
         tabs.AddChild(_variables);
 
+        _chain = new Tree
+        {
+            Name = "Chain",
+            Columns = 4,
+            ColumnTitlesVisible = true,
+            HideRoot = true,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+        };
+        _chain.SetColumnTitle(0, "Role");
+        _chain.SetColumnTitle(1, "Declared in the file");
+        _chain.SetColumnTitle(2, "On disk");
+        _chain.SetColumnTitle(3, "Notes");
+        _chain.SetColumnExpandRatio(0, 1);
+        _chain.SetColumnExpandRatio(1, 4);
+        _chain.SetColumnExpandRatio(2, 1);
+        _chain.SetColumnExpandRatio(3, 3);
+        Ux.StyleGrid(_chain);
+        tabs.AddChild(_chain);
+
         var footer = new HBoxContainer();
         footer.AddThemeConstantOverride("separation", Ux.Px(8));
         column.AddChild(footer);
@@ -186,7 +206,61 @@ public partial class StudioRoot : Control
                 GD.Print($"var {item.GetText(0),-3} {item.GetText(1),-24} value {item.GetText(2),-10} {item.GetText(3)}");
                 item = item.GetNext();
             }
+
+            RunDirectives();
             return;
+        }
+    }
+
+    // Headless entry points, so an edit can be made and checked without clicking anything.
+    //   chain                                  print the project chain
+    //   bind=<objectId>,<member>,<variable>    add a binding, declaring the variable if it is new
+    //   unbind=<setId>,<index>                 remove one
+    //   save=<path>                            repack and write the result there
+    private void RunDirectives()
+    {
+        foreach (string arg in OS.GetCmdlineUserArgs())
+        {
+            if (arg == "chain") PrintChain();
+            else if (arg.StartsWith("bind=")) Directive(arg[5..], 3, p => { AddBinding(p[0], p[1], p[2]); });
+            else if (arg.StartsWith("unbind=")) Directive(arg[7..], 2, p => { RemoveBinding(p[0], int.Parse(p[1]), p[0]); });
+            else if (arg.StartsWith("save=")) SaveAs(arg[5..]);
+        }
+    }
+
+    private void Directive(string payload, int expected, Action<string[]> run)
+    {
+        var parts = payload.Split(',');
+        if (parts.Length != expected) { GD.Print($"directive needs {expected} comma separated values"); return; }
+        run(parts);
+        GD.Print("directive: " + _status.Text);
+    }
+
+    private void PrintChain()
+    {
+        var item = _chain.GetRoot()?.GetFirstChild();
+        if (item == null) { GD.Print("chain: nothing resolved"); return; }
+        while (item != null)
+        {
+            GD.Print($"chain {item.GetText(0),-11} {item.GetText(1),-44} {item.GetText(2),-8} {item.GetText(3)}");
+            item = item.GetNext();
+        }
+    }
+
+    private void SaveAs(string target)
+    {
+        try
+        {
+            File.WriteAllText(_xmlPath, _xmlText);
+            string? java = HkxTextEdit.FindJava(LoadSetting("java"));
+            string? jar = HkxTextEdit.FindHkxPack(LoadSetting("hkxpack"), ProjectSettings.GlobalizePath("res://"));
+            string packed = HkxTextEdit.Repack(java!, jar!, _xmlPath);
+            File.Copy(packed, target, true);
+            GD.Print($"save: wrote {target} ({new FileInfo(target).Length} bytes)");
+        }
+        catch (Exception ex)
+        {
+            GD.Print("save failed: " + ex.Message.Split('\n')[0]);
         }
     }
 
@@ -339,6 +413,7 @@ public partial class StudioRoot : Control
             var model = BehaviourGraphModel.Parse(_xmlText);
             _canvas.Build(model);
             BuildVariables(model);
+            BuildChain();
         }
         catch (Exception ex)
         {
@@ -403,6 +478,8 @@ public partial class StudioRoot : Control
             field.FocusExited += () => Apply(owner, paramName, field, original);
             box.AddChild(field);
         }
+
+        AddBindingSection(objectId);
     }
 
     private void BuildVariables(BehaviourGraphModel model)
@@ -452,6 +529,161 @@ public partial class StudioRoot : Control
             item.SetText(1, "this graph declares no variables");
             item.SetCustomColor(1, Ux.TextDisabled);
         }
+    }
+
+    private void BuildChain()
+    {
+        _chain.Clear();
+        var root = _chain.CreateItem();
+
+        string? java = HkxTextEdit.FindJava(LoadSetting("java"));
+        string? jar = HkxTextEdit.FindHkxPack(LoadSetting("hkxpack"), ProjectSettings.GlobalizePath("res://"));
+        if (java == null || jar == null)
+        {
+            var warn = _chain.CreateItem(root);
+            warn.SetText(0, "unavailable");
+            warn.SetText(1, "the chain needs a Java runtime and hkxpack-cli.jar");
+            warn.SetCustomColor(1, Ux.TextMuted);
+            return;
+        }
+
+        var chain = ProjectChain.Resolve(_hkxPath, java, jar);
+
+        foreach (var link in chain.Links)
+        {
+            var item = _chain.CreateItem(root);
+            item.SetText(0, link.Role);
+            item.SetText(1, link.Declared);
+            item.SetText(2, link.Exists ? "found" : "MISSING");
+            item.SetText(3, link.Note);
+            item.SetCustomColor(0, Ux.TextMuted);
+            item.SetCustomColor(1, Ux.TextTitle);
+            item.SetCustomColor(2, link.Exists ? Ux.TextMeta : Color.FromHtml("FF5555"));
+            item.SetCustomColor(3, Ux.TextMeta);
+        }
+
+        AddChainGroup(root, "animations", $"{chain.Animations.Count} declared by the character", chain.Animations, Ux.TextCode);
+        AddChainGroup(root, "bones", $"{chain.Bones.Count} in the skeleton", chain.Bones, Ux.TextMeta);
+
+        foreach (string problem in chain.Problems)
+        {
+            var item = _chain.CreateItem(root);
+            item.SetText(0, "problem");
+            item.SetText(1, problem);
+            item.SetCustomColor(0, Color.FromHtml("FF5555"));
+            item.SetCustomColor(1, Color.FromHtml("FF5555"));
+        }
+    }
+
+    private void AddChainGroup(TreeItem root, string role, string summary, List<string> values, Color colour)
+    {
+        if (values.Count == 0) return;
+        var head = _chain.CreateItem(root);
+        head.SetText(0, role);
+        head.SetText(1, summary);
+        head.SetCustomColor(0, Ux.TextMuted);
+        head.SetCustomColor(1, Ux.TextTitle);
+        head.Collapsed = true;
+        foreach (string v in values)
+        {
+            var item = _chain.CreateItem(head);
+            item.SetText(1, v);
+            item.SetCustomColor(1, colour);
+        }
+    }
+
+    private void AddBindingSection(string objectId)
+    {
+        if (string.IsNullOrEmpty(_xmlText)) return;
+
+        var model = BehaviourGraphModel.Parse(_xmlText);
+        var owner = model.Get(objectId);
+        if (owner == null) return;
+
+        var names = BindingEditor.VariableNames(model);
+        _props.AddChild(Ux.SectionTitle("variable bindings"));
+
+        foreach (var b in BindingEditor.BindingsOf(model, owner))
+        {
+            var row = new HBoxContainer();
+            row.AddThemeConstantOverride("separation", Ux.Px(6));
+            _props.AddChild(row);
+
+            string varName = b.VariableIndex >= 0 && b.VariableIndex < names.Count
+                ? names[b.VariableIndex]
+                : "index " + b.VariableIndex;
+
+            var label = Ux.FieldLabel($"{b.MemberPath} <- {varName}");
+            label.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+            row.AddChild(label);
+
+            string setId = b.SetId;
+            int index = b.Index;
+            var remove = Ux.SecondaryButton("Remove");
+            remove.Pressed += () => RemoveBinding(setId, index, objectId);
+            row.AddChild(remove);
+        }
+
+        var addRow = new HBoxContainer();
+        addRow.AddThemeConstantOverride("separation", Ux.Px(6));
+        _props.AddChild(addRow);
+
+        var member = Ux.Field("member, e.g. userControlledTimeFraction");
+        addRow.AddChild(member);
+        var variable = Ux.Field("variable name");
+        addRow.AddChild(variable);
+
+        var bind = Ux.SecondaryButton("Bind");
+        bind.Pressed += () => AddBinding(objectId, member.Text.Trim(), variable.Text.Trim());
+        addRow.AddChild(bind);
+    }
+
+    private void AddBinding(string objectId, string memberPath, string variableName)
+    {
+        try
+        {
+            var names = BindingEditor.VariableNames(BehaviourGraphModel.Parse(_xmlText));
+            int index = names.FindIndex(n => n.Equals(variableName, StringComparison.OrdinalIgnoreCase));
+
+            if (index < 0)
+            {
+                _xmlText = BindingEditor.AddVariable(_xmlText, variableName, out index);
+                SetStatus($"declared variable '{variableName}' at index {index}", Ux.TextCode);
+            }
+
+            _xmlText = BindingEditor.AddBinding(_xmlText, objectId, memberPath, index);
+            SetDirty(true);
+            SetStatus($"#{objectId}.{memberPath} driven by {variableName}   (unsaved)", Ux.TextCode);
+            RefreshAfterEdit(objectId);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message.Split('\n')[0], Ux.TextMuted);
+        }
+    }
+
+    private void RemoveBinding(string setId, int index, string objectId)
+    {
+        try
+        {
+            _xmlText = BindingEditor.RemoveBinding(_xmlText, setId, index);
+            SetDirty(true);
+            SetStatus($"removed binding {index} from #{setId}   (unsaved)", Ux.TextCode);
+            RefreshAfterEdit(objectId);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message.Split('\n')[0], Ux.TextMuted);
+        }
+    }
+
+    private void RefreshAfterEdit(string objectId)
+    {
+        var model = BehaviourGraphModel.Parse(_xmlText);
+        _canvas.Build(model);
+        BuildVariables(model);
+        ClearProps();
+        ShowProps(objectId, HkxTextEdit.ClassOf(_xmlText, objectId));
     }
 
     private void ApplyDirect(string objectId, string paramName, string value)
