@@ -94,7 +94,13 @@ public static class GraphLinks
 
         if (!slot.Array)
         {
-            note = $"#{fromId}.{field} now points at #{toId}";
+            // A single link can only hold one thing, so connecting to a full one drops what was
+            // there. Say so, because the thing dropped keeps its own subtree and simply stops being
+            // reachable, which is easy to mistake for it having been deleted.
+            string had = slot.Targets.FirstOrDefault() ?? "";
+            note = had.Length > 0 && had != toId
+                ? $"#{fromId}.{field} now points at #{toId}, replacing #{had}, which is now detached"
+                : $"#{fromId}.{field} now points at #{toId}";
             return HkxTextEdit.SetParam(xml, fromId, field, "#" + toId);
         }
 

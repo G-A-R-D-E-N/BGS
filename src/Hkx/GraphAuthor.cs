@@ -109,6 +109,79 @@ public static class GraphAuthor
         return model.Objects.Where(o => !referenced.Contains(o.Id) && IsNode(o.Class)).ToList();
     }
 
+    // Which objects the canvas should draw, and in which column.
+    //
+    // Walking outwards from the root alone is not enough. Retargeting a link, which is the ordinary
+    // way to change what a node points at, detaches whatever it used to point at along with
+    // everything under it. Those objects are still in the file and still referenced by their own
+    // parents, so they are neither reachable from the root nor unattached, and drawing only the two
+    // makes an entire subtree vanish the moment a link is dragged.
+    //
+    // So every detached subtree gets walked as well, from its own head.
+    public static List<(HkObject Node, int Column)> Layout(BehaviourGraphModel model, int max)
+    {
+        var placed = new Dictionary<string, int>();
+        var order = new List<(HkObject, int)>();
+
+        var root = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraph")
+                   ?? model.Objects.FirstOrDefault(o => o.Class == "hkbStateMachine")
+                   ?? model.Objects.FirstOrDefault();
+        if (root == null) return order;
+
+        int deepest = Walk(model, root, 0, placed, order, max);
+
+        foreach (var detached in Unattached(model))
+        {
+            if (order.Count >= max) break;
+            if (placed.ContainsKey(detached.Id)) continue;
+            deepest = Math.Max(deepest, Walk(model, detached, deepest + 1, placed, order, max));
+        }
+
+        return order;
+    }
+
+    private static int Walk(BehaviourGraphModel model, HkObject from, int column,
+                            Dictionary<string, int> placed, List<(HkObject, int)> order, int max)
+    {
+        var queue = new Queue<(HkObject Node, int Column)>();
+        queue.Enqueue((from, column));
+        placed[from.Id] = column;
+        order.Add((from, column));
+        int deepest = column;
+
+        while (queue.Count > 0 && order.Count < max)
+        {
+            var (current, depth) = queue.Dequeue();
+            foreach (string target in Targets(model, current))
+            {
+                if (placed.ContainsKey(target)) continue;
+                var next = model.Get(target);
+                if (next == null) continue;
+
+                placed[target] = depth + 1;
+                deepest = Math.Max(deepest, depth + 1);
+                order.Add((next, depth + 1));
+                queue.Enqueue((next, depth + 1));
+                if (order.Count >= max) break;
+            }
+        }
+        return deepest;
+    }
+
+    // Everything the object points at, including references buried in array elements such as a
+    // transition's blend effect, which the port list does not carry.
+    private static IEnumerable<string> Targets(BehaviourGraphModel model, HkObject obj)
+    {
+        foreach (var slot in GraphLinks.OutSlots(model, obj))
+            foreach (string target in slot.Targets)
+                yield return target;
+
+        foreach (var rows in obj.StructLists.Values)
+            foreach (var row in rows)
+                foreach (string value in row.Values)
+                    if (value.StartsWith('#')) yield return value[1..];
+    }
+
     // Only things that produce or shape a pose count. Vanilla ships plenty of unreferenced
     // hkbStringEventPayload leftovers, and reporting those buries the one node the user forgot to
     // hook up under sixteen that never mattered.

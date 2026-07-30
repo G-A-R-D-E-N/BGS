@@ -396,63 +396,24 @@ public partial class GraphCanvas : Control
             .FirstOrDefault(o => o.Class == "hkbBehaviorGraphStringData")?.Strings("variableNames")
             ?? new List<string>();
 
-        var root = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraph")
-                   ?? model.Objects.FirstOrDefault(o => o.Class == "hkbStateMachine")
-                   ?? model.Objects.FirstOrDefault();
-
-        if (root == null)
+        // Layout knows to walk detached subtrees as well as the root's, which is what stops a
+        // retargeted link making everything it used to lead to disappear off the canvas.
+        var layout = GraphAuthor.Layout(model, MaxNodes);
+        if (layout.Count == 0)
         {
             ShowMessage("Nothing to draw: no root object in this file.");
             return;
         }
 
-        var edges = new Dictionary<string, List<(string Field, string Target)>>();
-        var depth = new Dictionary<string, int> { [root.Id] = 0 };
-        var order = new List<HkObject> { root };
-        var queue = new Queue<HkObject>();
-        queue.Enqueue(root);
-
-        while (queue.Count > 0 && order.Count < MaxNodes)
-        {
-            var current = queue.Dequeue();
-            var outgoing = new List<(string, string)>();
-
-            foreach (var field in LinkFields)
-            {
-                foreach (string target in TargetsOf(current, field))
-                {
-                    if (model.Get(target) == null) continue;
-                    outgoing.Add((field, target));
-                    if (depth.ContainsKey(target)) continue;
-                    depth[target] = depth[current.Id] + 1;
-                    var next = model.Get(target)!;
-                    order.Add(next);
-                    queue.Enqueue(next);
-                }
-            }
-
-            edges[current.Id] = outgoing;
-        }
-
-        // The walk above only reaches nodes something points at, so a node that was just created has
-        // nothing pointing at it and would be invisible: the tool would look like it did nothing.
-        // They go in a column past the deepest real one.
-        int orphanColumn = depth.Values.DefaultIfEmpty(0).Max() + 1;
-        foreach (var orphan in GraphAuthor.Unattached(model))
-        {
-            if (order.Count >= MaxNodes) break;
-            if (depth.ContainsKey(orphan.Id)) continue;
-            depth[orphan.Id] = orphanColumn;
-            order.Add(orphan);
-            edges[orphan.Id] = new List<(string, string)>();
-        }
+        var order = layout.Select(l => l.Node).ToList();
+        var depth = layout.ToDictionary(l => l.Node.Id, l => l.Column);
 
         int drawn = 0;
         var byDepth = new Dictionary<int, int>();
 
         foreach (var obj in order)
         {
-            var node = MakeNode(obj, edges.TryGetValue(obj.Id, out var outs) ? outs : new List<(string, string)>());
+            var node = MakeNode(obj);
             int d = depth[obj.Id];
             byDepth.TryGetValue(d, out int row);
             byDepth[d] = row + 1;
@@ -486,11 +447,12 @@ public partial class GraphCanvas : Control
         string capped = order.Count >= MaxNodes
             ? $"  (stopped at {MaxNodes} nodes, this graph is larger)"
             : "";
-        int orphans = depth.Count(kv => kv.Value == orphanColumn);
-        string unattached = orphans > 0 ? $",  {orphans} unattached in the last column" : "";
+        int detached = GraphAuthor.Unattached(model).Count;
+        string unattached = detached > 0 ? $",  {detached} detached" : "";
+        int links = _outFields.Values.Sum(slots => slots.Sum(s => s.Targets.Count));
 
-        _notice.Text = $"{drawn} nodes, {edges.Values.Sum(e => e.Count)} links, " +
-                       $"{orphanColumn} levels deep{unattached}{capped}";
+        _notice.Text = $"{drawn} of {model.Objects.Count} objects drawn, {links} links, " +
+                       $"{depth.Values.DefaultIfEmpty(0).Max() + 1} columns{unattached}{capped}";
         _notice.AddThemeColorOverride("font_color", Ux.TextTitle);
 
         SetSelection(_nodeToId.ContainsValue(SelectedId) ? SelectedId : "");
@@ -562,7 +524,7 @@ public partial class GraphCanvas : Control
         return box;
     }
 
-    private GraphNode MakeNode(HkObject obj, List<(string Field, string Target)> outs)
+    private GraphNode MakeNode(HkObject obj)
     {
         string label = obj.Str("name");
         if (string.IsNullOrEmpty(label)) label = obj.Class;

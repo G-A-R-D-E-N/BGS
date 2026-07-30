@@ -31,6 +31,7 @@ public static class Program
             case "remove": return Remove(argv);
             case "door": return Door(argv);
             case "link": return Link(argv);
+            case "draw": return Draw(argv);
             default: Usage(); return 1;
         }
     }
@@ -219,6 +220,73 @@ public static class Program
         foreach (var f in findings.Take(8)) Console.WriteLine("   " + f);
 
         return ok && errors == 0 ? 0 : 1;
+    }
+
+    // What the canvas will actually draw, before and after a link is retargeted.
+    //
+    // Retargeting is the ordinary way to change what a node points at, and it detaches whatever the
+    // link used to lead to. Drawing only what the root reaches makes all of that vanish, which is
+    // what "I dragged something and all my other nodes were removed" was.
+    private static int Draw(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm", "draw");
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+        Directory.CreateDirectory(work);
+
+        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
+        Console.WriteLine($"FILE {Path.GetFileName(argv[1])}");
+        Show("before any edit", xml);
+
+        var model = BehaviourGraphModel.Parse(xml);
+        var graph = model.Objects.First(o => o.Class == "hkbBehaviorGraph");
+        var leaf = model.Objects.First(o => o.Class == "hkbClipGenerator");
+
+        Console.WriteLine($"\n--- drag #{graph.Id}.rootGenerator onto clip #{leaf.Id}, which replaces what it held ---");
+        xml = GraphLinks.Connect(xml, graph.Id, "rootGenerator", leaf.Id, out string note);
+        Console.WriteLine("  " + note);
+        Show("after the retarget", xml);
+        return 0;
+    }
+
+    private static void Show(string label, string xml)
+    {
+        var model = BehaviourGraphModel.Parse(xml);
+        int reachable = RootReachable(model);
+        int drawn = GraphAuthor.Layout(model, 10000).Count;
+
+        Console.WriteLine($"  {label,-20} {model.Objects.Count} objects in the file, " +
+                          $"{reachable} reachable from the root, {drawn} drawn by the canvas");
+    }
+
+    private static int RootReachable(BehaviourGraphModel model)
+    {
+        var root = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraph")
+                   ?? model.Objects.FirstOrDefault();
+        if (root == null) return 0;
+
+        var seen = new HashSet<string> { root.Id };
+        var queue = new Queue<HkObject>();
+        queue.Enqueue(root);
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            var targets = GraphLinks.OutSlots(model, current).SelectMany(s => s.Targets)
+                .Concat(current.StructLists.Values.SelectMany(rows => rows)
+                    .SelectMany(row => row.Values)
+                    .Where(v => v.StartsWith('#')).Select(v => v[1..]));
+
+            foreach (string target in targets)
+            {
+                if (!seen.Add(target)) continue;
+                var next = model.Get(target);
+                if (next != null) queue.Enqueue(next);
+            }
+        }
+        return seen.Count;
     }
 
     // Exercises the wiring the graph view performs when a link is dragged between two ports. The
