@@ -212,6 +212,41 @@ public static class HkxTextEdit
         return xmlText.Substring(0, start) + block + xmlText.Substring(start + length);
     }
 
+    public static string ArrayInsertAt(string xmlText, string id, string paramName, int index, string elementXml)
+    {
+        var (start, length) = ObjectBlock(xmlText, id);
+        if (start < 0) throw new ArgumentException($"object #{id} not found");
+        string block = xmlText.Substring(start, length);
+
+        var open = new Regex($"<hkparam name=\"{Regex.Escape(paramName)}\" numelements=\"(?<n>\\d+)\">");
+        var mOpen = open.Match(block);
+        if (!mOpen.Success)
+        {
+            if (index != 0) throw new ArgumentOutOfRangeException(nameof(index));
+            return ArrayAppend(xmlText, id, paramName, elementXml);
+        }
+
+        int count = int.Parse(mOpen.Groups["n"].Value);
+        if (index < 0 || index > count) throw new ArgumentOutOfRangeException(nameof(index));
+
+        int bodyStart = mOpen.Index + mOpen.Length;
+        int bodyEnd = ArrayBodyEnd(block, bodyStart);
+        if (bodyEnd < 0) throw new InvalidOperationException($"#{id}.{paramName} is not closed");
+
+        var elements = SplitElements(block.Substring(bodyStart, bodyEnd - bodyStart));
+        if (elements.Count != count)
+            throw new InvalidOperationException(
+                $"#{id}.{paramName} says {count} elements but {elements.Count} were found; refusing to edit");
+
+        elements.Insert(index, elementXml.TrimEnd('\n'));
+        string newBody = "\n" + string.Join("\n", elements) + "\n            ";
+
+        block = block.Remove(bodyStart, bodyEnd - bodyStart).Insert(bodyStart, newBody);
+        block = open.Replace(block, $"<hkparam name=\"{paramName}\" numelements=\"{count + 1}\">", 1);
+
+        return xmlText.Substring(0, start) + block + xmlText.Substring(start + length);
+    }
+
     public static string ArrayRemoveAt(string xmlText, string id, string paramName, int index)
     {
         var (start, length) = ObjectBlock(xmlText, id);

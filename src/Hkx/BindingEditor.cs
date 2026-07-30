@@ -88,44 +88,12 @@ public static class BindingEditor
         return xml;
     }
 
-    // Declares a new float variable and returns its index.
-    public static string AddVariable(string xml, string name, out int index)
-    {
-        var stringIds = HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphStringData");
-        if (stringIds.Count == 0) throw new InvalidOperationException("this file has no hkbBehaviorGraphStringData");
-
-        var model = BehaviourGraphModel.Parse(xml);
-        index = VariableNames(model).Count;
-
-        xml = HkxTextEdit.ArrayAppend(xml, stringIds[0], "variableNames",
-                                      $"                <hkcstring>{name}</hkcstring>");
-
-        var valueIds = HkxTextEdit.IdsOfClass(xml, "hkbVariableValueSet");
-        if (valueIds.Count > 0)
-            xml = HkxTextEdit.ArrayAppend(xml, valueIds[0], "wordVariableValues",
-                                          "                <hkobject>\n" +
-                                          "                    <hkparam name=\"value\">0</hkparam>\n" +
-                                          "                </hkobject>");
-
-        var dataIds = HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphData");
-        if (dataIds.Count > 0)
-        {
-            var data = BehaviourGraphModel.Parse(xml).Get(dataIds[0]);
-            if (data != null && data.Lists.ContainsKey("variableInfos"))
-                xml = HkxTextEdit.ArrayAppend(xml, dataIds[0], "variableInfos",
-                                              "                <hkobject>\n" +
-                                              "                    <hkparam name=\"role\">\n" +
-                                              "                        <hkobject>\n" +
-                                              "                            <hkparam name=\"role\">ROLE_DEFAULT</hkparam>\n" +
-                                              "                            <hkparam name=\"flags\">0</hkparam>\n" +
-                                              "                        </hkobject>\n" +
-                                              "                    </hkparam>\n" +
-                                              "                    <hkparam name=\"type\">VARIABLE_TYPE_REAL</hkparam>\n" +
-                                              "                </hkobject>");
-        }
-
-        return xml;
-    }
+    // Declares a new float variable and returns its index. Delegates, because a variable has to be
+    // written into three parallel arrays and an earlier version of this silently skipped the type
+    // declaration: it tested Lists for variableInfos, which is a struct list, so the test was always
+    // false and the variable came out with no declared type.
+    public static string AddVariable(string xml, string name, out int index) =>
+        SymbolEditor.AddVariable(xml, name, SymbolEditor.VariableType.Real, out index);
 
     private static string OwnerBindingSetId(string xml, string ownerId)
     {
