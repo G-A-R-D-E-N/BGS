@@ -293,6 +293,12 @@ public static class HkxTextEdit
 
         foreach (Match m in Regex.Matches(body, @"<hkcstring>.*?</hkcstring>", RegexOptions.Singleline))
             result.Add(m.Value);
+        if (result.Count > 0) return result;
+
+        // A reference array is bare whitespace separated tokens, e.g. "#93 #97 #197", with no tags at
+        // all. Without this an element count check sees zero and refuses the edit.
+        foreach (Match m in Regex.Matches(body, @"(#\d+|null)"))
+            result.Add("                " + m.Value);
         return result;
     }
 
