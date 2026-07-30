@@ -6,4 +6,10 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <RootNamespace>BehaviourStudio</RootNamespace>
   </PropertyGroup>
+  <!-- tools/ holds its own projects. Without this the app's default source glob swallows their
+       build output and the compiler sees two of every assembly attribute. -->
+  <ItemGroup>
+    <Compile Remove="tools/**" />
+    <None Remove="tools/**" />
+  </ItemGroup>
 </Project>

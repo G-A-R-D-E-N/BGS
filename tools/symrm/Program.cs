@@ -1,0 +1,581 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using OpenCommonwealth.Services.Hkx;
+
+namespace BehaviourStudio.Tools;
+
+// symrm: the checks behind the claims in the README, runnable rather than described.
+//
+// The point of this tool is that nothing it reports is taken on trust. A structural edit is proved
+// by repacking with hkxpack and reading the binary back, and the validator is proved by running it
+// over Bethesda's own shipping files, where anything it reports is by definition a false alarm.
+public static class Program
+{
+    private static string _java = "";
+    private static string _jar = "";
+    private static string _root = "";
+
+    public static int Main(string[] argv)
+    {
+        _root = RepoRoot();
+
+        if (argv.Length == 0) { Usage(); return 1; }
+
+        switch (argv[0])
+        {
+            case "corpus": return Corpus(argv);
+            case "unpack": return Unpack(argv);
+            case "check": return Check(argv);
+            case "remove": return Remove(argv);
+            case "door": return Door(argv);
+            case "link": return Link(argv);
+            case "draw": return Draw(argv);
+            case "test": return Tests.Run();
+            default: Usage(); return 1;
+        }
+    }
+
+    private static void Usage() => Console.WriteLine("""
+        symrm, the verification harness for Behaviour Graph Studio.
+
+          dotnet run --project tools/symrm/symrm.csproj -- corpus <Fallout4 - Animations.ba2> <outDir>
+              Pull every vanilla behaviour .hkx out of the archive. 531 of them.
+
+          dotnet run --project tools/symrm/symrm.csproj -- unpack <hkxDir> [everyNth] [outDir]
+              Run hkxpack over them, writing to <hkxDir>/xml unless told otherwise. One JVM at a
+              time on purpose; running these in parallel will bury a six core machine. everyNth
+              defaults to 4, so 132 of the 531.
+
+          dotnet run --project tools/symrm/symrm.csproj -- check <xmlDir>
+              GraphValidator over every unpacked file. It should report zero errors: anything it
+              says about vanilla data is a false alarm in the checker, not a fault in the game.
+
+          dotnet run --project tools/symrm/symrm.csproj -- remove <behaviour.hkx>
+              The symbol removal round trip. Adds a variable and an event, refuses to remove one
+              that is in use, removes ones that are not, repacks, reads the binary back, and
+              confirms every binding and transition still resolves to the same name as before.
+
+          dotnet run --project tools/symrm/symrm.csproj -- test
+              Regression checks on graphs built in memory. No game install, no hkxpack, no JVM,
+              so this one can be run on every change. Exits non zero on any failure.
+
+          dotnet run --project tools/symrm/symrm.csproj -- door <SpecialCaseDoors Behavior.hkx> <out.hkx>
+              The additive door edit: two new events and two new states that give a door a way to
+              be placed already open or already closed without playing the transition, in the shape
+              DN151_DoorSeal already drives. Touches no existing transition. Repacks, reads the
+              binary back and runs the validator over the result.
+        """);
+
+    // Walk up for the folder holding the csproj, so the tool does not care where it is run from.
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "BehaviourGraphStudio.csproj")))
+            dir = dir.Parent;
+        return dir?.FullName ?? Directory.GetCurrentDirectory();
+    }
+
+    private static void NeedHkxPack()
+    {
+        _java = HkxTextEdit.FindJava("") ?? throw new InvalidOperationException("no java on PATH or in JAVA_HOME");
+        _jar = HkxTextEdit.FindHkxPack("", _root) ?? throw new InvalidOperationException(
+            "hkxpack-cli.jar not found; put it in tools/ or next to the FO4AnimForge checkout");
+    }
+
+    private static int Corpus(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+        int written = Ba2.ExtractMatching(argv[1], "behavior", argv[2], ".hkx", Console.WriteLine);
+        Console.WriteLine($"wrote {written} behaviour files to {argv[2]}");
+        return 0;
+    }
+
+    private static int Unpack(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        int everyNth = argv.Length > 2 ? int.Parse(argv[2]) : 4;
+        // Unpack copies the input next to its output, so the destination has to be a different
+        // folder from the corpus or every file collides with itself.
+        string outDir = argv.Length > 3 ? argv[3] : Path.Combine(argv[1], "xml");
+        Directory.CreateDirectory(outDir);
+
+        var files = Directory.GetFiles(argv[1], "*.hkx").OrderBy(f => f).ToList();
+        int done = 0, failed = 0;
+
+        for (int i = 0; i < files.Count; i++)
+        {
+            if (i % everyNth != 0) continue;
+            try { HkxTextEdit.Unpack(_java, _jar, files[i], outDir); done++; }
+            catch (Exception ex) { failed++; Console.WriteLine($"  failed {Path.GetFileName(files[i])}: {ex.Message.Split('\n')[0]}"); }
+        }
+
+        Console.WriteLine($"unpacked {done} of {files.Count} into {outDir}, {failed} failed");
+        return failed == 0 ? 0 : 1;
+    }
+
+    private static int Check(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        var files = Directory.GetFiles(argv[1], "*.xml").OrderBy(f => f).ToList();
+        int clean = 0, broken = 0, errorCount = 0, warningCount = 0;
+        var byKind = new Dictionary<string, int>();
+
+        foreach (string file in files)
+        {
+            List<GraphValidator.Finding> findings;
+            try { findings = GraphValidator.Check(File.ReadAllText(file)); }
+            catch (Exception ex) { Console.WriteLine($"  THREW {Path.GetFileName(file)}: {ex.Message.Split('\n')[0]}"); broken++; continue; }
+
+            var errors = findings.Where(f => f.Level == GraphValidator.Level.Error).ToList();
+            errorCount += errors.Count;
+            warningCount += findings.Count - errors.Count;
+            if (errors.Count == 0) clean++; else broken++;
+
+            string label = Path.GetFileNameWithoutExtension(file);
+            if (label.Length > 46) label = label[..46];
+            foreach (var f in findings)
+            {
+                Console.WriteLine($"  {label,-46} {f}");
+                string kind = f.Level + ": " + f.What.Split(',')[0];
+                byKind[kind] = byKind.GetValueOrDefault(kind) + 1;
+            }
+        }
+
+        Console.WriteLine($"\n{files.Count} files: {clean} with no errors, {broken} with errors");
+        Console.WriteLine($"{errorCount} errors, {warningCount} warnings in total\n");
+        foreach (var kv in byKind.OrderByDescending(k => k.Value))
+            Console.WriteLine($"  {kv.Value,5}  {kv.Key}");
+
+        return errorCount == 0 ? 0 : 1;
+    }
+
+    private static int Remove(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm", Path.GetFileNameWithoutExtension(argv[1]));
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+        Directory.CreateDirectory(work);
+
+        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
+        Console.WriteLine("FILE " + Path.GetFileName(argv[1]));
+        Report("BEFORE", xml);
+        var before = Resolved(xml);
+
+        Console.WriteLine("\n--- add a variable and an event ---");
+        xml = SymbolEditor.AddVariable(xml, "fSymrmProbe", SymbolEditor.VariableType.Real, out int newVar);
+        xml = SymbolEditor.AddEvent(xml, "SymrmProbeEvent", out int newEvent);
+        var counts = SymbolEditor.Audit(BehaviourGraphModel.Parse(xml));
+        Console.WriteLine($"  variable index {newVar}, event index {newEvent}");
+        Console.WriteLine($"  {counts}   consistent={counts.VariablesConsistent && counts.EventsConsistent}");
+
+        var names = SymbolEditor.VariableNames(BehaviourGraphModel.Parse(xml));
+        int inUse = FirstMatching(xml, events: false, wanted: true);
+        if (inUse >= 0)
+        {
+            Console.WriteLine($"\n--- refuse to remove variable {inUse} '{names[inUse]}', which is in use ---");
+            string untouched = SymbolEditor.RemoveVariable(xml, inUse, force: false, out var blockers);
+            Console.WriteLine($"  blockers {blockers.Count}: {string.Join(", ", blockers.Distinct().Take(3))}");
+            Console.WriteLine($"  file unchanged: {untouched == xml}");
+        }
+
+        int freeVar = FirstMatching(xml, events: false, wanted: false);
+        string removedVar = freeVar >= 0 ? names[freeVar] : "";
+        if (freeVar >= 0)
+        {
+            Console.WriteLine($"\n--- remove variable {freeVar} '{removedVar}', which nothing references ---");
+            Console.WriteLine($"  references above it that must shift: {CountAbove(xml, events: false, freeVar)}");
+            xml = SymbolEditor.RemoveVariable(xml, freeVar, force: false, out _);
+        }
+
+        var events = SymbolEditor.EventNames(BehaviourGraphModel.Parse(xml));
+        int freeEvent = FirstMatching(xml, events: true, wanted: false);
+        string removedEvent = freeEvent >= 0 ? events[freeEvent] : "";
+        if (freeEvent >= 0)
+        {
+            Console.WriteLine($"--- remove event {freeEvent} '{removedEvent}', which nothing references ---");
+            Console.WriteLine($"  references above it that must shift: {CountAbove(xml, events: true, freeEvent)}");
+            xml = SymbolEditor.RemoveEvent(xml, freeEvent, force: false, out _);
+        }
+
+        string packedDir = Path.Combine(work, "repack");
+        Directory.CreateDirectory(packedDir);
+        string xmlPath = Path.Combine(packedDir, "edited.xml");
+        File.WriteAllText(xmlPath, xml);
+        string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
+        Console.WriteLine($"\nrepacked to {new FileInfo(packed).Length} bytes, reading the binary back");
+        string back = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, packed, Path.Combine(packedDir, "back")));
+
+        Report("AFTER, ROUND TRIPPED", back);
+        var after = Resolved(back);
+
+        bool ok = Compare("bindings", before.Bindings, after.Bindings, "fSymrmProbe", removedVar)
+                & Compare("transitions", before.Transitions, after.Transitions, "SymrmProbeEvent", removedEvent);
+
+        Console.WriteLine("\n--- validator on the round tripped file ---");
+        var findings = GraphValidator.Check(back);
+        int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
+        Console.WriteLine($"  {errors} errors, {findings.Count - errors} warnings");
+        foreach (var f in findings.Take(8)) Console.WriteLine("   " + f);
+
+        return ok && errors == 0 ? 0 : 1;
+    }
+
+    // What the canvas will actually draw, before and after a link is retargeted.
+    //
+    // Retargeting is the ordinary way to change what a node points at, and it detaches whatever the
+    // link used to lead to. Drawing only what the root reaches makes all of that vanish, which is
+    // what "I dragged something and all my other nodes were removed" was.
+    private static int Draw(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm", "draw");
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+        Directory.CreateDirectory(work);
+
+        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
+        Console.WriteLine($"FILE {Path.GetFileName(argv[1])}");
+        Show("before any edit", xml);
+
+        var model = BehaviourGraphModel.Parse(xml);
+        var graph = model.Objects.First(o => o.Class == "hkbBehaviorGraph");
+        var leaf = model.Objects.First(o => o.Class == "hkbClipGenerator");
+
+        Console.WriteLine($"\n--- drag #{graph.Id}.rootGenerator onto clip #{leaf.Id}, which replaces what it held ---");
+        xml = GraphLinks.Connect(xml, graph.Id, "rootGenerator", leaf.Id, out string note);
+        Console.WriteLine("  " + note);
+        Show("after the retarget", xml);
+        return 0;
+    }
+
+    private static void Show(string label, string xml)
+    {
+        var model = BehaviourGraphModel.Parse(xml);
+        int reachable = RootReachable(model);
+        int drawn = GraphAuthor.Layout(model, 10000).Count;
+
+        Console.WriteLine($"  {label,-20} {model.Objects.Count} objects in the file, " +
+                          $"{reachable} reachable from the root, {drawn} drawn by the canvas");
+    }
+
+    private static int RootReachable(BehaviourGraphModel model)
+    {
+        var root = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraph")
+                   ?? model.Objects.FirstOrDefault();
+        if (root == null) return 0;
+
+        var seen = new HashSet<string> { root.Id };
+        var queue = new Queue<HkObject>();
+        queue.Enqueue(root);
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            var targets = GraphLinks.OutSlots(model, current).SelectMany(s => s.Targets)
+                .Concat(current.StructLists.Values.SelectMany(rows => rows)
+                    .SelectMany(row => row.Values)
+                    .Where(v => v.StartsWith('#')).Select(v => v[1..]));
+
+            foreach (string target in targets)
+            {
+                if (!seen.Add(target)) continue;
+                var next = model.Get(target);
+                if (next != null) queue.Enqueue(next);
+            }
+        }
+        return seen.Count;
+    }
+
+    // Exercises the wiring the graph view performs when a link is dragged between two ports. The
+    // canvas cannot be driven from a script, so this drives the same calls it makes.
+    private static int Link(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm", "link");
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+        Directory.CreateDirectory(work);
+
+        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
+        var model = BehaviourGraphModel.Parse(xml);
+        Console.WriteLine($"FILE {Path.GetFileName(argv[1])}   {model.Objects.Count} objects");
+
+        Console.WriteLine("\n--- ports the canvas offers, which is a port per link the class may hold ---");
+        foreach (var obj in model.Objects.Take(60))
+        {
+            var slots = GraphLinks.OutSlots(model, obj);
+            if (slots.Count == 0) continue;
+            Console.WriteLine($"  #{obj.Id,-4} {obj.Class,-34} {string.Join("  ", slots.Select(s => $"{s}({s.Targets.Count})"))}");
+        }
+
+        string machine = model.Objects.First(o => o.Class == "hkbStateMachine").Id;
+        var blender = model.Objects.FirstOrDefault(o => o.Class == "hkbBlenderGenerator");
+        var state = model.Objects.First(o => o.Class == "hkbStateMachineStateInfo");
+
+        Console.WriteLine("\n--- create a clip with nothing pointing at it, the way a drag to empty canvas does ---");
+        xml = GeneratorEditor.Add(xml, "clip", "SymrmLinkClip", "Meshes\\Probe\\link.hkx", "", out string clip);
+        Console.WriteLine($"  clip is #{clip}");
+
+        if (blender != null)
+        {
+            xml = GraphLinks.Connect(xml, blender.Id, "children", clip, out string note);
+            Console.WriteLine($"  drag blender.children  -> {note}");
+        }
+
+        xml = GraphLinks.Connect(xml, machine, "states", clip, out string stateNote);
+        Console.WriteLine($"  drag machine.states    -> {stateNote}");
+
+        xml = GraphLinks.Connect(xml, state.Id, "generator", clip, out string genNote);
+        Console.WriteLine($"  drag state.generator   -> {genNote}");
+
+        string back = RoundTripTo(xml, Path.Combine(work, "wired"));
+        var wired = BehaviourGraphModel.Parse(back);
+        Console.WriteLine($"\nAFTER ROUND TRIP: {wired.Objects.Count} objects");
+
+        var clipAfter = wired.Objects.First(o => o.Class == "hkbClipGenerator" && o.Str("name") == "SymrmLinkClip");
+        var holders = GeneratorEditor.ReferencesTo(wired, clipAfter.Id);
+        Console.WriteLine($"  the clip survived as #{clipAfter.Id}, referenced by {holders.Count}: " +
+                          string.Join(", ", holders.Select(h => $"#{h} {wired.Get(h)?.Class}")));
+
+        var blenderAfter = wired.Objects.FirstOrDefault(o => o.Class == "hkbBlenderGenerator");
+        if (blenderAfter != null)
+        {
+            Console.WriteLine("\n--- drag the blender child off again ---");
+            string wrapper = blenderAfter.Refs("children")
+                .First(id => wired.Get(id)?.Ref("generator") == clipAfter.Id);
+            back = GraphLinks.Disconnect(back, blenderAfter.Id, "children", wrapper, out string offNote);
+            Console.WriteLine($"  {offNote}");
+        }
+
+        string final = RoundTripTo(back, Path.Combine(work, "unwired"));
+        var end = BehaviourGraphModel.Parse(final);
+        Console.WriteLine($"\nFINAL: {end.Objects.Count} objects, " +
+                          $"{end.Objects.Count(o => o.Class == "hkbBlenderGeneratorChild")} blender children left");
+
+        Console.WriteLine("\n--- validator ---");
+        var findings = GraphValidator.Check(final);
+        int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
+        Console.WriteLine($"  {errors} errors, {findings.Count - errors} warnings");
+        foreach (var f in findings.Take(8)) Console.WriteLine("   " + f);
+        return errors == 0 ? 0 : 1;
+    }
+
+    private static string RoundTripTo(string xml, string dir)
+    {
+        Directory.CreateDirectory(dir);
+        string xmlPath = Path.Combine(dir, "edited.xml");
+        File.WriteAllText(xmlPath, xml);
+        string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
+        Console.WriteLine($"repacked to {new FileInfo(packed).Length} bytes");
+        return File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, packed, Path.Combine(dir, "back")));
+    }
+
+    // Adds DN151_DoorSeal's StartOpen and StartClosed to SpecialCaseDoors, which does not have them.
+    //
+    // Strictly additive. Two events, two states, two sequence generators, and four new transition
+    // entries. No existing transition is retargeted, because the same event ids are shared across
+    // every door that uses this behaviour and changing one would change all of them.
+    //
+    // Each new event enters a state that PLAYS its sequence and then moves on to the resting state
+    // when the sequence sends its end event. Worth knowing that vanilla does the opposite:
+    // SwitchDoorExLarge01 points StartOpen straight at its held pose state and reaches the playing
+    // states through Play01 instead, so there a door placed open is simply open, with no animation.
+    // Sending StartOpen here will make the door visibly open itself as the cell loads.
+    private static int Door(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm", "door");
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+        Directory.CreateDirectory(work);
+
+        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
+        var model = BehaviourGraphModel.Parse(xml);
+
+        string machine = model.Objects.First(o => o.Class == "hkbStateMachine").Id;
+        var states = StateEditor.States(model, machine);
+        Console.WriteLine($"BEFORE: {model.Objects.Count} objects, {states.Count} states, " +
+                          $"{StateEditor.Transitions(model, machine).Count} transitions, " +
+                          $"{SymbolEditor.EventNames(model).Count} events");
+
+        int StateIdNamed(string name) => states.FirstOrDefault(s => s.Name == name)?.StateId
+            ?? throw new InvalidOperationException($"this graph has no state called {name}");
+        int EventNamed(string name)
+        {
+            int i = SymbolEditor.EventNames(BehaviourGraphModel.Parse(xml)).IndexOf(name);
+            return i >= 0 ? i : throw new InvalidOperationException($"this graph declares no event called {name}");
+        }
+
+        // Reuse whatever blending effect the door's own transitions already use rather than
+        // inventing one, so the new transitions blend exactly like the existing ones.
+        string effect = FirstTransitionEffect(model, machine, xml);
+        Console.WriteLine($"  reusing transition effect {effect}");
+
+        int openedState = StateIdNamed("Opened");
+        int closedState = StateIdNamed("Closed");
+
+        // enterState is where the new event actually lands. StartOpen goes straight to the held open
+        // pose, because that is what vanilla does: SwitchDoorExLarge01 sends StartOpen to its posed
+        // state and reaches the playing states through Play01. A door placed open should be open,
+        // not open itself while the cell is still loading. StartClosed keeps the playing shape.
+        foreach (var (eventName, stateName, sequence, endEvent, target, poseEntry) in new[]
+                 {
+                     ("StartOpen", "StartOpening", "Opening", "Opened", openedState, true),
+                     ("StartClosed", "StartClosing", "Closing", "Closed", closedState, false),
+                 })
+        {
+            xml = SymbolEditor.AddEvent(xml, eventName, out int eventId);
+            int enterState = target;
+
+            // A pose entry event needs no state of its own. It lands on one the door already has,
+            // and building a playing state for it would leave that state with nothing pointing at
+            // it, duplicating the Open state the graph already has.
+            if (!poseEntry)
+            {
+                xml = GeneratorEditor.Add(xml, "sequence", stateName, sequence, "", out string generator);
+                xml = StateEditor.AddState(xml, machine, stateName, "#" + generator, out string stateObject, out enterState);
+                // Out of the new state on the event the sequence itself sends when it finishes.
+                xml = StateEditor.AddTransition(xml, machine, stateObject, target, EventNamed(endEvent), effect);
+            }
+
+            // Into it from anywhere, which is how this graph already handles pose entry events.
+            xml = StateEditor.AddTransition(xml, machine, "", enterState, eventId, effect);
+
+            Console.WriteLine(poseEntry
+                ? $"  {eventName,-12} event {eventId,2}  ->  state {enterState} directly, the held pose, no animation, no new state"
+                : $"  {eventName,-12} event {eventId,2}  ->  state {enterState} '{stateName}' " +
+                  $"playing sequence '{sequence}'  ->  on {endEvent} to state {target}");
+        }
+
+        string xmlPath = Path.Combine(work, "edited.xml");
+        File.WriteAllText(xmlPath, xml);
+        string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(argv[2]))!);
+        File.Copy(packed, argv[2], true);
+        Console.WriteLine($"\nrepacked to {new FileInfo(argv[2]).Length} bytes at {argv[2]}");
+
+        string back = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[2], Path.Combine(work, "back")));
+        var after = BehaviourGraphModel.Parse(back);
+        string machineAfter = after.Objects.First(o => o.Class == "hkbStateMachine").Id;
+        var statesAfter = StateEditor.States(after, machineAfter);
+
+        Console.WriteLine($"AFTER:  {after.Objects.Count} objects, {statesAfter.Count} states, " +
+                          $"{StateEditor.Transitions(after, machineAfter).Count} transitions, " +
+                          $"{SymbolEditor.EventNames(after).Count} events\n");
+
+        var events = SymbolEditor.EventNames(after);
+        foreach (var s in statesAfter)
+        {
+            var generator = after.Get(s.GeneratorRef.TrimStart('#'));
+            Console.WriteLine($"  state {s.StateId,2} {s.Name,-16} {generator?.Class} '{generator?.Str("pSequence")}'");
+        }
+        Console.WriteLine();
+        foreach (var t in StateEditor.Transitions(after, machineAfter))
+            Console.WriteLine($"  {(t.Wildcard ? "wildcard" : "        ")} on {events[t.EventId],-34} -> state {t.ToStateId}");
+
+        Console.WriteLine("\n--- validator ---");
+        var findings = GraphValidator.Check(back);
+        int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
+        Console.WriteLine($"  {errors} errors, {findings.Count - errors} warnings");
+        foreach (var f in findings) Console.WriteLine("   " + f);
+        return errors == 0 ? 0 : 1;
+    }
+
+    private static string FirstTransitionEffect(BehaviourGraphModel model, string machine, string xml)
+    {
+        foreach (var state in StateEditor.States(model, machine))
+        {
+            var array = model.Get(state.TransitionsRef.TrimStart('#'));
+            if (array == null || !array.StructLists.TryGetValue("transitions", out var rows)) continue;
+            foreach (var row in rows)
+                if (row.TryGetValue("transition", out string? value) && value.StartsWith('#'))
+                    return value;
+        }
+        return "null";
+    }
+
+    private static void Report(string label, string xml)
+    {
+        var model = BehaviourGraphModel.Parse(xml);
+        Console.WriteLine($"{label}: {model.Objects.Count} objects   {SymbolEditor.Audit(model)}");
+    }
+
+    private static int SymbolCount(string xml, bool events)
+    {
+        var model = BehaviourGraphModel.Parse(xml);
+        return events ? SymbolEditor.EventNames(model).Count : SymbolEditor.VariableNames(model).Count;
+    }
+
+    private static int FirstMatching(string xml, bool events, bool wanted)
+    {
+        int limit = SymbolCount(xml, events);
+        for (int i = 0; i < limit; i++)
+            if (SymbolIndexFixup.ReferencesTo(xml, events, i).Count > 0 == wanted) return i;
+        return -1;
+    }
+
+    private static int CountAbove(string xml, bool events, int index)
+    {
+        int limit = SymbolCount(xml, events), total = 0;
+        for (int i = index + 1; i < limit; i++) total += SymbolIndexFixup.ReferencesTo(xml, events, i).Count;
+        return total;
+    }
+
+    private sealed record Snapshot(List<string> Bindings, List<string> Transitions);
+
+    // Resolve every index to the name it lands on. A renumbering that went wrong then shows up as a
+    // changed name rather than a changed number, which is the only comparison worth making.
+    private static Snapshot Resolved(string xml)
+    {
+        var model = BehaviourGraphModel.Parse(xml);
+        var variables = SymbolEditor.VariableNames(model);
+        var events = SymbolEditor.EventNames(model);
+
+        var bindings = new List<string>();
+        foreach (var set in model.Objects.Where(o => o.Class == "hkbVariableBindingSet"))
+        {
+            if (!set.StructLists.TryGetValue("bindings", out var rows)) continue;
+            foreach (var row in rows)
+            {
+                row.TryGetValue("memberPath", out string? path);
+                row.TryGetValue("variableIndex", out string? raw);
+                int index = int.TryParse(raw, out int v) ? v : -1;
+                bindings.Add($"{path} <- {(index >= 0 && index < variables.Count ? variables[index] : "index " + index)}");
+            }
+        }
+
+        var transitions = new List<string>();
+        foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+            foreach (var t in StateEditor.Transitions(model, machine.Id))
+                transitions.Add($"{(t.EventId >= 0 && t.EventId < events.Count ? events[t.EventId] : "index " + t.EventId)} -> {t.ToStateId}");
+
+        bindings.Sort(StringComparer.Ordinal);
+        transitions.Sort(StringComparer.Ordinal);
+        return new Snapshot(bindings, transitions);
+    }
+
+    private static bool Compare(string what, List<string> before, List<string> after, params string[] ignore)
+    {
+        bool Skip(string s) => ignore.Any(i => i.Length > 0 && s.Contains(i, StringComparison.Ordinal));
+        var b = before.Where(x => !Skip(x)).ToList();
+        var a = after.Where(x => !Skip(x)).ToList();
+        var lost = b.Except(a).ToList();
+        var gained = a.Except(b).ToList();
+
+        bool same = lost.Count == 0 && gained.Count == 0;
+        Console.WriteLine($"\n{what}: {b.Count} before, {a.Count} after, resolved names identical: {same}");
+        foreach (string x in lost.Take(5)) Console.WriteLine("   lost   " + x);
+        foreach (string x in gained.Take(5)) Console.WriteLine("   gained " + x);
+        return same;
+    }
+}
