@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using OpenCommonwealth.Services.Hkx;
 
@@ -24,6 +25,7 @@ public static class Tests
         AnyNodeCanBeDeleted();
         StructuralObjectsAreProtected();
         PortTypesRefuseNonsense();
+        BundledHkxPackIsFound();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -190,6 +192,40 @@ public static class Tests
         CheckTrue("a triggers slot refuses a clip", !Allowed("triggers", "hkbClipGenerator"));
         CheckTrue("a states array refuses a trigger array",
             !Allowed("states", "hkbClipTriggerArray"));
+    }
+
+    // A release ships the jar in tools/ beside the executable. There is no project directory in an
+    // exported build and res:// cannot be globalized out of the binary, so if the search stops
+    // looking relative to the executable the shipped tool silently becomes read only.
+    private static void BundledHkxPackIsFound()
+    {
+        Console.WriteLine("\nthe bundled jar is found from the executable's own directory");
+
+        string app = Directory.CreateTempSubdirectory("bgs-bundle").FullName;
+        string project = Directory.CreateTempSubdirectory("bgs-project").FullName;
+        string saved = HkxTextEdit.AppDirectory;
+        try
+        {
+            HkxTextEdit.AppDirectory = app;
+            Check("nothing is found before it is bundled", null, HkxTextEdit.FindHkxPack("", project));
+
+            Directory.CreateDirectory(Path.Combine(app, "tools"));
+            string jar = Path.Combine(app, "tools", "hkxpack-cli.jar");
+            File.WriteAllText(jar, "not really a jar");
+            Check("the bundled jar is found", jar, HkxTextEdit.FindHkxPack("", project));
+
+            string chosen = Path.Combine(project, "elsewhere.jar");
+            File.WriteAllText(chosen, "not really a jar either");
+            Check("an explicitly configured jar still wins", chosen, HkxTextEdit.FindHkxPack(chosen, project));
+            Check("a configured path that does not exist is ignored", jar,
+                HkxTextEdit.FindHkxPack(Path.Combine(project, "gone.jar"), project));
+        }
+        finally
+        {
+            HkxTextEdit.AppDirectory = saved;
+            Directory.Delete(app, true);
+            Directory.Delete(project, true);
+        }
     }
 
     private static int Reachable(BehaviourGraphModel model)

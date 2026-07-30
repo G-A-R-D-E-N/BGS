@@ -1,11 +1,9 @@
-.godot/
 bin/
 obj/
 *.user
 
-# The engine binary lives here so the tool runs on its own, but it is 239MB of build output and
-# does not belong in git. See README for how to supply it.
-engine/
-
-# Export output
+# Publish output
 /dist/
+/out/
+/BehaviourGraphStudio-*/
+/*.zip

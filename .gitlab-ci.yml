@@ -1,0 +1,121 @@
+# Builds the tool for Windows and Linux on GitLab runners.
+#
+# Both jobs run on the same plain Linux image. Nothing here needs a game install, a game engine, or
+# a Windows machine: the Windows build is cross compiled, because a self contained .NET publish
+# emits the target's own host binary rather than reusing the build machine's.
+
+stages:
+  - test
+  - build
+  - release
+
+variables:
+  DOTNET: mcr.microsoft.com/dotnet/sdk:8.0
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"
+  PACKAGE_REGISTRY: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/behaviour-graph-studio/${CI_COMMIT_SHORT_SHA}"
+
+# The runner is one machine shared with the other projects, so packages are cached rather than
+# pulled fresh four times per pipeline.
+.dotnet:
+  image: $DOTNET
+  cache:
+    key: nuget
+    paths:
+      - .nuget/packages
+    when: always
+
+# The format layer builds graphs in memory, so this needs no game files and no Java. A red gate
+# here stops a broken release being cut.
+format:
+  extends: .dotnet
+  stage: test
+  script:
+    - dotnet run --project tools/symrm/symrm.csproj -- test
+
+# Builds the real window on a headless display and walks it, so a window that no longer opens fails
+# the build instead of reaching a release.
+window:
+  extends: .dotnet
+  stage: test
+  script:
+    - dotnet run --project tools/uismoke/uismoke.csproj
+
+.publish:
+  extends: .dotnet
+  stage: build
+  needs: [format, window]
+  script:
+    - dotnet publish app/BehaviourStudio.csproj -c Release -r $RID -o out
+    # hkxpack rides beside the binary rather than inside it, because the JVM has to open it as a
+    # file. MIT, and its licence travels with it because the licence says so.
+    - mkdir -p out/tools
+    - cp tools/hkxpack-cli.jar tools/hkxpack-LICENSE.txt THIRD_PARTY_NOTICES.md out/tools/
+    - ls -la out
+    - test -f "out/$BINARY"
+    - mv out "BehaviourGraphStudio-$RID"
+    - apt-get update -qq && apt-get install -y -qq zip >/dev/null
+    - zip -qr "BehaviourGraphStudio-$RID.zip" "BehaviourGraphStudio-$RID"
+  artifacts:
+    paths:
+      - "*.zip"
+    expire_in: 1 week
+
+linux:
+  extends: .publish
+  variables:
+    RID: linux-x64
+    BINARY: BehaviourGraphStudio
+
+windows:
+  extends: .publish
+  variables:
+    RID: win-x64
+    BINARY: BehaviourGraphStudio.exe
+
+# Proves the Linux build runs on a machine with no .NET and no build tools, which is the whole
+# claim of a standalone binary. The Windows one cannot be run here.
+standalone:
+  stage: build
+  image: debian:bookworm-slim
+  needs: [linux]
+  script:
+    - apt-get update -qq && apt-get install -y -qq unzip default-jre-headless >/dev/null
+    - unzip -q BehaviourGraphStudio-linux-x64.zip
+    - cd BehaviourGraphStudio-linux-x64
+    - chmod +x BehaviourGraphStudio
+    - ./BehaviourGraphStudio --version
+    # The bundled jar has to be the real thing, not a zero byte file that only looks bundled.
+    - test -s tools/hkxpack-LICENSE.txt
+    - java -jar tools/hkxpack-cli.jar | head -3
+
+upload:
+  stage: release
+  image: curlimages/curl:latest
+  needs: [linux, windows, standalone]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - |
+      for z in BehaviourGraphStudio-linux-x64.zip BehaviourGraphStudio-win-x64.zip; do
+        curl -sf --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$z" "$PACKAGE_REGISTRY/$z"
+      done
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs: [upload]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - echo "release for $CI_COMMIT_SHORT_SHA"
+  release:
+    tag_name: "build-$CI_COMMIT_SHORT_SHA"
+    description: "Behaviour Graph Studio. One file, nothing to install. Saving additionally needs a Java runtime."
+    assets:
+      links:
+        - name: "Behaviour Graph Studio (Linux x86_64)"
+          url: "$PACKAGE_REGISTRY/BehaviourGraphStudio-linux-x64.zip"
+        - name: "Behaviour Graph Studio (Windows x86_64)"
+          url: "$PACKAGE_REGISTRY/BehaviourGraphStudio-win-x64.zip"

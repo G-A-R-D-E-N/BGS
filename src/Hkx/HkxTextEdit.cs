@@ -51,19 +51,28 @@ public static class HkxTextEdit
         return null;
     }
 
+    // Set by the app to the directory the executable sits in. An exported build has no project
+    // directory to search, and res:// cannot be globalized once it is inside the binary, so the
+    // bundled jar is only findable relative to the executable.
+    public static string AppDirectory = "";
+
     public static string? FindHkxPack(string configured, string projectRoot)
     {
         if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return configured;
 
         string[] relative =
         {
-            Path.Combine("..", "..", "Tools", "FO4AnimForge", "tools", "extern", "hkxpack", "hkxpack-cli.jar"),
             Path.Combine("tools", "hkxpack-cli.jar"),
+            Path.Combine("..", "..", "Tools", "FO4AnimForge", "tools", "extern", "hkxpack", "hkxpack-cli.jar"),
         };
-        foreach (var rel in relative)
+        foreach (var root in new[] { AppDirectory, projectRoot })
         {
-            string full = Path.GetFullPath(Path.Combine(projectRoot, rel));
-            if (File.Exists(full)) return full;
+            if (string.IsNullOrWhiteSpace(root)) continue;
+            foreach (var rel in relative)
+            {
+                string full = Path.GetFullPath(Path.Combine(root, rel));
+                if (File.Exists(full)) return full;
+            }
         }
         return null;
     }
