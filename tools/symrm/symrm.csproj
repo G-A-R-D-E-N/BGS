@@ -10,6 +10,7 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="Ba2.cs" />
+    <Compile Include="Tests.cs" />
     <Compile Include="../../src/Hkx/*.cs" />
   </ItemGroup>
 </Project>

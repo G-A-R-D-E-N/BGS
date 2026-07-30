@@ -32,6 +32,7 @@ public static class Program
             case "door": return Door(argv);
             case "link": return Link(argv);
             case "draw": return Draw(argv);
+            case "test": return Tests.Run();
             default: Usage(); return 1;
         }
     }
@@ -55,6 +56,10 @@ public static class Program
               The symbol removal round trip. Adds a variable and an event, refuses to remove one
               that is in use, removes ones that are not, repacks, reads the binary back, and
               confirms every binding and transition still resolves to the same name as before.
+
+          dotnet run --project tools/symrm/symrm.csproj -- test
+              Regression checks on graphs built in memory. No game install, no hkxpack, no JVM,
+              so this one can be run on every change. Exits non zero on any failure.
 
           dotnet run --project tools/symrm/symrm.csproj -- door <SpecialCaseDoors Behavior.hkx> <out.hkx>
               The additive door edit: two new events and two new states that give a door a way to
