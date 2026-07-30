@@ -29,13 +29,26 @@ public static class Tests
         return _failed == 0 ? 0 : 1;
     }
 
-    private static void Check(string what, object expected, object actual)
+    // Nullable on purpose: half of what these assert is that something became null, or stayed
+    // null. Printing that as a blank made a failing line unreadable, so null and empty are spelled
+    // out rather than rendered as nothing.
+    private static void Check(string what, object? expected, object? actual)
     {
         _ran++;
         bool ok = Equals(expected, actual);
         if (!ok) _failed++;
-        Console.WriteLine($"  {(ok ? "ok  " : "FAIL")}  {what,-58} expected {expected}, got {actual}");
+        Console.WriteLine($"  {(ok ? "ok  " : "FAIL")}  {what,-58} expected {Text(expected)}, got {Text(actual)}");
     }
+
+    private static string Text(object? value) => value switch
+    {
+        null => "null",
+        string s when s.Length == 0 => "an empty string",
+        // HkObject has no ToString, so a failure would otherwise name the type and tell you
+        // nothing about which object was found.
+        HkObject o => $"#{o.Id} {o.Class}" + (o.Str("name").Length > 0 ? $" '{o.Str("name")}'" : ""),
+        _ => value.ToString() ?? "null",
+    };
 
     private static void CheckTrue(string what, bool value)
     {
