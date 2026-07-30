@@ -7,6 +7,34 @@ using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio;
 
+// Draws the link being dragged while the add menu is open. It sits above the GraphEdit and ignores
+// the mouse, because GraphEdit stops drawing its own preview the moment the button is released.
+public partial class LinkPreview : Control
+{
+    public bool Active;
+    public Vector2 From;
+    public Vector2 To;
+
+    public override void _Draw()
+    {
+        if (!Active) return;
+
+        // Same shape as GraphEdit's own connections, so the held line does not look like a
+        // different kind of thing from the ones already on the canvas.
+        var points = new Vector2[24];
+        Vector2 c1 = From + new Vector2((To.X - From.X) * 0.5f, 0);
+        Vector2 c2 = To - new Vector2((To.X - From.X) * 0.5f, 0);
+        for (int i = 0; i < points.Length; i++)
+        {
+            double t = i / (double)(points.Length - 1), u = 1 - t;
+            points[i] = From * (u * u * u) + c1 * (3 * u * u * t) + c2 * (3 * u * t * t) + To * (t * t * t);
+        }
+
+        DrawPolyline(points, Ux.Accent, 2.0f, true);
+        DrawCircle(To, 5.0f, Ux.Accent);
+    }
+}
+
 public partial class GraphCanvas : Control
 {
     private const int MaxNodes = 250;
@@ -34,8 +62,14 @@ public partial class GraphCanvas : Control
     public Action<string, string, string>? UnlinkRequested;
 
     private readonly Dictionary<string, List<GraphLinks.Slot>> _outFields = new();
+    private readonly Dictionary<string, Vector2> _positions = new();
     private PanelContainer _menu = null!;
     private VBoxContainer _menuItems = null!;
+    private LineEdit _menuFilter = null!;
+    private LinkPreview _preview = null!;
+    private List<(string Label, Action Run)> _menuAll = new();
+    private string _pendingNode = "";
+    private int _pendingPort = -1;
 
     public string SelectedId { get; private set; } = "";
 
@@ -82,6 +116,7 @@ public partial class GraphCanvas : Control
         _graph.DisconnectionRequest += OnDisconnectionRequest;
         _graph.ConnectionToEmpty += OnConnectionToEmpty;
         _graph.GuiInput += OnGraphInput;
+        _graph.EndNodeMove += RememberPositions;
         column.AddChild(_graph);
 
         BuildMenu();
@@ -92,19 +127,67 @@ public partial class GraphCanvas : Control
     // still dragging on.
     private void BuildMenu()
     {
+        _preview = new LinkPreview { MouseFilter = MouseFilterEnum.Ignore };
+        _preview.SetAnchorsPreset(LayoutPreset.FullRect);
+        AddChild(_preview);
+
         _menu = new PanelContainer { Visible = false, ZIndex = 100 };
         _menu.AddThemeStyleboxOverride("panel", Ux.Fill(Ux.Card, Ux.Accent, 1, 4));
+        _menu.CustomMinimumSize = new Vector2(Ux.Px(240), 0);
+
+        var box = new VBoxContainer();
+        box.AddThemeConstantOverride("separation", Ux.Px(4));
+        _menu.AddChild(box);
+
+        _menuFilter = Ux.Field("type to filter");
+        _menuFilter.TextChanged += _ => FillMenu();
+        _menuFilter.TextSubmitted += _ => RunFirstMatch();
+        box.AddChild(_menuFilter);
 
         _menuItems = new VBoxContainer();
         _menuItems.AddThemeConstantOverride("separation", Ux.Px(2));
-        _menu.AddChild(_menuItems);
+        box.AddChild(_menuItems);
+
         AddChild(_menu);
     }
 
-    private void HideMenu() => _menu.Visible = false;
+    private void RememberPositions()
+    {
+        foreach (var node in _graph.GetChildren().OfType<GraphNode>())
+            if (_nodeToId.TryGetValue(node.Name, out string id))
+                _positions[id] = node.PositionOffset;
+    }
+
+    private void HideMenu()
+    {
+        _menu.Visible = false;
+        _preview.Active = false;
+        _preview.QueueRedraw();
+        _pendingNode = "";
+        _pendingPort = -1;
+    }
+
+    // The line from the port the drag started at stays on screen while the menu is open and while
+    // the filter is being typed into, the way it does in a blueprint editor. It is anchored to the
+    // release point rather than following the cursor, so it does not chase the menu.
+    public override void _Process(double delta)
+    {
+        if (!_preview.Active || _pendingPort < 0) return;
+
+        var node = _graph.GetNodeOrNull<GraphNode>(_pendingNode);
+        if (node == null) { HideMenu(); return; }
+
+        Vector2 port = node.GetOutputPortPosition(_pendingPort) * _graph.Zoom;
+        Vector2 inGraph = node.PositionOffset * _graph.Zoom - _graph.ScrollOffset + port;
+        _preview.From = inGraph + _graph.GlobalPosition - GlobalPosition;
+        _preview.QueueRedraw();
+    }
 
     private void ShowMenu(string heading, List<(string Label, Action Run)> items)
     {
+        _menuAll = items;
+        _menuFilter.Text = "";
+
         foreach (var child in _menuItems.GetChildren())
         {
             _menuItems.RemoveChild(child);
@@ -115,16 +198,44 @@ public partial class GraphCanvas : Control
         title.AddThemeColorOverride("font_color", Ux.TextMuted);
         _menuItems.AddChild(title);
 
-        foreach (var (label, run) in items)
+        FillMenu();
+        _menu.Position = GetLocalMousePosition();
+        _menu.Visible = true;
+        _menuFilter.CallDeferred(Control.MethodName.GrabFocus);
+    }
+
+    private void FillMenu()
+    {
+        foreach (var child in _menuItems.GetChildren().Skip(1))
+        {
+            _menuItems.RemoveChild(child);
+            child.QueueFree();
+        }
+
+        foreach (var (label, run) in Matching())
         {
             var button = Ux.SecondaryButton(label);
             button.Alignment = HorizontalAlignment.Left;
-            button.Pressed += () => { HideMenu(); run(); };
+            var captured = run;
+            button.Pressed += () => { HideMenu(); captured(); };
             _menuItems.AddChild(button);
         }
+    }
 
-        _menu.Position = GetLocalMousePosition();
-        _menu.Visible = true;
+    private IEnumerable<(string Label, Action Run)> Matching()
+    {
+        string needle = _menuFilter.Text.Trim();
+        return needle.Length == 0
+            ? _menuAll
+            : _menuAll.Where(i => i.Label.Contains(needle, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void RunFirstMatch()
+    {
+        var first = Matching().FirstOrDefault();
+        if (first.Run == null) return;
+        HideMenu();
+        first.Run();
     }
 
     private void ShowCanvasMenu(string attachToId, string attachField)
@@ -328,7 +439,11 @@ public partial class GraphCanvas : Control
             byDepth.TryGetValue(d, out int row);
             byDepth[d] = row + 1;
 
-            node.PositionOffset = new Vector2(d * ColumnWidth, row * (RowHeight + RowGap) * 2);
+            // A node the user has dragged keeps where they put it. Without this every edit
+            // reshuffles the whole canvas back to the computed layout and loses their arrangement.
+            node.PositionOffset = _positions.TryGetValue(obj.Id, out var placed)
+                ? placed
+                : new Vector2(d * ColumnWidth, row * (RowHeight + RowGap) * 2);
             _graph.AddChild(node);
             _nodeToId[node.Name] = obj.Id;
             drawn++;
@@ -527,11 +642,17 @@ public partial class GraphCanvas : Control
 
     // Dropping a dragged link on empty canvas is the blueprint gesture for "make me something to
     // connect this to", so the menu that opens attaches whatever it creates to that port.
-    private void OnConnectionToEmpty(StringName fromNode, long fromPort, Vector2 _)
+    private void OnConnectionToEmpty(StringName fromNode, long fromPort, Vector2 releasePosition)
     {
         string from = fromNode.ToString();
         if (!_nodeToId.TryGetValue(from, out string id)) return;
         if (!_outFields.TryGetValue(from, out var fields) || fromPort >= fields.Count) return;
+
+        _pendingNode = from;
+        _pendingPort = (int)fromPort;
+        _preview.To = releasePosition + _graph.GlobalPosition - GlobalPosition;
+        _preview.Active = true;
+
         ShowCanvasMenu(id, fields[(int)fromPort].Field);
     }
 
