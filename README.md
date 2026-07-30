@@ -171,6 +171,21 @@ inside the game. **Check graph** looks for:
 It reports nothing at all on 132 vanilla behaviour files, which is the bar a check has to clear
 before it is worth reading. Passing it is not a promise the game will load the file.
 
+Run that yourself with `tools/symrm`, which pulls the corpus out of the game archive, unpacks it,
+and checks it:
+
+```
+dotnet run --project tools/symrm/symrm.csproj -- corpus "<Data>/Fallout4 - Animations.ba2" /tmp/beh
+dotnet run --project tools/symrm/symrm.csproj -- unpack /tmp/beh 4
+dotnet run --project tools/symrm/symrm.csproj -- check  /tmp/beh/xml
+dotnet run --project tools/symrm/symrm.csproj -- remove /tmp/beh/Meshes_Actors_Character_Behaviors_MTBehavior.hkx
+```
+
+`corpus` writes 531 files. `unpack 4` takes every fourth, which is the 132 the numbers here come
+from; pass 1 for all of them, and expect it to take a while, because it runs one JVM at a time
+deliberately. `remove` is the round trip that proves a symbol removal renumbered everything it had
+to: it exits non zero if any binding or transition comes back resolving to a different name.
+
 ## Known limits
 
 - Reading is proven against all 531 vanilla behaviour files; 5292 of 5323 states resolve to a
