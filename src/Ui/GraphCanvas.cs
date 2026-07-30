@@ -112,7 +112,15 @@ public partial class GraphCanvas : Control
         };
         _graph.AddThemeStyleboxOverride("panel", Ux.Fill(Ux.Base, Ux.Border, 1, 4));
         _graph.NodeSelected += OnNodeSelected;
-        _graph.NodeDeselected += _ => SetSelection("");
+        // Only clear when the node being deselected is the one we were tracking. Rebuilding the
+        // canvas frees every node, and Godot reports each of those as deselected, which wiped the
+        // selection straight after it had been set and left the Delete button with nothing to act
+        // on.
+        _graph.NodeDeselected += node =>
+        {
+            if (node is GraphNode g && _nodeToId.TryGetValue(g.Name, out string id) && id == SelectedId)
+                SetSelection("");
+        };
         _graph.ConnectionRequest += OnConnectionRequest;
         _graph.DisconnectionRequest += OnDisconnectionRequest;
         _graph.ConnectionToEmpty += OnConnectionToEmpty;
@@ -340,7 +348,7 @@ public partial class GraphCanvas : Control
         }
 
         var remove = Ux.SecondaryButton("Delete");
-        remove.Pressed += () => NodeDeleted?.Invoke(SelectedId);
+        remove.Pressed += DeleteSelection;
         bar.AddChild(remove);
 
         _parentLabel = Ux.FieldLabel("nothing selected, a new node will be left unattached");
@@ -348,6 +356,35 @@ public partial class GraphCanvas : Control
         bar.AddChild(_parentLabel);
 
         return bar;
+    }
+
+    // Ask the canvas what is selected rather than trusting a cached id. Selection signals arrive in
+    // an order that is not guaranteed, and the button has to work whatever order they came in.
+    private List<string> SelectedIds()
+    {
+        var ids = _graph.GetChildren().OfType<GraphNode>()
+            .Where(n => n.Selected && _nodeToId.ContainsKey(n.Name))
+            .Select(n => _nodeToId[n.Name])
+            .ToList();
+
+        if (ids.Count == 0 && SelectedId.Length > 0) ids.Add(SelectedId);
+        return ids;
+    }
+
+    // Deletes everything selected, which is what pressing delete in a graph editor does. Ids are
+    // stable until the file is repacked, so removing several one after another is safe even though
+    // the canvas rebuilds between them.
+    private void DeleteSelection()
+    {
+        var ids = SelectedIds();
+        if (ids.Count == 0)
+        {
+            _notice.Text = "Nothing selected. Click a node first, or right click one and choose Delete.";
+            _notice.AddThemeColorOverride("font_color", Ux.TextMuted);
+            return;
+        }
+
+        foreach (string id in ids) NodeDeleted?.Invoke(id);
     }
 
     private void RequestAdd(string kind)
@@ -630,6 +667,15 @@ public partial class GraphCanvas : Control
 
     private void OnGraphInput(InputEvent e)
     {
+        // The Delete key, because that is how a node gets removed in every graph editor. Guarded on
+        // the menu being closed so it does not fire while the filter box is being typed into.
+        if (e is InputEventKey { Pressed: true, Keycode: Key.Delete } && !_menu.Visible)
+        {
+            DeleteSelection();
+            _graph.AcceptEvent();
+            return;
+        }
+
         if (e is not InputEventMouseButton { Pressed: true } click) return;
         if (click.ButtonIndex == MouseButton.Right)
         {
