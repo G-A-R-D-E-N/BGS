@@ -143,8 +143,9 @@ tools.** The engine and the project are inside the exe, and the .NET runtime sit
 `data_BehaviourGraphStudio_windows_x86_64` folder next to it. Ship or copy the whole folder; the exe
 on its own will not start.
 
-Opening and reading a file needs nothing else at all. **Editing and saving need a Java runtime and
-`hkxpack-cli.jar`**, because writing goes back through hkxpack. Without them the tool opens the file
+Opening and reading a file needs nothing else at all. **Saving additionally needs a Java runtime**,
+because writing goes back through hkxpack. hkxpack itself ships in the release, in `tools/` beside
+the exe; Java does not, so install one if you intend to save. Without it the tool opens the file
 read only and says so in the status line rather than pretending.
 
 ## Building it yourself
@@ -165,13 +166,21 @@ Exporting needs a `template_release` build of that same engine. `export_presets.
 one; override it with `BGS_TEMPLATE`. `BehaviourGraphStudio.sln` exists only because Godot's C#
 exporter refuses to pack a script without a solution beside the project.
 
+Nobody has to do any of that to get a release. `.gitlab-ci.yml` builds both Windows and Linux on
+GitLab runners: it pulls the editor and the matching export templates from `opencw1/godotcustomsource`,
+exports both, drops hkxpack in beside each binary, and then unpacks the Linux one on a bare Debian
+image with no Godot and no .NET installed to prove it actually starts. Pin `ENGINE_VERSION` when a
+release has to be reproducible; leave it unset and it takes the newest engine build.
+
 ## Requirements
 
 - A Godot 4.7.1 double-precision mono build, in `engine/` or via `BGS_GODOT`.
 - .NET 8 SDK to build (`dotnet build BehaviourGraphStudio.csproj`).
-- **A Java runtime and `hkxpack-cli.jar`** for anything beyond structure. The tree and the graph come
-  from the native C# reader and work without Java, but field-level editing and saving go through
-  hkxpack. Without it the tool stays read-only and says so in the status line rather than pretending.
+- **A Java runtime** for anything beyond structure. The tree and the graph come from the native C#
+  reader and work without Java, but field-level editing and saving go through hkxpack. Without it the
+  tool stays read-only and says so in the status line rather than pretending. hkxpack itself is
+  bundled at `tools/hkxpack-cli.jar` (MIT, see `THIRD_PARTY_NOTICES.md`) and is found automatically
+  next to the executable, so only Java has to be supplied.
 
 ## Layout
 

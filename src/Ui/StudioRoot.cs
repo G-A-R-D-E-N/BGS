@@ -41,6 +41,7 @@ public partial class StudioRoot : Control
         AnchorRight = 1;
         AnchorBottom = 1;
         DisplayServer.WindowSetTitle("Behaviour Graph Studio");
+        HkxTextEdit.AppDirectory = System.IO.Path.GetDirectoryName(OS.GetExecutablePath()) ?? "";
 
         var root = new PanelContainer { AnchorRight = 1, AnchorBottom = 1 };
         root.AddThemeStyleboxOverride("panel", Ux.Fill(Ux.Base, Ux.Border, 0, 0));

@@ -9,3 +9,5 @@ engine/
 
 # Export output
 /dist/
+/smoke/
+/*.zip
