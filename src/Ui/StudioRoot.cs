@@ -894,6 +894,7 @@ public partial class StudioRoot : Control
             SetDirty(true);
             SetStatus(note + $"   (#{newId}, unsaved)", Ux.TextCode);
             RefreshAfterEdit(newId);
+            _canvas.PlaceNode(newId);
         }
         catch (Exception ex)
         {

@@ -70,6 +70,7 @@ public partial class GraphCanvas : Control
     private List<(string Label, Action Run)> _menuAll = new();
     private string _pendingNode = "";
     private int _pendingPort = -1;
+    private Vector2? _dropPosition;
 
     public string SelectedId { get; private set; } = "";
 
@@ -149,6 +150,23 @@ public partial class GraphCanvas : Control
         box.AddChild(_menuItems);
 
         AddChild(_menu);
+    }
+
+    // Canvas coordinates, which is what PositionOffset is in. A click arrives in the GraphEdit's own
+    // pixels, so it has to be un-scrolled and un-zoomed or a node created at the far end of a large
+    // graph lands nowhere near the cursor.
+    private Vector2 ToGraphSpace(Vector2 local) => (local + _graph.ScrollOffset) / _graph.Zoom;
+
+    // Called once the edit has been made and the canvas rebuilt, because only the caller knows what
+    // id the new object ended up with.
+    public void PlaceNode(string objectId)
+    {
+        if (_dropPosition is not { } where) return;
+        _dropPosition = null;
+
+        _positions[objectId] = where;
+        var node = _graph.GetNodeOrNull<GraphNode>(NodeName(objectId));
+        if (node != null) node.PositionOffset = where;
     }
 
     private void RememberPositions()
@@ -630,13 +648,22 @@ public partial class GraphCanvas : Control
         if (e is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Right }) return;
         SetSelection(objectId);
         ObjectSelected?.Invoke(objectId);
+
+        // Anything added from a node's own menu lands to its right rather than back in the layout.
+        var node = _graph.GetNodeOrNull<GraphNode>(NodeName(objectId));
+        if (node != null) _dropPosition = node.PositionOffset + new Vector2(ColumnWidth, 0);
+
         ShowNodeMenu(objectId);
     }
 
     private void OnGraphInput(InputEvent e)
     {
         if (e is not InputEventMouseButton { Pressed: true } click) return;
-        if (click.ButtonIndex == MouseButton.Right) ShowCanvasMenu("", "");
+        if (click.ButtonIndex == MouseButton.Right)
+        {
+            _dropPosition = ToGraphSpace(click.Position);
+            ShowCanvasMenu("", "");
+        }
         else HideMenu();
     }
 
@@ -650,6 +677,7 @@ public partial class GraphCanvas : Control
 
         _pendingNode = from;
         _pendingPort = (int)fromPort;
+        _dropPosition = ToGraphSpace(releasePosition);
         _preview.To = releasePosition + _graph.GlobalPosition - GlobalPosition;
         _preview.Active = true;
 
