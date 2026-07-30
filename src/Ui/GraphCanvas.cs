@@ -249,6 +249,12 @@ public partial class GraphCanvas : Control
         node.AddThemeStyleboxOverride("panel", Ux.Fill(Ux.Card, Ux.Border, 1, 4));
         node.AddThemeStyleboxOverride("titlebar", Ux.Fill(accent.Darkened(0.55f), accent, 1, 4));
 
+        // GraphNode swaps to panel_selected/titlebar_selected on selection; without these the
+        // default theme's translucent styles show through instead of the node body.
+        node.AddThemeStyleboxOverride("panel_selected", Ux.Fill(Ux.CardHover, accent, 2, 4));
+        node.AddThemeStyleboxOverride("panel_focus", Ux.Fill(Ux.CardHover, accent, 2, 4));
+        node.AddThemeStyleboxOverride("titlebar_selected", Ux.Fill(accent.Darkened(0.3f), accent, 2, 4));
+
         var header = new Label { Text = obj.Class };
         header.AddThemeColorOverride("font_color", accent);
         node.AddChild(header);
