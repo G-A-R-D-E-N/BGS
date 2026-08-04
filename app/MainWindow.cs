@@ -15,7 +15,7 @@ namespace BehaviourStudio.App;
 public class MainWindow : Window
 {
     private const int MaxTreeRows = 4000;
-    private const int MaxFrameRows = 300;
+    private const int FramesPerPage = 300;
 
     private readonly TextBox _pathField = Ux.Field("absolute path to a .hkx behaviour, character or project file");
     private readonly TextBox _filter = Ux.Field("filter objects by name, class or animation");
@@ -32,6 +32,10 @@ public class MainWindow : Window
         new(("Bone or track", -4), ("Frame", 70), ("Time", 80), ("Position", -4), ("Rotation", -5));
     private readonly TextBlock _animationSummary =
         new() { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _framePage = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private HkxAnimationData? _animationData;
+    private HkxSkeleton? _animationSkeleton;
+    private int _frameStart;
 
     private readonly TextBox _symbolName = Ux.Field("name", 170);
     private readonly TextBox _symbolValue = Ux.Field("value, for a variable", 130);
@@ -184,15 +188,54 @@ public class MainWindow : Window
         return split;
     }
 
+    // Read only, for the window checks. Which page is showing and how many rows it drew are the two
+    // things a paged view can lie about.
+    public HkGrid AnimationGrid => _animation;
+    public string FramePageLabel => _framePage.Text ?? "";
+    public int AnimationFrameCount => _animationData?.NumFrames ?? 0;
+    public int AnimationTrackCount => _animationData?.Tracks.Count ?? 0;
+
     private Control BuildAnimationTab()
     {
+        var earlier = Ux.Secondary("Earlier frames");
+        earlier.Click += (_, _) => PageFrames(-FramesPerPage);
+        var later = Ux.Secondary("Later frames");
+        later.Click += (_, _) => PageFrames(FramesPerPage);
+        var first = Ux.Secondary("First");
+        first.Click += (_, _) => PageFrames(int.MinValue);
+        var last = Ux.Secondary("Last");
+        last.Click += (_, _) => PageFrames(int.MaxValue);
+
         var panel = new DockPanel();
         var header = Ux.Pill(_animationSummary);
         header.Margin = new Thickness(0, 0, 0, 8);
         DockPanel.SetDock(header, Dock.Top);
         panel.Children.Add(header);
+
+        var bar = Bar(Ux.Pill(_framePage), first, earlier, later, last);
+        bar.Margin = new Thickness(0, 0, 0, 8);
+        DockPanel.SetDock(bar, Dock.Top);
+        panel.Children.Add(bar);
+
         panel.Children.Add(_animation);
         return panel;
+    }
+
+    // A page of frames rather than a cap. The old grid stopped at 300 rows per track and said how
+    // many it had dropped, which is honest but leaves the rest of a long animation unreachable.
+    private void PageFrames(int by)
+    {
+        if (_animationData == null) return;
+        int frames = _animationData.NumFrames;
+        int lastStart = Math.Max(0, ((frames - 1) / FramesPerPage) * FramesPerPage);
+
+        _frameStart = by switch
+        {
+            int.MinValue => 0,
+            int.MaxValue => lastStart,
+            _ => Math.Clamp(_frameStart + by, 0, lastStart),
+        };
+        ShowAnimationFrames();
     }
 
     // An animation is a different kind of file from a behaviour, so this runs on its own rather than
@@ -202,6 +245,9 @@ public class MainWindow : Window
     private bool BuildAnimation(string path)
     {
         _animation.Clear();
+        _animationData = null;
+        _animationSkeleton = null;
+        _frameStart = 0;
 
         HkxAnimationData anim;
         try
@@ -234,11 +280,29 @@ public class MainWindow : Window
             return anim.AnimationClass.Length > 0;
         }
 
-        var skeleton = SiblingSkeleton(path);
+        _animationData = anim;
+        _animationSkeleton = SiblingSkeleton(path);
+        _frameStart = 0;
+        ShowAnimationFrames();
+        return true;
+    }
+
+    private void ShowAnimationFrames()
+    {
+        _animation.Clear();
+        var anim = _animationData;
+        if (anim == null) { _framePage.Text = ""; return; }
+
+        var skeleton = _animationSkeleton;
         _animationSummary.Text =
             $"{anim.AnimationClass}   {anim.GetSummary()}" +
             (skeleton != null ? $"   bones named from a sibling skeleton of {skeleton.BoneNames.Count}" : "   no sibling skeleton, tracks are numbered");
         _animationSummary.Foreground = Ux.MetaBrush;
+
+        int last = Math.Min(_frameStart + FramesPerPage, anim.NumFrames);
+        _framePage.Text = anim.NumFrames <= FramesPerPage
+            ? $"all {anim.NumFrames} frames"
+            : $"frames {_frameStart} to {last - 1} of {anim.NumFrames}";
 
         foreach (var note in anim.Annotations)
             _animation.Add(null, "annotation", "", $"{note.Time:F3}s", note.Text, "").Colour(0, Ux.MutedBrush);
@@ -251,7 +315,7 @@ public class MainWindow : Window
             var head = _animation.Add(null, TrackName(anim, skeleton, t), frames.ToString(), "", "", "")
                                  .Colour(0, Ux.TitleBrush).Colour(1, Ux.DisabledBrush).Collapse();
 
-            for (int f = 0; f < Math.Min(frames, MaxFrameRows); f++)
+            for (int f = _frameStart; f < Math.Min(last, frames); f++)
             {
                 string pos = f < track.Translations.Count
                     ? $"{track.Translations[f].X:F3}, {track.Translations[f].Y:F3}, {track.Translations[f].Z:F3}" : "";
@@ -261,13 +325,7 @@ public class MainWindow : Window
                           .Colour(1, Ux.DisabledBrush).Colour(2, Ux.MutedBrush)
                           .Colour(3, Ux.CodeBrush).Colour(4, Ux.MetaBrush);
             }
-
-            if (frames > MaxFrameRows)
-                _animation.Add(head, "", "", "", $"{frames - MaxFrameRows} more frames not listed", "")
-                          .Colour(3, Ux.MutedBrush);
         }
-
-        return true;
     }
 
     // The bone names live in the skeleton, not the animation. An animation's annotation tracks are
@@ -440,6 +498,7 @@ public class MainWindow : Window
             _animationSummary.Text = "This is a behaviour file. It holds no animation.";
             _animationSummary.Foreground = Ux.MutedBrush;
             _animation.Clear();
+            _animationData = null;
         }
 
         _hkxPath = path;

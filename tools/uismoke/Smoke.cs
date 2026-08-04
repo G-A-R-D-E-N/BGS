@@ -78,10 +78,54 @@ public static class Smoke
 
             CheckTrue($"{name}: the animation panel says something", shown.Length > 0);
             Console.WriteLine($"        {shown}");
+
+            // A paged view can drop the tail without saying so, which is the failure the old 300 row
+            // cap made visible and paging could hide. Walk every page and prove the frames shown add
+            // up to the frames the file has, with the last page ending on the last frame.
+            if (window.AnimationFrameCount > 0)
+            {
+                var button = Find<Button>(window)
+                    .Where(b => !string.IsNullOrEmpty(b.Content?.ToString()))
+                    .GroupBy(b => b.Content!.ToString()!)
+                    .ToDictionary(g => g.Key, g => g.First());
+                int frames = window.AnimationFrameCount, tracks = window.AnimationTrackCount;
+
+                Click(button["First"]);
+                int firstRows = window.AnimationGrid.RowCount;
+                string firstLabel = window.FramePageLabel;
+
+                int seen = 0, pages = 0;
+                string label = "";
+                for (int guard = 0; guard < 100; guard++)
+                {
+                    pages++;
+                    seen += (window.AnimationGrid.RowCount - tracks) / Math.Max(tracks, 1);
+                    label = window.FramePageLabel;
+                    if (label.Contains($"of {frames}") && label.Contains($"to {frames - 1} ")) break;
+                    if (frames <= 300) break;
+                    Click(button["Later frames"]);
+                    if (window.FramePageLabel == label) break;
+                }
+
+                Console.WriteLine($"        {frames} frames, {tracks} tracks, {pages} page(s): " +
+                                  $"first \"{firstLabel}\" {firstRows} rows, last \"{label}\" {window.AnimationGrid.RowCount} rows");
+                Check($"{name}: frames shown across all pages", frames, seen);
+
+                Click(button["Last"]);
+                CheckTrue($"{name}: the last page ends on frame {frames - 1}",
+                          window.FramePageLabel.Contains($"to {frames - 1} ") || frames <= 300);
+            }
         }
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
+    }
+
+    private static void Click(Button button)
+    {
+        button.Command?.Execute(button.CommandParameter);
+        button.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
     }
 
     private static System.Collections.Generic.List<T> Find<T>(Visual root) where T : Visual
