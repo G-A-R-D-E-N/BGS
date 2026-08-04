@@ -38,6 +38,7 @@ public class MainWindow : Window
     private string _hkxPath = "";
     private string _xmlPath = "";
     private string _xmlText = "";
+    private ProjectChain? _projectChain;
     private string _selectedId = "";
     private bool _dirty;
 
@@ -229,6 +230,7 @@ public class MainWindow : Window
         _xmlText = "";
         _xmlPath = "";
         _selectedId = "";
+        _projectChain = null;
         SetDirty(false);
 
         string path = (_pathField.Text ?? "").Trim().Trim('"');
@@ -504,6 +506,7 @@ public class MainWindow : Window
     {
         _chain.Clear();
         var chain = ProjectChain.Resolve(_hkxPath, java, jar);
+        _projectChain = chain;
 
         foreach (var link in chain.Links)
             _chain.Add(null, link.Role, link.Declared, link.Exists ? "found" : "MISSING", link.Note)
@@ -805,7 +808,7 @@ public class MainWindow : Window
     {
         if (_xmlText.Length == 0) { SetStatus("Nothing loaded to check.", Ux.MutedBrush); return; }
 
-        var findings = GraphValidator.Check(_xmlText);
+        var findings = GraphValidator.Check(_xmlText, _projectChain);
         var errors = findings.Where(f => f.Level == GraphValidator.Level.Error).ToList();
         var warnings = findings.Where(f => f.Level == GraphValidator.Level.Warning).ToList();
 
@@ -835,6 +838,13 @@ public class MainWindow : Window
             File.WriteAllText(_xmlPath, _xmlText);
             string packed = HkxTextEdit.Repack(java, jar, _xmlPath);
 
+            var drift = VerifyRepack(java, jar, packed);
+            if (!drift.Clean)
+            {
+                SetStatus($"Not saved, and the original is untouched: the repack {drift}.", Ux.BadBrush);
+                return;
+            }
+
             string backup = _hkxPath + ".bak";
             if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
             File.Copy(packed, _hkxPath, true);
@@ -847,6 +857,17 @@ public class MainWindow : Window
         {
             SetStatus("Save failed: " + ex.Message.Split('\n')[0], Ux.BadBrush);
         }
+    }
+
+    // Read the file hkxpack just wrote back out and count what is in it. Done before the original
+    // is overwritten, so a repack that silently drops objects costs nothing.
+    private RepackCheck.Drift VerifyRepack(string java, string jar, string packed)
+    {
+        string work = Path.Combine(Path.GetTempPath(), "bgs_verify", Path.GetFileNameWithoutExtension(_hkxPath));
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+
+        string xml = HkxTextEdit.Unpack(java, jar, packed, work);
+        return RepackCheck.Compare(RepackCheck.Take(_xmlText), RepackCheck.Take(File.ReadAllText(xml)));
     }
 
     private void SetDirty(bool dirty)

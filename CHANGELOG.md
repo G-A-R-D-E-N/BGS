@@ -3,6 +3,29 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04
+
+Two checks that need something outside the single file, which is why the validator never had them.
+
+**A clip's animation is now checked against the folder on disk.** Getting there meant fixing the
+chain first: it read the animation list from `animationNames`, which is a Skyrim field. Fallout 4
+puts them in `animationBundleNameData`, so the Chain tab's animation list had been empty for every
+vanilla file it had ever been pointed at, and nothing downstream could have checked anything.
+
+Swept over the whole of `Fallout4 - Animations.ba2`: 215 project roots, 328 behaviours, 111 clips
+either missing their animation on disk or playing one the character does not declare. Those are real
+rather than false alarms, so both are warnings and not errors. Shared behaviours reference per
+creature animations that not every creature has, and some clips point at content that never shipped
+in any form. Dogmeat's behaviour plays `Animations\WalkForward_B.hkt` and there is no such file.
+
+**Save verifies the repack before overwriting anything.** hkxpack renumbers every object, so a
+repack cannot be compared by id, but the object count and the multiset of class names have to come
+back identical. They are compared now, on the file hkxpack actually produced, before the original is
+touched. A short file is refused and named rather than written.
+
+`symrm anims` and `symrm repack` run both from a clone. `anims` takes a directory to sweep every
+project root beneath it, which is where the numbers above come from.
+
 ## cac7b09, 2026-07-30
 
 Door graph editing, symbol removal and a validator. One squashed commit covering the session.
