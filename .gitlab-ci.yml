@@ -51,7 +51,13 @@ window:
     # hkxpack rides beside the binary rather than inside it, because the JVM has to open it as a
     # file. MIT, and its licence travels with it because the licence says so.
     - mkdir -p out/tools
-    - cp tools/hkxpack-cli.jar tools/hkxpack-LICENSE.txt THIRD_PARTY_NOTICES.md out/tools/
+    # apache-2.0.txt covers Guava, which hkxpack carries shaded inside its own jar and ships no
+    # licence for. Apache-2.0 requires the text to travel with it.
+    - cp tools/hkxpack-cli.jar tools/hkxpack-LICENSE.txt tools/apache-2.0.txt THIRD_PARTY_NOTICES.md out/tools/
+    # The tool's own licence sits at the top of the zip rather than in tools/, because that folder is
+    # where other people's software lives. A download with no licence in it is a download nobody may
+    # legally pass on.
+    - cp LICENSE out/
     - ls -la out
     - test -f "out/$BINARY"
     - mv out "BehaviourGraphStudio-$RID"
@@ -86,8 +92,11 @@ standalone:
     - cd BehaviourGraphStudio-linux-x64
     - chmod +x BehaviourGraphStudio
     - ./BehaviourGraphStudio --version
-    # The bundled jar has to be the real thing, not a zero byte file that only looks bundled.
+    # The bundled jar has to be the real thing, not a zero byte file that only looks bundled, and
+    # all three licences have to have survived the trip into the zip.
+    - test -s LICENSE
     - test -s tools/hkxpack-LICENSE.txt
+    - test -s tools/apache-2.0.txt
     - java -jar tools/hkxpack-cli.jar | head -3
 
 upload:

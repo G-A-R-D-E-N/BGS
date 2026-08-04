@@ -337,3 +337,8 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   the bytes yourself. If scale is ever wrong anywhere, this is where it will be wrong.
   `symrm scale <Data folder>` sweeps a folder and reports every animation whose scale is not the
   identity, which is how the numbers above were produced and how you would find a counterexample.
+
+## Licence
+
+MIT, in `LICENSE`. Software written by others and shipped with it is listed separately in
+`THIRD_PARTY_NOTICES.md`, hkxpack among them.
