@@ -13,10 +13,15 @@ count the objects, run the validator. All of that says the file is well formed. 
 engine will accept it, and the README has carried "none of it has been loaded by Fallout 4" as a
 standing caveat since the tool was split out.
 
-That caveat is now narrower. One edit, one door, one file, confirmed in game. It does not generalise
-to every edit the tool can make, and the `.bak` is still worth keeping, but the gap between "hkxpack
-accepts it" and "the game accepts it" has been crossed at least once, which is the first evidence that
-the write path produces something the engine can actually load.
+The file came from `symrm door`, the additive door edit: two new events and two new states so a door
+can be placed already open or already closed without playing the transition, touching no existing
+transition. So the thing the engine accepted is specifically that shape, new states and new events
+grafted onto a vanilla graph and repacked by hkxpack.
+
+That caveat is now narrower. One edit, one door, one kind of change, confirmed in game. It says
+nothing about a removal or a retarget, and the `.bak` is still worth keeping, but the gap between
+"hkxpack accepts it" and "the game accepts it" has been crossed at least once, which is the first
+evidence that the write path produces something the engine can actually load.
 
 ## 2026-08-04, the Pip-Boy's unused variables
 

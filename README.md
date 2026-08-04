@@ -313,12 +313,17 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   real but it is not about this tool, it counted how many states OpenCommonwealth's Godot converter
   could map to an animation node. See #18.
 - **One edit made with this tool has been loaded by Fallout 4 and worked**: the Red Rocket gas station
-  door, whose animation played correctly in game. That is the first time anything here has been proven
-  against the engine rather than against hkxpack, and it moves the tool from "the file reads back
-  correctly" to "the game accepted at least one of these".
-  It is one door in one file, so it is a foothold rather than a guarantee. Everything else has been
-  round tripped through hkxpack and read back from the binary and no further, and hkxpack accepting a
-  file is still not the engine accepting it. Keep the `.bak`.
+  door, whose animation played correctly in game. The file came from `symrm door`, the additive door
+  edit described under Verifying, which adds two events and two states so a door can be placed already
+  open or already closed without playing the transition, and touches no existing transition. So what
+  the engine has accepted is specifically that: new states and new events grafted onto a vanilla graph,
+  repacked by hkxpack. That is the first time anything here has been proven against the engine rather
+  than against hkxpack, and it moves the tool from "the file reads back correctly" to "the game
+  accepted at least one of these".
+  It is one door and one kind of edit, so it is a foothold rather than a guarantee, and nothing says
+  the same holds for a removal or a retarget. Everything else has been round tripped through hkxpack
+  and read back from the binary and no further, and hkxpack accepting a file is still not the engine
+  accepting it. Keep the `.bak`.
 - Deleting a node leaves whatever pointed at it holding null. Delete refuses while references exist,
   but detaching by hand first and then deleting can still leave, say, a state with no generator.
   Check graph finds that.
