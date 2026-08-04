@@ -28,6 +28,7 @@ public static class Program
             case "corpus": return Corpus(argv);
             case "unpack": return Unpack(argv);
             case "check": return Check(argv);
+            case "events": return Events(argv);
             case "anims": return Anims(argv);
             case "repack": return Repack(argv);
             case "frames": return Frames(argv);
@@ -56,6 +57,13 @@ public static class Program
           dotnet run --project tools/symrm/symrm.csproj -- check <xmlDir>
               GraphValidator over every unpacked file. It should report zero errors: anything it
               says about vanilla data is a false alarm in the checker, not a fault in the game.
+
+          dotnet run --project tools/symrm/symrm.csproj -- events <xmlDir | file.xml>
+              What each declared event is used for: raised here, listened for here, or written
+              somewhere this does not recognise. Reports no verdict, because an event with
+              listeners and no sender in the file is the ordinary case. Over a directory it
+              prints the totals and every class member pair it saw, which is how the role table
+              was built.
 
           dotnet run --project tools/symrm/symrm.csproj -- anims <behaviour.hkx | Data folder>
               The full validator, including the checks that need the folder around the file: every
@@ -379,6 +387,68 @@ public static class Program
         if (anim.NumFrames <= 1) return 0;
         int frame = (int)Math.Round(Math.Clamp(fraction, 0f, 1f) * (anim.NumFrames - 1));
         return frame;
+    }
+
+    // Measures the summary the way the other checks were measured, because a table built from a
+    // corpus is only honest while the corpus still fits in it. Anything landing in "not recognised"
+    // is a class member pair the table has never seen.
+    private static int Events(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        var files = Directory.Exists(argv[1])
+            ? Directory.GetFiles(argv[1], "*.xml").OrderBy(f => f).ToList()
+            : new List<string> { argv[1] };
+        bool one = files.Count == 1;
+
+        int declared = 0, withSites = 0, listenedOnly = 0, unnamedSites = 0;
+        var perSite = new Dictionary<string, int>(StringComparer.Ordinal);
+        var roles = new Dictionary<EventUsage.Role, int>();
+
+        foreach (string file in files)
+        {
+            string xml = File.ReadAllText(file);
+            var names = SymbolEditor.EventNames(BehaviourGraphModel.Parse(xml));
+            var usage = EventUsage.ByEvent(xml);
+            declared += names.Count;
+
+            if (one) Console.WriteLine($"{Path.GetFileName(file)}: {names.Count} events declared");
+
+            for (int i = 0; i < names.Count; i++)
+            {
+                if (!usage.TryGetValue(i, out var lines)) continue;
+                withSites++;
+                if (lines.All(l => l.Role != EventUsage.Role.Raised)) listenedOnly++;
+
+                foreach (var line in lines)
+                {
+                    perSite[line.Site] = perSite.GetValueOrDefault(line.Site) + line.Count;
+                    roles[line.Role] = roles.GetValueOrDefault(line.Role) + line.Count;
+                    if (line.Role == EventUsage.Role.Referenced) unnamedSites += line.Count;
+                }
+
+                if (!one) continue;
+                Console.WriteLine($"  #{i} {names[i]}: {EventUsage.Summarise(lines)}");
+                foreach (var line in lines)
+                    Console.WriteLine($"      {EventUsage.Describe(line.Role),-18} {line.Site}" +
+                                      (line.Count > 1 ? $" x{line.Count}" : "") +
+                                      (line.Note.Length > 0 ? $"  ({line.Note})" : ""));
+            }
+        }
+
+        Console.WriteLine($"\n{files.Count} file(s), {declared} events declared, {withSites} used somewhere in their own file");
+        Console.WriteLine($"{listenedOnly} of those are listened for with nothing in the file sending them, " +
+                          "which is the ordinary case and not reported as a finding");
+        foreach (var kv in roles.OrderByDescending(k => k.Value))
+            Console.WriteLine($"  {kv.Value,7}  {EventUsage.Describe(kv.Key)}");
+
+        Console.WriteLine($"\n{perSite.Count} class member pairs seen:");
+        foreach (var kv in perSite.OrderByDescending(k => k.Value))
+            Console.WriteLine($"  {kv.Value,7}  {EventUsage.Describe(EventUsage.RoleOf(kv.Key)),-18} {kv.Key}");
+
+        if (unnamedSites > 0)
+            Console.WriteLine($"\n{unnamedSites} references have no role in the table; they show as referenced, not guessed at");
+        return 0;
     }
 
     private static string Short(string file, string root) =>

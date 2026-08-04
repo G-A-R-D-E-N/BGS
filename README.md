@@ -30,7 +30,10 @@ Fallout 4 file. This reads the Fallout 4 format directly.
   created unattached, and unattached nodes are drawn in a column of their own rather than vanishing.
   Delete refuses while anything still points at the node, and names what.
 - **Symbols tab**: every variable and event with its index, type, initial value, and what references
-  it. Add, rename, retype the value, or remove. Removing renumbers every reference above it.
+  it. Add, rename, retype the value, or remove. Removing renumbers every reference above it. Expand an
+  event to see what the file does with it: raised here, listened for here, or written somewhere with
+  no established direction, each naming the class and member. No verdict comes with it, for the reason
+  under Validating.
 - **Chain tab**: project to character to behaviour, skeleton and animations, what is missing, and the
   skeleton's bone list.
 - **Check graph**: looks for the mistakes hkxpack cannot, listed under Validating below. With a real
@@ -259,6 +262,20 @@ null, `startStateId` is not variable bound, and `returnToPreviousStateEventId`,
 `randomTransitionEventId`, `transitionToNextHigherStateEventId` and `transitionToNextLowerStateEventId`
 are all -1, so Havok's own implicit transitions are not doing it either. The game simply sets those
 states.
+
+Events go one step further and are not a check at all. A transition listening for an event nothing
+sends looks dead, and almost never is: Papyrus sends events by name through
+`ObjectReference.PlayAnimation`, which 177 vanilla base scripts call, and the engine sends more
+itself. Across the 314 behaviour files, 4799 events are used inside their own file and 2912 of those
+are listened for with nothing in the file sending them. A check reporting that would be wrong three
+times in five. So the Symbols tab reports it as information and says nothing about whether it is
+right.
+
+The roles it does report are not guessed either. Those 314 files write an event index in 43 distinct
+class and member pairs, and all 43 are in the table, so the only thing that lands in "referenced" on
+vanilla data is `BSLimbCycleModifier`, whose three event members do not say which way they run.
+Anything the table has never seen reports the same way rather than being assigned a direction.
+`symrm events <xmlDir>` reprints the whole measurement.
 
 Two things follow. A machine with no transitions at all is skipped, because it is not transition
 driven and saying nothing transitions to its states is true and useless; that alone takes the count

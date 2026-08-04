@@ -195,6 +195,7 @@ public class MainWindow : Window
     public string FramePageLabel => _framePage.Text ?? "";
     public int AnimationFrameCount => _animationData?.NumFrames ?? 0;
     public int AnimationTrackCount => _animationData?.Tracks.Count ?? 0;
+    public HkGrid SymbolGrid => _symbols;
 
     private Control BuildAnimationTab()
     {
@@ -746,14 +747,31 @@ public class MainWindow : Window
                                Users(events: false, i)).Tag($"v:{i}"));
         }
 
+        var usage = _xmlText.Length == 0
+            ? new Dictionary<int, List<EventUsage.Line>>()
+            : EventUsage.ByEvent(_xmlText);
+
         for (int i = 0; i < events.Count; i++)
-            Paint(_symbols.Add(null, "event", i.ToString(), events[i], "", Users(events: true, i)).Tag($"e:{i}"));
+        {
+            usage.TryGetValue(i, out var lines);
+            var row = Paint(_symbols.Add(null, "event", i.ToString(), events[i], "",
+                                         lines is { Count: > 0 } ? EventUsage.Summarise(lines) : Users(events: true, i)))
+                .Tag($"e:{i}");
+            if (lines == null) continue;
+
+            row.Collapse();
+            foreach (var line in lines)
+                _symbols.Add(row, EventUsage.Describe(line.Role), line.Count > 1 ? $"x{line.Count}" : "",
+                             line.Site, "", line.Note)
+                        .Colour(0, line.Role == EventUsage.Role.Raised ? Ux.MetaBrush : Ux.MutedBrush)
+                        .Colour(1, Ux.DisabledBrush).Colour(2, Ux.CodeBrush).Colour(4, Ux.MutedBrush);
+        }
 
         if (names.Count == 0 && events.Count == 0)
             _symbols.Add(null, "", "", "this graph declares no variables or events").Colour(2, Ux.DisabledBrush);
     }
 
-    private static void Paint(HkRow row) => row
+    private static HkRow Paint(HkRow row) => row
         .Colour(0, Ux.MutedBrush).Colour(1, Ux.DisabledBrush).Colour(2, Ux.TitleBrush).Colour(3, Ux.CodeBrush)
         .Colour(4, row.Text(4).StartsWith("nothing") ? Ux.DisabledBrush : Ux.MetaBrush);
 

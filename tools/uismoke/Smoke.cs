@@ -79,6 +79,35 @@ public static class Smoke
             CheckTrue($"{name}: the animation panel says something", shown.Length > 0);
             Console.WriteLine($"        {shown}");
 
+            // The event summary is rows under an event, so it only exists once the Symbols tab has
+            // been built. A behaviour file that declares events has to say what each one is for.
+            if (shown.StartsWith("This is a behaviour file", StringComparison.Ordinal))
+            {
+                tabs[0].SelectedIndex = 2;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                var roles = new[] { "raised here", "listened for here", "referenced here" };
+                var said = Find<TextBlock>(window).Select(t => t.Text ?? "")
+                    .Where(t => roles.Any(r => t.Contains(r, StringComparison.Ordinal))).ToList();
+
+                // Symbols are only built once the file has been unpacked, which needs a Java runtime
+                // and the bundled jar. Without them the window is read only by design, so there is
+                // nothing here to check and saying so beats failing.
+                if (window.SymbolGrid.RowCount == 0)
+                {
+                    Console.WriteLine("        symbols: none built, the window opened read only");
+                }
+                else
+                {
+                    CheckTrue($"{name}: events say who sends and who listens", said.Count > 0);
+                    CheckTrue($"{name}: and no row calls an event dead or unused",
+                              !said.Any(t => t.Contains("dead", StringComparison.OrdinalIgnoreCase)
+                                          || t.Contains("unused", StringComparison.OrdinalIgnoreCase)));
+                    Console.WriteLine($"        symbols: {window.SymbolGrid.RowCount} rows, " +
+                                      $"{said.Count} of them naming a role, e.g. \"{said.FirstOrDefault()}\"");
+                }
+            }
+
             // A paged view can drop the tail without saying so, which is the failure the old 300 row
             // cap made visible and paging could hide. Walk every page and prove the frames shown add
             // up to the frames the file has, with the last page ending on the last frame.
