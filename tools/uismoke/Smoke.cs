@@ -143,6 +143,30 @@ public static class Smoke
                 Click(button["Last"]);
                 CheckTrue($"{name}: the last page ends on frame {frames - 1}",
                           window.FramePageLabel.Contains($"to {frames - 1} ") || frames <= 300);
+
+                // The lookup the ticket asks for: a variable drives userControlledTimeFraction, and
+                // this says which pose that is. 0 and 1 have to land on the ends, and the view has to
+                // move to the frame rather than only printing its number.
+                window.LookUpFraction("0");
+                Check($"{name}: fraction 0 is the first frame", 0, window.AimedFrame);
+                window.LookUpFraction("1");
+                Check($"{name}: fraction 1 is the last frame", frames - 1, window.AimedFrame);
+                CheckTrue($"{name}: and the page moved to it",
+                          window.FramePageLabel.Contains($"to {frames - 1} ") || frames <= 300);
+                Console.WriteLine($"        {window.FractionAnswer}");
+
+                window.LookUpFraction("banana");
+                Check($"{name}: nonsense is refused rather than aimed at", -1, window.AimedFrame);
+                CheckTrue($"{name}: and it says so", window.FractionAnswer.Contains("not a number"));
+
+                // Filtering to one bone is the difference between a browser and a wall of 95 tracks.
+                string bone = window.AnimationGrid.RowCount > 0 ? "no-such-bone-xyzzy" : "";
+                window.FilterBones(bone);
+                CheckTrue($"{name}: a filter matching nothing says so rather than showing everything",
+                          window.AnimationGrid.RowCount <= 2);
+                window.FilterBones("");
+                CheckTrue($"{name}: clearing the filter brings the tracks back",
+                          window.AnimationGrid.RowCount > 2);
             }
         }
 
