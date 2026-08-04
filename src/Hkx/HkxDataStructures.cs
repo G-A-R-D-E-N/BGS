@@ -65,6 +65,16 @@ public class HkxAnimationData
     public string OriginalSkeletonName { get; set; } = "";
     public int BlendHint { get; set; }
 
+    /// The hka*Animation class found in the file, or empty if it holds no animation object at all.
+    /// Only hkaSplineCompressedAnimation is decoded; anything else parses to no tracks, and callers
+    /// need to be able to tell that apart from an animation that is genuinely empty.
+    public string AnimationClass { get; set; } = "";
+
+    public const string SupportedAnimationClass = "hkaSplineCompressedAnimation";
+
+    public bool HasUnsupportedAnimation =>
+        AnimationClass.Length > 0 && AnimationClass != SupportedAnimationClass;
+
     public HkxSkeleton? Skeleton { get; set; }
 
     public string GetSummary()

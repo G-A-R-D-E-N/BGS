@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Text;
 
@@ -107,10 +108,21 @@ public class HkxBinaryReader
         catch { return false; }
     }
 
+    // Refuses rather than returning an empty animation. ReadSkeleton deliberately does not go
+    // through this, because a file can hold a skeleton this reader understands next to an animation
+    // class it does not.
     public HkxAnimationData ReadAnimation(string filepath)
     {
         byte[] data = File.ReadAllBytes(filepath);
-        return ParseHkx(data);
+        var parsed = ParseHkx(data);
+
+        if (parsed.HasUnsupportedAnimation)
+            throw new NotSupportedException(
+                $"unsupported animation class: {parsed.AnimationClass}. " +
+                $"Only {HkxAnimationData.SupportedAnimationClass} is decoded, so no frame data was read from " +
+                Path.GetFileName(filepath));
+
+        return parsed;
     }
 
     public HkxSkeleton ReadSkeleton(string filepath)
@@ -225,6 +237,13 @@ public class HkxBinaryReader
             result.Skeleton = bestSkel;
             result.BoneNames = new List<string>(bestSkel.BoneNames);
         }
+
+        // Havok ships several animation classes and Bethesda uses two of them. Record which one is
+        // here before decoding, so a class this reader cannot decode is distinguishable from an
+        // animation that really is empty. 857 of the 13990 vanilla animations are
+        // hkaLosslessCompressedAnimation and used to come back as silently empty.
+        result.AnimationClass = objectClasses.Keys.FirstOrDefault(
+            c => c.StartsWith("hka", StringComparison.Ordinal) && c.EndsWith("Animation", StringComparison.Ordinal)) ?? "";
 
         // ── Parse hkaSplineCompressedAnimation if present ──
         if (objectClasses.TryGetValue("hkaSplineCompressedAnimation", out int animRel))
