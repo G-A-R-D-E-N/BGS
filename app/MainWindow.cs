@@ -25,7 +25,8 @@ public class MainWindow : Window
     private readonly Button _saveButton;
 
     private readonly HkGrid _tree = new(("Node", -4), ("Havok class", -3), ("Animation", -4), ("Offset", 90));
-    private readonly HkGrid _symbols = new(("Kind", 60), ("Index", 55), ("Name", -4), ("Initial value", -2), ("Used by", -5));
+    private readonly HkGrid _symbols =
+        new(("Kind", 60), ("Index", 55), ("Name", -4), ("Initial value", -2), ("Used by, in this file", -5));
     private readonly HkGrid _chain = new(("Role", 110), ("Declared in the file", -4), ("On disk", 80), ("Notes", -3));
 
     private readonly TextBox _symbolName = Ux.Field("name", 170);
@@ -548,11 +549,19 @@ public class MainWindow : Window
         .Colour(0, Ux.MutedBrush).Colour(1, Ux.DisabledBrush).Colour(2, Ux.TitleBrush).Colour(3, Ux.CodeBrush)
         .Colour(4, row.Text(4).StartsWith("nothing") ? Ux.DisabledBrush : Ux.MetaBrush);
 
+    // This column is what the file references, not everything that uses the symbol. Game code
+    // addresses both variables and events by name rather than index, so an empty column means no
+    // consumer was found in this file, not that the symbol is dead. The Pip-Boy's iTabSync and
+    // iCatSync are the worked example: nothing in the graph reads them, the game writes them and
+    // reads them back, and the tab switching itself runs on events.
     private string Users(bool events, int index)
     {
         if (_xmlText.Length == 0) return "";
         var users = SymbolIndexFixup.ReferencesTo(_xmlText, events, index);
-        if (users.Count == 0) return "nothing references this, so it is safe to remove";
+        if (users.Count == 0)
+            return events
+                ? "nothing in this file listens for it; game code and scripts can still send it by name"
+                : "nothing in this file reads it; game code can still set and read it by name";
 
         return string.Join(", ", users.GroupBy(u => u).OrderByDescending(g => g.Count())
             .Select(g => g.Count() > 1 ? $"{g.Key} x{g.Count()}" : g.Key).Take(4));
@@ -644,7 +653,12 @@ public class MainWindow : Window
             string name = (_symbolName.Text ?? "").Trim();
             if (name.Length == 0) throw new ArgumentException("type the new name first");
             xml = SymbolEditor.Rename(xml, variable, index, name);
-            SetStatus($"renamed {(variable ? "variable" : "event")} {index} to '{name}'   (unsaved)", Ux.CodeBrush);
+            // The name is the contract with everything outside the file: the engine's setters take
+            // a name and resolve it against variableNames, and Papyrus sends events by name. A
+            // rename breaks those callers silently, with no error anywhere.
+            SetStatus($"renamed {(variable ? "variable" : "event")} {index} to '{name}'. " +
+                      "Game code and scripts address it by name, so anything outside this file that " +
+                      "used the old name now silently does nothing.   (unsaved)", Ux.CodeBrush);
             return xml;
         });
     }
