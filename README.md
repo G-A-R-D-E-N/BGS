@@ -306,12 +306,16 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
 
 ## Known limits
 
-- Reading is measured, not assumed. Over the 314 vanilla behaviour files to hand, every one of 4881
-  states resolves to a generator that exists in its own file, across 15 generator classes, and every
-  transition resolves its event name. Reproduce with `symrm unpack` and a walk over every
-  `hkbStateMachineStateInfo`. An older figure of "5292 of 5323" circulated here and elsewhere: it is
-  real but it is not about this tool, it counted how many states OpenCommonwealth's Godot converter
-  could map to an animation node. See #18.
+- Reading is measured, not assumed, over the whole game rather than a subset. All 531 behaviour files
+  in `Fallout4 - Animations.ba2`, all 5329 states: every one resolves to a generator that exists in
+  its own file, across 15 generator classes, and every transition resolves its event name. Nothing is
+  unresolved. Re-run it with `symrm corpus`, `symrm unpack <dir> 1` and `symrm states`, which walks
+  with the tool's own model rather than a script, so the number is about this reader.
+  An older figure of "5292 of 5323 states resolve to a generator we understand" circulated here and
+  elsewhere. It is real, it is not about this tool, and the shortfall is not a reading failure: it
+  counted how many states OpenCommonwealth's Godot converter could map to an animation node, and the
+  34 it could not are all `BSBehaviorGraphSwapGenerator` with a null `pDefaultGenerator`, a count that
+  reproduces here exactly. This reader parses all 34 of them. See #18.
 - **One edit made with this tool has been loaded by Fallout 4 and worked**: the Red Rocket gas station
   garage door, which sat permanently half open exactly as the edit asked, with no interaction needed.
   The edit was three scalar values on one existing object, the `Closed` state's sequence generator:

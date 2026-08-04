@@ -28,6 +28,7 @@ public static class Program
             case "corpus": return Corpus(argv);
             case "unpack": return Unpack(argv);
             case "check": return Check(argv);
+            case "states": return States(argv);
             case "events": return Events(argv);
             case "anims": return Anims(argv);
             case "repack": return Repack(argv);
@@ -58,6 +59,12 @@ public static class Program
           dotnet run --project tools/symrm/symrm.csproj -- check <xmlDir>
               GraphValidator over every unpacked file. It should report zero errors: anything it
               says about vanilla data is a false alarm in the checker, not a fault in the game.
+
+          dotnet run --project tools/symrm/symrm.csproj -- states <xmlDir>
+              Every state in the corpus and what its generator resolves to, by class. This is the
+              measurement behind the reading claim in the README, so the number there can be
+              rechecked rather than taken on trust. Unpack with everyNth 1 first or the count is
+              of whatever subset was unpacked.
 
           dotnet run --project tools/symrm/symrm.csproj -- events <xmlDir | file.xml>
               What each declared event is used for: raised here, listened for here, or written
@@ -216,6 +223,43 @@ public static class Program
         int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
         Console.WriteLine($"\n{errors} errors, {findings.Count - errors} warnings");
         return errors == 0 ? 0 : 1;
+    }
+
+    // The reading claim in the README, re-runnable. It walks with the tool's own model rather than
+    // a script, so what it reports is what the tool sees, not what a separate parser sees.
+    private static int States(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        var files = Directory.EnumerateFiles(Path.GetFullPath(argv[1]), "*.xml", SearchOption.AllDirectories)
+                             .OrderBy(f => f).ToList();
+
+        int states = 0, noGenerator = 0, dangling = 0;
+        var classes = new Dictionary<string, int>();
+
+        foreach (string file in files)
+        {
+            var model = BehaviourGraphModel.Parse(File.ReadAllText(file));
+            foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+                foreach (var state in StateEditor.States(model, machine.Id))
+                {
+                    states++;
+                    if (GraphValidator.HasNoGenerator(state)) { noGenerator++; continue; }
+
+                    var target = model.Get(state.GeneratorRef.TrimStart('#'));
+                    if (target == null) { dangling++; continue; }
+                    classes[target.Class] = classes.GetValueOrDefault(target.Class) + 1;
+                }
+        }
+
+        Console.WriteLine($"{states} states across {files.Count} files");
+        Console.WriteLine($"  {noGenerator} with no generator");
+        Console.WriteLine($"  {dangling} pointing at an object not in the file");
+        Console.WriteLine($"  {classes.Count} generator classes");
+        foreach (var kv in classes.OrderByDescending(k => k.Value))
+            Console.WriteLine($"  {kv.Value,6}  {kv.Key}");
+
+        return noGenerator + dangling == 0 ? 0 : 1;
     }
 
     private static int Repack(string[] argv)

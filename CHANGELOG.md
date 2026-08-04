@@ -3,6 +3,30 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, the state resolution figure, measured over the whole game
+
+**All 531 behaviour files, all 5329 states, nothing unresolved.** The README had been quoting a
+subset, 314 files and 4881 states, because that was what happened to be extracted at the time, and
+before that it quoted "5292 of 5323" from a document in another repository that nobody could check
+from here. Both are replaced by a number this repo can reproduce.
+
+    5329 states across 531 files
+      0 with no generator
+      0 pointing at an object not in the file
+      15 generator classes
+
+The 31 that supposedly did not resolve were never a reading failure. That figure came from
+OpenCommonwealth's whole-library conversion run, where "understand" meant "map to a Godot animation
+node", and its own numbers name the cause: 34 unmapped generators, all `BSBehaviorGraphSwapGenerator`
+with a null `pDefaultGenerator`. Counting those here gives 34 out of 34, exactly, which is what
+settles it. This reader parses every one; the Godot converter had nothing to point them at. The 31
+was that 34 arrived at by subtraction against a different denominator.
+
+`symrm states` is the new command, so the claim in the README is re-runnable rather than asserted.
+It walks with `BehaviourGraphModel` and `StateEditor`, the same code the window uses, which is the
+point: a separate script agreeing with itself proves nothing about the tool. An independent walk over
+the raw XML was run alongside it and agrees on all four numbers.
+
 ## 2026-08-04, a state with no generator crashes the game
 
 **Fallout 4 crashes while loading a graph that contains one**, so Save refuses to write the file
