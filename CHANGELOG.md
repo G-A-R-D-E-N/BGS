@@ -5,23 +5,28 @@ work rather than a list of every edit.
 
 ## 2026-08-04, first edit to run in the game
 
-**The Red Rocket gas station door was edited with this tool, loaded by Fallout 4, and the animation
-played correctly.**
+**The Red Rocket gas station garage door was edited with this tool, loaded by Fallout 4, and did what
+the edit asked.** It sat permanently half open, with no interaction needed, which is the whole point
+of that particular test: a door cannot end up half open by accident, so the signal cannot be confused
+with a broken mod.
 
-Everything before today was proven one step short of that: repack with hkxpack, read the binary back,
-count the objects, run the validator. All of that says the file is well formed. None of it says the
-engine will accept it, and the README has carried "none of it has been loaded by Fallout 4" as a
-standing caveat since the tool was split out.
+The edit was three scalar values on one existing object, the `Closed` state's sequence generator:
 
-The file came from `symrm door`, the additive door edit: two new events and two new states so a door
-can be placed already open or already closed without playing the transition, touching no existing
-transition. So the thing the engine accepted is specifically that shape, new states and new events
-grafted onto a vanilla graph and repacked by hkxpack.
+    pSequence           Closed  ->  Opening
+    eUseTimePercentage  NOT_USING_TIME_PERCENTAGE  ->  USING_TIME_PERCENTAGE
+    fTimePercent        0.0  ->  0.5
 
-That caveat is now narrower. One edit, one door, one kind of change, confirmed in game. It says
-nothing about a removal or a retarget, and the `.bak` is still worth keeping, but the gap between
-"hkxpack accepts it" and "the game accepts it" has been crossed at least once, which is the first
-evidence that the write path produces something the engine can actually load.
+The file keeps vanilla's 30 objects, 7 states, 11 events and byte size. So what the engine accepted is
+a field value edit on an existing object, written here and repacked by hkxpack.
+
+Everything before this was proven one step short of that: repack, read the binary back, count the
+objects, run the validator. All of that says the file is well formed. None of it says the engine will
+load it, and the README carried "none of it has been loaded by Fallout 4" as a standing caveat since
+the tool was split out.
+
+That caveat is now narrower, and only in one direction. Structural editing is still untested against
+the game: adding a state, removing one, retargeting a transition and renumbering a symbol have never
+been in front of it, and neither has `symrm door`'s additive edit. The `.bak` is still worth keeping.
 
 ## 2026-08-04, the Pip-Boy's unused variables
 

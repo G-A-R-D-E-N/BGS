@@ -313,17 +313,19 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   real but it is not about this tool, it counted how many states OpenCommonwealth's Godot converter
   could map to an animation node. See #18.
 - **One edit made with this tool has been loaded by Fallout 4 and worked**: the Red Rocket gas station
-  door, whose animation played correctly in game. The file came from `symrm door`, the additive door
-  edit described under Verifying, which adds two events and two states so a door can be placed already
-  open or already closed without playing the transition, and touches no existing transition. So what
-  the engine has accepted is specifically that: new states and new events grafted onto a vanilla graph,
-  repacked by hkxpack. That is the first time anything here has been proven against the engine rather
-  than against hkxpack, and it moves the tool from "the file reads back correctly" to "the game
-  accepted at least one of these".
-  It is one door and one kind of edit, so it is a foothold rather than a guarantee, and nothing says
-  the same holds for a removal or a retarget. Everything else has been round tripped through hkxpack
-  and read back from the binary and no further, and hkxpack accepting a file is still not the engine
-  accepting it. Keep the `.bak`.
+  garage door, which sat permanently half open exactly as the edit asked, with no interaction needed.
+  The edit was three scalar values on one existing object, the `Closed` state's sequence generator:
+  `pSequence` from `Closed` to `Opening`, `eUseTimePercentage` to `USING_TIME_PERCENTAGE`, and
+  `fTimePercent` to `0.5`. The file has vanilla's 30 objects, 7 states and 11 events, and vanilla's
+  byte size. So what the engine has accepted is a **field value edit on an existing object**, written
+  by this tool and repacked by hkxpack. That is the first time anything here has been proven against
+  the engine rather than against hkxpack, and it moves the tool from "the file reads back correctly"
+  to "the game accepted at least one of these".
+  It says nothing about structural editing. Adding a state, removing one, retargeting a transition or
+  renumbering a symbol have never been put in front of the game, and `symrm door`'s additive edit in
+  particular has not. Everything else has been round tripped through hkxpack and read back from the
+  binary and no further, and hkxpack accepting a file is still not the engine accepting it. Keep the
+  `.bak`.
 - Deleting a node leaves whatever pointed at it holding null. Delete refuses while references exist,
   but detaching by hand first and then deleting can still leave, say, a state with no generator.
   Check graph finds that.
