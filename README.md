@@ -8,6 +8,10 @@ events fire. Havok never released the authoring tool for this format, and the ed
 (Skyrim Behavior Editor, Haviour) target `hk_2010.2.0-r1`, which is Skyrim, and will not open a
 Fallout 4 file. This reads the Fallout 4 format directly.
 
+This README covers what the tool is and how to use it. What we have worked out about the format and
+the game, with the evidence behind it, lives in the
+[wiki](https://gitlab.com/opencw1/behaviortoolstandalone/-/wikis/home).
+
 ## What it does
 
 - Opens any FO4 behaviour, character or project `.hkx` and shows the object graph.
@@ -95,30 +99,16 @@ the same name it did before.
 
 ## Forcing an animation frame from a variable
 
-The pattern for driving an animation by hand (a gauge needle, a watch hand, a dial) rather than
-letting it play, taken from Fallout 4's own Pip-Boy graph:
+A clip can be sampled by a graph variable rather than played, which is how a gauge needle or a dial is
+driven. Set `mode = MODE_USER_CONTROLLED` and bind `userControlledTimeFraction` to a float variable;
+0.25 puts the clip a quarter of the way in and holds it there.
 
-```
-hkbClipGenerator  mode = MODE_USER_CONTROLLED
-                  variableBindingSet -> memberPath "userControlledTimeFraction"
-                                        variableIndex <your float variable>
-                                        bindingType BINDING_TYPE_VARIABLE
-```
+Bindings can be created from the properties panel, and the variable is declared for you if it does not
+exist yet. Open `Meshes\Pipboy\Behaviors\PipboyBehavior.hkx` in the Symbols tab to see the vanilla
+example.
 
-`userControlledTimeFraction` is 0 to 1 across the whole clip, so setting the variable to 0.25 puts the
-clip at a quarter of its length and holds it there. The animation needs no special frame data and is
-never "played", it is sampled.
-
-Verified in `Meshes\Pipboy\Behaviors\PipboyBehavior.hkx`, which declares four variables
-(`iTabSync`, `iCatSync`, `fRadioTune`, `fRadLevel`) and uses exactly this on two clips:
-
-| clip | mode | bound member | variable |
-|---|---|---|---|
-| `RadMeterTurning` | `MODE_USER_CONTROLLED` | `userControlledTimeFraction` | `fRadLevel` |
-| `TuneRadio` | `MODE_USER_CONTROLLED` | `userControlledTimeFraction` | `fRadioTune` |
-
-Open that file in the Symbols tab to see it. Bindings can be created from the properties panel, and
-the variable is declared for you if it does not exist yet.
+The full write up, including which of the Pip-Boy's four variables are actually used and how that was
+established, is in the wiki: **[Pip-Boy Variables](https://gitlab.com/opencw1/behaviortoolstandalone/-/wikis/Pip-Boy-Variables)**.
 
 ## Doors, lifts and switches are driven by events, not variables
 
@@ -316,9 +306,12 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
 
 ## Known limits
 
-- Reading is proven against all 531 vanilla behaviour files; 5292 of 5323 states resolve to a
-  generator we understand and every transition resolves its event name. Numbers and method are in
-  OpenCommonwealth's `docs/BEHAVIOR_GRAPH_RESEARCH.md`.
+- Reading is measured, not assumed. Over the 314 vanilla behaviour files to hand, every one of 4881
+  states resolves to a generator that exists in its own file, across 15 generator classes, and every
+  transition resolves its event name. Reproduce with `symrm unpack` and a walk over every
+  `hkbStateMachineStateInfo`. An older figure of "5292 of 5323" circulated here and elsewhere: it is
+  real but it is not about this tool, it counted how many states OpenCommonwealth's Godot converter
+  could map to an animation node. See #18.
 - Every edit here has been round tripped through hkxpack and read back from the binary. **None of it
   has been loaded by Fallout 4.** hkxpack accepting a file is not the engine accepting it. Keep the
   `.bak`.

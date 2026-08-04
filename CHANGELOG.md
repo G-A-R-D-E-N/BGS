@@ -3,6 +3,30 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, the Pip-Boy's unused variables
+
+**`iTabSync` and `iCatSync` are declared and never used, by anything.** They looked like the obvious
+drivers of the Pip-Boy's tab and category switching, and the Symbols tab showing an empty "Used by"
+column for both read as the tool missing a route rather than as the answer.
+
+Searched three places, case insensitively: the behaviour file binds neither, the 1.10.163 unpacked
+binary contains neither byte sequence anywhere in 65 MB, and no vanilla Papyrus script mentions
+either, across all 8570 entries of `Fallout4 - Misc.ba2` decompressed and searched. The same pass
+finds `PlayAnimation` in 220 scripts, so the search works.
+
+The contrast is what settles it. `fRadLevel` and `fRadioTune`, the two the file does bind, are both
+literals in `.rdata` beside the Pip-Boy's INI settings, and `PipboyManager::SetInputGraphVariables`
+passes them to `SetGraphVariableFloat` by name. The by-name mechanism exists and is in use for exactly
+two of the four variables. The other two never appear.
+
+So the tab switching is event driven, which the file states outright, and the Symbols tab's wording
+was right all along: an empty column means nothing in this file reads it, not that the symbol is dead.
+For these two it happens to be both.
+
+Recorded with its own caveat: a name assembled at runtime, or one written by a mod, would slip past a
+byte search of the binary. Neither is plausible here and neither can be ruled out without reading the
+values from a running game.
+
 ## 2026-08-04, lossless scale
 
 **The lossless scale path is confirmed against the engine.** It could not be checked against game
