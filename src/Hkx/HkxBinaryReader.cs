@@ -125,6 +125,15 @@ public class HkxBinaryReader
         return parsed;
     }
 
+    // For a caller that wants to show the problem rather than be stopped by it. Returns false when
+    // the file holds an animation class this reader cannot decode, with AnimationClass set to say
+    // which, so the message can name it without picking an exception apart.
+    public bool TryReadAnimation(string filepath, out HkxAnimationData data)
+    {
+        data = ParseHkx(File.ReadAllBytes(filepath));
+        return !data.HasUnsupportedAnimation;
+    }
+
     public HkxSkeleton ReadSkeleton(string filepath)
     {
         byte[] data = File.ReadAllBytes(filepath);

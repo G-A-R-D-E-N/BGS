@@ -16,7 +16,7 @@ public static class Smoke
     private static int _failed;
     private static int _ran;
 
-    public static int Main()
+    public static int Main(string[] args)
     {
         AppBuilder.Configure<HeadlessApp>().UseHeadless(new AvaloniaHeadlessPlatformOptions())
             .SetupWithoutStarting();
@@ -30,7 +30,7 @@ public static class Smoke
         Check("there is one tab control", 1, tabs.Count);
 
         var headers = tabs[0].Items.OfType<TabItem>().Select(t => t.Header?.ToString()).ToList();
-        Check("tabs", "Tree, Graph, Symbols, Chain", string.Join(", ", headers));
+        Check("tabs", "Tree, Graph, Symbols, Chain, Animation", string.Join(", ", headers));
 
         // A TabControl only builds the selected tab, so each one has to be visited to prove it is
         // whole. Visiting them also exercises the switching itself.
@@ -47,7 +47,7 @@ public static class Smoke
         }
 
         Check("the node canvas exists", 1, canvases);
-        Check("the tree, symbol and chain grids exist", 3, grids);
+        Check("the tree, symbol, chain and animation grids exist", 4, grids);
         foreach (string expected in new[]
                  { "Open", "Browse...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
@@ -55,6 +55,29 @@ public static class Smoke
         tabs[0].SelectedIndex = 0;
         CheckTrue("save is disabled until something changes",
             Find<Button>(window).First(b => b.Content?.ToString() == "Save to .hkx").IsEnabled == false);
+
+        // Opening a real file through the window, so what the panel actually says is checked rather
+        // than assumed from what the reader returns. Paths come in on the command line because the
+        // game's own files cannot be committed here.
+        foreach (string path in args.Where(System.IO.File.Exists))
+        {
+            window.Open(path);
+            // The panel has to be the selected tab or it is never built, so searching the visual
+            // tree for its text finds nothing however correct the text is.
+            tabs[0].SelectedIndex = tabs[0].ItemCount - 1;
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+            string name = System.IO.Path.GetFileName(path);
+            var texts = Find<TextBlock>(window).Select(t => t.Text ?? "").ToList();
+            string shown = texts.FirstOrDefault(t => t.StartsWith("Unsupported:", StringComparison.Ordinal)
+                                                  || t.Contains("hkaSplineCompressedAnimation", StringComparison.Ordinal)
+                                                  || t.StartsWith("This file holds no animation", StringComparison.Ordinal)
+                                                  || t.StartsWith("Could not read this file as an animation", StringComparison.Ordinal)
+                                                  || t.StartsWith("This is a behaviour file", StringComparison.Ordinal)) ?? "";
+
+            CheckTrue($"{name}: the animation panel says something", shown.Length > 0);
+            Console.WriteLine($"        {shown}");
+        }
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;

@@ -15,6 +15,7 @@ namespace BehaviourStudio.App;
 public class MainWindow : Window
 {
     private const int MaxTreeRows = 4000;
+    private const int MaxFrameRows = 300;
 
     private readonly TextBox _pathField = Ux.Field("absolute path to a .hkx behaviour, character or project file");
     private readonly TextBox _filter = Ux.Field("filter objects by name, class or animation");
@@ -27,6 +28,10 @@ public class MainWindow : Window
     private readonly HkGrid _tree = new(("Node", -4), ("Havok class", -3), ("Animation", -4), ("Offset", 90));
     private readonly HkGrid _symbols = new(("Kind", 60), ("Index", 55), ("Name", -4), ("Initial value", -2), ("Used by", -5));
     private readonly HkGrid _chain = new(("Role", 110), ("Declared in the file", -4), ("On disk", 80), ("Notes", -3));
+    private readonly HkGrid _animation =
+        new(("Bone or track", -4), ("Frame", 70), ("Time", 80), ("Position", -4), ("Rotation", -5));
+    private readonly TextBlock _animationSummary =
+        new() { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap };
 
     private readonly TextBox _symbolName = Ux.Field("name", 170);
     private readonly TextBox _symbolValue = Ux.Field("value, for a variable", 130);
@@ -87,6 +92,7 @@ public class MainWindow : Window
         tabs.Items.Add(Tab("Graph", Framed(_graph)));
         tabs.Items.Add(Tab("Symbols", BuildSymbolsTab()));
         tabs.Items.Add(Tab("Chain", _chain));
+        tabs.Items.Add(Tab("Animation", BuildAnimationTab()));
 
         Content = new Border
         {
@@ -176,6 +182,124 @@ public class MainWindow : Window
         split.Children.Add(splitter);
         split.Children.Add(right);
         return split;
+    }
+
+    private Control BuildAnimationTab()
+    {
+        var panel = new DockPanel();
+        var header = Ux.Pill(_animationSummary);
+        header.Margin = new Thickness(0, 0, 0, 8);
+        DockPanel.SetDock(header, Dock.Top);
+        panel.Children.Add(header);
+        panel.Children.Add(_animation);
+        return panel;
+    }
+
+    // An animation is a different kind of file from a behaviour, so this runs on its own rather than
+    // hanging off the behaviour parse. A class the reader cannot decode has to say so here, in the
+    // panel, and not only on the console: the whole point of making the reader refuse loudly was
+    // that somebody using the window finds out.
+    private bool BuildAnimation(string path)
+    {
+        _animation.Clear();
+
+        HkxAnimationData anim;
+        try
+        {
+            if (!new HkxBinaryReader().TryReadAnimation(path, out anim))
+            {
+                _animationSummary.Text =
+                    $"Unsupported: {anim.AnimationClass} (decode not implemented yet). " +
+                    $"Only {HkxAnimationData.SupportedAnimationClass} is read, so there is no frame data to show.";
+                _animationSummary.Foreground = Ux.BadBrush;
+                _animation.Add(null, anim.AnimationClass, "", "", "no frame data was read from this file", "")
+                          .Colour(0, Ux.BadBrush).Colour(3, Ux.MutedBrush);
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _animationSummary.Text = "Could not read this file as an animation: " + ex.Message.Split('\n')[0];
+            _animationSummary.Foreground = Ux.BadBrush;
+            return false;
+        }
+
+        bool anyFrames = anim.Tracks.Any(t => t.Rotations.Count > 0 || t.Translations.Count > 0);
+        if (!anyFrames || anim.NumFrames <= 0)
+        {
+            _animationSummary.Text = anim.AnimationClass.Length == 0
+                ? "This file holds no animation."
+                : $"{anim.AnimationClass} is present but decoded to no frames, so the file is an empty container.";
+            _animationSummary.Foreground = Ux.MutedBrush;
+            return anim.AnimationClass.Length > 0;
+        }
+
+        var skeleton = SiblingSkeleton(path);
+        _animationSummary.Text =
+            $"{anim.AnimationClass}   {anim.GetSummary()}" +
+            (skeleton != null ? $"   bones named from a sibling skeleton of {skeleton.BoneNames.Count}" : "   no sibling skeleton, tracks are numbered");
+        _animationSummary.Foreground = Ux.MetaBrush;
+
+        foreach (var note in anim.Annotations)
+            _animation.Add(null, "annotation", "", $"{note.Time:F3}s", note.Text, "").Colour(0, Ux.MutedBrush);
+
+        for (int t = 0; t < anim.Tracks.Count; t++)
+        {
+            var track = anim.Tracks[t];
+            int frames = Math.Max(track.Translations.Count, track.Rotations.Count);
+
+            var head = _animation.Add(null, TrackName(anim, skeleton, t), frames.ToString(), "", "", "")
+                                 .Colour(0, Ux.TitleBrush).Colour(1, Ux.DisabledBrush).Collapse();
+
+            for (int f = 0; f < Math.Min(frames, MaxFrameRows); f++)
+            {
+                string pos = f < track.Translations.Count
+                    ? $"{track.Translations[f].X:F3}, {track.Translations[f].Y:F3}, {track.Translations[f].Z:F3}" : "";
+                string rot = f < track.Rotations.Count
+                    ? $"{track.Rotations[f].X:F4}, {track.Rotations[f].Y:F4}, {track.Rotations[f].Z:F4}, {track.Rotations[f].W:F4}" : "";
+                _animation.Add(head, "", f.ToString(), $"{f * anim.FrameDuration:F3}s", pos, rot)
+                          .Colour(1, Ux.DisabledBrush).Colour(2, Ux.MutedBrush)
+                          .Colour(3, Ux.CodeBrush).Colour(4, Ux.MetaBrush);
+            }
+
+            if (frames > MaxFrameRows)
+                _animation.Add(head, "", "", "", $"{frames - MaxFrameRows} more frames not listed", "")
+                          .Colour(3, Ux.MutedBrush);
+        }
+
+        return true;
+    }
+
+    // The bone names live in the skeleton, not the animation. An animation's annotation tracks are
+    // named after bones by convention and are empty in plenty of vanilla files, so the real name
+    // comes through transformTrackToBoneIndices.
+    private static HkxSkeleton? SiblingSkeleton(string animationPath)
+    {
+        var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(animationPath)) ?? "");
+        for (int up = 0; up < 4 && dir != null; up++, dir = dir.Parent)
+        {
+            string assets = Path.Combine(dir.FullName, "CharacterAssets");
+            if (!Directory.Exists(assets)) continue;
+
+            foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
+            {
+                try { return new HkxBinaryReader().ReadSkeleton(file); }
+                catch { /* not a skeleton, try the next */ }
+            }
+        }
+        return null;
+    }
+
+    private static string TrackName(HkxAnimationData anim, HkxSkeleton? skeleton, int track)
+    {
+        if (skeleton != null && track < anim.TrackToBoneIndices.Count)
+        {
+            int bone = anim.TrackToBoneIndices[track];
+            if (bone >= 0 && bone < skeleton.BoneNames.Count) return skeleton.BoneNames[bone];
+        }
+
+        string annotation = track < anim.BoneNames.Count ? anim.BoneNames[track] : "";
+        return annotation.Length > 0 ? annotation : $"track {track}";
     }
 
     private Control BuildSymbolsTab()
@@ -290,8 +414,33 @@ public class MainWindow : Window
             return;
         }
 
+        // Animations are read on their own path. A behaviour file simply has no animation object in
+        // it and the tab says so, but an animation file has no behaviour root, so this has to happen
+        // before the root check below rejects it.
+        bool isAnimation = BuildAnimation(path);
+
         var root = HkxBehaviorParser.ParseBehavior(path);
-        if (root == null) { SetSummary("Parsed as FO4 hkx, but no root object was resolved.", Ux.MutedBrush); return; }
+        if (root == null)
+        {
+            _hkxPath = path;
+            Settings.Set("last_path", path);
+            Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
+            SetSummary(isAnimation
+                ? $"{Path.GetFileName(path)}   an animation, not a behaviour. See the Animation tab."
+                : "Parsed as FO4 hkx, but no root object was resolved.", Ux.MutedBrush);
+            SetStatus(_animationSummary.Text ?? "", _animationSummary.Foreground ?? Ux.MutedBrush);
+            return;
+        }
+
+        // A behaviour is a different layout entirely and the animation reader refuses it outright,
+        // which is true but reads as a fault. Once the behaviour parse has succeeded, say the plain
+        // thing instead.
+        if (!isAnimation)
+        {
+            _animationSummary.Text = "This is a behaviour file. It holds no animation.";
+            _animationSummary.Foreground = Ux.MutedBrush;
+            _animation.Clear();
+        }
 
         _hkxPath = path;
         _root = root;
