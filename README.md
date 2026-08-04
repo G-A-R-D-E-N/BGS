@@ -36,6 +36,10 @@ Fallout 4 file. This reads the Fallout 4 format directly.
   under Validating.
 - **Chain tab**: project to character to behaviour, skeleton and animations, what is missing, and the
   skeleton's bone list.
+- **Animation tab**: for an animation file, its class, duration, frame count, annotations, and a row
+  per bone with each frame's position, rotation and scale, named from a sibling skeleton. Frames page
+  in blocks of 300. Scale prints only on the tracks that carry one, because almost every track in the
+  game is a flat 1,1,1 and printing all of them hides the ones that are not.
 - **Check graph**: looks for the mistakes hkxpack cannot, listed under Validating below. With a real
   project folder around the file it also checks every clip's animation against the folder on disk.
 - Filter by name, class or animation.
@@ -319,3 +323,17 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   but detaching by hand first and then deleting can still leave, say, a state with no generator.
   Check graph finds that.
 - A partial `variableBounds` array is never edited, only reported. See the note in `SymbolEditor`.
+- Animation scale is decoded and shown, and for **spline compressed** animations it is checked against
+  real data: 130 of the 13133 vanilla ones carry a scale that is not the identity, none contains a
+  zero, and the static case was confirmed against the raw bytes rather than against the reader. The
+  crow's `PerchedIdle` folds both wings to 0.4599 on all three axes, left and right identical, and
+  those float32s sit at 0x714 and 0x794 in the file.
+- **Scale on lossless compressed animations is UNPROVEN. Do not read a scale of 1,1,1 from one as
+  confirmation that anything works.** No vanilla file exercises it: all 856 leave both scale arrays
+  empty with every scale word clear, so only the "no scale here" case has ever run, and 1,1,1 is what
+  that branch returns whether or not the code beside it is correct. The static and dynamic branches
+  have never decoded a real value in any file that ships with the game. If you open a lossless
+  animation that does scale something, treat what the tool prints as unverified and check it against
+  the bytes yourself. If scale is ever wrong anywhere, this is where it will be wrong.
+  `symrm scale <Data folder>` sweeps a folder and reports every animation whose scale is not the
+  identity, which is how the numbers above were produced and how you would find a counterexample.

@@ -32,6 +32,7 @@ public static class Program
             case "anims": return Anims(argv);
             case "repack": return Repack(argv);
             case "frames": return Frames(argv);
+            case "scale": return Scale(argv);
             case "skeleton": return Skeleton(argv);
             case "rig": return Rig(argv);
             case "remove": return Remove(argv);
@@ -80,6 +81,11 @@ public static class Program
               track lengths, the first few frames of each, annotations, and which frame a given
               userControlledTimeFraction lands on. Point it at a directory to read every animation
               under it and report how many decode to nothing.
+
+          dotnet run --project tools/symrm/symrm.csproj -- scale <animation.hkx | Data folder>
+              Every animation whose scale is not the identity, with the range it spans and whether
+              any of it is zero. 130 of the 13133 vanilla spline animations scale something; all 856
+              lossless ones leave scale empty, which is why that branch is still unproven.
 
           dotnet run --project tools/symrm/symrm.csproj -- skeleton <skeleton.hkx> [bone]
               Bone names, parents, and a chain composed from the root, to see where the reference
@@ -325,17 +331,23 @@ public static class Program
         {
             var track = anim.Tracks[t];
             string bone = TrackName(anim, skeleton, t);
+            bool scaled = HkxTrackData.IsScaled(track);
             Console.WriteLine($"\n  {bone}: {track.Translations.Count} translations, " +
-                              $"{track.Rotations.Count} rotations, {track.Scales.Count} scales");
+                              $"{track.Rotations.Count} rotations, {track.Scales.Count} scales" +
+                              (track.Scales.Count == 0 ? "" : scaled ? ", scale is not the identity" : ", scale is 1,1,1 throughout"));
 
-            int frames = Math.Min(4, Math.Max(track.Rotations.Count, track.Translations.Count));
+            int frames = Math.Min(4, Math.Max(Math.Max(track.Rotations.Count, track.Translations.Count),
+                                              track.Scales.Count));
             for (int f = 0; f < frames; f++)
             {
                 string pos = f < track.Translations.Count
                     ? $"pos {track.Translations[f].X,8:F3} {track.Translations[f].Y,8:F3} {track.Translations[f].Z,8:F3}" : "";
                 string rot = f < track.Rotations.Count
                     ? $"  rot {track.Rotations[f].X,7:F4} {track.Rotations[f].Y,7:F4} {track.Rotations[f].Z,7:F4} {track.Rotations[f].W,7:F4}" : "";
-                Console.WriteLine($"    frame {f,4}  t={f * anim.FrameDuration,7:F3}s  {pos}{rot}");
+                // A flat 1,1,1 on every row of every animation would bury the ones that really scale.
+                string scl = scaled && f < track.Scales.Count
+                    ? $"  scale {track.Scales[f].X,7:F4} {track.Scales[f].Y,7:F4} {track.Scales[f].Z,7:F4}" : "";
+                Console.WriteLine($"    frame {f,4}  t={f * anim.FrameDuration,7:F3}s  {pos}{rot}{scl}");
             }
         }
 
@@ -448,6 +460,70 @@ public static class Program
 
         if (unnamedSites > 0)
             Console.WriteLine($"\n{unnamedSites} references have no role in the table; they show as referenced, not guessed at");
+        return 0;
+    }
+
+    // Scale was decoded and then never shown anywhere, so nothing said whether it was right. This
+    // sweeps for animations whose scale is not the identity and reports what came out, which is the
+    // only way to find real data to check the decode against.
+    private static int Scale(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        string target = Path.GetFullPath(argv[1]);
+
+        var files = Directory.Exists(target)
+            ? Directory.EnumerateFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .Where(f => f.Contains($"{Path.DirectorySeparatorChar}Animations{Path.DirectorySeparatorChar}",
+                                              StringComparison.OrdinalIgnoreCase))
+                       .OrderBy(f => f).ToList()
+            : new List<string> { target };
+
+        int read = 0, withScale = 0, degenerate = 0;
+        var byClass = new Dictionary<string, int>();
+        var scaledByClass = new Dictionary<string, int>();
+
+        foreach (string file in files)
+        {
+            HkxAnimationData a;
+            try { a = new HkxBinaryReader().ReadAnimation(file); }
+            catch { continue; }
+            read++;
+            byClass[a.AnimationClass] = byClass.GetValueOrDefault(a.AnimationClass) + 1;
+
+            float lo = float.MaxValue, hi = float.MinValue;
+            int oddTracks = 0, zeroFrames = 0;
+            for (int t = 0; t < a.Tracks.Count; t++)
+            {
+                bool odd = false;
+                foreach (var s in a.Tracks[t].Scales)
+                {
+                    foreach (float v in new[] { s.X, s.Y, s.Z })
+                    {
+                        if (v < lo) lo = v;
+                        if (v > hi) hi = v;
+                        // A scale of zero collapses whatever it drives. Worth counting separately from
+                        // a merely unusual value, because it is the shape a decode bug takes.
+                        if (v == 0f) zeroFrames++;
+                        if (Math.Abs(v - 1f) > 0.0001f) odd = true;
+                    }
+                }
+                if (odd) oddTracks++;
+            }
+
+            if (oddTracks == 0) continue;
+            withScale++;
+            scaledByClass[a.AnimationClass] = scaledByClass.GetValueOrDefault(a.AnimationClass) + 1;
+            if (zeroFrames > 0) degenerate++;
+
+            Console.WriteLine($"  {Short(file, Directory.Exists(target) ? target : Path.GetDirectoryName(target)!),-64} " +
+                              $"{a.AnimationClass,-34} {oddTracks}/{a.Tracks.Count} tracks  " +
+                              $"range {lo:F4}..{hi:F4}" + (zeroFrames > 0 ? $"  ZERO x{zeroFrames}" : ""));
+        }
+
+        Console.WriteLine($"\n{read} animations read, {withScale} carry a scale that is not the identity, " +
+                          $"{degenerate} of those contain a zero");
+        foreach (var kv in byClass.OrderByDescending(k => k.Value))
+            Console.WriteLine($"  {kv.Value,6} {kv.Key}, {scaledByClass.GetValueOrDefault(kv.Key)} of them scaled");
         return 0;
     }
 

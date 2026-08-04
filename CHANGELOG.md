@@ -3,6 +3,27 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, scale
+
+**Animation scale is decoded, shown, and checked against real data.** It was being decoded all along
+and then printed nowhere: the tab had columns for position and rotation only, and `symrm frames`
+counted scales without ever showing one. A wrong value and a right one looked identical, which is not
+a decode anyone should trust.
+
+There is a Scale column now, and `frames` prints it, on the tracks that carry one. Almost every track
+in the game is a flat 1,1,1, so printing all of them would bury the ones that are not.
+
+Checked, rather than assumed. 130 of the 13133 vanilla spline compressed animations scale something,
+none of them contains a zero, and the values are the shape authored data takes: the crow's
+`PerchedIdle` folds both wings to exactly 0.4599 on all three axes, left and right identical. Those
+float32s are in the file at 0x714 and 0x794, so the static branch is confirmed against the raw bytes
+rather than against itself.
+
+The lossless branch is still unproven and the README now says so plainly. All 856 vanilla lossless
+animations leave both scale arrays empty with every scale word clear, so only the clear case has ever
+run. It returns 1,1,1 there, which is correct, but nothing in the game exercises static or dynamic
+scale. `symrm scale` is the sweep that produced these numbers.
+
 ## 2026-08-04, later still
 
 **Expanding an event says what the file does with it.** Raised here, listened for here, or written
