@@ -1236,6 +1236,9 @@ public class MainWindow : Window
     {
         if (!_dirty || _xmlText.Length == 0) return;
 
+        string? refusal = GraphValidator.RefuseToSave(_xmlText);
+        if (refusal != null) { SetStatus(refusal, Ux.BadBrush); return; }
+
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
         if (java == null || jar == null) { SetStatus("Cannot save: Java is missing.", Ux.BadBrush); return; }
@@ -1257,20 +1260,7 @@ public class MainWindow : Window
             File.Copy(packed, _hkxPath, true);
 
             SetDirty(false);
-
-            // Warned rather than refused. Everything else Save blocks on is a file the engine
-            // demonstrably cannot use; a state with no generator has never been put in front of
-            // Fallout 4, so refusing to write it would be a verdict this project cannot support. Say
-            // it plainly at the moment of saving instead, since Check graph is a step people forget.
-            var empty = GraphValidator.StatesWithNoGenerator(BehaviourGraphModel.Parse(_xmlText));
-            string saved = $"Saved. The original is kept as {Path.GetFileName(backup)}.";
-            if (empty.Count > 0)
-                SetStatus($"{saved} Warning: {empty.Count} state{(empty.Count == 1 ? "" : "s")} " +
-                          "in this file have no generator, so entering them plays nothing. " +
-                          "Check graph lists them.", Ux.BadBrush);
-            else
-                SetStatus(saved, Ux.MetaBrush);
-
+            SetStatus($"Saved. The original is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
             Load();
         }
         catch (Exception ex)

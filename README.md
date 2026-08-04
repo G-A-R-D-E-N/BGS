@@ -217,7 +217,7 @@ inside the game. **Check graph** looks for:
 - the symbol arrays disagreeing with each other
 - two states in one machine sharing a stateId, a transition to a stateId nothing has, a startStateId
   that does not exist
-- a state with no generator
+- a state with no generator, which crashes the game while the graph loads
 - a blender child that is not an `hkbBlenderGeneratorChild` wrapper
 - a clip with no animation
 - nodes nothing points at
@@ -316,11 +316,14 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   has been loaded by Fallout 4.** hkxpack accepting a file is not the engine accepting it. Keep the
   `.bak`.
 - Deleting a node leaves whatever pointed at it holding null. Delete refuses while references exist,
-  but detaching by hand first and then deleting can still leave, say, a state with no generator. The
-  tree and the graph mark such a state, Check graph lists it, and Save warns without refusing. It
-  warns rather than blocking because a state with no generator has never been put in front of
-  Fallout 4, so refusing to write one would be a verdict this project cannot support. **What the
-  engine does with it is untested.** See #16.
+  but detaching by hand first and then deleting can still leave, say, a state with no generator.
+  **Fallout 4 crashes while loading any graph that contains one**, before a state is entered, so
+  reachability does not save it. The engine's own graph walk pops every child a node reports and
+  reads its vtable pointer with no null check, so the null goes straight into an access violation:
+  `BShkbUtils::GraphTraverser::Next`, `Fallout4.exe+0x1705DDF`, under `LoadBehaviorHelper` on the
+  background clone thread. Measured on the Red Rocket garage door with one link cleared and nothing
+  else changed. The tree and the graph mark such a state, Check graph reports it as an error, and
+  Save refuses to write the file at all. See #16.
 - A partial `variableBounds` array is never edited, only reported. See the note in `SymbolEditor`.
 - Animation scale is decoded and shown, and for **spline compressed** animations it is checked against
   real data: 130 of the 13133 vanilla ones carry a scale that is not the identity, none contains a

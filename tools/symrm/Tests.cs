@@ -539,6 +539,22 @@ public static class Tests
         // Vanilla never ships this, so a mark appearing on an unedited file would be a false alarm.
         Check("an untouched graph stays unmarked", 0,
               GraphValidator.StatesWithNoGenerator(BehaviourGraphModel.Parse(SmallGraph())).Count);
+
+        // The game crashed while loading a graph carrying exactly one of these, so Save refuses
+        // rather than warns. Both come from the same set above, so the refusal cannot disagree
+        // with the mark.
+        Check("a whole graph is not refused", null, GraphValidator.RefuseToSave(xml));
+        Check("an empty file is not refused either", null, GraphValidator.RefuseToSave(""));
+
+        // Spelled as an empty string rather than null so a missing refusal fails all four of these
+        // instead of throwing on the first and hiding the other three.
+        string refusal = GraphValidator.RefuseToSave(after) ?? "";
+        CheckTrue("one empty state is refused", refusal.Length > 0);
+        CheckTrue("saying nothing was written", refusal.Contains("original is untouched"));
+        CheckTrue("and why the game cannot take it", refusal.Contains("crashes on load"));
+        CheckTrue("without claiming the state has to be entered",
+                  refusal.Contains("whether or not anything can enter"));
+        CheckTrue("counting the states rather than guessing", refusal.Contains("1 state has"));
     }
 
     // No vanilla file carries a scale on a lossless compressed animation: all 856 leave both arrays
