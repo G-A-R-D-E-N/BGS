@@ -221,6 +221,8 @@ inside the game. **Check graph** looks for:
 - a blender child that is not an `hkbBlenderGeneratorChild` wrapper
 - a clip with no animation
 - nodes nothing points at
+- a state no transition in its machine can reach, which being referenced can never catch, because a
+  machine always lists its own states
 
 and, when the file sits in a real project folder rather than on its own:
 
@@ -231,6 +233,12 @@ and, when the file sits in a real project folder rather than on its own:
 It reports no errors at all on 132 vanilla behaviour files, which is the bar a check has to clear
 before it is worth reading. Passing it is not a promise the game will load the file.
 
+Widening that to all 328 behaviours reachable through a project folder turns up 11 errors on 2 files,
+all of them `hkbVariableBindingSet.variableIndex` pointing past the end of the variable list, in
+`SharedCoreBehavior.hkx` and one `Behavior00.hkx`. That predates the checks described below and is
+not explained yet: either those files really are wrong, or the symbol index check is missing a way a
+graph can reach variables it does not declare itself. Worth knowing before trusting a clean run.
+
 The two animation checks are warnings rather than errors because vanilla trips them: across all 215
 project roots in `Fallout4 - Animations.ba2`, 328 behaviours produce 111 of them. They are real, not
 false alarms. Shared behaviours reference per creature animations that not every creature has, and
@@ -239,6 +247,24 @@ among them. A handful is normal. A file suddenly full of them means the folder m
 
 127 of those 215 characters declare no animations at all, which is also normal: an empty
 `animationBundleNameData` is how a behaviour that plays no clips of its own is written.
+
+The unreachable state check is a warning for the same reason, and the reason is worth writing down
+because it is not what you would assume. A state is reachable if the machine starts in it, or some
+transition targets it, following normal transitions from their own state and wildcards from
+anywhere. Vanilla still trips it 123 times across 56 of the 328 behaviours. Every case checked is a
+state the engine enters from outside the graph rather than through a transition: `RagdollAndGetUp`
+21 times, the `SharedCore` wrapper state 18, `PairedState` 14, plus death variants and teleport
+landings. None of them is reachable by any mechanism the file describes. `startStateIdSelector` is
+null, `startStateId` is not variable bound, and `returnToPreviousStateEventId`,
+`randomTransitionEventId`, `transitionToNextHigherStateEventId` and `transitionToNextLowerStateEventId`
+are all -1, so Havok's own implicit transitions are not doing it either. The game simply sets those
+states.
+
+Two things follow. A machine with no transitions at all is skipped, because it is not transition
+driven and saying nothing transitions to its states is true and useless; that alone takes the count
+from 477 to 123. And a state named as a `toNestedStateId` target anywhere in the file is exempt,
+because a transition in one machine can enter a nested machine's state directly. What is left is a
+warning worth reading, not an error worth blocking on.
 
 Run that yourself with `tools/symrm`, which pulls the corpus out of the game archive, unpacks it,
 and checks it:

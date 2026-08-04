@@ -33,6 +33,7 @@ public static class GraphValidator
         CheckDanglingReferences(model, found);
         CheckSymbolIndices(xml, model, found);
         CheckStateMachines(model, found);
+        CheckReachableStates(model, found);
         CheckBlenders(model, found);
         CheckClips(model, found);
         CheckClipAnimations(model, chain, found);
@@ -114,6 +115,63 @@ public static class GraphValidator
             int start = machine.Int("startStateId");
             if (states.Count > 0 && start >= 0 && !ids.Contains(start))
                 Add(found, Level.Error, $"#{machine.Id} {name}", $"startStateId is {start}, which no state in this machine has");
+        }
+    }
+
+    // Being referenced and being reachable are different questions for a state. A state info is
+    // always referenced, because the machine lists it, so the unattached check can never see a state
+    // that no transition can enter. Retargeting a transition is the normal way to change what an
+    // event does, and it silently orphans whatever the transition used to point at.
+    private static void CheckReachableStates(BehaviourGraphModel model, List<Finding> found)
+    {
+        // A transition in one machine can enter a nested machine's state directly, so a state named
+        // anywhere as a nested target is enterable even with nothing pointing at it in its own
+        // machine.
+        var nestedTargets = model.Objects
+            .Where(o => o.Class == "hkbStateMachineTransitionInfoArray")
+            .SelectMany(o => o.StructLists.TryGetValue("transitions", out var rows) ? rows : new())
+            .Select(r => r.TryGetValue("toNestedStateId", out var v) && int.TryParse(v, out int n) ? n : 0)
+            .Where(n => n != 0)
+            .ToHashSet();
+
+        foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+        {
+            var states = StateEditor.States(model, machine.Id);
+            int start = machine.Int("startStateId");
+
+            // A machine whose start state does not exist is already an error above, and treating it
+            // as unreachable here would report every state in the machine on top of that.
+            if (states.Count == 0 || !states.Any(s => s.StateId == start)) continue;
+
+            var transitions = StateEditor.Transitions(model, machine.Id);
+
+            // A machine with no transitions at all is not transition driven: the engine picks the
+            // state. Saying nothing transitions to a state there is true and useless, and it is how
+            // vanilla writes ragdoll and death machines.
+            if (transitions.Count == 0) continue;
+
+            var reachable = new HashSet<int> { start };
+
+            for (bool grew = true; grew;)
+            {
+                grew = false;
+                foreach (var t in transitions)
+                {
+                    if (t.ToStateId < 0 || reachable.Contains(t.ToStateId)) continue;
+                    // A wildcard fires from any state, so its target is live once anything is.
+                    if (!t.Wildcard && !reachable.Contains(t.FromStateId)) continue;
+                    reachable.Add(t.ToStateId);
+                    grew = true;
+                }
+            }
+
+            // A warning, not an error. The ticket assumed an unreachable state is always a mistake;
+            // vanilla disagrees 123 times across 56 files, and every one checked is a state the game
+            // enters from outside the graph rather than through a transition: ragdoll, death
+            // variants, paired animations, the SharedCore wrapper.
+            foreach (var s in states.Where(s => !reachable.Contains(s.StateId) && !nestedTargets.Contains(s.StateId)))
+                Add(found, Level.Warning, $"#{s.Id} state '{s.Name}'",
+                    $"cannot be entered from inside this file: nothing in #{machine.Id} '{machine.Str("name")}' transitions to stateId {s.StateId}, and it is not the start state");
         }
     }
 

@@ -3,6 +3,25 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, later
+
+**Check graph now finds a state nothing can enter.** Being referenced and being reachable are
+different questions for a state: a machine always lists its own states, so the unattached check could
+never see one that no transition targets. That is what the door edit produced, and the checker had
+nothing to say about it.
+
+The ticket asked for this as an error, on the grounds that a dead state is always a mistake. Vanilla
+says otherwise, so it ships as a warning. Swept over all 328 behaviours: 477 hits, dominated by
+`RagdollAndGetUp`, the `SharedCore` wrapper state and `PairedState`. Those are entered by the game,
+not by the graph, and nothing in the file describes how. Checked and ruled out on samples:
+`startStateIdSelector` is null, `startStateId` is not variable bound, and all four of Havok's implicit
+transition event ids are -1. Skipping machines that have no transitions at all, which are engine
+driven by definition, takes it to 123 across 56 files. States named as a `toNestedStateId` target are
+exempt too, since a parent machine can enter a nested state directly.
+
+Two independent implementations of the reachability walk, one in the validator and one throwaway in
+Python, agree on the same set, so the count is the data rather than a bug in the walk.
+
 ## 2026-08-04
 
 Two checks that need something outside the single file, which is why the validator never had them.
