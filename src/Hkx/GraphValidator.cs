@@ -93,6 +93,26 @@ public static class GraphValidator
             Add(found, Level.Error, user, $"but this graph declares only {events} events");
     }
 
+    /// A state holding nothing. Deleting a generator clears the link that pointed at it rather than
+    /// refusing, which is right, but it leaves the state behind looking ordinary. The views and Save
+    /// ask this rather than each deciding for themselves what empty means, so they cannot drift apart
+    /// from what Check graph reports.
+    ///
+    /// The game never ships this shape: across the 314 vanilla behaviour files, all 4881 states have a
+    /// generator. It only appears after an edit.
+    public static bool HasNoGenerator(StateEditor.StateRow state) =>
+        string.IsNullOrEmpty(state.GeneratorRef) || state.GeneratorRef == "null";
+
+    /// Object ids of every state in the file that has no generator, for marking them on screen.
+    public static HashSet<string> StatesWithNoGenerator(BehaviourGraphModel model)
+    {
+        var empty = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+            foreach (var state in StateEditor.States(model, machine.Id).Where(HasNoGenerator))
+                empty.Add(state.Id);
+        return empty;
+    }
+
     private static void CheckStateMachines(BehaviourGraphModel model, List<Finding> found)
     {
         foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
@@ -104,7 +124,7 @@ public static class GraphValidator
                 Add(found, Level.Error, $"#{machine.Id} {name}",
                     $"stateId {group.Key} is used by {group.Count()} states, so transitions to it are ambiguous");
 
-            foreach (var state in states.Where(s => string.IsNullOrEmpty(s.GeneratorRef) || s.GeneratorRef == "null"))
+            foreach (var state in states.Where(HasNoGenerator))
                 Add(found, Level.Error, $"#{state.Id} state '{state.Name}'", "has no generator, so entering it plays nothing");
 
             var ids = states.Select(s => s.StateId).ToHashSet();

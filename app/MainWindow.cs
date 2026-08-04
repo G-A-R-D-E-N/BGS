@@ -48,6 +48,7 @@ public class MainWindow : Window
     private readonly TextBlock _symbolAudit = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
 
     private readonly Dictionary<int, int> _offsetToIndex = new();
+    private HashSet<string> _emptyStates = new();
     private List<string> _objectIds = new();
     private List<HkxBehaviorParser.BehaviorNode> _objects = new();
     private HkxBehaviorParser.BehaviorNode? _root;
@@ -663,11 +664,21 @@ public class MainWindow : Window
         }
     }
 
+    private bool IsEmptyState(int offset) =>
+        _emptyStates.Count > 0
+        && _offsetToIndex.TryGetValue(offset, out int index)
+        && index < _objectIds.Count
+        && _emptyStates.Contains(_objectIds[index]);
+
     private void RebuildTree()
     {
         _tree.Clear();
         _props.Children.Clear();
         if (_root == null) return;
+
+        _emptyStates = _xmlText.Length == 0
+            ? new HashSet<string>()
+            : GraphValidator.StatesWithNoGenerator(BehaviourGraphModel.Parse(_xmlText));
 
         string needle = (_filter.Text ?? "").Trim();
         if (needle.Length == 0)
@@ -702,11 +713,15 @@ public class MainWindow : Window
 
         bool repeat = !seen.Add(node.Offset);
         string label = string.IsNullOrEmpty(node.NodeName) ? node.ClassName : node.NodeName;
+        // Offsets map to xml object ids the same way selection resolves them, so a state the graph
+        // marks as empty is the same row the tree marks.
+        bool empty = IsEmptyState(node.Offset);
 
         var row = _tree.Add(parent, repeat ? label + "  (shown above)" : label,
-                            node.ClassName, node.AnimationName, "0x" + node.Offset.ToString("X"));
-        row.Colour(0, parent == null ? Ux.TitleBrush : repeat ? Ux.DisabledBrush : Ux.MetaBrush)
-           .Colour(2, Ux.CodeBrush).Colour(3, Ux.DisabledBrush).Tag(node.Offset);
+                            empty ? node.ClassName + "  no generator" : node.ClassName,
+                            node.AnimationName, "0x" + node.Offset.ToString("X"));
+        row.Colour(0, empty ? Ux.BadBrush : parent == null ? Ux.TitleBrush : repeat ? Ux.DisabledBrush : Ux.MetaBrush)
+           .Colour(2, empty ? Ux.BadBrush : Ux.CodeBrush).Colour(3, Ux.DisabledBrush).Tag(node.Offset);
 
         if (repeat) return;
         foreach (var child in node.Children) AddTreeNode(child, row, seen, ref rows);
@@ -1242,7 +1257,20 @@ public class MainWindow : Window
             File.Copy(packed, _hkxPath, true);
 
             SetDirty(false);
-            SetStatus($"Saved. The original is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
+
+            // Warned rather than refused. Everything else Save blocks on is a file the engine
+            // demonstrably cannot use; a state with no generator has never been put in front of
+            // Fallout 4, so refusing to write it would be a verdict this project cannot support. Say
+            // it plainly at the moment of saving instead, since Check graph is a step people forget.
+            var empty = GraphValidator.StatesWithNoGenerator(BehaviourGraphModel.Parse(_xmlText));
+            string saved = $"Saved. The original is kept as {Path.GetFileName(backup)}.";
+            if (empty.Count > 0)
+                SetStatus($"{saved} Warning: {empty.Count} state{(empty.Count == 1 ? "" : "s")} " +
+                          "in this file have no generator, so entering them plays nothing. " +
+                          "Check graph lists them.", Ux.BadBrush);
+            else
+                SetStatus(saved, Ux.MetaBrush);
+
             Load();
         }
         catch (Exception ex)

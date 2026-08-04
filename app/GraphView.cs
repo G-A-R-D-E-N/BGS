@@ -30,6 +30,7 @@ public class GraphView : Control
         public Rect Bounds;
         public List<GraphLinks.Slot> Slots = new();
         public Color Accent;
+        public bool Empty;
         public Point InPort => new(Bounds.X - PortRadius, Bounds.Y + HeaderHeight / 2);
         public Point OutPort(int index) =>
             new(Bounds.Right + PortRadius, Bounds.Y + HeaderHeight + RowHeight * (index + 0.5) + 2);
@@ -66,6 +67,11 @@ public class GraphView : Control
         _model = model;
         _nodes.Clear();
 
+        // A state left holding nothing is drawn like any other until it is marked. Deleting its
+        // generator clears the link rather than refusing, so this is a shape an edit can produce and
+        // the game never ships.
+        var empty = GraphValidator.StatesWithNoGenerator(model);
+
         var byColumn = new Dictionary<int, int>();
         foreach (var (obj, column) in GraphAuthor.Layout(model, 400))
         {
@@ -87,6 +93,7 @@ public class GraphView : Control
                 Name = obj.Str("name"),
                 Slots = slots,
                 Accent = Ux.ForClass(obj.Class),
+                Empty = empty.Contains(obj.Id),
                 Bounds = new Rect(at.X, at.Y, NodeWidth, height),
             };
         }
@@ -152,9 +159,11 @@ public class GraphView : Control
 
         double scale = _zoom;
         string title = node.Name.Length > 0 ? node.Name : node.Class;
-        Draw(ctx, title, r.X + 6 * scale, r.Y + 4 * scale, 11 * scale, Ux.TitleBrush, r.Width - 12 * scale);
-        Draw(ctx, node.Class, r.X + 6 * scale, r.Y + (HeaderHeight + 1) * scale, 9 * scale,
-             new SolidColorBrush(node.Accent), r.Width - 12 * scale);
+        Draw(ctx, title, r.X + 6 * scale, r.Y + 4 * scale, 11 * scale,
+             node.Empty ? Ux.BadBrush : Ux.TitleBrush, r.Width - 12 * scale);
+        Draw(ctx, node.Empty ? node.Class + "  no generator" : node.Class,
+             r.X + 6 * scale, r.Y + (HeaderHeight + 1) * scale, 9 * scale,
+             node.Empty ? Ux.BadBrush : new SolidColorBrush(node.Accent), r.Width - 12 * scale);
 
         ctx.DrawEllipse(new SolidColorBrush(node.Accent), null, ToScreen(node.InPort), PortRadius * scale, PortRadius * scale);
 
