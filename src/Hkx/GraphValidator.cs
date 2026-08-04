@@ -93,6 +93,45 @@ public static class GraphValidator
             Add(found, Level.Error, user, $"but this graph declares only {events} events");
     }
 
+    /// A state holding nothing. Deleting a generator clears the link that pointed at it rather than
+    /// refusing, which is right, but it leaves the state behind looking ordinary. The views and Save
+    /// ask this rather than each deciding for themselves what empty means, so they cannot drift apart
+    /// from what Check graph reports.
+    ///
+    /// The game never ships this shape: across the 314 vanilla behaviour files, all 4881 states have a
+    /// generator. It only appears after an edit.
+    public static bool HasNoGenerator(StateEditor.StateRow state) =>
+        string.IsNullOrEmpty(state.GeneratorRef) || state.GeneratorRef == "null";
+
+    /// Why Save must not write this file, or null when there is nothing to refuse.
+    ///
+    /// Fallout 4 crashes while loading a graph that contains one, before any state is entered, so
+    /// reachability does not save it. BShkbUtils::GraphTraverser::Next pops every child a node
+    /// reports and reads its vtable pointer without a null check, at Fallout4.exe+0x1705DDF, under
+    /// LoadBehaviorHelper on the background clone thread. Measured 2026-08-04 on the Red Rocket
+    /// garage door with one generator link cleared and nothing else changed.
+    public static string? RefuseToSave(string xml)
+    {
+        if (xml.Length == 0) return null;
+        var empty = StatesWithNoGenerator(BehaviourGraphModel.Parse(xml));
+        if (empty.Count == 0) return null;
+
+        return $"Not saved, and the original is untouched: {empty.Count} " +
+               $"state{(empty.Count == 1 ? " has" : "s have")} no generator. Fallout 4 crashes on " +
+               "load while it walks the graph, whether or not anything can enter the state. Check " +
+               "graph lists them; give each a generator, or remove the state.";
+    }
+
+    /// Object ids of every state in the file that has no generator, for marking them on screen.
+    public static HashSet<string> StatesWithNoGenerator(BehaviourGraphModel model)
+    {
+        var empty = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+            foreach (var state in StateEditor.States(model, machine.Id).Where(HasNoGenerator))
+                empty.Add(state.Id);
+        return empty;
+    }
+
     private static void CheckStateMachines(BehaviourGraphModel model, List<Finding> found)
     {
         foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
@@ -104,8 +143,8 @@ public static class GraphValidator
                 Add(found, Level.Error, $"#{machine.Id} {name}",
                     $"stateId {group.Key} is used by {group.Count()} states, so transitions to it are ambiguous");
 
-            foreach (var state in states.Where(s => string.IsNullOrEmpty(s.GeneratorRef) || s.GeneratorRef == "null"))
-                Add(found, Level.Error, $"#{state.Id} state '{state.Name}'", "has no generator, so entering it plays nothing");
+            foreach (var state in states.Where(HasNoGenerator))
+                Add(found, Level.Error, $"#{state.Id} state '{state.Name}'", "has no generator, and Fallout 4 crashes while loading a graph that contains one");
 
             var ids = states.Select(s => s.StateId).ToHashSet();
             foreach (var t in StateEditor.Transitions(model, machine.Id).Where(t => !ids.Contains(t.ToStateId)))

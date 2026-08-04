@@ -3,6 +3,39 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, a state with no generator crashes the game
+
+**Fallout 4 crashes while loading a graph that contains one**, so Save refuses to write the file
+instead of warning about it. The tree and the graph still mark the state, and Check graph still names
+it, but nothing reaches disk while one exists.
+
+That was the open question on the ticket. Marking a state is easy; deciding whether an empty state is
+a mistake worth blocking on was not, because no file with one had ever been in front of the game. It
+has now. The Red Rocket garage door's `Closed` state had its generator link cleared through the
+tool's own unlink and nothing else touched: 30 objects in, 30 objects out, same 7 states and 11
+events as vanilla. Approaching the door takes the game down.
+
+**It crashes on the load, not on entering the state**, which is the part worth keeping. The crash log
+puts it in `BShkbUtils::GraphTraverser::Next` at `Fallout4.exe+0x1705DDF`, an access violation
+reading address 0, under `LoadBehaviorHelper` → `BShkbAnimationGraph::InitImpl` →
+`QueuedReference::BackgroundClone`, with `GenericBehaviors\SpecialCaseDoors\SpecialCaseDoors.hkx` on
+the stack. The disassembly says why: the traverser pops each child a node reports off its own stack
+and immediately reads that pointer's vtable to make a virtual call, with no null check anywhere on
+the path. A null child is dereferenced as soon as the walk reaches it.
+
+So reachability is beside the point. A state nothing can enter still kills the file, which is a
+stronger rule than the one the tool was about to ship, and it is why the refusal does not ask whether
+anything targets the state.
+
+Unlink rather than delete on purpose. Deleting the orphan would also have exercised object removal
+and renumbering, which are separately unproven, and a crash would then have had two candidates. The
+only two crashes of this signature in the log are the two from this test; the one before it is an
+unrelated CEF breakpoint from a week earlier.
+
+The refusal and the mark both come from `GraphValidator.StatesWithNoGenerator`, so they cannot
+disagree about what empty means, and five checks hold the refusal to saying what it is refusing and
+why. Vanilla is unaffected: all 4881 states across 314 files have a generator, so a mark only ever
+means an edit produced it.
 ## 2026-08-04, first edit to run in the game
 
 **The Red Rocket gas station garage door was edited with this tool, loaded by Fallout 4, and did what

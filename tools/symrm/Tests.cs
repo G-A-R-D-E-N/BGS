@@ -35,6 +35,7 @@ public static class Tests
         ScaleIsShownOnlyWhenItIsRealScale();
         AFractionLandsOnAFrame();
         LosslessScaleFollowsTheEngine();
+        AnEmptyStateIsFoundTheSameWayEverywhere();
         AddedVariablesCarryTheirDeclaredType();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
@@ -504,6 +505,57 @@ public static class Tests
                   !HkxTrackData.IsScaled(Scaled(new Vector3(0.99999994f, 1f, 1.00000006f))));
         CheckTrue("but a real 0.999 is",
                   HkxTrackData.IsScaled(Scaled(new Vector3(0.999f, 1f, 1f))));
+    }
+
+    // Deleting a generator clears the link that held it rather than refusing, so a state can be left
+    // holding nothing. Check graph has always reported it; the views and Save now mark it too, and all
+    // three ask the same function so they cannot drift into disagreeing about what empty means.
+    private static void AnEmptyStateIsFoundTheSameWayEverywhere()
+    {
+        Console.WriteLine("\na state left holding nothing is found the same way everywhere");
+
+        string xml = SmallGraph();
+        var model = BehaviourGraphModel.Parse(xml);
+        Check("a whole graph has no empty states", 0, GraphValidator.StatesWithNoGenerator(model).Count);
+
+        // #94 is state A's clip. Deleting it clears A's generator link, which is the shape the ticket
+        // is about: the delete is correct, and the state it leaves behind looks ordinary.
+        string after = GraphAuthor.DeleteNode(xml, "94", out _);
+        var afterModel = BehaviourGraphModel.Parse(after);
+        var empty = GraphValidator.StatesWithNoGenerator(afterModel);
+
+        Check("deleting a state's generator leaves one empty state", 1, empty.Count);
+        CheckTrue("and it is state A, the one that held the clip", empty.Contains("93"));
+        Check("the state itself is still there, not deleted with it", "A", afterModel.Get("93")?.Str("name"));
+        Check("its generator link reads null rather than dangling", "null", afterModel.Get("93")?.Str("generator"));
+
+        // The views mark what this set contains, so it has to agree with what Check graph reports or
+        // one of them is lying to the person reading it.
+        var reported = GraphValidator.Check(after)
+            .Where(f => f.What.Contains("no generator", StringComparison.Ordinal)).ToList();
+        Check("Check graph reports exactly the same count", empty.Count, reported.Count);
+        CheckTrue("and reports it as an error", reported.All(f => f.Level == GraphValidator.Level.Error));
+        CheckTrue("naming the state", reported.Any(f => f.Where.Contains("'A'")));
+
+        // Vanilla never ships this, so a mark appearing on an unedited file would be a false alarm.
+        Check("an untouched graph stays unmarked", 0,
+              GraphValidator.StatesWithNoGenerator(BehaviourGraphModel.Parse(SmallGraph())).Count);
+
+        // The game crashed while loading a graph carrying exactly one of these, so Save refuses
+        // rather than warns. Both come from the same set above, so the refusal cannot disagree
+        // with the mark.
+        Check("a whole graph is not refused", null, GraphValidator.RefuseToSave(xml));
+        Check("an empty file is not refused either", null, GraphValidator.RefuseToSave(""));
+
+        // Spelled as an empty string rather than null so a missing refusal fails all four of these
+        // instead of throwing on the first and hiding the other three.
+        string refusal = GraphValidator.RefuseToSave(after) ?? "";
+        CheckTrue("one empty state is refused", refusal.Length > 0);
+        CheckTrue("saying nothing was written", refusal.Contains("original is untouched"));
+        CheckTrue("and why the game cannot take it", refusal.Contains("crashes on load"));
+        CheckTrue("without claiming the state has to be entered",
+                  refusal.Contains("whether or not anything can enter"));
+        CheckTrue("counting the states rather than guessing", refusal.Contains("1 state has"));
     }
 
     // No vanilla file carries a scale on a lossless compressed animation: all 856 leave both arrays

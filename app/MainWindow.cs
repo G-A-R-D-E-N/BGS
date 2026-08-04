@@ -48,6 +48,7 @@ public class MainWindow : Window
     private readonly TextBlock _symbolAudit = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
 
     private readonly Dictionary<int, int> _offsetToIndex = new();
+    private HashSet<string> _emptyStates = new();
     private List<string> _objectIds = new();
     private List<HkxBehaviorParser.BehaviorNode> _objects = new();
     private HkxBehaviorParser.BehaviorNode? _root;
@@ -663,11 +664,21 @@ public class MainWindow : Window
         }
     }
 
+    private bool IsEmptyState(int offset) =>
+        _emptyStates.Count > 0
+        && _offsetToIndex.TryGetValue(offset, out int index)
+        && index < _objectIds.Count
+        && _emptyStates.Contains(_objectIds[index]);
+
     private void RebuildTree()
     {
         _tree.Clear();
         _props.Children.Clear();
         if (_root == null) return;
+
+        _emptyStates = _xmlText.Length == 0
+            ? new HashSet<string>()
+            : GraphValidator.StatesWithNoGenerator(BehaviourGraphModel.Parse(_xmlText));
 
         string needle = (_filter.Text ?? "").Trim();
         if (needle.Length == 0)
@@ -702,11 +713,15 @@ public class MainWindow : Window
 
         bool repeat = !seen.Add(node.Offset);
         string label = string.IsNullOrEmpty(node.NodeName) ? node.ClassName : node.NodeName;
+        // Offsets map to xml object ids the same way selection resolves them, so a state the graph
+        // marks as empty is the same row the tree marks.
+        bool empty = IsEmptyState(node.Offset);
 
         var row = _tree.Add(parent, repeat ? label + "  (shown above)" : label,
-                            node.ClassName, node.AnimationName, "0x" + node.Offset.ToString("X"));
-        row.Colour(0, parent == null ? Ux.TitleBrush : repeat ? Ux.DisabledBrush : Ux.MetaBrush)
-           .Colour(2, Ux.CodeBrush).Colour(3, Ux.DisabledBrush).Tag(node.Offset);
+                            empty ? node.ClassName + "  no generator" : node.ClassName,
+                            node.AnimationName, "0x" + node.Offset.ToString("X"));
+        row.Colour(0, empty ? Ux.BadBrush : parent == null ? Ux.TitleBrush : repeat ? Ux.DisabledBrush : Ux.MetaBrush)
+           .Colour(2, empty ? Ux.BadBrush : Ux.CodeBrush).Colour(3, Ux.DisabledBrush).Tag(node.Offset);
 
         if (repeat) return;
         foreach (var child in node.Children) AddTreeNode(child, row, seen, ref rows);
@@ -1220,6 +1235,9 @@ public class MainWindow : Window
     private void Save()
     {
         if (!_dirty || _xmlText.Length == 0) return;
+
+        string? refusal = GraphValidator.RefuseToSave(_xmlText);
+        if (refusal != null) { SetStatus(refusal, Ux.BadBrush); return; }
 
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
