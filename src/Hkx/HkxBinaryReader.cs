@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Text;
 
@@ -107,10 +108,30 @@ public class HkxBinaryReader
         catch { return false; }
     }
 
+    // Refuses rather than returning an empty animation. ReadSkeleton deliberately does not go
+    // through this, because a file can hold a skeleton this reader understands next to an animation
+    // class it does not.
     public HkxAnimationData ReadAnimation(string filepath)
     {
         byte[] data = File.ReadAllBytes(filepath);
-        return ParseHkx(data);
+        var parsed = ParseHkx(data);
+
+        if (parsed.HasUnsupportedAnimation)
+            throw new NotSupportedException(
+                $"unsupported animation class: {parsed.AnimationClass}. " +
+                $"Only {HkxAnimationData.SupportedAnimationClasses} are decoded, so no frame data was read from " +
+                Path.GetFileName(filepath));
+
+        return parsed;
+    }
+
+    // For a caller that wants to show the problem rather than be stopped by it. Returns false when
+    // the file holds an animation class this reader cannot decode, with AnimationClass set to say
+    // which, so the message can name it without picking an exception apart.
+    public bool TryReadAnimation(string filepath, out HkxAnimationData data)
+    {
+        data = ParseHkx(File.ReadAllBytes(filepath));
+        return !data.HasUnsupportedAnimation;
     }
 
     public HkxSkeleton ReadSkeleton(string filepath)
@@ -226,10 +247,21 @@ public class HkxBinaryReader
             result.BoneNames = new List<string>(bestSkel.BoneNames);
         }
 
-        // ── Parse hkaSplineCompressedAnimation if present ──
+        // Havok ships several animation classes and Bethesda uses two of them. Record which one is
+        // here before decoding, so a class this reader cannot decode is distinguishable from an
+        // animation that really is empty. 857 of the 13990 vanilla animations are
+        // hkaLosslessCompressedAnimation and used to come back as silently empty.
+        result.AnimationClass = objectClasses.Keys.FirstOrDefault(
+            c => c.StartsWith("hka", StringComparison.Ordinal) && c.EndsWith("Animation", StringComparison.Ordinal)) ?? "";
+
+        // ── Parse the animation, whichever of the two classes it is ──
         if (objectClasses.TryGetValue("hkaSplineCompressedAnimation", out int animRel))
         {
             ParseSplineAnimation(data, dataAbs, animRel, fixups, result);
+        }
+        else if (objectClasses.TryGetValue("hkaLosslessCompressedAnimation", out int losslessRel))
+        {
+            ParseLosslessAnimation(data, dataAbs, losslessRel, fixups, result);
         }
         else if (result.Skeleton != null)
         {
@@ -433,6 +465,169 @@ public class HkxBinaryReader
                 }
             }
         }
+    }
+
+    // hkaLosslessCompressedAnimation. Every track stores each component as either one value that
+    // holds for the whole animation or one value per frame, and a packed word says which and where.
+    //
+    // Member offsets are the class's own, from hkxpack's classxml descriptor for the class; the
+    // hkaAnimation members below 56 were read out of a real file and matched against it. The packing
+    // and the indexing are not inferred from the data: they are what
+    // hkaLosslessCompressedAnimation::getType, ::getOffset and ::getFrameTransform do in the
+    // 1.10.163 binary. See issue 14.
+    private const int LosslessDuration = 20, LosslessTransformTracks = 24, LosslessNumFrames = 216;
+    private const int LosslessDynamicTranslations = 56, LosslessStaticTranslations = 72, LosslessTranslationWords = 88;
+    private const int LosslessDynamicRotations = 104, LosslessStaticRotations = 120, LosslessRotationWords = 136;
+    private const int LosslessDynamicScales = 152, LosslessStaticScales = 168, LosslessScaleWords = 184;
+
+    private const int TrackClear = 0, TrackStatic = 1, TrackDynamic = 2;
+
+    private static void ParseLosslessAnimation(byte[] data, int dataAbs, int animRel,
+        Dictionary<int, int> fixups, HkxAnimationData anim)
+    {
+        int a = dataAbs + animRel;
+        if (a + LosslessNumFrames + 4 > data.Length) return;
+
+        anim.Duration  = ReadF32(data, a + LosslessDuration);
+        anim.NumTracks = SafeReadI32(data, a + LosslessTransformTracks);
+        anim.NumFrames = SafeReadI32(data, a + LosslessNumFrames);
+        if (anim.NumFrames <= 0 || anim.NumTracks <= 0) return;
+
+        anim.NumBlocks = 1;
+        anim.MaxFramesPerBlock = anim.NumFrames;
+        anim.BlockDuration = anim.Duration;
+        if (anim.NumFrames > 1 && anim.Duration > 0)
+            anim.FrameDuration = anim.Duration / (anim.NumFrames - 1);
+
+        var dynamicT = ReadFloats(data, dataAbs, animRel + LosslessDynamicTranslations, fixups);
+        var staticT  = ReadFloats(data, dataAbs, animRel + LosslessStaticTranslations, fixups);
+        var wordsT   = ReadWords64(data, dataAbs, animRel + LosslessTranslationWords, fixups);
+        var dynamicR = ReadQuaternions(data, dataAbs, animRel + LosslessDynamicRotations, fixups);
+        var staticR  = ReadQuaternions(data, dataAbs, animRel + LosslessStaticRotations, fixups);
+        var wordsR   = ReadWords16(data, dataAbs, animRel + LosslessRotationWords, fixups);
+        var dynamicS = ReadFloats(data, dataAbs, animRel + LosslessDynamicScales, fixups);
+        var staticS  = ReadFloats(data, dataAbs, animRel + LosslessStaticScales, fixups);
+        var wordsS   = ReadWords64(data, dataAbs, animRel + LosslessScaleWords, fixups);
+
+        int frames = anim.NumFrames;
+
+        // The dynamic arrays are frame major: every channel's value for frame 0, then frame 1, and
+        // so on. The stride is how many channels there are, which the engine works out the same way,
+        // by dividing the array length by the frame count.
+        int strideT = dynamicT.Count / frames;
+        int strideR = dynamicR.Count / frames;
+        int strideS = dynamicS.Count / frames;
+
+        for (int t = 0; t < anim.NumTracks; t++)
+        {
+            ulong wordT = t < wordsT.Count ? wordsT[t] : 0;
+            ulong wordR = t < wordsR.Count ? wordsR[t] : 0;
+            ulong wordS = t < wordsS.Count ? wordsS[t] : 0;
+
+            var track = new HkxTrackData();
+            for (int f = 0; f < frames; f++)
+            {
+                track.Translations.Add(new Vector3(
+                    LosslessValue(wordT, 0, f, strideT, dynamicT, staticT, 0f),
+                    LosslessValue(wordT, 1, f, strideT, dynamicT, staticT, 0f),
+                    LosslessValue(wordT, 2, f, strideT, dynamicT, staticT, 0f)));
+
+                track.Scales.Add(new Vector3(
+                    LosslessValue(wordS, 0, f, strideS, dynamicS, staticS, 1f),
+                    LosslessValue(wordS, 1, f, strideS, dynamicS, staticS, 1f),
+                    LosslessValue(wordS, 2, f, strideS, dynamicS, staticS, 1f)));
+
+                track.Rotations.Add(LosslessRotation(wordR, f, strideR, dynamicR, staticR));
+            }
+            anim.Tracks.Add(track);
+        }
+    }
+
+    // A word carries one 16 bit field per vector component: (offset << 2) | type, offset 14 bits.
+    // A uint16 word is the same shape with a single field, which is why rotation reads component 0.
+    private static int LosslessField(ulong word, int component) => (int)((word >> (component * 16)) & 0xFFFF);
+
+    private static float LosslessValue(ulong word, int component, int frame, int stride,
+                                       List<float> dynamic, List<float> constant, float fallback)
+    {
+        int field = LosslessField(word, component);
+        int offset = (field >> 2) & 0x3FFF;
+
+        switch (field & 3)
+        {
+            case TrackStatic:
+                return offset < constant.Count ? constant[offset] : fallback;
+            case TrackDynamic:
+                int index = offset + frame * stride;
+                return index >= 0 && index < dynamic.Count ? dynamic[index] : fallback;
+            default:
+                return fallback;
+        }
+    }
+
+    private static Quaternion LosslessRotation(ulong word, int frame, int stride,
+                                               List<Quaternion> dynamic, List<Quaternion> constant)
+    {
+        int field = LosslessField(word, 0);
+        int offset = (field >> 2) & 0x3FFF;
+
+        switch (field & 3)
+        {
+            case TrackStatic:
+                return offset < constant.Count ? constant[offset] : Quaternion.Identity;
+            case TrackDynamic:
+                int index = offset + frame * stride;
+                return index >= 0 && index < dynamic.Count ? dynamic[index] : Quaternion.Identity;
+            default:
+                return Quaternion.Identity;
+        }
+    }
+
+    // hkArray is a pointer resolved through the local fixups, then a count eight bytes in.
+    private static int ArrayAt(byte[] data, int dataAbs, int memberRel,
+                               Dictionary<int, int> fixups, out int count)
+    {
+        count = SafeReadI32(data, dataAbs + memberRel + 8);
+        if (count <= 0 || !fixups.TryGetValue(memberRel, out int contentRel)) { count = 0; return 0; }
+        return dataAbs + contentRel;
+    }
+
+    private static List<float> ReadFloats(byte[] data, int dataAbs, int memberRel, Dictionary<int, int> fixups)
+    {
+        int at = ArrayAt(data, dataAbs, memberRel, fixups, out int count);
+        var list = new List<float>(count);
+        for (int i = 0; i < count; i++) list.Add(ReadF32(data, at + i * 4));
+        return list;
+    }
+
+    private static List<Quaternion> ReadQuaternions(byte[] data, int dataAbs, int memberRel, Dictionary<int, int> fixups)
+    {
+        int at = ArrayAt(data, dataAbs, memberRel, fixups, out int count);
+        var list = new List<Quaternion>(count);
+        for (int i = 0; i < count; i++)
+        {
+            int p = at + i * 16;
+            list.Add(new Quaternion(ReadF32(data, p), ReadF32(data, p + 4), ReadF32(data, p + 8), ReadF32(data, p + 12)));
+        }
+        return list;
+    }
+
+    private static List<ulong> ReadWords64(byte[] data, int dataAbs, int memberRel, Dictionary<int, int> fixups)
+    {
+        int at = ArrayAt(data, dataAbs, memberRel, fixups, out int count);
+        var list = new List<ulong>(count);
+        for (int i = 0; i < count; i++)
+            list.Add(CanRead(data, at + i * 8, 8) ? BitConverter.ToUInt64(data, at + i * 8) : 0UL);
+        return list;
+    }
+
+    private static List<ulong> ReadWords16(byte[] data, int dataAbs, int memberRel, Dictionary<int, int> fixups)
+    {
+        int at = ArrayAt(data, dataAbs, memberRel, fixups, out int count);
+        var list = new List<ulong>(count);
+        for (int i = 0; i < count; i++)
+            list.Add(CanRead(data, at + i * 2, 2) ? BitConverter.ToUInt16(data, at + i * 2) : (ulong)0);
+        return list;
     }
 
     private static void ParseAnimationBinding(byte[] data, int dataAbs, int bindRel,

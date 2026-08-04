@@ -60,10 +60,15 @@ public sealed class HkGrid : Border
 
     public object? SelectedTag => (_tree.SelectedItem as TreeViewItem)?.Tag;
 
+    /// Every row in the grid, nested ones included. A window over a long list can then be checked
+    /// for holding what it claims to rather than taken on trust.
+    public int RowCount { get; private set; }
+
     public void Clear()
     {
         _tree.ItemsSource = null;
         _tree.Items.Clear();
+        RowCount = 0;
     }
 
     public HkRow Add(HkRow? parent, params string[] cells)
@@ -71,6 +76,7 @@ public sealed class HkGrid : Border
         var row = new HkRow(Columns(), cells, _columns.Length, parent?.Depth + 1 ?? 0);
         if (parent == null) _tree.Items.Add(row.Item);
         else parent.Item.Items.Add(row.Item);
+        RowCount++;
         return row;
     }
 

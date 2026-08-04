@@ -30,6 +30,7 @@ public static class Program
             case "check": return Check(argv);
             case "anims": return Anims(argv);
             case "repack": return Repack(argv);
+            case "frames": return Frames(argv);
             case "skeleton": return Skeleton(argv);
             case "rig": return Rig(argv);
             case "remove": return Remove(argv);
@@ -65,6 +66,12 @@ public static class Program
           dotnet run --project tools/symrm/symrm.csproj -- repack <behaviour.hkx>
               Unpack, repack, unpack again, and compare the object count and the multiset of class
               names. hkxpack renumbers, so ids are expected to change and nothing else is.
+
+          dotnet run --project tools/symrm/symrm.csproj -- frames <animation.hkx | Data folder> [tracks]
+              What the binary reader gets out of an animation: duration, frame count, per bone
+              track lengths, the first few frames of each, annotations, and which frame a given
+              userControlledTimeFraction lands on. Point it at a directory to read every animation
+              under it and report how many decode to nothing.
 
           dotnet run --project tools/symrm/symrm.csproj -- skeleton <skeleton.hkx> [bone]
               Bone names, parents, and a chain composed from the root, to see where the reference
@@ -215,6 +222,168 @@ public static class Program
         return drift.Clean ? 0 : 1;
     }
 
+    // What the binary reader actually gets out of an animation, before any of it is put on screen.
+    // A directory reports one line per file, which is how a decode that works on one animation and
+    // quietly returns nothing on a hundred others gets caught.
+    private static int Frames(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        if (Directory.Exists(target))
+        {
+            var files = Directory.EnumerateFiles(target, "*.hkx", SearchOption.AllDirectories)
+                                 .Where(f => f.Contains($"{Path.DirectorySeparatorChar}Animations{Path.DirectorySeparatorChar}",
+                                                        StringComparison.OrdinalIgnoreCase))
+                                 .OrderBy(f => f).ToList();
+
+            int read = 0, empty = 0, unsupported = 0, threw = 0;
+            var classes = new Dictionary<string, int>();
+            var reasons = new Dictionary<string, int>();
+
+            foreach (string file in files)
+            {
+                try
+                {
+                    var a = new HkxBinaryReader().ReadAnimation(file);
+                    bool any = a.Tracks.Any(t => t.Rotations.Count > 0 || t.Translations.Count > 0 || t.Scales.Count > 0);
+                    if (a.NumFrames <= 0 || !any) { empty++; Console.WriteLine($"  empty  {Short(file, target)}  {a.GetSummary()}"); }
+                    else read++;
+                }
+                catch (NotSupportedException ex)
+                {
+                    unsupported++;
+                    string cls = ex.Message.Split('.')[0].Replace("unsupported animation class: ", "");
+                    classes[cls] = classes.GetValueOrDefault(cls) + 1;
+                }
+                catch (Exception ex)
+                {
+                    threw++;
+                    string why = ex.Message.Split('\n')[0];
+                    reasons[why] = reasons.GetValueOrDefault(why) + 1;
+                }
+            }
+
+            Console.WriteLine($"\n{files.Count} animations: {read} decoded, {unsupported} in a class this reader " +
+                              $"does not decode, {empty} decoded to nothing, {threw} threw");
+            foreach (var kv in classes.OrderByDescending(k => k.Value)) Console.WriteLine($"  {kv.Value,5}  {kv.Key}");
+            foreach (var kv in reasons.OrderByDescending(k => k.Value)) Console.WriteLine($"  {kv.Value,5}  {kv.Key}");
+            return threw == 0 && empty == 0 ? 0 : 1;
+        }
+
+        // A digest the independent Python probe can produce too, so "the reader decodes it" can be
+        // checked against "the packing is right" rather than assumed from it.
+        if (argv.Length > 2 && argv[2] == "--digest")
+        {
+            var a = new HkxBinaryReader().ReadAnimation(target);
+            double sum = 0;
+            foreach (var tr in a.Tracks)
+            {
+                foreach (var v in tr.Translations) sum += v.X + v.Y + v.Z;
+                foreach (var q in tr.Rotations) sum += q.X + q.Y + q.Z + q.W;
+                foreach (var v in tr.Scales) sum += v.X + v.Y + v.Z;
+            }
+            Console.WriteLine($"{a.NumTracks} {a.NumFrames} {a.Duration:F4} {sum:F3}");
+            return 0;
+        }
+
+        HkxAnimationData anim;
+        try
+        {
+            anim = new HkxBinaryReader().ReadAnimation(target);
+        }
+        catch (NotSupportedException ex)
+        {
+            Console.WriteLine($"{Path.GetFileName(target)}");
+            Console.WriteLine("  " + ex.Message);
+            return 1;
+        }
+
+        Console.WriteLine($"{Path.GetFileName(target)}");
+        Console.WriteLine("  " + anim.GetSummary());
+        Console.WriteLine($"  blocks {anim.NumBlocks}, up to {anim.MaxFramesPerBlock} frames each, " +
+                          $"block duration {anim.BlockDuration:F3}s, blend hint {anim.BlendHint}");
+        if (anim.OriginalSkeletonName.Length > 0) Console.WriteLine($"  skeleton named in the file: {anim.OriginalSkeletonName}");
+
+        foreach (var note in anim.Annotations) Console.WriteLine($"  annotation {note.Time:F3}s  {note.Text}");
+
+        var skeleton = SiblingSkeleton(target);
+        Console.WriteLine(skeleton == null
+            ? "  no skeleton found beside it, so tracks are numbered rather than named"
+            : $"  naming tracks from {skeleton.BoneNames.Count} bones in the sibling skeleton");
+
+        int tracks = Math.Min(anim.Tracks.Count, argv.Length > 2 && int.TryParse(argv[2], out int n) ? n : 8);
+        for (int t = 0; t < tracks; t++)
+        {
+            var track = anim.Tracks[t];
+            string bone = TrackName(anim, skeleton, t);
+            Console.WriteLine($"\n  {bone}: {track.Translations.Count} translations, " +
+                              $"{track.Rotations.Count} rotations, {track.Scales.Count} scales");
+
+            int frames = Math.Min(4, Math.Max(track.Rotations.Count, track.Translations.Count));
+            for (int f = 0; f < frames; f++)
+            {
+                string pos = f < track.Translations.Count
+                    ? $"pos {track.Translations[f].X,8:F3} {track.Translations[f].Y,8:F3} {track.Translations[f].Z,8:F3}" : "";
+                string rot = f < track.Rotations.Count
+                    ? $"  rot {track.Rotations[f].X,7:F4} {track.Rotations[f].Y,7:F4} {track.Rotations[f].Z,7:F4} {track.Rotations[f].W,7:F4}" : "";
+                Console.WriteLine($"    frame {f,4}  t={f * anim.FrameDuration,7:F3}s  {pos}{rot}");
+            }
+        }
+
+        // The question the clip work actually asks: a variable drives userControlledTimeFraction,
+        // and this says which frame that lands on.
+        Console.WriteLine();
+        foreach (float fraction in new[] { 0f, 0.25f, 0.5f, 0.75f, 1f })
+            Console.WriteLine($"  userControlledTimeFraction {fraction:F2} -> frame {FrameAt(anim, fraction)} " +
+                              $"of {Math.Max(anim.NumFrames - 1, 0)}");
+
+        return 0;
+    }
+
+    // An animation carries no bone names of its own. Its annotation tracks are named after bones by
+    // convention and are empty in plenty of vanilla files, so the real name comes from the skeleton
+    // through transformTrackToBoneIndices. The skeleton sits in the project's CharacterAssets, one
+    // level up from Animations, and reading it needs no JVM.
+    private static HkxSkeleton? SiblingSkeleton(string animationPath)
+    {
+        var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(animationPath)) ?? "");
+        for (int up = 0; up < 4 && dir != null; up++, dir = dir.Parent)
+        {
+            string assets = Path.Combine(dir.FullName, "CharacterAssets");
+            if (!Directory.Exists(assets)) continue;
+
+            foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
+            {
+                try { return new HkxBinaryReader().ReadSkeleton(file); }
+                catch { /* not a skeleton, try the next */ }
+            }
+        }
+        return null;
+    }
+
+    private static string TrackName(HkxAnimationData anim, HkxSkeleton? skeleton, int track)
+    {
+        if (skeleton != null && track < anim.TrackToBoneIndices.Count)
+        {
+            int bone = anim.TrackToBoneIndices[track];
+            if (bone >= 0 && bone < skeleton.BoneNames.Count) return skeleton.BoneNames[bone];
+        }
+
+        string annotation = track < anim.BoneNames.Count ? anim.BoneNames[track] : "";
+        return annotation.Length > 0 ? annotation : $"track {track}";
+    }
+
+    private static int FrameAt(HkxAnimationData anim, float fraction)
+    {
+        if (anim.NumFrames <= 1) return 0;
+        int frame = (int)Math.Round(Math.Clamp(fraction, 0f, 1f) * (anim.NumFrames - 1));
+        return frame;
+    }
+
+    private static string Short(string file, string root) =>
+        file.StartsWith(root, StringComparison.Ordinal) ? file[(root.Length + 1)..] : file;
+
     // Answers one question before any rig work starts: is the reference pose stored parent relative
     // or already in world space. Composing a chain and looking at where the bones land settles it,
     // and guessing it wrong would put every bone in the wrong place.
@@ -344,9 +513,6 @@ public static class Program
 
         return names && parents && count;
     }
-
-    private static string Short(string file, string root) =>
-        file.StartsWith(root, StringComparison.Ordinal) ? file[(root.Length + 1)..] : file;
 
     private static string Work(string name)
     {
