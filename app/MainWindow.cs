@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.App;
@@ -54,6 +56,8 @@ public class MainWindow : Window
 
         var open = Ux.Primary("Open");
         open.Click += (_, _) => Load();
+        var browse = Ux.Secondary("Browse...");
+        browse.Click += async (_, _) => await Browse();
         _pathField.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) Load(); };
 
         var expand = Ux.Secondary("Expand all");
@@ -89,7 +93,7 @@ public class MainWindow : Window
             Padding = new Thickness(14),
             Child = Rows(
                 (Ux.SectionTitle("Havok behaviour file"), false),
-                (Bar(_pathField, open), false),
+                (Bar(_pathField, browse, open), false),
                 (Ux.Pill(_summary), false),
                 (Bar(_filter, expand, collapse), false),
                 (tabs, true),
@@ -215,6 +219,48 @@ public class MainWindow : Window
         return panel;
     }
 
+    // Opens where the last file came from. Behaviours, characters, skeletons and animations all sit
+    // in sibling folders of one project, so the next file wanted is nearly always a couple of clicks
+    // from the last one rather than somewhere new.
+    private async Task Browse()
+    {
+        var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Open a Havok file",
+            AllowMultiple = false,
+            SuggestedStartLocation = await StartFolder(),
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Havok files")
+                {
+                    Patterns = new[] { "*.hkx", "*.HKX", "*.hkt", "*.HKT" },
+                },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        string? path = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (path == null) return;
+
+        Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
+        Open(path);
+    }
+
+    private async Task<IStorageFolder?> StartFolder()
+    {
+        string[] candidates =
+        {
+            Settings.Get("last_folder"),
+            Path.GetDirectoryName(_pathField.Text ?? "") ?? "",
+        };
+
+        foreach (string dir in candidates)
+            if (dir.Length > 0 && Directory.Exists(dir))
+                return await StorageProvider.TryGetFolderFromPathAsync(dir);
+
+        return null;
+    }
+
     public void Open(string path)
     {
         _pathField.Text = path;
@@ -263,6 +309,7 @@ public class MainWindow : Window
 
         RebuildTree();
         Settings.Set("last_path", path);
+        Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
         PrepareEditing();
     }
 
