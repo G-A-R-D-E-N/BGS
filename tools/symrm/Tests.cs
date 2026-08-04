@@ -36,6 +36,7 @@ public static class Tests
         AFractionLandsOnAFrame();
         LosslessScaleFollowsTheEngine();
         AnEmptyStateIsFoundTheSameWayEverywhere();
+        AddedVariablesCarryTheirDeclaredType();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -659,6 +660,102 @@ public static class Tests
         var lines = Lines(usage, index);
         return lines.Count > 0 ? lines[0] : new EventUsage.Line(EventUsage.Role.Referenced, "not found", "", 0);
     }
+
+    // A variable lives in three arrays at once, and the one that silently went missing was its
+    // declared type. BindingEditor.AddVariable used to test variableInfos against Lists, but that
+    // field is a struct list, so the check was always false: the name and the value were written, the
+    // info element was not, and nothing raised an error. The engine then read a variable with no
+    // declared type.
+    //
+    // The only thing exercising this path was symrm remove, which needs hkxpack, a JVM and a real game
+    // file, so it never ran in CI. This does, on a graph built in memory.
+    private static void AddedVariablesCarryTheirDeclaredType()
+    {
+        Console.WriteLine("\nan added variable carries its declared type into variableInfos");
+
+        foreach (var (type, expected) in new[]
+                 {
+                     (SymbolEditor.VariableType.Real,  "VARIABLE_TYPE_REAL"),
+                     (SymbolEditor.VariableType.Int32, "VARIABLE_TYPE_INT32"),
+                     (SymbolEditor.VariableType.Bool,  "VARIABLE_TYPE_BOOL"),
+                 })
+        {
+            string xml = SymbolEditor.AddVariable(SymbolGraph(), "fProbe", type, out int index);
+            var model = BehaviourGraphModel.Parse(xml);
+            var counts = SymbolEditor.Audit(model);
+
+            Check($"{type}: the new variable takes the next index", 2, index);
+            Check($"{type}: its name is declared", "fProbe", SymbolEditor.VariableNames(model)[index]);
+            Check($"{type}: an info element was written for it", 3, counts.Infos);
+            Check($"{type}: with the right declared type", expected, TypeOfVariable(model, index));
+            CheckTrue($"{type}: the three arrays still agree", counts.VariablesConsistent);
+        }
+
+        // The binding path is the one that had the bug, so it gets its own check rather than trusting
+        // that delegation stayed in place.
+        string bound = BindingEditor.AddVariable(SymbolGraph(), "fBoundProbe", out int boundIndex);
+        var boundModel = BehaviourGraphModel.Parse(bound);
+        Check("BindingEditor declares a real variable too", "VARIABLE_TYPE_REAL",
+              TypeOfVariable(boundModel, boundIndex));
+        CheckTrue("and leaves the arrays consistent", SymbolEditor.Audit(boundModel).VariablesConsistent);
+
+        // The failure this guards against was silent: names grew, infos did not. Assert the shape
+        // rather than only the count, so a future edit that writes an element with no type still fails.
+        string twice = SymbolEditor.AddVariable(
+            SymbolEditor.AddVariable(SymbolGraph(), "fOne", SymbolEditor.VariableType.Real, out _),
+            "bTwo", SymbolEditor.VariableType.Bool, out int second);
+        var twiceModel = BehaviourGraphModel.Parse(twice);
+        Check("adding two keeps names and infos in step", 4, SymbolEditor.Audit(twiceModel).Infos);
+        Check("and each keeps its own type", "VARIABLE_TYPE_BOOL", TypeOfVariable(twiceModel, second));
+        Check("the earlier one is untouched", "VARIABLE_TYPE_REAL", TypeOfVariable(twiceModel, second - 1));
+    }
+
+    private static string TypeOfVariable(BehaviourGraphModel model, int index)
+    {
+        var data = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraphData");
+        if (data == null || !data.StructLists.TryGetValue("variableInfos", out var infos)) return "no variableInfos";
+        if (index < 0 || index >= infos.Count) return "no element at that index";
+        return infos[index].TryGetValue("type", out string? t) ? t : "element with no type";
+    }
+
+    // The three arrays a variable lives in, with two variables already declared so an append has
+    // something to line up against.
+    private static string SymbolGraph() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraphStringData" name="#90" signature="0xc713064e">
+                    <hkparam name="variableNames" numelements="2">
+                        <hkcstring>fExisting</hkcstring>
+                        <hkcstring>bExisting</hkcstring>
+                    </hkparam>
+                    <hkparam name="eventNames" numelements="0"></hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphData" name="#91" signature="0x95aca5d">
+                    <hkparam name="variableInfos" numelements="2">
+                        <hkobject>
+                            <hkparam name="type">VARIABLE_TYPE_REAL</hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="type">VARIABLE_TYPE_BOOL</hkparam>
+                        </hkobject>
+                    </hkparam>
+                    <hkparam name="eventInfos" numelements="0"></hkparam>
+                    <hkparam name="variableBounds" numelements="0"></hkparam>
+                </hkobject>
+                <hkobject class="hkbVariableValueSet" name="#92" signature="0x27812d8d">
+                    <hkparam name="wordVariableValues" numelements="2">
+                        <hkobject>
+                            <hkparam name="value">0</hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="value">0</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
 
     private static string EventGraph() => """
         <?xml version="1.0" encoding="ascii"?>
