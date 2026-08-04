@@ -210,7 +210,7 @@ public class MainWindow : Window
             {
                 _animationSummary.Text =
                     $"Unsupported: {anim.AnimationClass} (decode not implemented yet). " +
-                    $"Only {HkxAnimationData.SupportedAnimationClass} is read, so there is no frame data to show.";
+                    $"Only {HkxAnimationData.SupportedAnimationClasses} are read, so there is no frame data to show.";
                 _animationSummary.Foreground = Ux.BadBrush;
                 _animation.Add(null, anim.AnimationClass, "", "", "no frame data was read from this file", "")
                           .Colour(0, Ux.BadBrush).Colour(3, Ux.MutedBrush);

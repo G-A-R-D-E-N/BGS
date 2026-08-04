@@ -260,6 +260,22 @@ public static class Program
             return threw == 0 && empty == 0 ? 0 : 1;
         }
 
+        // A digest the independent Python probe can produce too, so "the reader decodes it" can be
+        // checked against "the packing is right" rather than assumed from it.
+        if (argv.Length > 2 && argv[2] == "--digest")
+        {
+            var a = new HkxBinaryReader().ReadAnimation(target);
+            double sum = 0;
+            foreach (var tr in a.Tracks)
+            {
+                foreach (var v in tr.Translations) sum += v.X + v.Y + v.Z;
+                foreach (var q in tr.Rotations) sum += q.X + q.Y + q.Z + q.W;
+                foreach (var v in tr.Scales) sum += v.X + v.Y + v.Z;
+            }
+            Console.WriteLine($"{a.NumTracks} {a.NumFrames} {a.Duration:F4} {sum:F3}");
+            return 0;
+        }
+
         HkxAnimationData anim;
         try
         {

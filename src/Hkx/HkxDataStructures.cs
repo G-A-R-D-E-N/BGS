@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 
@@ -66,14 +67,20 @@ public class HkxAnimationData
     public int BlendHint { get; set; }
 
     /// The hka*Animation class found in the file, or empty if it holds no animation object at all.
-    /// Only hkaSplineCompressedAnimation is decoded; anything else parses to no tracks, and callers
-    /// need to be able to tell that apart from an animation that is genuinely empty.
+    /// Havok defines several and Fallout 4 ships the two below; anything else parses to no tracks,
+    /// and callers need to tell that apart from an animation that is genuinely empty.
     public string AnimationClass { get; set; } = "";
 
-    public const string SupportedAnimationClass = "hkaSplineCompressedAnimation";
+    public static readonly string[] DecodedAnimationClasses =
+    {
+        "hkaSplineCompressedAnimation",
+        "hkaLosslessCompressedAnimation",
+    };
+
+    public static string SupportedAnimationClasses => string.Join(" and ", DecodedAnimationClasses);
 
     public bool HasUnsupportedAnimation =>
-        AnimationClass.Length > 0 && AnimationClass != SupportedAnimationClass;
+        AnimationClass.Length > 0 && Array.IndexOf(DecodedAnimationClasses, AnimationClass) < 0;
 
     public HkxSkeleton? Skeleton { get; set; }
 

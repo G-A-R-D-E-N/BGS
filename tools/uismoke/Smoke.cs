@@ -70,7 +70,8 @@ public static class Smoke
             string name = System.IO.Path.GetFileName(path);
             var texts = Find<TextBlock>(window).Select(t => t.Text ?? "").ToList();
             string shown = texts.FirstOrDefault(t => t.StartsWith("Unsupported:", StringComparison.Ordinal)
-                                                  || t.Contains("hkaSplineCompressedAnimation", StringComparison.Ordinal)
+                                                  || OpenCommonwealth.Services.Hkx.HkxAnimationData.DecodedAnimationClasses
+                                                         .Any(c => t.Contains(c, StringComparison.Ordinal))
                                                   || t.StartsWith("This file holds no animation", StringComparison.Ordinal)
                                                   || t.StartsWith("Could not read this file as an animation", StringComparison.Ordinal)
                                                   || t.StartsWith("This is a behaviour file", StringComparison.Ordinal)) ?? "";
