@@ -28,6 +28,8 @@ public static class Program
             case "corpus": return Corpus(argv);
             case "unpack": return Unpack(argv);
             case "check": return Check(argv);
+            case "anims": return Anims(argv);
+            case "repack": return Repack(argv);
             case "remove": return Remove(argv);
             case "door": return Door(argv);
             case "link": return Link(argv);
@@ -52,6 +54,15 @@ public static class Program
               GraphValidator over every unpacked file. It should report zero errors: anything it
               says about vanilla data is a false alarm in the checker, not a fault in the game.
 
+          dotnet run --project tools/symrm/symrm.csproj -- anims <behaviour.hkx>
+              The same checks plus the ones that need the folder: resolves the project chain and
+              reports every clip whose animation is not on disk, or that the character does not
+              declare. Needs a real project folder, not a loose file.
+
+          dotnet run --project tools/symrm/symrm.csproj -- repack <behaviour.hkx>
+              Unpack, repack, unpack again, and compare the object count and the multiset of class
+              names. hkxpack renumbers, so ids are expected to change and nothing else is.
+
           dotnet run --project tools/symrm/symrm.csproj -- remove <behaviour.hkx>
               The symbol removal round trip. Adds a variable and an event, refuses to remove one
               that is in use, removes ones that are not, repacks, reads the binary back, and
@@ -72,7 +83,7 @@ public static class Program
     private static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "BehaviourGraphStudio.csproj")))
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, "src", "Hkx")))
             dir = dir.Parent;
         return dir?.FullName ?? Directory.GetCurrentDirectory();
     }
@@ -90,6 +101,113 @@ public static class Program
         int written = Ba2.ExtractMatching(argv[1], "behavior", argv[2], ".hkx", Console.WriteLine);
         Console.WriteLine($"wrote {written} behaviour files to {argv[2]}");
         return 0;
+    }
+
+    private static int Anims(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string target = Path.GetFullPath(argv[1]);
+        return Directory.Exists(target) ? AnimsSweep(target) : AnimsOne(target);
+    }
+
+    // Every behaviour under one project root shares that root's animation folder, so the chain is
+    // resolved once per root rather than once per file.
+    private static int AnimsSweep(string root)
+    {
+        var roots = Directory.EnumerateDirectories(root, "Behaviors", SearchOption.AllDirectories)
+                             .Select(d => Path.GetDirectoryName(d)!)
+                             .OrderBy(d => d).ToList();
+
+        int files = 0, errorCount = 0, warningCount = 0, chainless = 0;
+        var byKind = new Dictionary<string, int>();
+
+        foreach (string project in roots)
+        {
+            var chain = ProjectChain.Resolve(Path.Combine(project, "Behaviors"), _java, _jar);
+            if (chain.Animations.Count == 0)
+            {
+                chainless++;
+                Console.WriteLine($"  no animation list  {project[(root.Length + 1)..]}" +
+                                  (chain.Problems.Count > 0 ? "  (" + chain.Problems[0] + ")" : ""));
+            }
+
+            foreach (string hkx in Directory.EnumerateFiles(Path.Combine(project, "Behaviors"), "*.hkx").OrderBy(f => f))
+            {
+                List<GraphValidator.Finding> findings;
+                try
+                {
+                    string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, hkx, Work("sweep")));
+                    findings = GraphValidator.Check(xml, chain);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"  THREW {Path.GetFileName(hkx)}: {ex.Message.Split('\n')[0]}");
+                    continue;
+                }
+
+                files++;
+                foreach (var f in findings.Where(f => f.What.Contains("plays '")))
+                {
+                    if (f.Level == GraphValidator.Level.Error) errorCount++; else warningCount++;
+                    Console.WriteLine($"  {Path.GetFileName(hkx),-46} {f}");
+                    string kind = f.Level + ": " + f.What.Split(',')[0].Split('\'')[0].Trim();
+                    byKind[kind] = byKind.GetValueOrDefault(kind) + 1;
+                }
+            }
+        }
+
+        Console.WriteLine($"\n{roots.Count} project roots, {files} behaviours");
+        Console.WriteLine($"{chainless} roots whose character declares no animations");
+        Console.WriteLine($"{errorCount} animation errors, {warningCount} animation warnings");
+        foreach (var kv in byKind.OrderByDescending(k => k.Value))
+            Console.WriteLine($"  {kv.Value,5}  {kv.Key}");
+
+        return errorCount == 0 ? 0 : 1;
+    }
+
+    private static int AnimsOne(string hkx)
+    {
+        var chain = ProjectChain.Resolve(hkx, _java, _jar);
+
+        Console.WriteLine($"project root  {chain.Root}");
+        Console.WriteLine($"{chain.Animations.Count} animations declared by the character");
+        foreach (string anim in chain.Animations) Console.WriteLine("    " + anim);
+        foreach (string problem in chain.Problems) Console.WriteLine("  problem  " + problem);
+
+        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, hkx, Work("anims")));
+        var findings = GraphValidator.Check(xml, chain);
+        foreach (var f in findings) Console.WriteLine("  " + f);
+
+        int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
+        Console.WriteLine($"\n{errors} errors, {findings.Count - errors} warnings");
+        return errors == 0 ? 0 : 1;
+    }
+
+    private static int Repack(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string hkx = Path.GetFullPath(argv[1]);
+        string xmlPath = HkxTextEdit.Unpack(_java, _jar, hkx, Work("repack_in"));
+        var before = RepackCheck.Take(File.ReadAllText(xmlPath));
+
+        string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
+        var after = RepackCheck.Take(File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, packed, Work("repack_out"))));
+
+        var drift = RepackCheck.Compare(before, after);
+        Console.WriteLine($"{Path.GetFileName(hkx)}: {drift}");
+        Console.WriteLine(drift.Clean ? "clean" : "DRIFT");
+        return drift.Clean ? 0 : 1;
+    }
+
+    private static string Work(string name)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "symrm_" + name);
+        if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        return dir;
     }
 
     private static int Unpack(string[] argv)

@@ -61,7 +61,7 @@ public sealed class ProjectChain
             return chain;
         }
 
-        string characterPath = Resolve(chain.Root, characterRel);
+        string characterPath = ResolvePath(chain.Root, characterRel);
         chain.Add("character", characterRel, characterPath);
         if (!File.Exists(characterPath)) return chain;
 
@@ -77,14 +77,14 @@ public sealed class ProjectChain
         // folder the character file happens to sit in.
         string behaviourRel = strings.Str("behaviorFilename");
         if (behaviourRel.Length > 0)
-            chain.Add("behaviour", behaviourRel, Resolve(chain.Root, behaviourRel));
+            chain.Add("behaviour", behaviourRel, ResolvePath(chain.Root, behaviourRel));
         else
             chain.Problems.Add("the character names no behaviour file");
 
         string rigRel = strings.Str("rigName");
         if (rigRel.Length > 0)
         {
-            string rigPath = Resolve(chain.Root, rigRel);
+            string rigPath = ResolvePath(chain.Root, rigRel);
             var link = chain.Add("skeleton", rigRel, rigPath);
             if (link.Exists)
             {
@@ -105,18 +105,34 @@ public sealed class ProjectChain
             chain.Problems.Add("the character names no skeleton");
         }
 
-        foreach (string anim in strings.Strings("animationNames"))
+        foreach (string anim in DeclaredAnimations(strings))
         {
-            string full = Resolve(chain.Root, anim);
             chain.Animations.Add(anim);
-            if (!File.Exists(full)) chain.Problems.Add("missing animation: " + anim);
+            if (!File.Exists(ResolvePath(chain.Root, anim)))
+                chain.Problems.Add("missing animation: " + anim);
         }
 
         return chain;
     }
 
+    // Skyrim era characters list their animations in animationNames. Fallout 4 moved them into
+    // animationBundleNameData, whose assetNames the model parser flattens onto the outer param, so
+    // reading only the old field leaves this empty for every vanilla FO4 character.
+    public static List<string> DeclaredAnimations(HkObject characterStringData)
+    {
+        var all = new List<string>(characterStringData.Strings("animationNames"));
+        foreach (string name in characterStringData.Strings("animationBundleNameData"))
+            if (!all.Contains(name)) all.Add(name);
+        return all;
+    }
+
+    // A clip names its animation the same way the character declares it, but the two can differ in
+    // separator and in the .hkt/.hkx split, so compare on this rather than on the raw string.
+    public static string AnimationKey(string declared)
+        => Path.ChangeExtension(declared.Replace('/', '\\'), null).ToLowerInvariant();
+
     // Fallout 4 declares these as .hkt but ships .hkx on disk, so a plain join misses every file.
-    private static string Resolve(string baseDir, string relative)
+    public static string ResolvePath(string baseDir, string relative)
     {
         string cleaned = relative.Replace('\\', Path.DirectorySeparatorChar)
                                  .Replace('/', Path.DirectorySeparatorChar);

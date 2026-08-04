@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
@@ -20,7 +21,10 @@ public static class GraphValidator
         public override string ToString() => $"{(Level == Level.Error ? "error" : "warning")}  {Where}  {What}";
     }
 
-    public static List<Finding> Check(string xml)
+    // The chain is optional because most of these checks only need the one file. Pass it and the
+    // clip animations are checked against the folder on disk as well, which is the breakage that
+    // cloning a behaviour folder under a new name causes and that nothing else here can see.
+    public static List<Finding> Check(string xml, ProjectChain? chain = null)
     {
         var model = BehaviourGraphModel.Parse(xml);
         var found = new List<Finding>();
@@ -31,6 +35,7 @@ public static class GraphValidator
         CheckStateMachines(model, found);
         CheckBlenders(model, found);
         CheckClips(model, found);
+        CheckClipAnimations(model, chain, found);
         CheckUnattached(model, found);
 
         return found;
@@ -146,6 +151,31 @@ public static class GraphValidator
             if (!driven)
                 Add(found, Level.Warning, $"#{clip.Id} clip '{clip.Str("name")}'",
                     "is MODE_USER_CONTROLLED with nothing bound to userControlledTimeFraction, so it holds frame zero");
+        }
+    }
+
+    private static void CheckClipAnimations(BehaviourGraphModel model, ProjectChain? chain, List<Finding> found)
+    {
+        if (chain == null || chain.Root.Length == 0) return;
+
+        var declared = chain.Animations.Select(ProjectChain.AnimationKey).ToHashSet();
+
+        foreach (var clip in model.Objects.Where(o => o.Class == "hkbClipGenerator"))
+        {
+            string anim = clip.Str("animationName");
+            if (string.IsNullOrWhiteSpace(anim)) continue;
+
+            string where = $"#{clip.Id} clip '{clip.Str("name")}'";
+
+            // A warning rather than an error because Bethesda ships plenty of these: shared
+            // behaviours reference per creature animations that not every creature has, and some
+            // clips point at content that was cut. A file full of them after a folder was renamed
+            // is still the loudest signal there is.
+            if (!File.Exists(ProjectChain.ResolvePath(chain.Root, anim)))
+                Add(found, Level.Warning, where, $"plays '{anim}', which is not on disk under {chain.Root}");
+            else if (declared.Count > 0 && !declared.Contains(ProjectChain.AnimationKey(anim)))
+                Add(found, Level.Warning, where,
+                    $"plays '{anim}', which the character file does not list, so the engine may not load it");
         }
     }
 

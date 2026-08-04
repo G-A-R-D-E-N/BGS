@@ -26,6 +26,9 @@ public static class Tests
         StructuralObjectsAreProtected();
         PortTypesRefuseNonsense();
         BundledHkxPackIsFound();
+        Fo4CharacterListsItsAnimations();
+        MissingClipAnimationIsReported();
+        RepackDriftNamesWhatMoved();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -251,6 +254,117 @@ public static class Tests
 
     // Seven objects: a graph, a machine with two states, a clip under each, and one spare clip that
     // nothing points at. Small enough to reason about, shaped like the real thing.
+    // Fallout 4 does not use animationNames. Reading only that field left the chain's animation
+    // list empty for every vanilla file, which is why nothing ever checked a clip against disk.
+    private static void Fo4CharacterListsItsAnimations()
+    {
+        Console.WriteLine("\na Fallout 4 character's animation list is read");
+
+        var model = BehaviourGraphModel.Parse(Fo4Character());
+        var strings = model.Objects.First(o => o.Class == "hkbCharacterStringData");
+
+        Check("the old Skyrim field is empty here", 0, strings.Strings("animationNames").Count);
+
+        var declared = ProjectChain.DeclaredAnimations(strings);
+        Check("both bundled animations are found", 2, declared.Count);
+        Check("the first one", @"Animations\Anim01.HKT", declared.FirstOrDefault());
+
+        Check("separator and extension do not matter to the key",
+              ProjectChain.AnimationKey(@"Animations\Anim01.HKT"),
+              ProjectChain.AnimationKey("animations/anim01.hkx"));
+    }
+
+    private static void MissingClipAnimationIsReported()
+    {
+        Console.WriteLine("\na clip pointing at an animation that is not on disk is an error");
+
+        string root = Directory.CreateTempSubdirectory("bgs-anims").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "a.hkx"), "not really an animation");
+
+            var chain = new ProjectChain { Root = root };
+            chain.Animations.AddRange(new[] { "a.hkx", "b.hkx", "spare.hkx" });
+
+            var missing = GraphValidator.Check(SmallGraph(), chain)
+                                        .Where(f => f.What.Contains("not on disk")).ToList();
+
+            Check("two of the three clips are missing their animation", 2, missing.Count);
+            CheckTrue("reported as a warning, because vanilla trips it too",
+                      missing.All(f => f.Level == GraphValidator.Level.Warning));
+            CheckTrue("ClipB is named", missing.Any(f => f.Where.Contains("ClipB")));
+            CheckTrue("the spare clip is named", missing.Any(f => f.Where.Contains("Spare")));
+            CheckTrue("ClipA, which is on disk, is not", !missing.Any(f => f.Where.Contains("ClipA")));
+
+            Check("nothing is reported without a chain to check against", 0,
+                  GraphValidator.Check(SmallGraph()).Count(f => f.What.Contains("not on disk")));
+
+            // Fallout 4 declares .HKT and ships .hkx, so the swap has to happen before the check.
+            File.Move(Path.Combine(root, "a.hkx"), Path.Combine(root, "b.hkx"));
+            var swapped = new ProjectChain { Root = root };
+            Check("a .HKT declaration resolves to the .hkx on disk", 0,
+                  GraphValidator.Check(SmallGraph().Replace("b.hkx", "b.HKT"), swapped)
+                                .Count(f => f.Where.Contains("ClipB") && f.What.Contains("not on disk")));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static void RepackDriftNamesWhatMoved()
+    {
+        Console.WriteLine("\na repack that drops objects is caught and says what went");
+
+        var before = RepackCheck.Take(SmallGraph());
+        Check("the graph has seven objects", 7, before.Objects);
+
+        CheckTrue("an unchanged file drifts by nothing",
+                  RepackCheck.Compare(before, RepackCheck.Take(SmallGraph())).Clean);
+
+        // Renumbering is what hkxpack always does, and is not drift.
+        var renumbered = RepackCheck.Take(SmallGraph().Replace("\"#9", "\"#20"));
+        CheckTrue("renumbering every object is not drift", RepackCheck.Compare(before, renumbered).Clean);
+
+        string short1 = SmallGraph().Replace(
+            "<hkobject class=\"hkbClipGenerator\" name=\"#97\"",
+            "<hkobject class=\"hkbClipGeneratorGONE\" name=\"#97\"");
+        var drift = RepackCheck.Compare(before, RepackCheck.Take(short1));
+
+        CheckTrue("a swapped class is drift", !drift.Clean);
+        CheckTrue("it says what was lost", drift.ToString().Contains("lost 1 hkbClipGenerator"));
+        CheckTrue("it says what appeared", drift.ToString().Contains("invented 1 hkbClipGeneratorGONE"));
+
+        int cut = SmallGraph().IndexOf("<hkobject class=\"hkbClipGenerator\" name=\"#97\"", StringComparison.Ordinal);
+        var dropped = RepackCheck.Compare(before, RepackCheck.Take(SmallGraph()[..cut]));
+        CheckTrue("a dropped object is drift", !dropped.Clean);
+        CheckTrue("it counts both sides", dropped.ToString().Contains("7 objects and came back with 6"));
+    }
+
+    private static string Fo4Character() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbCharacterStringData" name="#93" signature="0xb9d8a52">
+                    <hkparam name="skinNames" numelements="0"/>
+                    <hkparam name="boneAttachmentNames" numelements="0"/>
+                    <hkparam name="animationBundleNameData" numelements="1">
+                        <hkobject>
+                            <hkparam name="bundleName"/>
+                            <hkparam name="assetNames" numelements="2">
+                                <hkcstring>Animations\Anim01.HKT</hkcstring>
+                                <hkcstring>Animations\Anim02.HKT</hkcstring>
+                            </hkparam>
+                        </hkobject>
+                    </hkparam>
+                    <hkparam name="animationNames" numelements="0"/>
+                    <hkparam name="rigName">CharacterAssets\Skeleton.HKT</hkparam>
+                    <hkparam name="behaviorFilename">Behaviors\Behavior00.hkx</hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
+
     private static string SmallGraph() => """
         <?xml version="1.0" encoding="ascii"?>
         <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">

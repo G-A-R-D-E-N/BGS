@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.App;
@@ -38,6 +40,7 @@ public class MainWindow : Window
     private string _hkxPath = "";
     private string _xmlPath = "";
     private string _xmlText = "";
+    private ProjectChain? _projectChain;
     private string _selectedId = "";
     private bool _dirty;
 
@@ -53,6 +56,8 @@ public class MainWindow : Window
 
         var open = Ux.Primary("Open");
         open.Click += (_, _) => Load();
+        var browse = Ux.Secondary("Browse...");
+        browse.Click += async (_, _) => await Browse();
         _pathField.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) Load(); };
 
         var expand = Ux.Secondary("Expand all");
@@ -88,7 +93,7 @@ public class MainWindow : Window
             Padding = new Thickness(14),
             Child = Rows(
                 (Ux.SectionTitle("Havok behaviour file"), false),
-                (Bar(_pathField, open), false),
+                (Bar(_pathField, browse, open), false),
                 (Ux.Pill(_summary), false),
                 (Bar(_filter, expand, collapse), false),
                 (tabs, true),
@@ -150,11 +155,13 @@ public class MainWindow : Window
         var title = Ux.SectionTitle("Properties");
         DockPanel.SetDock(title, Dock.Top);
         right.Children.Add(title);
+        // Disabled rather than Auto: the panel is narrow and fixed, so anything that does not fit
+        // has to wrap or trim. Letting it scroll sideways instead just hid the left of every line.
         right.Children.Add(new ScrollViewer
         {
             Content = _props,
             Padding = new Thickness(0, 6, 8, 0),
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
         });
 
         var split = new Grid();
@@ -214,6 +221,48 @@ public class MainWindow : Window
         return panel;
     }
 
+    // Opens where the last file came from. Behaviours, characters, skeletons and animations all sit
+    // in sibling folders of one project, so the next file wanted is nearly always a couple of clicks
+    // from the last one rather than somewhere new.
+    private async Task Browse()
+    {
+        var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Open a Havok file",
+            AllowMultiple = false,
+            SuggestedStartLocation = await StartFolder(),
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Havok files")
+                {
+                    Patterns = new[] { "*.hkx", "*.HKX", "*.hkt", "*.HKT" },
+                },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        string? path = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (path == null) return;
+
+        Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
+        Open(path);
+    }
+
+    private async Task<IStorageFolder?> StartFolder()
+    {
+        string[] candidates =
+        {
+            Settings.Get("last_folder"),
+            Path.GetDirectoryName(_pathField.Text ?? "") ?? "",
+        };
+
+        foreach (string dir in candidates)
+            if (dir.Length > 0 && Directory.Exists(dir))
+                return await StorageProvider.TryGetFolderFromPathAsync(dir);
+
+        return null;
+    }
+
     public void Open(string path)
     {
         _pathField.Text = path;
@@ -229,6 +278,7 @@ public class MainWindow : Window
         _xmlText = "";
         _xmlPath = "";
         _selectedId = "";
+        _projectChain = null;
         SetDirty(false);
 
         string path = (_pathField.Text ?? "").Trim().Trim('"');
@@ -261,6 +311,7 @@ public class MainWindow : Window
 
         RebuildTree();
         Settings.Set("last_path", path);
+        Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
         PrepareEditing();
     }
 
@@ -388,7 +439,9 @@ public class MainWindow : Window
         string className = HkxTextEdit.ClassOf(_xmlText, objectId);
         var parameters = HkxTextEdit.ReadParams(_xmlText, objectId);
 
-        _props.Children.Add(Ux.Label($"#{objectId}   {className}   {parameters.Count} editable fields"));
+        var heading = Ux.Label($"#{objectId}   {className}   {parameters.Count} editable fields");
+        heading.TextWrapping = TextWrapping.Wrap;
+        _props.Children.Add(heading);
 
         foreach (var p in parameters)
         {
@@ -405,7 +458,10 @@ public class MainWindow : Window
             };
 
             var label = Ux.Label(p.Name);
-            label.Width = 150;
+            label.Width = 128;
+            label.TextTrimming = TextTrimming.CharacterEllipsis;
+            ToolTip.SetTip(label, p.Name);
+
             var row = new DockPanel();
             DockPanel.SetDock(label, Dock.Left);
             row.Children.Add(label);
@@ -436,25 +492,27 @@ public class MainWindow : Window
             var remove = Ux.Secondary("Remove");
             remove.Click += (_, _) => RemoveBinding(setId, index, objectId);
 
+            var text = Ux.Label($"{b.MemberPath} <- {varName}");
+            text.TextWrapping = TextWrapping.Wrap;
+
             var row = new DockPanel();
             DockPanel.SetDock(remove, Dock.Right);
             row.Children.Add(remove);
-            row.Children.Add(Ux.Label($"{b.MemberPath} <- {varName}"));
+            row.Children.Add(text);
             _props.Children.Add(row);
         }
 
+        // Stacked rather than one row: the member path alone is wider than this panel, and a row
+        // that does not fit gets its left end cut off rather than shrinking.
         var member = Ux.Field("member, e.g. userControlledTimeFraction");
-        var variable = Ux.Field("variable name", 120);
+        var variable = Ux.Field("variable name");
         var bind = Ux.Secondary("Bind");
+        bind.HorizontalAlignment = HorizontalAlignment.Right;
         bind.Click += (_, _) => AddBinding(objectId, (member.Text ?? "").Trim(), (variable.Text ?? "").Trim());
 
-        var addRow = new DockPanel();
-        DockPanel.SetDock(bind, Dock.Right);
-        DockPanel.SetDock(variable, Dock.Right);
-        addRow.Children.Add(bind);
-        addRow.Children.Add(variable);
-        addRow.Children.Add(member);
-        _props.Children.Add(addRow);
+        _props.Children.Add(member);
+        _props.Children.Add(variable);
+        _props.Children.Add(bind);
     }
 
     private void BuildSymbols(BehaviourGraphModel model)
@@ -504,6 +562,7 @@ public class MainWindow : Window
     {
         _chain.Clear();
         var chain = ProjectChain.Resolve(_hkxPath, java, jar);
+        _projectChain = chain;
 
         foreach (var link in chain.Links)
             _chain.Add(null, link.Role, link.Declared, link.Exists ? "found" : "MISSING", link.Note)
@@ -805,7 +864,7 @@ public class MainWindow : Window
     {
         if (_xmlText.Length == 0) { SetStatus("Nothing loaded to check.", Ux.MutedBrush); return; }
 
-        var findings = GraphValidator.Check(_xmlText);
+        var findings = GraphValidator.Check(_xmlText, _projectChain);
         var errors = findings.Where(f => f.Level == GraphValidator.Level.Error).ToList();
         var warnings = findings.Where(f => f.Level == GraphValidator.Level.Warning).ToList();
 
@@ -835,6 +894,13 @@ public class MainWindow : Window
             File.WriteAllText(_xmlPath, _xmlText);
             string packed = HkxTextEdit.Repack(java, jar, _xmlPath);
 
+            var drift = VerifyRepack(java, jar, packed);
+            if (!drift.Clean)
+            {
+                SetStatus($"Not saved, and the original is untouched: the repack {drift}.", Ux.BadBrush);
+                return;
+            }
+
             string backup = _hkxPath + ".bak";
             if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
             File.Copy(packed, _hkxPath, true);
@@ -847,6 +913,17 @@ public class MainWindow : Window
         {
             SetStatus("Save failed: " + ex.Message.Split('\n')[0], Ux.BadBrush);
         }
+    }
+
+    // Read the file hkxpack just wrote back out and count what is in it. Done before the original
+    // is overwritten, so a repack that silently drops objects costs nothing.
+    private RepackCheck.Drift VerifyRepack(string java, string jar, string packed)
+    {
+        string work = Path.Combine(Path.GetTempPath(), "bgs_verify", Path.GetFileNameWithoutExtension(_hkxPath));
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+
+        string xml = HkxTextEdit.Unpack(java, jar, packed, work);
+        return RepackCheck.Compare(RepackCheck.Take(_xmlText), RepackCheck.Take(File.ReadAllText(xml)));
     }
 
     private void SetDirty(bool dirty)

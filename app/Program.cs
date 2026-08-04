@@ -75,11 +75,14 @@ public static class Headless
         Console.WriteLine($"{Path.GetFileName(path)}  root {root.ClassName}  {objects.Count} objects  " +
                           $"{objects.Select(o => o.ClassName).Distinct().Count()} classes");
 
+        HkxTextEdit.AppDirectory = AppContext.BaseDirectory;
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
         if (java == null || jar == null)
         {
-            Console.WriteLine("read only: no java runtime found, so the graph and symbols are unavailable");
+            Console.WriteLine(java == null
+                ? "read only: no java runtime found, so the graph and symbols are unavailable"
+                : "read only: hkxpack-cli.jar was not found next to the executable");
             return 0;
         }
 
@@ -93,7 +96,10 @@ public static class Headless
         Console.WriteLine($"graph  {GraphAuthor.Layout(model, 4000).Count} nodes drawn");
         Console.WriteLine("symbols  " + SymbolEditor.Audit(model));
 
-        var findings = GraphValidator.Check(xml);
+        var chain = ProjectChain.Resolve(path, java, jar);
+        Console.WriteLine($"chain  {chain.Animations.Count} animations declared under {chain.Root}");
+
+        var findings = GraphValidator.Check(xml, chain);
         foreach (var f in findings) Console.WriteLine("check  " + f);
         int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
         Console.WriteLine($"check  {errors} errors, {findings.Count - errors} warnings");

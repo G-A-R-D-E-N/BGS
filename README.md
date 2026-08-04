@@ -19,7 +19,9 @@ Fallout 4 file. This reads the Fallout 4 format directly.
 - **Editable nodes**: the common fields (`mode`, `playbackSpeed`, `userControlledTimeFraction`,
   crop times, `startTime`, `enable`, `weight`, ids) are text boxes on the node itself. Type, tab out,
   and the change is staged. Every other field is editable from the properties panel in the tree view.
-  Save writes back to `.hkx` and keeps the original as `.bak`.
+  Save writes back to `.hkx` and keeps the original as `.bak`. Before it overwrites anything it reads
+  the file hkxpack just produced back out and counts it; if objects went missing on the way through,
+  nothing is written and it says what was lost.
 - **Variable bindings on the node**: a node bound to a graph variable says so, in the form
   `userControlledTimeFraction driven by fRadLevel`, with the variable resolved to its name.
 - **Adding nodes**: select a node in the graph, type a name, and press one of the add buttons. The
@@ -31,7 +33,8 @@ Fallout 4 file. This reads the Fallout 4 format directly.
   it. Add, rename, retype the value, or remove. Removing renumbers every reference above it.
 - **Chain tab**: project to character to behaviour, skeleton and animations, what is missing, and the
   skeleton's bone list.
-- **Check graph**: looks for the mistakes hkxpack cannot, listed under Validating below.
+- **Check graph**: looks for the mistakes hkxpack cannot, listed under Validating below. With a real
+  project folder around the file it also checks every clip's animation against the folder on disk.
 - Filter by name, class or animation.
 
 ## Structural editing
@@ -219,8 +222,23 @@ inside the game. **Check graph** looks for:
 - a clip with no animation
 - nodes nothing points at
 
-It reports nothing at all on 132 vanilla behaviour files, which is the bar a check has to clear
+and, when the file sits in a real project folder rather than on its own:
+
+- a clip whose animation is not on disk, which is what renaming or cloning a behaviour folder
+  breaks and what nothing else here can see
+- a clip playing an animation the character file does not declare
+
+It reports no errors at all on 132 vanilla behaviour files, which is the bar a check has to clear
 before it is worth reading. Passing it is not a promise the game will load the file.
+
+The two animation checks are warnings rather than errors because vanilla trips them: across all 215
+project roots in `Fallout4 - Animations.ba2`, 328 behaviours produce 111 of them. They are real, not
+false alarms. Shared behaviours reference per creature animations that not every creature has, and
+some clips point at content that shipped in neither form, Dogmeat's `Animations\WalkForward_B.hkt`
+among them. A handful is normal. A file suddenly full of them means the folder moved.
+
+127 of those 215 characters declare no animations at all, which is also normal: an empty
+`animationBundleNameData` is how a behaviour that plays no clips of its own is written.
 
 Run that yourself with `tools/symrm`, which pulls the corpus out of the game archive, unpacks it,
 and checks it:
@@ -230,6 +248,15 @@ dotnet run --project tools/symrm/symrm.csproj -- corpus "<Data>/Fallout4 - Anima
 dotnet run --project tools/symrm/symrm.csproj -- unpack /tmp/beh 4
 dotnet run --project tools/symrm/symrm.csproj -- check  /tmp/beh/xml
 dotnet run --project tools/symrm/symrm.csproj -- remove /tmp/beh/Meshes_Actors_Character_Behaviors_MTBehavior.hkx
+```
+
+The animation and repack checks need whole folders rather than loose files, so they have their own
+commands. Point `anims` at one behaviour, or at a directory to sweep every project root beneath it:
+
+```
+dotnet run --project tools/symrm/symrm.csproj -- anims  <Data>/Meshes/Actors/Dogmeat/Behaviors/DogmeatDefault.hkx
+dotnet run --project tools/symrm/symrm.csproj -- anims  <extracted Data folder>
+dotnet run --project tools/symrm/symrm.csproj -- repack <Data>/Meshes/Actors/Dogmeat/Behaviors/DogmeatDefault.hkx
 ```
 
 `corpus` writes 531 files. `unpack 4` takes every fourth, which is the 132 the numbers here come

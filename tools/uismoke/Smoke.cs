@@ -49,7 +49,7 @@ public static class Smoke
         Check("the node canvas exists", 1, canvases);
         Check("the tree, symbol and chain grids exist", 3, grids);
         foreach (string expected in new[]
-                 { "Open", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove" })
+                 { "Open", "Browse...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
 
         tabs[0].SelectedIndex = 0;
