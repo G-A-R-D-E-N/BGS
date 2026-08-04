@@ -29,6 +29,7 @@ public static class Tests
         Fo4CharacterListsItsAnimations();
         MissingClipAnimationIsReported();
         RepackDriftNamesWhatMoved();
+        AnUnreachableStateIsReported();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -340,6 +341,52 @@ public static class Tests
         CheckTrue("a dropped object is drift", !dropped.Clean);
         CheckTrue("it counts both sides", dropped.ToString().Contains("7 objects and came back with 6"));
     }
+
+    // The one the door edit slipped past. A state info is always referenced, because the machine
+    // lists it, so asking whether anything points at it can never catch a state no transition can
+    // enter. Driven starts from a machine that has a transition, because a machine with none is
+    // engine driven and deliberately exempt.
+    private static void AnUnreachableStateIsReported()
+    {
+        Console.WriteLine("\na state nothing can transition to is reported");
+
+        Check("a machine with no transitions at all is left alone", 0, Unreachable(SmallGraph()).Count);
+
+        string driven = StateEditor.AddTransition(SmallGraph(), "92", "93", 0, 0, "null");
+        var dead = Unreachable(driven);
+        Check("one state cannot be entered", 1, dead.Count);
+        CheckTrue("it is B, the one nothing targets", dead.Any(f => f.Where.Contains("'B'")));
+        CheckTrue("not A, which is the start state", !dead.Any(f => f.Where.Contains("'A'")));
+        CheckTrue("a warning, because vanilla does this on purpose 123 times",
+                  dead.All(f => f.Level == GraphValidator.Level.Warning));
+
+        string wired = StateEditor.AddTransition(driven, "92", "93", 1, 0, "null");
+        Check("a transition from A clears it", 0, Unreachable(wired).Count);
+
+        string wild = StateEditor.AddTransition(driven, "92", "", 1, 0, "null");
+        Check("a wildcard transition clears it too", 0, Unreachable(wild).Count);
+
+        // Two hops, because reachability has to keep going rather than stopping at the start state's
+        // own targets.
+        string chained = StateEditor.AddTransition(
+            StateEditor.AddState(driven, "92", "C", "#97", out _, out int third), "92", "95", third, 0, "null");
+        var chainDead = Unreachable(chained);
+        CheckTrue("a state reached only through B is still dead while B is",
+                  chainDead.Any(f => f.Where.Contains("'C'")));
+        Check("both B and C are named", 2, chainDead.Count);
+
+        string reached = StateEditor.AddTransition(chained, "92", "93", 1, 0, "null");
+        Check("wiring A to B makes C reachable too", 0, Unreachable(reached).Count);
+
+        // A machine whose start state does not exist is already reported on its own, and treating
+        // every state as unreachable on top of that would bury it.
+        string noStart = driven.Replace("<hkparam name=\"startStateId\">0</hkparam>",
+                                        "<hkparam name=\"startStateId\">9</hkparam>");
+        Check("a broken startStateId is not turned into a flood", 0, Unreachable(noStart).Count);
+    }
+
+    private static List<GraphValidator.Finding> Unreachable(string xml) =>
+        GraphValidator.Check(xml).Where(f => f.What.StartsWith("cannot be entered")).ToList();
 
     private static string Fo4Character() => """
         <?xml version="1.0" encoding="ascii"?>

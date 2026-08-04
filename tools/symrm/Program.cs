@@ -54,10 +54,11 @@ public static class Program
               GraphValidator over every unpacked file. It should report zero errors: anything it
               says about vanilla data is a false alarm in the checker, not a fault in the game.
 
-          dotnet run --project tools/symrm/symrm.csproj -- anims <behaviour.hkx>
-              The same checks plus the ones that need the folder: resolves the project chain and
-              reports every clip whose animation is not on disk, or that the character does not
-              declare. Needs a real project folder, not a loose file.
+          dotnet run --project tools/symrm/symrm.csproj -- anims <behaviour.hkx | Data folder>
+              The full validator, including the checks that need the folder around the file: every
+              clip whose animation is not on disk, or that the character does not declare. Point it
+              at a directory and it sweeps every project root beneath it. Needs real project
+              folders, not loose files.
 
           dotnet run --project tools/symrm/symrm.csproj -- repack <behaviour.hkx>
               Unpack, repack, unpack again, and compare the object count and the multiset of class
@@ -148,7 +149,7 @@ public static class Program
                 }
 
                 files++;
-                foreach (var f in findings.Where(f => f.What.Contains("plays '")))
+                foreach (var f in findings)
                 {
                     if (f.Level == GraphValidator.Level.Error) errorCount++; else warningCount++;
                     Console.WriteLine($"  {Path.GetFileName(hkx),-46} {f}");
@@ -160,7 +161,7 @@ public static class Program
 
         Console.WriteLine($"\n{roots.Count} project roots, {files} behaviours");
         Console.WriteLine($"{chainless} roots whose character declares no animations");
-        Console.WriteLine($"{errorCount} animation errors, {warningCount} animation warnings");
+        Console.WriteLine($"{errorCount} errors, {warningCount} warnings");
         foreach (var kv in byKind.OrderByDescending(k => k.Value))
             Console.WriteLine($"  {kv.Value,5}  {kv.Key}");
 
