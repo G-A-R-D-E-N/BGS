@@ -155,11 +155,13 @@ public class MainWindow : Window
         var title = Ux.SectionTitle("Properties");
         DockPanel.SetDock(title, Dock.Top);
         right.Children.Add(title);
+        // Disabled rather than Auto: the panel is narrow and fixed, so anything that does not fit
+        // has to wrap or trim. Letting it scroll sideways instead just hid the left of every line.
         right.Children.Add(new ScrollViewer
         {
             Content = _props,
             Padding = new Thickness(0, 6, 8, 0),
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
         });
 
         var split = new Grid();
@@ -437,7 +439,9 @@ public class MainWindow : Window
         string className = HkxTextEdit.ClassOf(_xmlText, objectId);
         var parameters = HkxTextEdit.ReadParams(_xmlText, objectId);
 
-        _props.Children.Add(Ux.Label($"#{objectId}   {className}   {parameters.Count} editable fields"));
+        var heading = Ux.Label($"#{objectId}   {className}   {parameters.Count} editable fields");
+        heading.TextWrapping = TextWrapping.Wrap;
+        _props.Children.Add(heading);
 
         foreach (var p in parameters)
         {
@@ -454,7 +458,10 @@ public class MainWindow : Window
             };
 
             var label = Ux.Label(p.Name);
-            label.Width = 150;
+            label.Width = 128;
+            label.TextTrimming = TextTrimming.CharacterEllipsis;
+            ToolTip.SetTip(label, p.Name);
+
             var row = new DockPanel();
             DockPanel.SetDock(label, Dock.Left);
             row.Children.Add(label);
@@ -485,25 +492,27 @@ public class MainWindow : Window
             var remove = Ux.Secondary("Remove");
             remove.Click += (_, _) => RemoveBinding(setId, index, objectId);
 
+            var text = Ux.Label($"{b.MemberPath} <- {varName}");
+            text.TextWrapping = TextWrapping.Wrap;
+
             var row = new DockPanel();
             DockPanel.SetDock(remove, Dock.Right);
             row.Children.Add(remove);
-            row.Children.Add(Ux.Label($"{b.MemberPath} <- {varName}"));
+            row.Children.Add(text);
             _props.Children.Add(row);
         }
 
+        // Stacked rather than one row: the member path alone is wider than this panel, and a row
+        // that does not fit gets its left end cut off rather than shrinking.
         var member = Ux.Field("member, e.g. userControlledTimeFraction");
-        var variable = Ux.Field("variable name", 120);
+        var variable = Ux.Field("variable name");
         var bind = Ux.Secondary("Bind");
+        bind.HorizontalAlignment = HorizontalAlignment.Right;
         bind.Click += (_, _) => AddBinding(objectId, (member.Text ?? "").Trim(), (variable.Text ?? "").Trim());
 
-        var addRow = new DockPanel();
-        DockPanel.SetDock(bind, Dock.Right);
-        DockPanel.SetDock(variable, Dock.Right);
-        addRow.Children.Add(bind);
-        addRow.Children.Add(variable);
-        addRow.Children.Add(member);
-        _props.Children.Add(addRow);
+        _props.Children.Add(member);
+        _props.Children.Add(variable);
+        _props.Children.Add(bind);
     }
 
     private void BuildSymbols(BehaviourGraphModel model)
