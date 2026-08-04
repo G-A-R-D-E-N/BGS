@@ -422,21 +422,23 @@ public static class Tests
 
         var usage = EventUsage.ByEvent(EventGraph());
 
-        Check("the enter notify event is used once", 1, usage[0].Count);
-        Check("and it is a send", EventUsage.Role.Raised, usage[0][0].Role);
-        Check("named by the member holding it", "hkbStateMachineEventPropertyArray.events", usage[0][0].Site);
+        // Indexed through a helper on purpose. A missing event used to throw out of here and take the
+        // rest of the suite with it, which reads as a crash rather than as the one thing that broke.
+        Check("the enter notify event is seen at all", 1, Lines(usage, 3).Count);
+        Check("and it is a send", EventUsage.Role.Raised, Line(usage, 3).Role);
+        Check("named by the member holding it", "hkbStateMachineEventPropertyArray.events", Line(usage, 3).Site);
 
-        Check("the transition's event is listened for", EventUsage.Role.Listened, usage[1][0].Role);
-        Check("by the transition array", "hkbStateMachineTransitionInfoArray.eventId", usage[1][0].Site);
+        Check("the transition's event is listened for", EventUsage.Role.Listened, Line(usage, 1).Role);
+        Check("by the transition array", "hkbStateMachineTransitionInfoArray.eventId", Line(usage, 1).Site);
 
-        Check("the clip trigger is a send", EventUsage.Role.Raised, usage[2][0].Role);
-        Check("named by the trigger array, not hkbEventProperty", "hkbClipTriggerArray.event", usage[2][0].Site);
+        Check("the clip trigger is a send", EventUsage.Role.Raised, Line(usage, 2).Role);
+        Check("named by the trigger array, not hkbEventProperty", "hkbClipTriggerArray.event", Line(usage, 2).Site);
 
         // A member the table has never seen is reported as written here and nothing more. Guessing a
         // direction would be a verdict, which is the thing this deliberately does not do.
-        Check("an unrecognised member has no role", EventUsage.Role.Referenced, usage[3][0].Role);
-        Check("it is still named", "BSLimbCycleModifier.EventCycleLeft", usage[3][0].Site);
-        Check("with no note invented for it", "", usage[3][0].Note);
+        Check("an unrecognised member has no role", EventUsage.Role.Referenced, Line(usage, 0).Role);
+        Check("it is still named", "BSLimbCycleModifier.EventCycleLeft", Line(usage, 0).Site);
+        Check("with no note invented for it", "", Line(usage, 0).Note);
 
         CheckTrue("an event listened for with no sender here is not called dead",
                   !EventUsage.Summarise(usage[1]).Contains("dead", StringComparison.OrdinalIgnoreCase)
@@ -444,17 +446,31 @@ public static class Tests
         Check("it just says what it saw", "1 listened for here", EventUsage.Summarise(usage[1]));
 
         // The notify array carries its event inline with no class of its own, so leaving it out of the
-        // carrier set hid it from both the summary and the renumbering. Removing an earlier event has
-        // to move it down with everything else or a state starts sending the wrong one.
+        // carrier set hid it from the summary and, worse, from renumbering. The notify event is the
+        // highest index in the fixture on purpose: it has to move when anything below it goes, and
+        // while the array was unrecognised it silently did not, leaving a state sending whatever
+        // ended up at its old index.
         Check("a notify event is visible to the reference walk", 1,
-              SymbolIndexFixup.ReferencesTo(EventGraph(), events: true, 0).Count);
+              SymbolIndexFixup.ReferencesTo(EventGraph(), events: true, 3).Count);
+
+        SymbolIndexFixup.ShiftDown(EventGraph(), events: true, removedIndex: 0, out int all);
+        Check("removing event 0 moves all three above it, notify event included", 3, all);
 
         string shifted = SymbolIndexFixup.ShiftDown(EventGraph(), events: true, removedIndex: 1, out int rewritten);
         Check("removing event 1 renumbers the two above it", 2, rewritten);
         var after = EventUsage.ByEvent(shifted);
-        Check("the notify event below it did not move", "hkbStateMachineEventPropertyArray.events", after[0][0].Site);
-        Check("the clip trigger came down to 1", "hkbClipTriggerArray.event", after[1][0].Site);
+        Check("the notify event came down to 2", "hkbStateMachineEventPropertyArray.events", Line(after, 2).Site);
+        Check("the clip trigger came down to 1", "hkbClipTriggerArray.event", Line(after, 1).Site);
         CheckTrue("and nothing is left pointing at the old top index", !after.ContainsKey(3));
+    }
+
+    private static List<EventUsage.Line> Lines(Dictionary<int, List<EventUsage.Line>> usage, int index) =>
+        usage.TryGetValue(index, out var lines) ? lines : new List<EventUsage.Line>();
+
+    private static EventUsage.Line Line(Dictionary<int, List<EventUsage.Line>> usage, int index)
+    {
+        var lines = Lines(usage, index);
+        return lines.Count > 0 ? lines[0] : new EventUsage.Line(EventUsage.Role.Referenced, "not found", "", 0);
     }
 
     private static string EventGraph() => """
@@ -475,7 +491,7 @@ public static class Tests
                 <hkobject class="hkbStateMachineEventPropertyArray" name="#94" signature="0x71957c2d">
                     <hkparam name="events" numelements="1">
                         <hkobject>
-                            <hkparam name="id">0</hkparam>
+                            <hkparam name="id">3</hkparam>
                             <hkparam name="payload">null</hkparam>
                         </hkobject>
                     </hkparam>
@@ -505,7 +521,7 @@ public static class Tests
                     <hkparam name="name">Limbs</hkparam>
                     <hkparam name="EventCycleLeft">
                         <hkobject class="hkbEventProperty" name="EventCycleLeft" signature="0xdb38a15">
-                            <hkparam name="id">3</hkparam>
+                            <hkparam name="id">0</hkparam>
                             <hkparam name="payload">null</hkparam>
                         </hkobject>
                     </hkparam>
