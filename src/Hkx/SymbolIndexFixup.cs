@@ -32,9 +32,14 @@ public static class SymbolIndexFixup
     };
 
     // Classes whose "id" member is an event index rather than an object id.
+    //
+    // hkbStateMachineEventPropertyArray is here because its events array holds the event property
+    // struct inline with no class attribute of its own, so the nearest class is the array. Leaving it
+    // out hid every state enter and exit notify event: 2804 references across the 314 vanilla
+    // behaviour files, none of them renumbered when an event was removed.
     private static readonly HashSet<string> EventCarriers = new(StringComparer.Ordinal)
     {
-        "hkbEventProperty", "hkbEvent",
+        "hkbEventProperty", "hkbEvent", "hkbStateMachineEventPropertyArray",
     };
 
     // Names that look like an index but are structure: a reference, an array, or a mode enum. Listed
@@ -66,6 +71,16 @@ public static class SymbolIndexFixup
         public int Value;
         public string Param = "";
         public string OwnerClass = "";
+        public string HolderClass = "";
+        public string HolderParam = "";
+    }
+
+    /// Where one event index is written, named by the class that holds it and the member it sits in.
+    /// A carrier's own class is not the useful name: every clip trigger and every alarm is an
+    /// hkbEventProperty, and what separates them is whose member the property is.
+    public readonly record struct EventReference(int Index, string Owner, string Member)
+    {
+        public override string ToString() => $"{Owner}.{Member}";
     }
 
     // Every place in the file that stores an event or variable index, with the class that owns it.
@@ -74,6 +89,7 @@ public static class SymbolIndexFixup
         var found = new List<Site>();
         var unknown = new HashSet<string>(StringComparer.Ordinal);
         var classStack = new List<string>();
+        var paramStack = new List<string>();
 
         foreach (Match m in Token.Matches(xml))
         {
@@ -88,12 +104,23 @@ public static class SymbolIndexFixup
                     classStack.Add(m.Groups["cls"].Success ? m.Groups["cls"].Value : "");
                 continue;
             }
+            if (m.Value.StartsWith("</hkparam", StringComparison.Ordinal))
+            {
+                if (paramStack.Count > 0) paramStack.RemoveAt(paramStack.Count - 1);
+                continue;
+            }
+            if (m.Groups["open"].Success)
+            {
+                if (!m.Groups["paramclose"].Success) paramStack.Add(m.Groups["open"].Value);
+                continue;
+            }
             if (!m.Groups["param"].Success) continue;
 
             string name = m.Groups["param"].Value;
             string owner = "";
+            int ownerDepth = -1;
             for (int i = classStack.Count - 1; i >= 0; i--)
-                if (classStack[i].Length > 0) { owner = classStack[i]; break; }
+                if (classStack[i].Length > 0) { owner = classStack[i]; ownerDepth = i; break; }
 
             bool isEvent = EventIdParams.Contains(name)
                            || (name == "id" && EventCarriers.Contains(owner));
@@ -107,6 +134,19 @@ public static class SymbolIndexFixup
             if (isEvent != events) continue;
             if (!int.TryParse(m.Groups["value"].Value, out int value)) continue;
 
+            // For a carrier the interesting name is one level out: whose member the event sits in.
+            string holderClass = owner, holderParam = name;
+            if (EventCarriers.Contains(owner))
+            {
+                holderClass = "";
+                for (int i = ownerDepth - 1; i >= 0; i--)
+                    if (classStack[i].Length > 0) { holderClass = classStack[i]; break; }
+                holderParam = paramStack.Count > 0 ? paramStack[^1] : name;
+                // The array is its own holder: the state info that points at it is a separate object.
+                if (holderClass.Length == 0 || owner == "hkbStateMachineEventPropertyArray")
+                    holderClass = owner;
+            }
+
             found.Add(new Site
             {
                 Start = m.Groups["value"].Index,
@@ -114,6 +154,8 @@ public static class SymbolIndexFixup
                 Value = value,
                 Param = name,
                 OwnerClass = owner,
+                HolderClass = holderClass,
+                HolderParam = holderParam,
             });
         }
 
@@ -139,8 +181,19 @@ public static class SymbolIndexFixup
         var users = new List<string>();
         foreach (var site in Sites(xml, events, out _))
             if (site.Value == index)
-                users.Add($"{site.OwnerClass}.{site.Param}");
+                users.Add($"{site.HolderClass}.{site.HolderParam}");
         return users;
+    }
+
+    /// Every event index the file writes, in one pass. Asking per event reparses the file once per
+    /// event, which a graph declaring a hundred of them notices.
+    public static List<EventReference> EventReferences(string xml)
+    {
+        var found = new List<EventReference>();
+        foreach (var site in Sites(xml, events: true, out _))
+            if (site.Value >= 0)
+                found.Add(new EventReference(site.Value, site.HolderClass, site.HolderParam));
+        return found;
     }
 
     // Anything addressing a symbol the graph does not declare. -1 is the format's "none" and is not

@@ -30,6 +30,7 @@ public static class Tests
         MissingClipAnimationIsReported();
         RepackDriftNamesWhatMoved();
         AnUnreachableStateIsReported();
+        EventUsageSaysWhoSendsAndWhoListens();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -407,6 +408,123 @@ public static class Tests
                     <hkparam name="animationNames" numelements="0"/>
                     <hkparam name="rigName">CharacterAssets\Skeleton.HKT</hkparam>
                     <hkparam name="behaviorFilename">Behaviors\Behavior00.hkx</hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
+
+    // The summary has to name the member that holds the event rather than the struct that carries it,
+    // because every clip trigger and every alarm is an hkbEventProperty and that name separates
+    // nothing. It also has to keep quiet about whether any of it is right.
+    private static void EventUsageSaysWhoSendsAndWhoListens()
+    {
+        Console.WriteLine("\nwho sends and who listens for each event, with no verdict");
+
+        var usage = EventUsage.ByEvent(EventGraph());
+
+        // Indexed through a helper on purpose. A missing event used to throw out of here and take the
+        // rest of the suite with it, which reads as a crash rather than as the one thing that broke.
+        Check("the enter notify event is seen at all", 1, Lines(usage, 3).Count);
+        Check("and it is a send", EventUsage.Role.Raised, Line(usage, 3).Role);
+        Check("named by the member holding it", "hkbStateMachineEventPropertyArray.events", Line(usage, 3).Site);
+
+        Check("the transition's event is listened for", EventUsage.Role.Listened, Line(usage, 1).Role);
+        Check("by the transition array", "hkbStateMachineTransitionInfoArray.eventId", Line(usage, 1).Site);
+
+        Check("the clip trigger is a send", EventUsage.Role.Raised, Line(usage, 2).Role);
+        Check("named by the trigger array, not hkbEventProperty", "hkbClipTriggerArray.event", Line(usage, 2).Site);
+
+        // A member the table has never seen is reported as written here and nothing more. Guessing a
+        // direction would be a verdict, which is the thing this deliberately does not do.
+        Check("an unrecognised member has no role", EventUsage.Role.Referenced, Line(usage, 0).Role);
+        Check("it is still named", "BSLimbCycleModifier.EventCycleLeft", Line(usage, 0).Site);
+        Check("with no note invented for it", "", Line(usage, 0).Note);
+
+        CheckTrue("an event listened for with no sender here is not called dead",
+                  !EventUsage.Summarise(usage[1]).Contains("dead", StringComparison.OrdinalIgnoreCase)
+                  && !EventUsage.Summarise(usage[1]).Contains("unused", StringComparison.OrdinalIgnoreCase));
+        Check("it just says what it saw", "1 listened for here", EventUsage.Summarise(usage[1]));
+
+        // The notify array carries its event inline with no class of its own, so leaving it out of the
+        // carrier set hid it from the summary and, worse, from renumbering. The notify event is the
+        // highest index in the fixture on purpose: it has to move when anything below it goes, and
+        // while the array was unrecognised it silently did not, leaving a state sending whatever
+        // ended up at its old index.
+        Check("a notify event is visible to the reference walk", 1,
+              SymbolIndexFixup.ReferencesTo(EventGraph(), events: true, 3).Count);
+
+        SymbolIndexFixup.ShiftDown(EventGraph(), events: true, removedIndex: 0, out int all);
+        Check("removing event 0 moves all three above it, notify event included", 3, all);
+
+        string shifted = SymbolIndexFixup.ShiftDown(EventGraph(), events: true, removedIndex: 1, out int rewritten);
+        Check("removing event 1 renumbers the two above it", 2, rewritten);
+        var after = EventUsage.ByEvent(shifted);
+        Check("the notify event came down to 2", "hkbStateMachineEventPropertyArray.events", Line(after, 2).Site);
+        Check("the clip trigger came down to 1", "hkbClipTriggerArray.event", Line(after, 1).Site);
+        CheckTrue("and nothing is left pointing at the old top index", !after.ContainsKey(3));
+    }
+
+    private static List<EventUsage.Line> Lines(Dictionary<int, List<EventUsage.Line>> usage, int index) =>
+        usage.TryGetValue(index, out var lines) ? lines : new List<EventUsage.Line>();
+
+    private static EventUsage.Line Line(Dictionary<int, List<EventUsage.Line>> usage, int index)
+    {
+        var lines = Lines(usage, index);
+        return lines.Count > 0 ? lines[0] : new EventUsage.Line(EventUsage.Role.Referenced, "not found", "", 0);
+    }
+
+    private static string EventGraph() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbStateMachine" name="#92" signature="0xa5896bcf">
+                    <hkparam name="name">Root</hkparam>
+                    <hkparam name="startStateId">0</hkparam>
+                    <hkparam name="states" numelements="1">#93</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#93" signature="0x39d76713">
+                    <hkparam name="name">A</hkparam>
+                    <hkparam name="stateId">0</hkparam>
+                    <hkparam name="enterNotifyEvents">#94</hkparam>
+                    <hkparam name="transitions">#95</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineEventPropertyArray" name="#94" signature="0x71957c2d">
+                    <hkparam name="events" numelements="1">
+                        <hkobject>
+                            <hkparam name="id">3</hkparam>
+                            <hkparam name="payload">null</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineTransitionInfoArray" name="#95" signature="0xe397b11e">
+                    <hkparam name="transitions" numelements="1">
+                        <hkobject>
+                            <hkparam name="eventId">1</hkparam>
+                            <hkparam name="toStateId">0</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbClipTriggerArray" name="#96" signature="0xf757cd66">
+                    <hkparam name="triggers" numelements="1">
+                        <hkobject>
+                            <hkparam name="localTime">0.5</hkparam>
+                            <hkparam name="event">
+                                <hkobject class="hkbEventProperty" name="event" signature="0xdb38a15">
+                                    <hkparam name="id">2</hkparam>
+                                    <hkparam name="payload">null</hkparam>
+                                </hkobject>
+                            </hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="BSLimbCycleModifier" name="#97" signature="0x1f7a1c1b">
+                    <hkparam name="name">Limbs</hkparam>
+                    <hkparam name="EventCycleLeft">
+                        <hkobject class="hkbEventProperty" name="EventCycleLeft" signature="0xdb38a15">
+                            <hkparam name="id">0</hkparam>
+                            <hkparam name="payload">null</hkparam>
+                        </hkobject>
+                    </hkparam>
                 </hkobject>
             </hksection>
         </hkpackfile>

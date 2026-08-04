@@ -3,6 +3,29 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, later still
+
+**Expanding an event says what the file does with it.** Raised here, listened for here, or written
+somewhere with no established direction, each naming the class and member rather than the struct that
+carries it: every clip trigger and every alarm is an `hkbEventProperty`, so that name separates
+nothing.
+
+No verdict comes with it, which was the decision on the ticket. An event listened for with nothing in
+the file sending it is the ordinary case, not a fault: 2912 of the 4799 events used across the 314
+vanilla behaviour files look exactly like that, because Papyrus and the engine send them by name from
+outside. A check would be wrong more often than right.
+
+The role table was enumerated rather than recalled. Those files write an event index in 43 distinct
+class and member pairs and all 43 are listed, so the only thing reporting as "referenced" on vanilla
+data is `BSLimbCycleModifier`. Anything outside the table reports the same way instead of being
+assigned a direction. `symrm events` reprints the measurement over a directory.
+
+Found on the way: state enter and exit notify events were invisible. They sit inline in
+`hkbStateMachineEventPropertyArray` with no class attribute of their own, so the reference walk never
+saw them, in 2804 places across the vanilla corpus. That hid them from the Used by column and, worse,
+from renumbering, so removing an event left every notify event above it pointing one too high. Both
+are fixed.
+
 ## 2026-08-04, later
 
 **Check graph now finds a state nothing can enter.** Being referenced and being reachable are
