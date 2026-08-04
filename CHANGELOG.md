@@ -3,6 +3,31 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, first edit to run in the game
+
+**The Red Rocket gas station garage door was edited with this tool, loaded by Fallout 4, and did what
+the edit asked.** It sat permanently half open, with no interaction needed, which is the whole point
+of that particular test: a door cannot end up half open by accident, so the signal cannot be confused
+with a broken mod.
+
+The edit was three scalar values on one existing object, the `Closed` state's sequence generator:
+
+    pSequence           Closed  ->  Opening
+    eUseTimePercentage  NOT_USING_TIME_PERCENTAGE  ->  USING_TIME_PERCENTAGE
+    fTimePercent        0.0  ->  0.5
+
+The file keeps vanilla's 30 objects, 7 states, 11 events and byte size. So what the engine accepted is
+a field value edit on an existing object, written here and repacked by hkxpack.
+
+Everything before this was proven one step short of that: repack, read the binary back, count the
+objects, run the validator. All of that says the file is well formed. None of it says the engine will
+load it, and the README carried "none of it has been loaded by Fallout 4" as a standing caveat since
+the tool was split out.
+
+That caveat is now narrower, and only in one direction. Structural editing is still untested against
+the game: adding a state, removing one, retargeting a transition and renumbering a symbol have never
+been in front of it, and neither has `symrm door`'s additive edit. The `.bak` is still worth keeping.
+
 ## 2026-08-04, the Pip-Boy's unused variables
 
 **`iTabSync` and `iCatSync` are declared and never used, by anything.** They looked like the obvious

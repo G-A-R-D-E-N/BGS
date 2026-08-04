@@ -312,8 +312,19 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   `hkbStateMachineStateInfo`. An older figure of "5292 of 5323" circulated here and elsewhere: it is
   real but it is not about this tool, it counted how many states OpenCommonwealth's Godot converter
   could map to an animation node. See #18.
-- Every edit here has been round tripped through hkxpack and read back from the binary. **None of it
-  has been loaded by Fallout 4.** hkxpack accepting a file is not the engine accepting it. Keep the
+- **One edit made with this tool has been loaded by Fallout 4 and worked**: the Red Rocket gas station
+  garage door, which sat permanently half open exactly as the edit asked, with no interaction needed.
+  The edit was three scalar values on one existing object, the `Closed` state's sequence generator:
+  `pSequence` from `Closed` to `Opening`, `eUseTimePercentage` to `USING_TIME_PERCENTAGE`, and
+  `fTimePercent` to `0.5`. The file has vanilla's 30 objects, 7 states and 11 events, and vanilla's
+  byte size. So what the engine has accepted is a **field value edit on an existing object**, written
+  by this tool and repacked by hkxpack. That is the first time anything here has been proven against
+  the engine rather than against hkxpack, and it moves the tool from "the file reads back correctly"
+  to "the game accepted at least one of these".
+  It says nothing about structural editing. Adding a state, removing one, retargeting a transition or
+  renumbering a symbol have never been put in front of the game, and `symrm door`'s additive edit in
+  particular has not. Everything else has been round tripped through hkxpack and read back from the
+  binary and no further, and hkxpack accepting a file is still not the engine accepting it. Keep the
   `.bak`.
 - Deleting a node leaves whatever pointed at it holding null. Delete refuses while references exist,
   but detaching by hand first and then deleting can still leave, say, a state with no generator.
