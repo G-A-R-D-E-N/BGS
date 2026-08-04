@@ -545,15 +545,30 @@ public class HkxBinaryReader
 
     // A word carries one 16 bit field per vector component: (offset << 2) | type, offset 14 bits.
     // A uint16 word is the same shape with a single field, which is why rotation reads component 0.
-    private static int LosslessField(ulong word, int component) => (int)((word >> (component * 16)) & 0xFFFF);
+    //
+    // This is the engine's own layout, read out of hkaLosslessCompressedAnimation::getType and
+    // ::getOffset in the 1.10.163 unpacked binary rather than guessed:
+    //
+    //   getType<u64>   word = words[track];  return (word >> (component * 16)) & 3
+    //   getOffset<u64> word = words[track];  return ((word >> (component * 16)) >> 2) & 0x3FFF
+    //
+    // Public so a check can exercise the packing directly. Nothing in the game ships a lossless
+    // animation with a scale, so this is the only way that branch gets tested at all.
+    public static int LosslessField(ulong word, int component) => (int)((word >> (component * 16)) & 0xFFFF);
 
-    private static float LosslessValue(ulong word, int component, int frame, int stride,
-                                       List<float> dynamic, List<float> constant, float fallback)
+    public static int LosslessOffset(ulong word, int component) => (LosslessField(word, component) >> 2) & 0x3FFF;
+
+    public static int LosslessType(ulong word, int component) => LosslessField(word, component) & 3;
+
+    /// One component of one frame, by the same rules ::getFrameTransform uses. The fallback is what
+    /// the engine leaves in place when a word says "clear": it prefills the transform before touching
+    /// any of it, with translation 0, rotation identity, and scale 1,1,1,1.
+    public static float LosslessValue(ulong word, int component, int frame, int stride,
+                                      List<float> dynamic, List<float> constant, float fallback)
     {
-        int field = LosslessField(word, component);
-        int offset = (field >> 2) & 0x3FFF;
+        int offset = LosslessOffset(word, component);
 
-        switch (field & 3)
+        switch (LosslessType(word, component))
         {
             case TrackStatic:
                 return offset < constant.Count ? constant[offset] : fallback;
