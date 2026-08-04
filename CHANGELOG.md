@@ -3,6 +3,26 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, lossless scale
+
+**The lossless scale path is confirmed against the engine.** It could not be checked against game
+data, because no vanilla animation of that class carries a scale, so it was checked against
+`hkaLosslessCompressedAnimation::getFrameTransform` in the 1.10.163 unpacked binary instead.
+
+Every point agrees: the scale word array at `+0xb8`, static values at `+0xa8`, dynamic at `+0x98`,
+stride as the dynamic array's length over the frame count at `+0xd8`, and the same `(offset << 2) |
+type` packing that `::getType` and `::getOffset` apply, four fields to a 64 bit word. Dynamic indexing
+is `offset + frame * stride`, frame major, the same trap that nearly shipped on translations.
+
+The one that mattered most: what a clear word means. The engine prefills the output transform before
+touching any of it, with translation 0, rotation identity and scale 1,1,1,1, from a constant at
+0x143828480 that reads as four ones. So returning 1,1,1 for a clear scale is the engine's answer, not
+a convenient default, and a scale falling back to 0 would have collapsed whatever it drives.
+
+13 new checks hold the reader to those rules, including the field above bit 32 that hkxpack's XML
+drops, so the packing cannot drift back to a guess. The README no longer calls this unproven, but it
+still says plainly that no real file has ever exercised it.
+
 ## 2026-08-04, frame browser
 
 **The animation tab answers the question a variable driven clip asks.** Type a

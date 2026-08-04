@@ -331,15 +331,18 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   zero, and the static case was confirmed against the raw bytes rather than against the reader. The
   crow's `PerchedIdle` folds both wings to 0.4599 on all three axes, left and right identical, and
   those float32s sit at 0x714 and 0x794 in the file.
-- **Scale on lossless compressed animations is UNPROVEN. Do not read a scale of 1,1,1 from one as
-  confirmation that anything works.** No vanilla file exercises it: all 856 leave both scale arrays
-  empty with every scale word clear, so only the "no scale here" case has ever run, and 1,1,1 is what
-  that branch returns whether or not the code beside it is correct. The static and dynamic branches
-  have never decoded a real value in any file that ships with the game. If you open a lossless
-  animation that does scale something, treat what the tool prints as unverified and check it against
-  the bytes yourself. If scale is ever wrong anywhere, this is where it will be wrong.
-  `symrm scale <Data folder>` sweeps a folder and reports every animation whose scale is not the
-  identity, which is how the numbers above were produced and how you would find a counterexample.
+- **Scale on lossless compressed animations is confirmed against the engine, but has still never
+  decoded a real value.** No vanilla file exercises it: all 856 leave both scale arrays empty with
+  every scale word clear, so only the "no scale here" case has ever run on real data. Rather than
+  leave it at that, the branch was checked against `hkaLosslessCompressedAnimation::getFrameTransform`
+  in the 1.10.163 unpacked binary, and it agrees on every point: the word array at +0xb8, statics at
+  +0xa8, dynamics at +0x98, stride as the dynamic array's length divided by the frame count at +0xd8,
+  `(offset << 2) | type` packed four to a 64 bit word, and frame major indexing as
+  `offset + frame * stride`. The clear case returns 1,1,1 because the engine prefills the transform
+  with scale 1,1,1,1 before it reads anything, from the constant at 0x143828480. So the decode is not
+  guesswork, but the words it decodes have only ever said "nothing here". `symrm scale <Data folder>`
+  reports every animation whose scale is not the identity, which is how you would find the first file
+  that proves it end to end.
 
 ## Licence
 

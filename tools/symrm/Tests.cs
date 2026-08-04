@@ -34,6 +34,7 @@ public static class Tests
         EventUsageSaysWhoSendsAndWhoListens();
         ScaleIsShownOnlyWhenItIsRealScale();
         AFractionLandsOnAFrame();
+        LosslessScaleFollowsTheEngine();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -503,6 +504,64 @@ public static class Tests
         CheckTrue("but a real 0.999 is",
                   HkxTrackData.IsScaled(Scaled(new Vector3(0.999f, 1f, 1f))));
     }
+
+    // No vanilla file carries a scale on a lossless compressed animation: all 856 leave both arrays
+    // empty with every word clear, so the static and dynamic branches never run on real data. The
+    // rules below are therefore taken from the engine rather than from a file, out of
+    // hkaLosslessCompressedAnimation::getType, ::getOffset and ::getFrameTransform in the 1.10.163
+    // unpacked binary, and this is what holds the reader to them.
+    private static void LosslessScaleFollowsTheEngine()
+    {
+        Console.WriteLine("\nlossless scale decodes the way the engine's own sampler does");
+
+        // getType<u64>:   (word >> (component * 16)) & 3
+        // getOffset<u64>: ((word >> (component * 16)) >> 2) & 0x3FFF
+        // So one 64 bit word carries four fields, one per component, each (offset << 2) | type.
+        ulong word = Field(0, 5, 1) | Field(1, 9, 2) | Field(2, 0, 0) | Field(3, 0x3FFF, 2);
+
+        Check("component 0 is static", 1, HkxBinaryReader.LosslessType(word, 0));
+        Check("with offset 5", 5, HkxBinaryReader.LosslessOffset(word, 0));
+        Check("component 1 is dynamic", 2, HkxBinaryReader.LosslessType(word, 1));
+        Check("with offset 9", 9, HkxBinaryReader.LosslessOffset(word, 1));
+        Check("component 2 is clear", 0, HkxBinaryReader.LosslessType(word, 2));
+        // The top field lives above bit 32, which is the half hkxpack's XML drops. Reading it from the
+        // binary rather than from a dump is the only reason this one is right.
+        Check("component 3 carries the widest offset the format allows", 0x3FFF,
+              HkxBinaryReader.LosslessOffset(word, 3));
+
+        var constants = new List<float> { 9f, 9f, 9f, 9f, 9f, 0.5f };
+        var dynamic = new List<float>();
+        for (int i = 0; i < 40; i++) dynamic.Add(i);
+
+        Check("static reads the constant at its offset", 0.5f,
+              HkxBinaryReader.LosslessValue(word, 0, frame: 3, stride: 4, dynamic, constants, 1f));
+
+        // The trap that nearly shipped on translations: the dynamic arrays are frame major, so the
+        // index is offset + frame * stride, not offset * frames + frame. Both look plausible and only
+        // one moves per frame.
+        Check("dynamic is frame major, frame 0", 9f,
+              HkxBinaryReader.LosslessValue(word, 1, frame: 0, stride: 4, dynamic, constants, 1f));
+        Check("dynamic is frame major, frame 3", 21f,
+              HkxBinaryReader.LosslessValue(word, 1, frame: 3, stride: 4, dynamic, constants, 1f));
+
+        // The engine prefills the transform before it touches anything: translation 0, rotation
+        // identity, scale 1,1,1,1, read from the constant at 0x143828480. A clear word writes nothing,
+        // so the prefill is the answer. Scale falling back to 0 would collapse whatever it drives.
+        Check("a clear scale component is 1, not 0", 1f,
+              HkxBinaryReader.LosslessValue(word, 2, frame: 3, stride: 4, dynamic, constants, 1f));
+        Check("a clear translation component is 0", 0f,
+              HkxBinaryReader.LosslessValue(word, 2, frame: 3, stride: 4, dynamic, constants, 0f));
+
+        // An offset past the end of its array is a corrupt file, not a crash.
+        ulong wild = Field(0, 4000, 1) | Field(1, 4000, 2);
+        Check("a static offset past the array falls back", 1f,
+              HkxBinaryReader.LosslessValue(wild, 0, frame: 0, stride: 4, dynamic, constants, 1f));
+        Check("so does a dynamic one", 1f,
+              HkxBinaryReader.LosslessValue(wild, 1, frame: 0, stride: 4, dynamic, constants, 1f));
+    }
+
+    private static ulong Field(int component, int offset, int type) =>
+        ((ulong)(((offset & 0x3FFF) << 2) | (type & 3))) << (component * 16);
 
     // A clip driven by a variable is sampled, not played, so the only question that matters is which
     // frame a given userControlledTimeFraction is sitting on. The trap is off by one: the fraction
