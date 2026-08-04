@@ -312,9 +312,13 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   `hkbStateMachineStateInfo`. An older figure of "5292 of 5323" circulated here and elsewhere: it is
   real but it is not about this tool, it counted how many states OpenCommonwealth's Godot converter
   could map to an animation node. See #18.
-- Every edit here has been round tripped through hkxpack and read back from the binary. **None of it
-  has been loaded by Fallout 4.** hkxpack accepting a file is not the engine accepting it. Keep the
-  `.bak`.
+- **One edit made with this tool has been loaded by Fallout 4 and worked**: the Red Rocket gas station
+  door, whose animation played correctly in game. That is the first time anything here has been proven
+  against the engine rather than against hkxpack, and it moves the tool from "the file reads back
+  correctly" to "the game accepted at least one of these".
+  It is one door in one file, so it is a foothold rather than a guarantee. Everything else has been
+  round tripped through hkxpack and read back from the binary and no further, and hkxpack accepting a
+  file is still not the engine accepting it. Keep the `.bak`.
 - Deleting a node leaves whatever pointed at it holding null. Delete refuses while references exist,
   but detaching by hand first and then deleting can still leave, say, a state with no generator.
   Check graph finds that.
