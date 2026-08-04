@@ -355,7 +355,7 @@ public static class Program
         // and this says which frame that lands on.
         Console.WriteLine();
         foreach (float fraction in new[] { 0f, 0.25f, 0.5f, 0.75f, 1f })
-            Console.WriteLine($"  userControlledTimeFraction {fraction:F2} -> frame {FrameAt(anim, fraction)} " +
+            Console.WriteLine($"  userControlledTimeFraction {fraction:F2} -> frame {anim.FrameAt(fraction)} " +
                               $"of {Math.Max(anim.NumFrames - 1, 0)}");
 
         return 0;
@@ -392,13 +392,6 @@ public static class Program
 
         string annotation = track < anim.BoneNames.Count ? anim.BoneNames[track] : "";
         return annotation.Length > 0 ? annotation : $"track {track}";
-    }
-
-    private static int FrameAt(HkxAnimationData anim, float fraction)
-    {
-        if (anim.NumFrames <= 1) return 0;
-        int frame = (int)Math.Round(Math.Clamp(fraction, 0f, 1f) * (anim.NumFrames - 1));
-        return frame;
     }
 
     // Measures the summary the way the other checks were measured, because a table built from a

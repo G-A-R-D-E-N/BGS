@@ -3,6 +3,25 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, frame browser
+
+**The animation tab answers the question a variable driven clip asks.** Type a
+`userControlledTimeFraction`, and it says which frame that is, moves the page to it and marks the row.
+Previously that mapping existed only in `symrm frames`, printed for five fixed fractions, which is not
+much use when you are aiming a Pip-Boy needle at a pose. It now lives in `HkxAnimationData.FrameAt` so
+the window and the harness share one implementation rather than two that can drift.
+
+**A bone filter**, because a character animation has 95 tracks and reading one bone's motion should
+not mean scrolling past 94 others. Filtering also expands what it finds, so a search lands on frames
+rather than on a collapsed row.
+
+Nonsense in the fraction box is refused and says so rather than aiming at something. Out of range is
+clamped, since the value comes from a graph variable and wrapping to the other end of the clip would
+be worse than pinning to the nearest.
+
+Checked against real files: fraction 1 on `Idle_TrainTrain_Song05` lands on frame 3684 of 3684 and
+jumps 13 pages to get there, and 0 and 1 land on the ends of every file tested.
+
 ## 2026-08-04, scale
 
 **Animation scale is decoded, shown, and checked against real data.** It was being decoded all along

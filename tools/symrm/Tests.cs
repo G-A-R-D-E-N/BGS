@@ -33,6 +33,7 @@ public static class Tests
         AnUnreachableStateIsReported();
         EventUsageSaysWhoSendsAndWhoListens();
         ScaleIsShownOnlyWhenItIsRealScale();
+        AFractionLandsOnAFrame();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -501,6 +502,35 @@ public static class Tests
                   !HkxTrackData.IsScaled(Scaled(new Vector3(0.99999994f, 1f, 1.00000006f))));
         CheckTrue("but a real 0.999 is",
                   HkxTrackData.IsScaled(Scaled(new Vector3(0.999f, 1f, 1f))));
+    }
+
+    // A clip driven by a variable is sampled, not played, so the only question that matters is which
+    // frame a given userControlledTimeFraction is sitting on. The trap is off by one: the fraction
+    // spans the clip, so 1.0 is the last frame's index and not the frame count.
+    private static void AFractionLandsOnAFrame()
+    {
+        Console.WriteLine("\na userControlledTimeFraction lands on a frame");
+
+        var clip = new HkxAnimationData { NumFrames = 41 };
+        Check("0 is the first frame", 0, clip.FrameAt(0f));
+        Check("1 is the last frame, not one past it", 40, clip.FrameAt(1f));
+        Check("half way is frame 20 of 40, not 20.5", 20, clip.FrameAt(0.5f));
+        Check("a quarter", 10, clip.FrameAt(0.25f));
+
+        // Out of range comes from a variable the graph drives, so it is clamped rather than throwing
+        // or wrapping around to the other end of the clip.
+        Check("below zero clamps to the first frame", 0, clip.FrameAt(-2f));
+        Check("above one clamps to the last", 40, clip.FrameAt(7f));
+
+        var single = new HkxAnimationData { NumFrames = 1 };
+        Check("a one frame clip is always frame 0", 0, single.FrameAt(0.5f));
+        var empty = new HkxAnimationData { NumFrames = 0 };
+        Check("and an empty one does not divide by its own length", 0, empty.FrameAt(0.5f));
+
+        // The real one, from Idle_TrainTrain_Song05: 3685 frames, well past the 300 row page size.
+        var long_ = new HkxAnimationData { NumFrames = 3685 };
+        Check("the longest vanilla animation ends on 3684", 3684, long_.FrameAt(1f));
+        Check("and its midpoint is 13 pages in", 1842, long_.FrameAt(0.5f));
     }
 
     private static HkxTrackData Scaled(params Vector3[] frames)

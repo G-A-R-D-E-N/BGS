@@ -38,8 +38,11 @@ Fallout 4 file. This reads the Fallout 4 format directly.
   skeleton's bone list.
 - **Animation tab**: for an animation file, its class, duration, frame count, annotations, and a row
   per bone with each frame's position, rotation and scale, named from a sibling skeleton. Frames page
-  in blocks of 300. Scale prints only on the tracks that carry one, because almost every track in the
-  game is a flat 1,1,1 and printing all of them hides the ones that are not.
+  in blocks of 300. Filter to a bone by name, because a character animation has 95 tracks and reading
+  one bone's motion means seeing only that bone. Type a `userControlledTimeFraction` and it says which
+  frame that is, jumps the page to it and marks the row, which is the question a variable driven clip
+  asks. Scale prints only on the tracks that carry one, because almost every track in the game is a
+  flat 1,1,1 and printing all of them hides the ones that are not.
 - **Check graph**: looks for the mistakes hkxpack cannot, listed under Validating below. With a real
   project folder around the file it also checks every clip's animation against the folder on disk.
 - Filter by name, class or animation.

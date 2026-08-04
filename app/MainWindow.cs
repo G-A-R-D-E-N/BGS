@@ -35,9 +35,13 @@ public class MainWindow : Window
     private readonly TextBlock _animationSummary =
         new() { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _framePage = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private readonly TextBox _boneFilter = Ux.Field("bone", 150);
+    private readonly TextBox _fraction = Ux.Field("0.0 to 1.0", 110);
+    private readonly TextBlock _fractionAnswer = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
     private HkxAnimationData? _animationData;
     private HkxSkeleton? _animationSkeleton;
     private int _frameStart;
+    private int _aimedFrame = -1;
 
     private readonly TextBox _symbolName = Ux.Field("name", 170);
     private readonly TextBox _symbolValue = Ux.Field("value, for a variable", 130);
@@ -197,6 +201,22 @@ public class MainWindow : Window
     public int AnimationFrameCount => _animationData?.NumFrames ?? 0;
     public int AnimationTrackCount => _animationData?.Tracks.Count ?? 0;
     public HkGrid SymbolGrid => _symbols;
+    public string FractionAnswer => _fractionAnswer.Text ?? "";
+    public int AimedFrame => _aimedFrame;
+
+    /// Drives the fraction lookup the way a person does, through the same field and the same handler,
+    /// so a check exercises what the button exercises rather than a parallel path.
+    public void LookUpFraction(string typed)
+    {
+        _fraction.Text = typed;
+        AimAtFraction();
+    }
+
+    public void FilterBones(string needle)
+    {
+        _boneFilter.Text = needle;
+        ShowAnimationFrames();
+    }
 
     private Control BuildAnimationTab()
     {
@@ -220,8 +240,59 @@ public class MainWindow : Window
         DockPanel.SetDock(bar, Dock.Top);
         panel.Children.Add(bar);
 
+        // The question a variable driven clip actually asks: I am about to set the fraction to this,
+        // which pose am I asking for. Answering it needs the page to move to that frame, not just a
+        // number printed somewhere, so this jumps and marks the row.
+        var aim = Ux.Secondary("Find frame");
+        aim.Click += (_, _) => AimAtFraction();
+        _fraction.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) AimAtFraction(); };
+        _boneFilter.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == TextBox.TextProperty) ShowAnimationFrames();
+        };
+
+        var tools = Bar(Ux.Pill(_fractionAnswer), _boneFilter, _fraction, aim);
+        tools.Margin = new Thickness(0, 0, 0, 8);
+        DockPanel.SetDock(tools, Dock.Top);
+        panel.Children.Add(tools);
+
         panel.Children.Add(_animation);
         return panel;
+    }
+
+    /// userControlledTimeFraction is what a bound variable drives, so this is the lookup the clip work
+    /// needs: type the fraction, land on the frame, see the transform that plays there.
+    private void AimAtFraction()
+    {
+        var anim = _animationData;
+        if (anim == null || anim.NumFrames <= 0)
+        {
+            _fractionAnswer.Text = "Open an animation first.";
+            _fractionAnswer.Foreground = Ux.MutedBrush;
+            return;
+        }
+
+        string typed = (_fraction.Text ?? "").Trim();
+        if (!float.TryParse(typed, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out float fraction))
+        {
+            _fractionAnswer.Text = $"\"{typed}\" is not a number between 0 and 1.";
+            _fractionAnswer.Foreground = Ux.BadBrush;
+            _aimedFrame = -1;
+            ShowAnimationFrames();
+            return;
+        }
+
+        _aimedFrame = anim.FrameAt(fraction);
+        string clamped = fraction is < 0f or > 1f ? $", clamped from {fraction:0.###}" : "";
+        _fractionAnswer.Text =
+            $"userControlledTimeFraction {Math.Clamp(fraction, 0f, 1f):0.###} is frame {_aimedFrame} " +
+            $"of {Math.Max(anim.NumFrames - 1, 0)}, at {_aimedFrame * anim.FrameDuration:F3}s{clamped}";
+        _fractionAnswer.Foreground = Ux.MetaBrush;
+
+        // Land the page on the frame rather than leaving the reader to find it.
+        _frameStart = _aimedFrame / FramesPerPage * FramesPerPage;
+        ShowAnimationFrames();
     }
 
     // A page of frames rather than a cap. The old grid stopped at 300 rows per track and said how
@@ -251,6 +322,9 @@ public class MainWindow : Window
         _animationData = null;
         _animationSkeleton = null;
         _frameStart = 0;
+        // A frame aimed at in the last file means nothing in this one.
+        _aimedFrame = -1;
+        _fractionAnswer.Text = "";
 
         HkxAnimationData anim;
         try
@@ -310,16 +384,24 @@ public class MainWindow : Window
         foreach (var note in anim.Annotations)
             _animation.Add(null, "annotation", "", $"{note.Time:F3}s", note.Text, "", "").Colour(0, Ux.MutedBrush);
 
+        string needle = (_boneFilter.Text ?? "").Trim();
+        int shown = 0;
+
         for (int t = 0; t < anim.Tracks.Count; t++)
         {
+            string name = TrackName(anim, skeleton, t);
+            if (needle.Length > 0 && name.IndexOf(needle, StringComparison.OrdinalIgnoreCase) < 0) continue;
+            shown++;
+
             var track = anim.Tracks[t];
             int frames = Math.Max(Math.Max(track.Translations.Count, track.Rotations.Count), track.Scales.Count);
             bool scaled = HkxTrackData.IsScaled(track);
 
-            var head = _animation.Add(null, TrackName(anim, skeleton, t), frames.ToString(), "", "", "",
-                                      scaled ? "scaled" : "")
-                                 .Colour(0, Ux.TitleBrush).Colour(1, Ux.DisabledBrush).Colour(5, Ux.BadBrush)
-                                 .Collapse();
+            // Filtering to one bone is what makes this a browser rather than a wall: a character
+            // animation has 95 tracks, and reading one bone's motion means seeing only that bone.
+            var head = _animation.Add(null, name, frames.ToString(), "", "", "", scaled ? "scaled" : "")
+                                 .Colour(0, Ux.TitleBrush).Colour(1, Ux.DisabledBrush).Colour(5, Ux.BadBrush);
+            if (needle.Length == 0) head.Collapse();
 
             for (int f = _frameStart; f < Math.Min(last, frames); f++)
             {
@@ -331,11 +413,17 @@ public class MainWindow : Window
                 // with 1.000, 1.000, 1.000 would bury the 130 vanilla animations that actually scale.
                 string scl = scaled && f < track.Scales.Count
                     ? $"{track.Scales[f].X:F4}, {track.Scales[f].Y:F4}, {track.Scales[f].Z:F4}" : "";
-                _animation.Add(head, "", f.ToString(), $"{f * anim.FrameDuration:F3}s", pos, rot, scl)
-                          .Colour(1, Ux.DisabledBrush).Colour(2, Ux.MutedBrush)
+                bool aimed = f == _aimedFrame;
+                _animation.Add(head, aimed ? "->" : "", f.ToString(), $"{f * anim.FrameDuration:F3}s", pos, rot, scl)
+                          .Colour(0, Ux.AccentBrush)
+                          .Colour(1, aimed ? Ux.AccentBrush : Ux.DisabledBrush).Colour(2, Ux.MutedBrush)
                           .Colour(3, Ux.CodeBrush).Colour(4, Ux.MetaBrush).Colour(5, Ux.BadBrush);
             }
         }
+
+        if (shown == 0 && anim.Tracks.Count > 0)
+            _animation.Add(null, $"no track matches \"{needle}\"", anim.Tracks.Count + " in the file")
+                      .Colour(0, Ux.MutedBrush).Colour(1, Ux.DisabledBrush);
     }
 
     // The bone names live in the skeleton, not the animation. An animation's annotation tracks are

@@ -98,6 +98,15 @@ public class HkxAnimationData
 
     public HkxSkeleton? Skeleton { get; set; }
 
+    /// Which frame a clip driven by userControlledTimeFraction is sitting on. The fraction runs 0 to 1
+    /// across the whole clip, so it maps onto the last frame's index rather than the frame count: on
+    /// 41 frames, 1.0 is frame 40, and 0.5 is frame 20 rather than 20.5.
+    public int FrameAt(float fraction)
+    {
+        if (NumFrames <= 1) return 0;
+        return (int)Math.Round(Math.Clamp(fraction, 0f, 1f) * (NumFrames - 1));
+    }
+
     public string GetSummary()
     {
         float fps = FrameDuration > 0 ? 1.0f / FrameDuration : 0;
