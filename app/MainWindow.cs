@@ -30,7 +30,8 @@ public class MainWindow : Window
         new(("Kind", 60), ("Index", 55), ("Name", -4), ("Initial value", -2), ("Used by, in this file", -5));
     private readonly HkGrid _chain = new(("Role", 110), ("Declared in the file", -4), ("On disk", 80), ("Notes", -3));
     private readonly HkGrid _animation =
-        new(("Bone or track", -4), ("Frame", 70), ("Time", 80), ("Position", -4), ("Rotation", -5));
+        new(("Bone or track", -4), ("Frame", 70), ("Time", 80), ("Position", -4), ("Rotation", -5),
+            ("Scale", -3));
     private readonly TextBlock _animationSummary =
         new() { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _framePage = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
@@ -307,15 +308,18 @@ public class MainWindow : Window
             : $"frames {_frameStart} to {last - 1} of {anim.NumFrames}";
 
         foreach (var note in anim.Annotations)
-            _animation.Add(null, "annotation", "", $"{note.Time:F3}s", note.Text, "").Colour(0, Ux.MutedBrush);
+            _animation.Add(null, "annotation", "", $"{note.Time:F3}s", note.Text, "", "").Colour(0, Ux.MutedBrush);
 
         for (int t = 0; t < anim.Tracks.Count; t++)
         {
             var track = anim.Tracks[t];
-            int frames = Math.Max(track.Translations.Count, track.Rotations.Count);
+            int frames = Math.Max(Math.Max(track.Translations.Count, track.Rotations.Count), track.Scales.Count);
+            bool scaled = HkxTrackData.IsScaled(track);
 
-            var head = _animation.Add(null, TrackName(anim, skeleton, t), frames.ToString(), "", "", "")
-                                 .Colour(0, Ux.TitleBrush).Colour(1, Ux.DisabledBrush).Collapse();
+            var head = _animation.Add(null, TrackName(anim, skeleton, t), frames.ToString(), "", "", "",
+                                      scaled ? "scaled" : "")
+                                 .Colour(0, Ux.TitleBrush).Colour(1, Ux.DisabledBrush).Colour(5, Ux.BadBrush)
+                                 .Collapse();
 
             for (int f = _frameStart; f < Math.Min(last, frames); f++)
             {
@@ -323,9 +327,13 @@ public class MainWindow : Window
                     ? $"{track.Translations[f].X:F3}, {track.Translations[f].Y:F3}, {track.Translations[f].Z:F3}" : "";
                 string rot = f < track.Rotations.Count
                     ? $"{track.Rotations[f].X:F4}, {track.Rotations[f].Y:F4}, {track.Rotations[f].Z:F4}, {track.Rotations[f].W:F4}" : "";
-                _animation.Add(head, "", f.ToString(), $"{f * anim.FrameDuration:F3}s", pos, rot)
+                // Only the tracks that carry a scale print one. Filling every row of every animation
+                // with 1.000, 1.000, 1.000 would bury the 130 vanilla animations that actually scale.
+                string scl = scaled && f < track.Scales.Count
+                    ? $"{track.Scales[f].X:F4}, {track.Scales[f].Y:F4}, {track.Scales[f].Z:F4}" : "";
+                _animation.Add(head, "", f.ToString(), $"{f * anim.FrameDuration:F3}s", pos, rot, scl)
                           .Colour(1, Ux.DisabledBrush).Colour(2, Ux.MutedBrush)
-                          .Colour(3, Ux.CodeBrush).Colour(4, Ux.MetaBrush);
+                          .Colour(3, Ux.CodeBrush).Colour(4, Ux.MetaBrush).Colour(5, Ux.BadBrush);
             }
         }
     }

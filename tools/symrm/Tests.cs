@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.Tools;
@@ -31,6 +32,7 @@ public static class Tests
         RepackDriftNamesWhatMoved();
         AnUnreachableStateIsReported();
         EventUsageSaysWhoSendsAndWhoListens();
+        ScaleIsShownOnlyWhenItIsRealScale();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -462,6 +464,50 @@ public static class Tests
         Check("the notify event came down to 2", "hkbStateMachineEventPropertyArray.events", Line(after, 2).Site);
         Check("the clip trigger came down to 1", "hkbClipTriggerArray.event", Line(after, 1).Site);
         CheckTrue("and nothing is left pointing at the old top index", !after.ContainsKey(3));
+    }
+
+    // Scale was decoded and then printed nowhere, so a wrong value and a right one looked the same.
+    // Now that it is on screen, what counts as worth showing has to be pinned down: a track really at
+    // 1,1,1 is not the same as one whose scale never decoded, and a track scaled to zero is the shape
+    // a decode bug takes rather than something to hide.
+    private static void ScaleIsShownOnlyWhenItIsRealScale()
+    {
+        Console.WriteLine("\nscale is reported when it is real and quiet when it is not");
+
+        CheckTrue("a track with no scale at all is not called scaled",
+                  !HkxTrackData.IsScaled(new HkxTrackData()));
+
+        CheckTrue("a flat 1,1,1 is not called scaled",
+                  !HkxTrackData.IsScaled(Scaled(Vector3.One, Vector3.One)));
+
+        // The crow's folded wing, the real value read out of PerchedIdle.hkx.
+        CheckTrue("the crow's 0.4599 wing counts as scaled",
+                  HkxTrackData.IsScaled(Scaled(new Vector3(0.4599f, 0.4599f, 0.4599f))));
+
+        CheckTrue("one scaled frame among unscaled ones still counts",
+                  HkxTrackData.IsScaled(Scaled(Vector3.One, new Vector3(1f, 0.5f, 1f), Vector3.One)));
+
+        CheckTrue("a single axis is enough",
+                  HkxTrackData.IsScaled(Scaled(new Vector3(1f, 1f, 0.82f))));
+
+        // Zero is the failure a wrong decode produces: whatever the track drives collapses. It has to
+        // read as scaled so it is visible, not filtered out as uninteresting.
+        CheckTrue("a zero scale is reported rather than hidden",
+                  HkxTrackData.IsScaled(Scaled(Vector3.Zero)));
+
+        // Float noise either side of 1 is not scale. The epsilon exists so quantised values that come
+        // back as 0.99999994 do not light up every track in the game.
+        CheckTrue("float noise just under 1 is not scale",
+                  !HkxTrackData.IsScaled(Scaled(new Vector3(0.99999994f, 1f, 1.00000006f))));
+        CheckTrue("but a real 0.999 is",
+                  HkxTrackData.IsScaled(Scaled(new Vector3(0.999f, 1f, 1f))));
+    }
+
+    private static HkxTrackData Scaled(params Vector3[] frames)
+    {
+        var track = new HkxTrackData();
+        track.Scales.AddRange(frames);
+        return track;
     }
 
     private static List<EventUsage.Line> Lines(Dictionary<int, List<EventUsage.Line>> usage, int index) =>

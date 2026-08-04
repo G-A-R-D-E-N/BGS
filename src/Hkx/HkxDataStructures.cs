@@ -41,6 +41,20 @@ public class HkxTrackData
     public List<Vector3> Translations { get; set; } = new();
     public List<Quaternion> Rotations { get; set; } = new();
     public List<Vector3> Scales { get; set; } = new();
+
+    /// Whether this track's scale is worth showing. Almost every track in the game is a flat 1,1,1,
+    /// so printing all of them hides the ones that are not, and a track that only looks unscaled
+    /// because the decode returned nothing is a different thing from one that really is 1,1,1.
+    public static bool IsScaled(HkxTrackData track)
+    {
+        foreach (var s in track.Scales)
+            if (Math.Abs(s.X - 1f) > ScaleEpsilon
+             || Math.Abs(s.Y - 1f) > ScaleEpsilon
+             || Math.Abs(s.Z - 1f) > ScaleEpsilon) return true;
+        return false;
+    }
+
+    public const float ScaleEpsilon = 0.0001f;
 }
 
 public class HkxAnnotation
