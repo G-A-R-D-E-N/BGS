@@ -21,12 +21,16 @@ public class GraphView : Control
     private const double ColumnGap = 320;
     private const double RowGap = 26;
     private const double PortRadius = 5;
+    // A weapon behaviour lays out just under 4000 nodes. Drawing 400 of them meant the search could
+    // not find a node that is in the file, because it was never on the canvas to find.
+    private const int MaxNodes = 4000;
 
     private sealed class Node
     {
         public string Id = "";
         public string Class = "";
         public string Name = "";
+        public string Animation = "";
         public Rect Bounds;
         public List<GraphLinks.Slot> Slots = new();
         public Color Accent;
@@ -38,6 +42,7 @@ public class GraphView : Control
     }
 
     private readonly Dictionary<string, Node> _nodes = new();
+    private readonly List<string> _order = new();
     private readonly Dictionary<string, Point> _placed = new();
     private BehaviourGraphModel? _model;
 
@@ -115,8 +120,45 @@ public class GraphView : Control
                 }
     }
 
-    private bool Lit(string fromId, string toId) =>
-        _highlight.Length == 0 || fromId == _highlight || toId == _highlight;
+    /// The filter box, applied to the canvas rather than only to the tree. Non-matching nodes dim
+    /// instead of disappearing, because a node's place in the graph is most of what it tells you and
+    /// a filtered canvas with holes in it says nothing about where the match sits.
+    private string _needle = "";
+    private readonly HashSet<string> _matched = new();
+
+    public int MatchCount => _matched.Count;
+    public string FirstMatch => _order.FirstOrDefault(_matched.Contains) ?? "";
+
+    public void Filter(string needle)
+    {
+        _needle = needle.Trim();
+        RebuildMatched();
+        InvalidateVisual();
+    }
+
+    private void RebuildMatched()
+    {
+        _matched.Clear();
+        if (_needle.Length == 0) return;
+
+        foreach (var node in _nodes.Values)
+            if (node.Name.Contains(_needle, StringComparison.OrdinalIgnoreCase)
+                || node.Class.Contains(_needle, StringComparison.OrdinalIgnoreCase)
+                || node.Animation.Contains(_needle, StringComparison.OrdinalIgnoreCase))
+                _matched.Add(node.Id);
+    }
+
+    private bool Dimmed(string id) =>
+        (_highlight.Length > 0 && !_related.Contains(id))
+        || (_needle.Length > 0 && !_matched.Contains(id));
+
+    // A wire touching a match stays lit, because where a match connects is the question being asked.
+    private bool Lit(string fromId, string toId)
+    {
+        if (_highlight.Length > 0 && fromId != _highlight && toId != _highlight) return false;
+        if (_needle.Length > 0 && !_matched.Contains(fromId) && !_matched.Contains(toId)) return false;
+        return true;
+    }
 
     /// Select a node and bring it under the viewport centre, which is the whole point of clicking a
     /// row in the problem list: the node is usually off screen when it is the one that is wrong.
@@ -135,31 +177,42 @@ public class GraphView : Control
     {
         _model = model;
         _nodes.Clear();
+        _order.Clear();
 
         // A state left holding nothing is drawn like any other until it is marked. Deleting its
         // generator clears the link rather than refusing, so this is a shape an edit can produce and
         // the game never ships.
         var empty = GraphValidator.StatesWithNoGenerator(model);
 
-        var byColumn = new Dictionary<int, int>();
-        foreach (var (obj, column) in GraphAuthor.Layout(model, 400))
+        // A running offset per column rather than a row number times this node's own height. Nodes
+        // are as tall as their slot count, so multiplying by one node's height overlapped every node
+        // shorter than it with the one below.
+        var nextY = new Dictionary<int, double>();
+        foreach (var (obj, column) in GraphAuthor.Layout(model, MaxNodes))
         {
-            byColumn.TryGetValue(column, out int row);
-            byColumn[column] = row + 1;
-
             var slots = GraphLinks.OutSlots(model, obj);
             double height = HeaderHeight + Math.Max(1, slots.Count) * RowHeight + 8;
 
             // A node the user has dragged stays where they put it across rebuilds.
-            Point at = _placed.TryGetValue(obj.Id, out var kept)
-                ? kept
-                : new Point(column * ColumnGap, row * (height + RowGap));
+            nextY.TryGetValue(column, out double y);
+            Point at;
+            if (_placed.TryGetValue(obj.Id, out var kept))
+            {
+                at = kept;
+            }
+            else
+            {
+                at = new Point(column * ColumnGap, y);
+                nextY[column] = y + height + RowGap;
+            }
 
+            _order.Add(obj.Id);
             _nodes[obj.Id] = new Node
             {
                 Id = obj.Id,
                 Class = obj.Class,
                 Name = obj.Str("name"),
+                Animation = obj.Str("animationName"),
                 Slots = slots,
                 Accent = Ux.ForClass(obj.Class),
                 Empty = empty.Contains(obj.Id),
@@ -171,6 +224,7 @@ public class GraphView : Control
         if (SelectedId.Length > 0 && !_nodes.ContainsKey(SelectedId)) SelectedId = "";
         if (_highlight.Length > 0 && !_nodes.ContainsKey(_highlight)) _highlight = "";
         RebuildRelated();
+        RebuildMatched();
         InvalidateVisual();
     }
 
@@ -215,8 +269,14 @@ public class GraphView : Control
                         if (!_nodes.TryGetValue(target, out var to)) continue;
                         bool lit = Lit(node.Id, target);
                         if (lit != (pass == 1)) continue;
-                        DrawLink(ctx, ToScreen(node.OutPort(i)), ToScreen(to.InPort), node.Accent,
-                                 lit && _highlight.Length > 0 ? 2.6 : 1.6, lit ? 0.85 : 0.42);
+
+                        var from = ToScreen(node.OutPort(i));
+                        var into = ToScreen(to.InPort);
+                        if (OffScreen(from, into)) continue;
+
+                        DrawLink(ctx, from, into, node.Accent,
+                                 lit && (_highlight.Length > 0 || _needle.Length > 0) ? 2.6 : 1.6,
+                                 lit ? 0.85 : 0.42);
                     }
 
         if (_wiring is { } w)
@@ -224,9 +284,20 @@ public class GraphView : Control
 
         foreach (var node in _nodes.Values)
         {
-            if (_highlight.Length == 0 || _related.Contains(node.Id)) DrawNode(ctx, node);
+            if (!Dimmed(node.Id)) DrawNode(ctx, node);
             else using (ctx.PushOpacity(0.4)) DrawNode(ctx, node);
         }
+    }
+
+    // A weapon graph holds a few thousand wires and only a handful are on screen. The curve stays
+    // inside its endpoints' box widened by the bend, so a box test is enough to drop the rest.
+    private bool OffScreen(Point from, Point to)
+    {
+        double margin = Math.Max(40, Math.Abs(to.X - from.X) * 0.45) + 10;
+        return Math.Max(from.X, to.X) + margin < 0
+            || Math.Min(from.X, to.X) - margin > Bounds.Width
+            || Math.Max(from.Y, to.Y) < 0
+            || Math.Min(from.Y, to.Y) > Bounds.Height;
     }
 
     private void DrawLink(DrawingContext ctx, Point from, Point to, Color colour, double width, double alpha)

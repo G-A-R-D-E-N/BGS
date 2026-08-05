@@ -84,7 +84,8 @@ public class MainWindow : Window
         expand.Click += (_, _) => _tree.SetAllExpanded(true);
         var collapse = Ux.Secondary("Collapse all");
         collapse.Click += (_, _) => _tree.SetAllExpanded(false);
-        _filter.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) RebuildTree(); };
+        _filter.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) ApplyFilter(); };
+        _filter.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) JumpToFirstMatch(); };
 
         var check = Ux.Secondary("Check graph");
         check.Click += (_, _) => Validate();
@@ -742,6 +743,49 @@ public class MainWindow : Window
         }
     }
 
+    // The box sits above the tabs and used to drive only the tree, so on the Graph tab typing in it
+    // did nothing at all. It filters whichever view is showing now. The canvas dims rather than
+    // jumping while you type; Enter is what moves the view onto the first match.
+    private void ApplyFilter()
+    {
+        RebuildTree();
+        if (_xmlText.Length == 0) return;
+
+        string needle = (_filter.Text ?? "").Trim();
+        _graph.Filter(needle);
+
+        if (needle.Length == 0)
+        {
+            SetStatus($"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn.", Ux.MetaBrush);
+            return;
+        }
+
+        int hits = _graph.MatchCount;
+        SetStatus(hits == 0
+            ? $"Nothing matches \"{needle}\"."
+            : $"{hits} node{(hits == 1 ? "" : "s")} match \"{needle}\", the rest are dimmed. " +
+              "Press Enter to go to the first one.",
+            hits == 0 ? Ux.MutedBrush : Ux.MetaBrush);
+    }
+
+    private void JumpToFirstMatch()
+    {
+        string first = _graph.FirstMatch;
+        if (first.Length == 0) return;
+
+        _graph.FocusOn(first);
+        SelectObjectId(first);
+    }
+
+    /// Drives the filter through the same handlers typing does.
+    public void Filter(string needle)
+    {
+        _filter.Text = needle;
+        ApplyFilter();
+    }
+
+    public HkGrid TreeGrid => _tree;
+
     private static bool Matches(HkxBehaviorParser.BehaviorNode o, string needle) =>
         o.ClassName.Contains(needle, StringComparison.OrdinalIgnoreCase)
         || o.NodeName.Contains(needle, StringComparison.OrdinalIgnoreCase)
@@ -783,13 +827,19 @@ public class MainWindow : Window
         ClearProps();
         _selectedId = "";
         if (objectId.Length == 0 || _xmlText.Length == 0) return;
-        ShowProps(objectId);
-        SetStatus(Describe(objectId), Ux.MetaBrush);
+
+        // One parse for both. On a weapon behaviour a parse is a tenth of a second, and selecting a
+        // node was paying for two of them.
+        var model = BehaviourGraphModel.Parse(_xmlText);
+        ShowProps(objectId, model);
+        SetStatus(Describe(model, objectId), Ux.MetaBrush);
     }
 
-    private string Describe(string id)
+    private string Describe(string id) => Describe(BehaviourGraphModel.Parse(_xmlText), id);
+
+    private static string Describe(BehaviourGraphModel model, string id)
     {
-        var obj = BehaviourGraphModel.Parse(_xmlText).Get(id);
+        var obj = model.Get(id);
         if (obj == null) return "#" + id;
         string name = obj.Str("name");
         return $"#{id} {obj.Class}" + (name.Length > 0 ? $" '{name}'" : "");
@@ -804,10 +854,11 @@ public class MainWindow : Window
     // Both panels are filled, because which one is on screen depends on the tab and a node can be
     // reached from either. The model is parsed once and handed to both: on a shipped weapon graph
     // that parse is the expensive part of selecting a node.
-    private void ShowProps(string objectId)
+    private void ShowProps(string objectId) => ShowProps(objectId, BehaviourGraphModel.Parse(_xmlText));
+
+    private void ShowProps(string objectId, BehaviourGraphModel model)
     {
         _selectedId = objectId;
-        var model = BehaviourGraphModel.Parse(_xmlText);
         FillProps(_treeProps, objectId, model);
         FillProps(_graphProps, objectId, model);
     }
@@ -907,12 +958,15 @@ public class MainWindow : Window
         _symbolAudit.Foreground = counts.VariablesConsistent && counts.EventsConsistent
             ? Ux.MetaBrush : Ux.BadBrush;
 
+        var readers = UsersByIndex(events: false);
+        var listeners = UsersByIndex(events: true);
+
         for (int i = 0; i < names.Count; i++)
         {
             var type = i < types.Count ? types[i] : SymbolEditor.VariableType.Int32;
             Paint(_symbols.Add(null, type.ToString().ToLowerInvariant(), i.ToString(), names[i],
                                i < values.Count ? SymbolEditor.DecodeValue(type, values[i]) : "",
-                               Users(events: false, i)).Tag($"v:{i}"));
+                               Users(readers, events: false, i)).Tag($"v:{i}"));
         }
 
         var usage = _xmlText.Length == 0
@@ -923,7 +977,7 @@ public class MainWindow : Window
         {
             usage.TryGetValue(i, out var lines);
             var row = Paint(_symbols.Add(null, "event", i.ToString(), events[i], "",
-                                         lines is { Count: > 0 } ? EventUsage.Summarise(lines) : Users(events: true, i)))
+                                         lines is { Count: > 0 } ? EventUsage.Summarise(lines) : Users(listeners, events: true, i)))
                 .Tag($"e:{i}");
             if (lines == null) continue;
 
@@ -948,10 +1002,27 @@ public class MainWindow : Window
     // consumer was found in this file, not that the symbol is dead. The Pip-Boy's iTabSync and
     // iCatSync are the worked example: nothing in the graph reads them, the game writes them and
     // reads them back, and the tab switching itself runs on events.
-    private string Users(bool events, int index)
+    // One scan for every index rather than one scan per symbol. A weapon behaviour declares 873
+    // symbols against seven megabytes of text, and asking one at a time took about two minutes of
+    // the load.
+    private Dictionary<int, List<string>> UsersByIndex(bool events)
+    {
+        var map = new Dictionary<int, List<string>>();
+        if (_xmlText.Length == 0) return map;
+
+        foreach (var reference in SymbolIndexFixup.References(_xmlText, events))
+        {
+            if (!map.TryGetValue(reference.Index, out var list))
+                map[reference.Index] = list = new List<string>();
+            list.Add(reference.ToString());
+        }
+        return map;
+    }
+
+    private string Users(Dictionary<int, List<string>> map, bool events, int index)
     {
         if (_xmlText.Length == 0) return "";
-        var users = SymbolIndexFixup.ReferencesTo(_xmlText, events, index);
+        var users = map.TryGetValue(index, out var found) ? found : new List<string>();
         if (users.Count == 0)
             return events
                 ? "nothing in this file listens for it; game code and scripts can still send it by name"

@@ -3,6 +3,30 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, the search box works on the canvas, and the weapon graph is usable
+
+**The filter box only ever drove the tree.** It sits above the tabs, so on the Graph tab typing in it
+did nothing at all. It now filters whichever view is showing: matching nodes stay lit, everything else
+dims, and a wire touching a match stays lit because where a match connects is the question being
+asked. Nodes dim rather than disappear, since a node's place in the graph is most of what it tells
+you. Enter moves the view onto the first match and selects it; typing alone does not yank the view
+around.
+
+**The canvas drew 400 nodes.** `WeaponBehavior.hkx` lays out 3978, so nine tenths of it was never
+drawn and the search could not find a node that is plainly in the file. The cap is 4000 now. Wires
+off screen are dropped before their geometry is built, which is what makes that affordable: ten full
+redraws of all 3978 nodes measure 240ms.
+
+**Nodes were drawn on top of each other.** A column placed its nodes at row number times *this* node's
+height, and a node is as tall as its slot count, so anything shorter than its neighbour overlapped the
+one below. Now each column keeps a running offset. On a small graph this was barely visible; on the
+weapon graph it was most of why the canvas looked like a mess.
+
+**Opening the weapon behaviour took about two minutes.** The Symbols tab asked "what references this
+symbol" one symbol at a time, and each ask rescanned seven megabytes of text: 873 symbols, roughly 110
+seconds of pure scanning. One pass builds the whole table now. Selecting a node also parsed the file
+twice, once for the fields and once for the status line. The file opens in a couple of seconds.
+
 ## 2026-08-04, a new node lands where it was dropped
 
 **Dragging a wire out to empty canvas put the node at the far end of the graph.** The canvas lays

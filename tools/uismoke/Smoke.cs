@@ -148,6 +148,28 @@ public static class Smoke
                     Check($"{name}: and clearing it releases the canvas", "", canvas.HighlightId);
                 }
 
+                // The filter box sits above the tabs, so it has to work on whichever one is showing.
+                // Driving only the tree meant typing in it on the Graph tab did nothing at all.
+                int drawn = canvas.DrawnCount;
+                string needle = OpenCommonwealth.Services.Hkx.BehaviourGraphModel
+                    .Parse(window.LoadedXml).Get(node)?.Str("name") ?? "";
+                if (needle.Length > 0)
+                {
+                    window.Filter(needle);
+                    CheckTrue($"{name}: the filter matches something on the canvas", canvas.MatchCount > 0);
+                    CheckTrue($"{name}: and not everything", canvas.MatchCount < drawn);
+                    CheckTrue($"{name}: the tree filters to the matches too", window.TreeGrid.RowCount > 0);
+                    Console.WriteLine($"        \"{needle}\": {canvas.MatchCount} of {drawn} nodes, " +
+                                      $"{window.TreeGrid.RowCount} tree rows");
+
+                    window.Filter("no-such-node-xyzzy");
+                    Check($"{name}: nonsense matches nothing rather than everything", 0, canvas.MatchCount);
+
+                    window.Filter("");
+                    Check($"{name}: clearing it releases the canvas", 0, canvas.MatchCount);
+                    Check($"{name}: and nothing was dropped from the canvas", drawn, canvas.DrawnCount);
+                }
+
                 // Dragging a wire out to empty canvas and picking a node type. The new node has to
                 // land under the cursor: laid out by depth it goes into a column of its own at the
                 // far end of the graph, which is where it used to appear.
