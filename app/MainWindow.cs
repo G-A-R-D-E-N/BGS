@@ -959,15 +959,33 @@ public class MainWindow : Window
 
         if (_clock != null) { Stop(); return; }
 
+        // The selected clip's own playbackSpeed, so changing it here shows the change here. Without
+        // this the preview always ran at the animation's native rate and an edited speed looked like
+        // an edit that had not taken, when it had and had been saved.
         _clock = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(Math.Clamp(_poseAnimation.FrameDuration, 1 / 120f, 1)),
+            Interval = TimeSpan.FromSeconds(
+                Math.Clamp(_poseAnimation.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4)),
         };
         // Looping rather than stopping at the end: nearly every clip in a behaviour graph is a loop,
         // and one that is not still reads better repeating than freezing on its last frame.
         _clock.Tick += (_, _) => ShowFrame(_poseFrame + 1 > _scrub.Maximum ? 0 : _poseFrame + 1, stop: false);
         _clock.Start();
         _playButton.Content = "Pause";
+    }
+
+    /// How fast the selected clip says to play, or full speed when nothing sensible is set. Zero and
+    /// negative are treated as full speed rather than as a stopped or reversed preview: the engine
+    /// reads them as its own thing, and guessing which would be inventing behaviour.
+    private float SelectedPlaybackSpeed()
+    {
+        if (_xmlText.Length == 0 || _selectedId.Length == 0) return 1f;
+
+        foreach (var p in HkxTextEdit.ReadParams(_xmlText, _selectedId))
+            if (p.Name == "playbackSpeed" && float.TryParse(p.Value, out float speed))
+                return speed > 0f ? speed : 1f;
+
+        return 1f;
     }
 
     private void Stop()
@@ -2234,6 +2252,12 @@ public class MainWindow : Window
         {
             Commit(HkxTextEdit.SetParam(_xmlText, objectId, paramName, field.Text ?? ""));
             SetStatus($"#{objectId}.{paramName} = {field.Text}   (unsaved)", Ux.CodeBrush);
+
+            // Retimes a preview that is already running, so an edited speed shows up without having
+            // to stop and start playback to see it.
+            if (paramName == "playbackSpeed" && objectId == _selectedId && _clock != null)
+                _clock.Interval = TimeSpan.FromSeconds(
+                    Math.Clamp(_poseAnimation!.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4));
         }
         catch (Exception ex)
         {
