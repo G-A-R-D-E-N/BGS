@@ -61,7 +61,9 @@ the game, with the evidence behind it, lives in the
   centres on that node and selects it, which matters because the node that is wrong is usually the
   one off screen. Marks survive edits until the next check, so fixing one thing does not clear the
   rest of the list.
-- Filter by name, class or animation.
+- **Filter by name, class or animation**, on whichever view is showing. The tree narrows to the
+  matches; on the canvas the matches stay lit, everything else dims, and a wire touching a match stays
+  lit so you can see where it connects. Enter goes to the first match.
 
 ## Structural editing
 

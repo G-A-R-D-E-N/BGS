@@ -3,6 +3,30 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, review pass before the beta
+
+Four things a read of the session's own changes turned up, all of them things the canvas remembered
+when it should not have:
+
+**Opening a second file kept the first one's positions.** Everything the canvas holds is keyed by
+object id, and the next file numbers its objects from one as well, so a node dragged in one file
+pinned whichever node happened to hold that number in the next. The highlight, the filter and the
+marks had the same problem. A load clears all of it now.
+
+**A file with no text form left the last graph on screen.** The canvas is only refilled once a file
+has been unpacked, so opening something that cannot be unpacked showed the previous file's nodes
+under the new file's name.
+
+**The tree marked no empty states on load.** It was built before the file was unpacked, so the
+answer was always "none", and it was only ever right after something else forced a rebuild. It is
+built again once the text form exists.
+
+**Typing in the filter reparsed the file.** Working out which states are empty is a question about
+the file, not about the filter, and it was being answered on every keystroke: seven megabytes,
+six times, to type "Sprint". Six keystrokes now cost 444ms on the weapon behaviour rather than well
+over a second. The properties panel also stopped being wiped by typing, which is the last thing you
+want when the reason you are searching is the node whose fields are open.
+
 ## 2026-08-04, the search box works on the canvas, and the weapon graph is usable
 
 **The filter box only ever drove the tree.** It sits above the tabs, so on the Graph tab typing in it

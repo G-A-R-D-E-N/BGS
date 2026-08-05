@@ -173,6 +173,27 @@ public class GraphView : Control
         return true;
     }
 
+    /// Everything the canvas remembers is keyed by object id, and the next file numbers its objects
+    /// from one as well, so carrying any of it across a load applies it to whichever object happens
+    /// to hold that number now.
+    public void Reset()
+    {
+        // The canvas is only refilled when a file has a text form to draw from. Without this, opening
+        // something that cannot be unpacked left the previous file's graph on screen.
+        _model = null;
+        _nodes.Clear();
+        _order.Clear();
+        _placed.Clear();
+        _problems.Clear();
+        _highlight = "";
+        _related.Clear();
+        _needle = "";
+        _matched.Clear();
+        SelectedId = "";
+        _zoom = 0.9;
+        _pan = new Point(40, 40);
+    }
+
     public void Show(BehaviourGraphModel model)
     {
         _model = model;
@@ -260,8 +281,11 @@ public class GraphView : Control
         if (_model == null) return;
 
         // Two passes so the highlighted wires sit on top of the dimmed ones rather than being
-        // crossed by them, which is the whole point of asking for one state at a time.
-        for (int pass = 0; pass < 2; pass++)
+        // crossed by them, which is the whole point of asking for one state at a time. With nothing
+        // picked out there is nothing to sit on top of, and a second walk of four thousand nodes is
+        // not free, so that case runs the lit pass only.
+        bool focused = _highlight.Length > 0 || _needle.Length > 0;
+        for (int pass = focused ? 0 : 1; pass < 2; pass++)
             foreach (var node in _nodes.Values)
                 for (int i = 0; i < node.Slots.Count; i++)
                     foreach (string target in node.Slots[i].Targets)

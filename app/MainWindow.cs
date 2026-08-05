@@ -592,6 +592,10 @@ public class MainWindow : Window
         _xmlPath = "";
         _selectedId = "";
         _projectChain = null;
+        _emptyStates = new HashSet<string>();
+        // Object ids start again at #1 in the next file, so anything the canvas remembers by id is
+        // about to be applied to a different object entirely.
+        _graph.Reset();
         SetDirty(false);
 
         string path = (_pathField.Text ?? "").Trim().Trim('"');
@@ -693,6 +697,11 @@ public class MainWindow : Window
             }
 
             var model = BehaviourGraphModel.Parse(_xmlText);
+            // The tree drew before the text form existed, so the states holding nothing were unknown
+            // when it was built. Now they are known, so it is built again.
+            _emptyStates = GraphValidator.StatesWithNoGenerator(model);
+            RebuildTree();
+
             _graph.Show(model);
             _graph.FrameAll();
             BuildSymbols(model);
@@ -712,15 +721,12 @@ public class MainWindow : Window
         && index < _objectIds.Count
         && _emptyStates.Contains(_objectIds[index]);
 
+    // The properties panel is not cleared here: the tree is rebuilt on every keystroke in the filter,
+    // and the node whose fields are open is usually the reason the filter is being typed.
     private void RebuildTree()
     {
         _tree.Clear();
-        ClearProps();
         if (_root == null) return;
-
-        _emptyStates = _xmlText.Length == 0
-            ? new HashSet<string>()
-            : GraphValidator.StatesWithNoGenerator(BehaviourGraphModel.Parse(_xmlText));
 
         string needle = (_filter.Text ?? "").Trim();
         if (needle.Length == 0)
@@ -1193,11 +1199,12 @@ public class MainWindow : Window
 
         string parent = fromId.Length > 0 ? fromId : _graph.SelectedId;
         var items = new List<Control>();
+        var model = BehaviourGraphModel.Parse(_xmlText);
 
         if (_graph.SelectedId.Length > 0)
         {
             string id = _graph.SelectedId;
-            var highlight = new MenuItem { Header = "Highlight the paths of " + Describe(id) };
+            var highlight = new MenuItem { Header = "Highlight the paths of " + Describe(model, id) };
             highlight.Click += (_, _) => HighlightPaths(id);
             items.Add(highlight);
         }
@@ -1222,7 +1229,7 @@ public class MainWindow : Window
         if (_graph.SelectedId.Length > 0)
         {
             string id = _graph.SelectedId;
-            var delete = new MenuItem { Header = "Delete " + Describe(id) };
+            var delete = new MenuItem { Header = "Delete " + Describe(model, id) };
             delete.Click += (_, _) => DeleteNode(id);
             items.Add(delete);
         }

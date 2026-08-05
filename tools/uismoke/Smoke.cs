@@ -197,6 +197,17 @@ public static class Smoke
                     var owner = OpenCommonwealth.Services.Hkx.BehaviourGraphModel
                         .Parse(window.LoadedXml).Get(host);
                     Check($"{name}: wired into the slot the drag came from", added, owner?.Ref("generator") ?? "");
+
+                    // Object ids restart at #1 in the next file, so a remembered position, highlight
+                    // or filter would be applied to whatever now holds that number.
+                    canvas.Highlight(added);
+                    window.Filter("clip");
+                    window.Open(path);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    Check($"{name}: reopening drops the old highlight", "", canvas.HighlightId);
+                    Check($"{name}: and the old filter", 0, canvas.MatchCount);
+                    CheckTrue($"{name}: and does not pin nodes where the last file's were",
+                              canvas.PositionOf(host) != dropped);
                 }
             }
 
