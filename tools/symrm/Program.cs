@@ -178,7 +178,7 @@ public static class Program
                 List<GraphValidator.Finding> findings;
                 try
                 {
-                    string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, hkx, Work("sweep")));
+                    string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, hkx, Work("sweep")));
                     findings = GraphValidator.Check(xml, chain);
                 }
                 catch (Exception ex)
@@ -216,7 +216,7 @@ public static class Program
         foreach (string anim in chain.Animations) Console.WriteLine("    " + anim);
         foreach (string problem in chain.Problems) Console.WriteLine("  problem  " + problem);
 
-        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, hkx, Work("anims")));
+        string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, hkx, Work("anims")));
         var findings = GraphValidator.Check(xml, chain);
         foreach (var f in findings) Console.WriteLine("  " + f);
 
@@ -239,7 +239,7 @@ public static class Program
 
         foreach (string file in files)
         {
-            var model = BehaviourGraphModel.Parse(File.ReadAllText(file));
+            var model = BehaviourGraphModel.Parse(HkxTextEdit.ReadXml(file));
             foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
                 foreach (var state in StateEditor.States(model, machine.Id))
                 {
@@ -269,10 +269,10 @@ public static class Program
 
         string hkx = Path.GetFullPath(argv[1]);
         string xmlPath = HkxTextEdit.Unpack(_java, _jar, hkx, Work("repack_in"));
-        var before = RepackCheck.Take(File.ReadAllText(xmlPath));
+        var before = RepackCheck.Take(HkxTextEdit.ReadXml(xmlPath));
 
         string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
-        var after = RepackCheck.Take(File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, packed, Work("repack_out"))));
+        var after = RepackCheck.Take(HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, packed, Work("repack_out"))));
 
         var drift = RepackCheck.Compare(before, after);
         Console.WriteLine($"{Path.GetFileName(hkx)}: {drift}");
@@ -456,7 +456,7 @@ public static class Program
 
         foreach (string file in files)
         {
-            string xml = File.ReadAllText(file);
+            string xml = HkxTextEdit.ReadXml(file);
             var names = SymbolEditor.EventNames(BehaviourGraphModel.Parse(xml));
             var usage = EventUsage.ByEvent(xml);
             declared += names.Count;
@@ -740,7 +740,7 @@ public static class Program
         foreach (string file in files)
         {
             List<GraphValidator.Finding> findings;
-            try { findings = GraphValidator.Check(File.ReadAllText(file)); }
+            try { findings = GraphValidator.Check(HkxTextEdit.ReadXml(file)); }
             catch (Exception ex) { Console.WriteLine($"  THREW {Path.GetFileName(file)}: {ex.Message.Split('\n')[0]}"); broken++; continue; }
 
             var errors = findings.Where(f => f.Level == GraphValidator.Level.Error).ToList();
@@ -775,7 +775,7 @@ public static class Program
         if (Directory.Exists(work)) Directory.Delete(work, true);
         Directory.CreateDirectory(work);
 
-        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
+        string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
         Console.WriteLine("FILE " + Path.GetFileName(argv[1]));
         Report("BEFORE", xml);
         var before = Resolved(xml);
@@ -822,7 +822,7 @@ public static class Program
         File.WriteAllText(xmlPath, xml);
         string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
         Console.WriteLine($"\nrepacked to {new FileInfo(packed).Length} bytes, reading the binary back");
-        string back = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, packed, Path.Combine(packedDir, "back")));
+        string back = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, packed, Path.Combine(packedDir, "back")));
 
         Report("AFTER, ROUND TRIPPED", back);
         var after = Resolved(back);
@@ -853,7 +853,7 @@ public static class Program
         if (Directory.Exists(work)) Directory.Delete(work, true);
         Directory.CreateDirectory(work);
 
-        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
+        string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
         Console.WriteLine($"FILE {Path.GetFileName(argv[1])}");
         Show("before any edit", xml);
 
@@ -917,7 +917,7 @@ public static class Program
         if (Directory.Exists(work)) Directory.Delete(work, true);
         Directory.CreateDirectory(work);
 
-        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
+        string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
         var model = BehaviourGraphModel.Parse(xml);
         Console.WriteLine($"FILE {Path.GetFileName(argv[1])}   {model.Objects.Count} objects");
 
@@ -988,7 +988,7 @@ public static class Program
         File.WriteAllText(xmlPath, xml);
         string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
         Console.WriteLine($"repacked to {new FileInfo(packed).Length} bytes");
-        return File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, packed, Path.Combine(dir, "back")));
+        return HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, packed, Path.Combine(dir, "back")));
     }
 
     // Adds DN151_DoorSeal's StartOpen and StartClosed to SpecialCaseDoors, which does not have them.
@@ -1011,7 +1011,7 @@ public static class Program
         if (Directory.Exists(work)) Directory.Delete(work, true);
         Directory.CreateDirectory(work);
 
-        string xml = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
+        string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
         var model = BehaviourGraphModel.Parse(xml);
 
         string machine = model.Objects.First(o => o.Class == "hkbStateMachine").Id;
@@ -1076,7 +1076,7 @@ public static class Program
         File.Copy(packed, argv[2], true);
         Console.WriteLine($"\nrepacked to {new FileInfo(argv[2]).Length} bytes at {argv[2]}");
 
-        string back = File.ReadAllText(HkxTextEdit.Unpack(_java, _jar, argv[2], Path.Combine(work, "back")));
+        string back = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[2], Path.Combine(work, "back")));
         var after = BehaviourGraphModel.Parse(back);
         string machineAfter = after.Objects.First(o => o.Class == "hkbStateMachine").Id;
         var statesAfter = StateEditor.States(after, machineAfter);

@@ -39,6 +39,7 @@ public static class Tests
         AddedVariablesCarryTheirDeclaredType();
         EveryFindingPointsAtAnObject();
         AShortBoundsArrayStaysLinedUp();
+        WindowsLineEndingsStillEdit();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -985,6 +986,40 @@ public static class Tests
             </hksection>
         </hkpackfile>
         """;
+
+    // hkxpack writes the platform's line ending, so every unpacked file on Windows is CRLF. The
+    // parameter regex is anchored to end of line, and .NET's multiline $ sits between the \r and the
+    // \n, so it matched nothing there: every object reported zero editable fields and every edit
+    // routed through SetParam failed, which includes connecting and disconnecting nodes. Reading and
+    // drawing were unaffected, so the window looked like it was working. Reported from a Windows
+    // build of the first beta.
+    private static void WindowsLineEndingsStillEdit()
+    {
+        Console.WriteLine("a file with Windows line endings is still editable");
+
+        string lf = SmallGraph().Replace("\r\n", "\n");
+        string crlf = lf.Replace("\n", "\r\n");
+
+        Check("fields read from a unix file", 3, HkxTextEdit.ReadParams(lf, "96").Count);
+        Check("fields read from a windows file", 3, HkxTextEdit.ReadParams(crlf, "96").Count);
+
+        string edited = HkxTextEdit.SetParam(crlf, "96", "animationName", "changed.hkx");
+        Check("a field set on a windows file",
+              "changed.hkx", BehaviourGraphModel.Parse(edited).Get("96")!.Str("animationName"));
+
+        // Connecting goes through SetParam, so it failed the same way and looked like a dead canvas.
+        string linked = GraphLinks.Connect(crlf, "95", "generator", "97", out _);
+        Check("a node connected on a windows file",
+              "97", BehaviourGraphModel.Parse(linked).Get("95")!.Ref("generator"));
+
+        // Whatever it was read as, one line ending comes out, or the splices disagree with the file.
+        string normalised = lf.Replace("\n", "\r\n");
+        CheckTrue("reading normalises the line endings",
+                  !NormaliseLike(normalised).Contains('\r'));
+    }
+
+    private static string NormaliseLike(string text) =>
+        text.Replace("\r\n", "\n").Replace("\r", "\n");
 
     private static string SmallGraph() => """
         <?xml version="1.0" encoding="ascii"?>

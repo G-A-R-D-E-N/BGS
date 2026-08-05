@@ -685,7 +685,7 @@ public class MainWindow : Window
             if (Directory.Exists(work)) Directory.Delete(work, true);
 
             _xmlPath = HkxTextEdit.Unpack(java, jar, _hkxPath, work);
-            _xmlText = File.ReadAllText(_xmlPath);
+            _xmlText = HkxTextEdit.ReadXml(_xmlPath);
             _objectIds = HkxTextEdit.ObjectIds(_xmlText);
 
             if (_objectIds.Count != _objects.Count)
@@ -1490,7 +1490,7 @@ public class MainWindow : Window
         if (Directory.Exists(work)) Directory.Delete(work, true);
 
         string xml = HkxTextEdit.Unpack(java, jar, packed, work);
-        return RepackCheck.Compare(RepackCheck.Take(_xmlText), RepackCheck.Take(File.ReadAllText(xml)));
+        return RepackCheck.Compare(RepackCheck.Take(_xmlText), RepackCheck.Take(HkxTextEdit.ReadXml(xml)));
     }
 
     private void SetDirty(bool dirty)
