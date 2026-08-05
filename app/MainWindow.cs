@@ -21,7 +21,8 @@ public class MainWindow : Window
     private readonly TextBox _filter = Ux.Field("filter objects by name, class or animation");
     private readonly TextBlock _summary = new() { Foreground = Ux.MutedBrush, FontSize = 12 };
     private readonly TextBlock _status = new() { Foreground = Ux.MutedBrush, FontSize = 12 };
-    private readonly StackPanel _props = new() { Spacing = 6 };
+    private readonly Inspector _treeProps = new(340);
+    private readonly Inspector _graphProps = new(360);
     private readonly GraphView _graph = new();
     private readonly Button _saveButton;
 
@@ -95,6 +96,7 @@ public class MainWindow : Window
         _symbols.SelectionChanged += OnSymbolSelected;
 
         _graph.Selected += SelectObjectId;
+        _graph.Activated += id => { SelectObjectId(id); _graphProps.FocusFirstField(); };
         _graph.LinkRequested += (from, field, to) => Relink(from, field, to, connect: true);
         _graph.UnlinkRequested += (from, field, to) => Relink(from, field, to, connect: false);
         _graph.DeleteRequested += DeleteNode;
@@ -176,11 +178,17 @@ public class MainWindow : Window
         _problems.Height = 150;
         _problems.SelectionChanged += OnProblemSelected;
 
+        var splitter = new GridSplitter { Width = 6, Background = Brushes.Transparent };
+
         var panel = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(_problemBar, Dock.Bottom);
         DockPanel.SetDock(_problems, Dock.Bottom);
+        DockPanel.SetDock(_graphProps, Dock.Right);
+        DockPanel.SetDock(splitter, Dock.Right);
         panel.Children.Add(_problemBar);
         panel.Children.Add(_problems);
+        panel.Children.Add(_graphProps);
+        panel.Children.Add(splitter);
         panel.Children.Add(Framed(_graph));
 
         _problems.IsVisible = false;
@@ -197,19 +205,6 @@ public class MainWindow : Window
 
     private Control BuildTreeTab()
     {
-        var right = new DockPanel { MinWidth = 340 };
-        var title = Ux.SectionTitle("Properties");
-        DockPanel.SetDock(title, Dock.Top);
-        right.Children.Add(title);
-        // Disabled rather than Auto: the panel is narrow and fixed, so anything that does not fit
-        // has to wrap or trim. Letting it scroll sideways instead just hid the left of every line.
-        right.Children.Add(new ScrollViewer
-        {
-            Content = _props,
-            Padding = new Thickness(0, 6, 8, 0),
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-        });
-
         var split = new Grid();
         split.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(3, GridUnitType.Star)));
         split.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
@@ -217,10 +212,10 @@ public class MainWindow : Window
 
         var splitter = new GridSplitter { Width = 6, Background = Brushes.Transparent };
         Grid.SetColumn(splitter, 1);
-        Grid.SetColumn(right, 2);
+        Grid.SetColumn(_treeProps, 2);
         split.Children.Add(_tree);
         split.Children.Add(splitter);
-        split.Children.Add(right);
+        split.Children.Add(_treeProps);
         return split;
     }
 
@@ -233,6 +228,13 @@ public class MainWindow : Window
     public HkGrid SymbolGrid => _symbols;
     public string FractionAnswer => _fractionAnswer.Text ?? "";
     public int AimedFrame => _aimedFrame;
+    public string LoadedXml => _xmlText;
+    public Inspector GraphProperties => _graphProps;
+    public GraphView Canvas => _graph;
+
+    /// Selects through the same handler a click on the canvas uses, so a check exercises the path a
+    /// person takes rather than a parallel one.
+    public void SelectNode(string objectId) => SelectObjectId(objectId);
 
     /// Drives the fraction lookup the way a person does, through the same field and the same handler,
     /// so a check exercises what the button exercises rather than a parallel path.
@@ -582,7 +584,7 @@ public class MainWindow : Window
     private void Load()
     {
         _tree.Clear();
-        _props.Children.Clear();
+        ClearProps();
         _offsetToIndex.Clear();
         _objectIds = new List<string>();
         _xmlText = "";
@@ -712,7 +714,7 @@ public class MainWindow : Window
     private void RebuildTree()
     {
         _tree.Clear();
-        _props.Children.Clear();
+        ClearProps();
         if (_root == null) return;
 
         _emptyStates = _xmlText.Length == 0
@@ -768,7 +770,7 @@ public class MainWindow : Window
 
     private void OnTreeSelected()
     {
-        _props.Children.Clear();
+        ClearProps();
         _selectedId = "";
         if (_tree.SelectedTag is not int offset || _xmlText.Length == 0) return;
         if (!_offsetToIndex.TryGetValue(offset, out int index)) return;
@@ -778,7 +780,7 @@ public class MainWindow : Window
 
     private void SelectObjectId(string objectId)
     {
-        _props.Children.Clear();
+        ClearProps();
         _selectedId = "";
         if (objectId.Length == 0 || _xmlText.Length == 0) return;
         ShowProps(objectId);
@@ -793,15 +795,32 @@ public class MainWindow : Window
         return $"#{id} {obj.Class}" + (name.Length > 0 ? $" '{name}'" : "");
     }
 
+    private void ClearProps()
+    {
+        _treeProps.Clear();
+        _graphProps.Clear();
+    }
+
+    // Both panels are filled, because which one is on screen depends on the tab and a node can be
+    // reached from either. The model is parsed once and handed to both: on a shipped weapon graph
+    // that parse is the expensive part of selecting a node.
     private void ShowProps(string objectId)
     {
         _selectedId = objectId;
+        var model = BehaviourGraphModel.Parse(_xmlText);
+        FillProps(_treeProps, objectId, model);
+        FillProps(_graphProps, objectId, model);
+    }
+
+    private void FillProps(Inspector panel, string objectId, BehaviourGraphModel model)
+    {
+        panel.Clear();
         string className = HkxTextEdit.ClassOf(_xmlText, objectId);
         var parameters = HkxTextEdit.ReadParams(_xmlText, objectId);
 
         var heading = Ux.Label($"#{objectId}   {className}   {parameters.Count} editable fields");
         heading.TextWrapping = TextWrapping.Wrap;
-        _props.Children.Add(heading);
+        panel.Add(heading);
 
         foreach (var p in parameters)
         {
@@ -826,20 +845,19 @@ public class MainWindow : Window
             DockPanel.SetDock(label, Dock.Left);
             row.Children.Add(label);
             row.Children.Add(field);
-            _props.Children.Add(row);
+            panel.Add(row);
         }
 
-        AddBindingSection(objectId);
+        AddBindingSection(panel, objectId, model);
     }
 
-    private void AddBindingSection(string objectId)
+    private void AddBindingSection(Inspector panel, string objectId, BehaviourGraphModel model)
     {
-        var model = BehaviourGraphModel.Parse(_xmlText);
         var owner = model.Get(objectId);
         if (owner == null) return;
 
         var names = BindingEditor.VariableNames(model);
-        _props.Children.Add(Ux.SectionTitle("variable bindings"));
+        panel.Add(Ux.SectionTitle("variable bindings"));
 
         foreach (var b in BindingEditor.BindingsOf(model, owner))
         {
@@ -859,7 +877,7 @@ public class MainWindow : Window
             DockPanel.SetDock(remove, Dock.Right);
             row.Children.Add(remove);
             row.Children.Add(text);
-            _props.Children.Add(row);
+            panel.Add(row);
         }
 
         // Stacked rather than one row: the member path alone is wider than this panel, and a row
@@ -870,9 +888,9 @@ public class MainWindow : Window
         bind.HorizontalAlignment = HorizontalAlignment.Right;
         bind.Click += (_, _) => AddBinding(objectId, (member.Text ?? "").Trim(), (variable.Text ?? "").Trim());
 
-        _props.Children.Add(member);
-        _props.Children.Add(variable);
-        _props.Children.Add(bind);
+        panel.Add(member);
+        panel.Add(variable);
+        panel.Add(bind);
     }
 
     private void BuildSymbols(BehaviourGraphModel model)
@@ -1100,7 +1118,25 @@ public class MainWindow : Window
     {
         if (_xmlText.Length == 0) return;
 
-        var items = new List<MenuItem>();
+        var items = new List<Control>();
+
+        if (_graph.SelectedId.Length > 0)
+        {
+            string id = _graph.SelectedId;
+            var highlight = new MenuItem { Header = "Highlight the paths of " + Describe(id) };
+            highlight.Click += (_, _) => HighlightPaths(id);
+            items.Add(highlight);
+        }
+
+        if (_graph.HighlightId.Length > 0)
+        {
+            var clear = new MenuItem { Header = "Clear the highlight" };
+            clear.Click += (_, _) => HighlightPaths("");
+            items.Add(clear);
+        }
+
+        if (items.Count > 0) items.Add(new Separator());
+
         foreach (string kind in GraphAuthor.Kinds)
         {
             string captured = kind;
@@ -1119,6 +1155,20 @@ public class MainWindow : Window
 
         _graph.ContextMenu = new ContextMenu { ItemsSource = items };
         _graph.ContextMenu.Open(_graph);
+    }
+
+    private void HighlightPaths(string objectId)
+    {
+        if (objectId.Length == 0)
+        {
+            _graph.ClearHighlight();
+            SetStatus("Highlight cleared.", Ux.MutedBrush);
+            return;
+        }
+
+        _graph.Highlight(objectId);
+        SetStatus($"Showing only what {Describe(objectId)} is wired to. Escape, or right click, to clear.",
+                  Ux.MetaBrush);
     }
 
     private void AddNode(string kind, string name, string animation, string parentId)
@@ -1175,7 +1225,7 @@ public class MainWindow : Window
             var model = BehaviourGraphModel.Parse(_xmlText);
             _graph.Show(model);
             BuildSymbols(model);
-            _props.Children.Clear();
+            ClearProps();
         }
         catch (Exception ex)
         {
@@ -1227,7 +1277,7 @@ public class MainWindow : Window
         var model = BehaviourGraphModel.Parse(_xmlText);
         _graph.Show(model);
         BuildSymbols(model);
-        _props.Children.Clear();
+        ClearProps();
         ShowProps(objectId);
     }
 

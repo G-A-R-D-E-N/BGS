@@ -3,6 +3,29 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, the fields are next to the node now, and one state at a time
+
+**The properties panel was in the wrong tab.** Clicking a node on the canvas filled a panel that only
+existed beside the tree, so the fields were built, correct, and invisible unless you switched tabs and
+lost the node you were looking at. The panel is now a control rather than a loose stack, and there is
+one beside the canvas as well as one beside the tree. Double clicking a node puts the caret in the
+first box instead of nudging the node a pixel.
+
+**An empty field could not be given a value.** hkxpack writes an empty string as a self closing tag,
+and the reader only matched `<hkparam name="x">value</hkparam>`, so `animationBundleName` and every
+other empty field was missing from the panel entirely. Both shapes are now read in one pass, so the
+order fields appear in is still the order they sit in the file, and writing an empty value puts the
+self closing form back rather than leaving `<hkparam name="x"></hkparam>` behind. Proved by editing
+`PipboyBehavior.hkx` #98 through a real hkxpack repack and reading it back: the value survives, and
+clearing it repacks clean. Arrays are excluded for free, since a `numelements` attribute sits between
+the name and the slash.
+
+**Highlighting one state.** Right click a node, "Highlight the paths of ...", and every wire not
+touching it drops to half opacity while unrelated nodes dim to 40%. The lit wires are drawn in a
+second pass so they sit on top of the dimmed ones rather than being crossed by them. Escape clears it.
+A shipped graph draws a few hundred wires over each other and following one state through that was the
+thing the canvas was worst at.
+
 ## 2026-08-04, variableBounds is positional after all
 
 **The struct settles it.** The open question was what a short `variableBounds` array keys off, since

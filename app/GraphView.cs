@@ -52,6 +52,7 @@ public class GraphView : Control
     public string SelectedId { get; private set; } = "";
 
     public Action<string>? Selected;
+    public Action<string>? Activated;
     public Action<string, string, string>? LinkRequested;
     public Action<string, string, string>? UnlinkRequested;
     public Action<string>? DeleteRequested;
@@ -74,6 +75,46 @@ public class GraphView : Control
             node.Problem = problems.TryGetValue(node.Id, out var level) ? level : null;
         InvalidateVisual();
     }
+
+    /// One state at a time. A shipped graph draws a few hundred wires over each other and reading a
+    /// single state's routes off that is the thing the canvas is worst at, so everything not touching
+    /// the chosen node is dimmed rather than hidden: the shape of the rest stays visible as context.
+    private string _highlight = "";
+    private readonly HashSet<string> _related = new();
+
+    public string HighlightId => _highlight;
+
+    public void Highlight(string id)
+    {
+        _highlight = _nodes.ContainsKey(id) ? id : "";
+        RebuildRelated();
+        InvalidateVisual();
+    }
+
+    public void ClearHighlight()
+    {
+        _highlight = "";
+        _related.Clear();
+        InvalidateVisual();
+    }
+
+    private void RebuildRelated()
+    {
+        _related.Clear();
+        if (_highlight.Length == 0) return;
+
+        _related.Add(_highlight);
+        foreach (var node in _nodes.Values)
+            foreach (var slot in node.Slots)
+                foreach (string target in slot.Targets)
+                {
+                    if (node.Id == _highlight) _related.Add(target);
+                    else if (target == _highlight) _related.Add(node.Id);
+                }
+    }
+
+    private bool Lit(string fromId, string toId) =>
+        _highlight.Length == 0 || fromId == _highlight || toId == _highlight;
 
     /// Select a node and bring it under the viewport centre, which is the whole point of clicking a
     /// row in the problem list: the node is usually off screen when it is the one that is wrong.
@@ -126,10 +167,13 @@ public class GraphView : Control
         }
 
         if (SelectedId.Length > 0 && !_nodes.ContainsKey(SelectedId)) SelectedId = "";
+        if (_highlight.Length > 0 && !_nodes.ContainsKey(_highlight)) _highlight = "";
+        RebuildRelated();
         InvalidateVisual();
     }
 
     public int DrawnCount => _nodes.Count;
+    public IReadOnlyCollection<string> DrawnIds => _nodes.Keys;
 
     private Point ToWorld(Point screen) => new((screen.X - _pan.X) / _zoom, (screen.Y - _pan.Y) / _zoom);
     private Point ToScreen(Point world) => new(world.X * _zoom + _pan.X, world.Y * _zoom + _pan.Y);
@@ -146,19 +190,31 @@ public class GraphView : Control
 
         if (_model == null) return;
 
-        foreach (var node in _nodes.Values)
-            for (int i = 0; i < node.Slots.Count; i++)
-                foreach (string target in node.Slots[i].Targets)
-                    if (_nodes.TryGetValue(target, out var to))
-                        DrawLink(ctx, ToScreen(node.OutPort(i)), ToScreen(to.InPort), node.Accent, 1.6);
+        // Two passes so the highlighted wires sit on top of the dimmed ones rather than being
+        // crossed by them, which is the whole point of asking for one state at a time.
+        for (int pass = 0; pass < 2; pass++)
+            foreach (var node in _nodes.Values)
+                for (int i = 0; i < node.Slots.Count; i++)
+                    foreach (string target in node.Slots[i].Targets)
+                    {
+                        if (!_nodes.TryGetValue(target, out var to)) continue;
+                        bool lit = Lit(node.Id, target);
+                        if (lit != (pass == 1)) continue;
+                        DrawLink(ctx, ToScreen(node.OutPort(i)), ToScreen(to.InPort), node.Accent,
+                                 lit && _highlight.Length > 0 ? 2.6 : 1.6, lit ? 0.85 : 0.42);
+                    }
 
         if (_wiring is { } w)
-            DrawLink(ctx, ToScreen(w.Node.OutPort(w.Slot)), _wireTo, Ux.Accent, 2.2);
+            DrawLink(ctx, ToScreen(w.Node.OutPort(w.Slot)), _wireTo, Ux.Accent, 2.2, 0.85);
 
-        foreach (var node in _nodes.Values) DrawNode(ctx, node);
+        foreach (var node in _nodes.Values)
+        {
+            if (_highlight.Length == 0 || _related.Contains(node.Id)) DrawNode(ctx, node);
+            else using (ctx.PushOpacity(0.4)) DrawNode(ctx, node);
+        }
     }
 
-    private void DrawLink(DrawingContext ctx, Point from, Point to, Color colour, double width)
+    private void DrawLink(DrawingContext ctx, Point from, Point to, Color colour, double width, double alpha)
     {
         double bend = Math.Max(40, Math.Abs(to.X - from.X) * 0.45);
         var geometry = new StreamGeometry();
@@ -168,7 +224,7 @@ public class GraphView : Control
             g.CubicBezierTo(from + new Vector(bend, 0), to - new Vector(bend, 0), to);
             g.EndFigure(false);
         }
-        ctx.DrawGeometry(null, new Pen(new SolidColorBrush(colour, 0.85), width), geometry);
+        ctx.DrawGeometry(null, new Pen(new SolidColorBrush(colour, alpha), width), geometry);
     }
 
     private void DrawNode(DrawingContext ctx, Node node)
@@ -276,8 +332,11 @@ public class GraphView : Control
         if (node != null)
         {
             SelectedId = node.Id;
-            _dragNode = node;
             Selected?.Invoke(node.Id);
+            // A second click opens the fields rather than starting a drag, so the node does not
+            // shift by a pixel on the way to editing it.
+            if (e.ClickCount >= 2) Activated?.Invoke(node.Id);
+            else _dragNode = node;
         }
         else
         {
@@ -352,6 +411,12 @@ public class GraphView : Control
         if (e.Key == Key.Delete && SelectedId.Length > 0)
         {
             DeleteRequested?.Invoke(SelectedId);
+            e.Handled = true;
+        }
+
+        if (e.Key == Key.Escape && _highlight.Length > 0)
+        {
+            ClearHighlight();
             e.Handled = true;
         }
     }

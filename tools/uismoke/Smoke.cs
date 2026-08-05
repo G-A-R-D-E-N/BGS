@@ -112,6 +112,43 @@ public static class Smoke
                 }
             }
 
+            // The fields have to be reachable from the canvas, not only from the tree. A node's
+            // properties are useless in a tab that is not showing the node.
+            if (window.LoadedXml.Length > 0)
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                var canvas = Find<GraphView>(window).First();
+                string node = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                    .IdsOfClass(window.LoadedXml, "hkbClipGenerator")
+                    .FirstOrDefault(id => canvas.DrawnIds.Contains(id)) ?? canvas.DrawnIds.FirstOrDefault() ?? "";
+
+                if (node.Length > 0)
+                {
+                    var fields = OpenCommonwealth.Services.Hkx.HkxTextEdit.ReadParams(window.LoadedXml, node);
+                    window.SelectNode(node);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    var boxes = Find<TextBox>(window.GraphProperties);
+                    CheckTrue($"{name}: picking a node on the canvas fills the panel beside it",
+                              boxes.Count >= fields.Count && fields.Count > 0);
+                    Console.WriteLine($"        #{node}: {fields.Count} fields, {boxes.Count} boxes beside the canvas");
+
+                    // Double click is what the request asks for, so the wiring from the canvas to
+                    // the panel is what gets checked, not a synthetic mouse event.
+                    canvas.Activated?.Invoke(node);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    CheckTrue($"{name}: double click still leaves the fields there",
+                              Find<TextBox>(window.GraphProperties).Count >= fields.Count);
+
+                    canvas.Highlight(node);
+                    Check($"{name}: highlighting one node sticks", node, canvas.HighlightId);
+                    canvas.ClearHighlight();
+                    Check($"{name}: and clearing it releases the canvas", "", canvas.HighlightId);
+                }
+            }
+
             // A paged view can drop the tail without saying so, which is the failure the old 300 row
             // cap made visible and paging could hide. Walk every page and prove the frames shown add
             // up to the frames the file has, with the last page ending on the last frame.
