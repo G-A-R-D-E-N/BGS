@@ -155,9 +155,28 @@ public static class GraphValidator
     /// Named rather than counted, and with both ways out spelled out, because the refusal is the
     /// whole message: someone who hits this is stopped, and being stopped without being told which
     /// state or what to do about it is worse than not checking at all.
+    // Classes hkxpack cannot carry through a repack intact. hkaLosslessCompressedAnimation packs
+    // four fields into a 64 bit word and the XML form keeps only the low 32 bits, so a dump of one
+    // repacks into an animation that is not the one that went in. Nothing routes an animation into
+    // saving today, because a file with no behaviour root never gets a text form at all, so this
+    // guards a door that is currently walled up rather than one standing open. It is here so that
+    // opening that door later cannot quietly corrupt a file.
+    private static readonly string[] LossyOnRepack =
+    {
+        "hkaLosslessCompressedAnimation",
+    };
+
     public static string? RefuseToSave(string xml)
     {
         if (xml.Length == 0) return null;
+
+        foreach (string cls in LossyOnRepack)
+            if (xml.Contains($"class=\"{cls}\"", StringComparison.Ordinal))
+                return $"Not saved, and the original is untouched. This file holds a {cls}, " +
+                       "which hkxpack cannot write back without changing it: the packed words it " +
+                       "stores are cut short on the way through, so the animation that came out " +
+                       "would not be the one that went in. Read it here, edit it elsewhere.";
+
         var empty = EmptyStates(BehaviourGraphModel.Parse(xml));
         if (empty.Count == 0) return null;
 

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Text.RegularExpressions;
 using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.Tools;
@@ -40,6 +41,8 @@ public static class Tests
         EveryFindingPointsAtAnObject();
         AShortBoundsArrayStaysLinedUp();
         WindowsLineEndingsStillEdit();
+        RepackDriftCatchesAChangedValue();
+        AnAnimationIsRefusedForSaving();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -1020,6 +1023,63 @@ public static class Tests
 
     private static string NormaliseLike(string text) =>
         text.Replace("\r\n", "\n").Replace("\r", "\n");
+
+    // Counting objects and class names catches a repack that came back short. It does not catch one
+    // that came back the same size with a value moved, which loads and then behaves wrongly with
+    // nothing reporting it, so the contents are compared too. Renumbering is the one difference a
+    // repack is allowed to make and must not read as a change.
+    private static void RepackDriftCatchesAChangedValue()
+    {
+        Console.WriteLine("\nrepack drift catches a value that moved, and ignores renumbering");
+
+        string before = SmallGraph();
+
+        // What hkxpack does on every pack: same objects, same order, different numbers.
+        string renumbered = Regex.Replace(before, @"#(\d+)",
+                                          m => "#" + (int.Parse(m.Groups[1].Value) + 400));
+        var same = RepackCheck.Compare(RepackCheck.Take(before), RepackCheck.Take(renumbered));
+        CheckTrue("renumbering alone is not drift", same.Clean);
+        CheckTrue("and it says so plainly", same.ToString().Contains("every value"));
+
+        string moved = renumbered.Replace("<hkparam name=\"animationName\">b.hkx</hkparam>",
+                                          "<hkparam name=\"animationName\">elsewhere.hkx</hkparam>");
+        var drift = RepackCheck.Compare(RepackCheck.Take(before), RepackCheck.Take(moved));
+        CheckTrue("a changed value is drift", !drift.Clean);
+        Check("the object count still agrees", drift.Before, drift.After);
+        CheckTrue("nothing was reported lost or gained", drift.Lost.Count == 0 && drift.Gained.Count == 0);
+        Check("one value is named", 1, drift.Changed.Count);
+        Check("named by field, not just by object", true,
+              drift.Changed.Count > 0 && drift.Changed[0].Contains("animationName"));
+        Console.WriteLine("        -> " + (drift.Changed.FirstOrDefault() ?? ""));
+
+        string retyped = renumbered.Replace("class=\"hkbClipGenerator\" name=\"#496\"",
+                                            "class=\"hkbBlenderGenerator\" name=\"#496\"");
+        var swapped = RepackCheck.Compare(RepackCheck.Take(before), RepackCheck.Take(retyped));
+        CheckTrue("an object coming back a different class is drift", !swapped.Clean);
+    }
+
+    // hkxpack keeps only the low half of the packed words in a lossless compressed animation, so a
+    // dump of one repacks into a different animation. Nothing routes an animation into saving today,
+    // which is luck rather than a guard, so the refusal is stated rather than assumed.
+    private static void AnAnimationIsRefusedForSaving()
+    {
+        Console.WriteLine("\nan animation hkxpack cannot carry is refused before it is written");
+
+        CheckTrue("a behaviour is not refused", GraphValidator.RefuseToSave(SmallGraph()) == null);
+
+        string withAnimation = SmallGraph().Replace(
+            "<hkobject class=\"hkbClipGenerator\" name=\"#97\"",
+            "<hkobject class=\"hkaLosslessCompressedAnimation\" name=\"#99\" signature=\"0x1\">\n" +
+            "            <hkparam name=\"numFrames\">2</hkparam>\n" +
+            "        </hkobject>\n" +
+            "        <hkobject class=\"hkbClipGenerator\" name=\"#97\"");
+
+        string? refusal = GraphValidator.RefuseToSave(withAnimation);
+        CheckTrue("one that holds a lossless compressed animation is refused", refusal != null);
+        CheckTrue("and the refusal names the class",
+                  refusal?.Contains("hkaLosslessCompressedAnimation") == true);
+        CheckTrue("and says the original is untouched", refusal?.Contains("untouched") == true);
+    }
 
     private static string SmallGraph() => """
         <?xml version="1.0" encoding="ascii"?>
