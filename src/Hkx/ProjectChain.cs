@@ -162,7 +162,7 @@ public sealed class ProjectChain
         try
         {
             string work = Path.Combine(Path.GetTempPath(), "oc_chain", Path.GetFileNameWithoutExtension(hkxPath));
-            if (Directory.Exists(work)) Directory.Delete(work, true);
+            HkxTextEdit.ResetDirectory(work);
             string xml = HkxTextEdit.Unpack(java, jar, hkxPath, work);
             return BehaviourGraphModel.Parse(HkxTextEdit.ReadXml(xml));
         }

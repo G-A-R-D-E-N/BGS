@@ -682,7 +682,7 @@ public class MainWindow : Window
         try
         {
             string work = Path.Combine(Path.GetTempPath(), "bgs_edit", Path.GetFileNameWithoutExtension(_hkxPath));
-            if (Directory.Exists(work)) Directory.Delete(work, true);
+            HkxTextEdit.ResetDirectory(work);
 
             _xmlPath = HkxTextEdit.Unpack(java, jar, _hkxPath, work);
             _xmlText = HkxTextEdit.ReadXml(_xmlPath);
@@ -1456,6 +1456,11 @@ public class MainWindow : Window
         if (java == null) { SetStatus("Cannot save: no Java runtime found.", Ux.BadBrush); return; }
         if (jar == null) { SetStatus("Cannot save: hkxpack-cli.jar not found.", Ux.BadBrush); return; }
 
+        // Asked before packing rather than after. Packing a weapon behaviour takes seconds, and
+        // finding out at the end that the file was read only all along wastes all of them.
+        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
+        if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return; }
+
         try
         {
             File.WriteAllText(_xmlPath, _xmlText);
@@ -1476,6 +1481,11 @@ public class MainWindow : Window
             SetStatus($"Saved. The original is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
             Load();
         }
+        catch (UnauthorizedAccessException)
+        {
+            SetStatus("Save failed: " + (HkxTextEdit.WhyNotWritable(_hkxPath) ??
+                      "Windows refused the write. Your original is untouched."), Ux.BadBrush);
+        }
         catch (Exception ex)
         {
             SetStatus("Save failed: " + ex.Message.Split('\n')[0], Ux.BadBrush);
@@ -1487,7 +1497,7 @@ public class MainWindow : Window
     private RepackCheck.Drift VerifyRepack(string java, string jar, string packed)
     {
         string work = Path.Combine(Path.GetTempPath(), "bgs_verify", Path.GetFileNameWithoutExtension(_hkxPath));
-        if (Directory.Exists(work)) Directory.Delete(work, true);
+        HkxTextEdit.ResetDirectory(work);
 
         string xml = HkxTextEdit.Unpack(java, jar, packed, work);
         return RepackCheck.Compare(RepackCheck.Take(_xmlText), RepackCheck.Take(HkxTextEdit.ReadXml(xml)));

@@ -87,7 +87,7 @@ public static class Headless
         }
 
         string work = Path.Combine(Path.GetTempPath(), "bgs_headless", Path.GetFileNameWithoutExtension(path));
-        if (Directory.Exists(work)) Directory.Delete(work, true);
+        HkxTextEdit.ResetDirectory(work);
 
         string xmlPath = HkxTextEdit.Unpack(java, jar, path, work);
         string xml = HkxTextEdit.ReadXml(xmlPath);
