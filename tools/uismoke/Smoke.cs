@@ -35,19 +35,23 @@ public static class Smoke
         // A TabControl only builds the selected tab, so each one has to be visited to prove it is
         // whole. Visiting them also exercises the switching itself.
         var canvases = 0;
-        var grids = 0;
+        var grids = new System.Collections.Generic.List<HkGrid>();
         var buttons = new System.Collections.Generic.List<string?>();
         for (int i = 0; i < tabs[0].ItemCount; i++)
         {
             tabs[0].SelectedIndex = i;
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
             canvases += Find<GraphView>(window).Count;
-            grids += Find<HkGrid>(window).Count;
+            grids.AddRange(Find<HkGrid>(window));
             buttons.AddRange(Find<Button>(window).Select(b => b.Content?.ToString()));
         }
 
         Check("the node canvas exists", 1, canvases);
-        Check("the tree, symbol, chain and animation grids exist", 4, grids);
+        Check("the tree, problem, symbol, chain and animation grids exist", 5, grids.Count);
+
+        // The problem list is the one that starts hidden: an empty box under the canvas before any
+        // check has run would read as a check that found nothing.
+        Check("the problem list is hidden until a check has run", 1, grids.Count(g => !g.IsVisible));
         foreach (string expected in new[]
                  { "Open", "Browse...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
