@@ -700,7 +700,7 @@ public static class Program
     private static string Work(string name)
     {
         string dir = Path.Combine(Path.GetTempPath(), "symrm_" + name);
-        if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        HkxTextEdit.ResetDirectory(dir);
         return dir;
     }
 
@@ -772,7 +772,7 @@ public static class Program
         NeedHkxPack();
 
         string work = Path.Combine(Path.GetTempPath(), "symrm", Path.GetFileNameWithoutExtension(argv[1]));
-        if (Directory.Exists(work)) Directory.Delete(work, true);
+        HkxTextEdit.ResetDirectory(work);
         Directory.CreateDirectory(work);
 
         string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
@@ -850,7 +850,7 @@ public static class Program
         NeedHkxPack();
 
         string work = Path.Combine(Path.GetTempPath(), "symrm", "draw");
-        if (Directory.Exists(work)) Directory.Delete(work, true);
+        HkxTextEdit.ResetDirectory(work);
         Directory.CreateDirectory(work);
 
         string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
@@ -914,7 +914,7 @@ public static class Program
         NeedHkxPack();
 
         string work = Path.Combine(Path.GetTempPath(), "symrm", "link");
-        if (Directory.Exists(work)) Directory.Delete(work, true);
+        HkxTextEdit.ResetDirectory(work);
         Directory.CreateDirectory(work);
 
         string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
@@ -1008,7 +1008,7 @@ public static class Program
         NeedHkxPack();
 
         string work = Path.Combine(Path.GetTempPath(), "symrm", "door");
-        if (Directory.Exists(work)) Directory.Delete(work, true);
+        HkxTextEdit.ResetDirectory(work);
         Directory.CreateDirectory(work);
 
         string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));

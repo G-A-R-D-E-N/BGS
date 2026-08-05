@@ -48,16 +48,74 @@ public static class HkxTextEdit
             if (File.Exists(c)) return c;
 
         string pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
-        foreach (var dir in pathVar.Split(Path.PathSeparator))
+        foreach (var entry in pathVar.Split(Path.PathSeparator))
         {
-            if (string.IsNullOrWhiteSpace(dir)) continue;
+            // A Windows PATH entry may be quoted, and the quotes are part of the string as read.
+            // Combining them into a path produces something that exists nowhere, so Java installed
+            // and on PATH was still reported missing.
+            string dir = entry.Trim().Trim('"');
+            if (dir.Length == 0) continue;
+
             foreach (var exe in new[] { "java", "java.exe" })
             {
-                string full = Path.Combine(dir, exe);
-                if (File.Exists(full)) return full;
+                // A malformed entry is one somebody typed, not a reason to stop looking at the rest.
+                try
+                {
+                    string full = Path.Combine(dir, exe);
+                    if (File.Exists(full)) return full;
+                }
+                catch (ArgumentException)
+                {
+                }
             }
         }
         return null;
+    }
+
+    /// An empty working directory, on a filesystem where something else may be holding a handle to
+    /// the one being replaced. On Windows an antivirus scanner or the search indexer opening a file
+    /// moments after it is written makes the delete fail, and it succeeds a fraction of a second
+    /// later, so the only thing needed is to ask again.
+    public static void ResetDirectory(string path)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                if (Directory.Exists(path)) Directory.Delete(path, true);
+                Directory.CreateDirectory(path);
+                return;
+            }
+            catch (Exception e) when (attempt < 4 && (e is IOException or UnauthorizedAccessException))
+            {
+                System.Threading.Thread.Sleep(150);
+            }
+        }
+    }
+
+    /// Why the file cannot be written, in words that say what to do about it, or null if it can.
+    /// Checked before packing rather than after, so a refusal costs nothing.
+    public static string? WhyNotWritable(string path)
+    {
+        try
+        {
+            if (File.GetAttributes(path).HasFlag(FileAttributes.ReadOnly))
+                return $"{Path.GetFileName(path)} is marked read only. Clear it in the file's " +
+                       "Properties, or run  attrib -r  on it, and save again.";
+
+            using (File.Open(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite)) { }
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return $"Windows will not let this program write {Path.GetFileName(path)}. It is either " +
+                   "read only or owned by another account; check the file's Properties.";
+        }
+        catch (IOException)
+        {
+            return $"{Path.GetFileName(path)} is open in another program. Close Fallout 4, the mod " +
+                   "manager, or whatever else is holding it, and save again.";
+        }
     }
 
     // Set by the app to the directory the executable sits in. An exported build has no project
