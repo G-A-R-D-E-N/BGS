@@ -100,8 +100,20 @@ public static class AnimationPose
         return pose;
     }
 
-    /// One bone's parent relative transform at a frame: the animation where it drives a channel, the
-    /// skeleton's reference pose everywhere else.
+    /// What a track that drives none of a channel means. Spline compression defines it: an undriven
+    /// component reads no translation, no rotation and unit scale, which for an additive clip is the
+    /// zero delta it is meant to be. Anything else is left on the reference pose, because the format
+    /// has not been shown to mean the same thing and guessing moves bones.
+    ///
+    /// The two readings agree on every one of Dogmeat's 206 whole body clips: the bones those leave
+    /// undriven are the ones the rig already places at no offset and no rotation. They part company on
+    /// its 237 additive clips, by up to 17 units and 92 degrees, which is the difference between a
+    /// delta and a pose. Run `symrm channels` to measure it on any rig.
+    private static bool UndrivenIsIdentity(HkxAnimationData animation) =>
+        animation.AnimationClass == "hkaSplineCompressedAnimation";
+
+    /// One bone's parent relative transform at a frame: the animation where it drives a channel, and
+    /// where it does not, whatever that format says an undriven channel means.
     public static HkxBonePose Local(HkxSkeleton skeleton, HkxAnimationData? animation,
                                     int track, int bone, int frame)
     {
@@ -109,16 +121,19 @@ public static class AnimationPose
         if (animation == null || track < 0 || track >= animation.Tracks.Count) return reference;
 
         var data = animation.Tracks[track];
+        var undriven = UndrivenIsIdentity(animation)
+            ? new HkxBonePose { Translation = Vector3.Zero, Rotation = Quaternion.Identity, Scale = Vector3.One }
+            : reference;
         var pose = reference;
 
-        if (frame < data.Translations.Count)
-        {
-            var animated = data.Translations[frame];
-            pose.Translation = new Vector3(
-                data.TranslationAnimated[0] ? animated.X : reference.Translation.X,
-                data.TranslationAnimated[1] ? animated.Y : reference.Translation.Y,
-                data.TranslationAnimated[2] ? animated.Z : reference.Translation.Z);
-        }
+        // Which value a component takes is decided by the mask, not by whether the decoder produced a
+        // frame for it. A track can name a channel undriven and carry no samples for it at all, so
+        // reading the list first would silently leave those on the reference pose.
+        var t = frame < data.Translations.Count ? data.Translations[frame] : undriven.Translation;
+        pose.Translation = new Vector3(
+            data.TranslationAnimated[0] ? t.X : undriven.Translation.X,
+            data.TranslationAnimated[1] ? t.Y : undriven.Translation.Y,
+            data.TranslationAnimated[2] ? t.Z : undriven.Translation.Z);
 
         if (data.RotationAnimated && frame < data.Rotations.Count)
         {
@@ -127,15 +142,16 @@ public static class AnimationPose
             // produces NaN that then poisons every child down the chain.
             pose.Rotation = q.LengthSquared() > 1e-8f ? Quaternion.Normalize(q) : reference.Rotation;
         }
-
-        if (frame < data.Scales.Count)
+        else
         {
-            var animated = data.Scales[frame];
-            pose.Scale = new Vector3(
-                data.ScaleAnimated[0] ? animated.X : reference.Scale.X,
-                data.ScaleAnimated[1] ? animated.Y : reference.Scale.Y,
-                data.ScaleAnimated[2] ? animated.Z : reference.Scale.Z);
+            pose.Rotation = undriven.Rotation;
         }
+
+        var s = frame < data.Scales.Count ? data.Scales[frame] : undriven.Scale;
+        pose.Scale = new Vector3(
+            data.ScaleAnimated[0] ? s.X : undriven.Scale.X,
+            data.ScaleAnimated[1] ? s.Y : undriven.Scale.Y,
+            data.ScaleAnimated[2] ? s.Z : undriven.Scale.Z);
 
         return pose;
     }

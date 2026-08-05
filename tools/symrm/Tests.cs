@@ -47,6 +47,7 @@ public static class Tests
         ("PapyrusSendersAreReportedNotJudged", PapyrusSendersAreReportedNotJudged),
         ("APoseComposesDownTheBoneChain", APoseComposesDownTheBoneChain),
         ("AClearChannelKeepsTheReferencePose", AClearChannelKeepsTheReferencePose),
+        ("SplineUndrivenChannelsReadAsIdentity", SplineUndrivenChannelsReadAsIdentity),
         ("ScrubbingLandsOnDifferentPoses", ScrubbingLandsOnDifferentPoses),
         ("TracksDriveTheBonesTheyName", TracksDriveTheBonesTheyName),
         ("AnimationsForAnotherRigAreRefused", AnimationsForAnotherRigAreRefused),
@@ -1218,6 +1219,37 @@ public static class Tests
         var collapsed = AnimationPose.At(rig, anim, 0);
         CheckTrue("a driven zero translation is honoured",
                   Near(collapsed.Bones[1].Position, Vector3.Zero));
+    }
+
+    /// Spline compression is the one format that says outright what an undriven channel means, and it
+    /// is not the reference pose: no translation, no rotation, unit scale. On a whole body clip the
+    /// two answers coincide, because the bones such a clip leaves undriven are the ones already at
+    /// zero. On an additive clip they do not, and Havok's reading is the one that makes it a delta.
+    private static void SplineUndrivenChannelsReadAsIdentity()
+    {
+        Console.WriteLine("\nspline compression reads an undriven channel as identity, not the rest pose");
+
+        var rig = ThreeBoneChain();
+        var anim = new HkxAnimationData
+        {
+            NumFrames = 1,
+            NumTracks = 3,
+            FrameDuration = 1f / 30f,
+            AnimationClass = "hkaSplineCompressedAnimation",
+            TrackToBoneIndices = { 0, 1, 2 },
+        };
+
+        for (int i = 0; i < 3; i++) anim.Tracks.Add(new HkxTrackData { RotationAnimated = true });
+
+        var posed = AnimationPose.At(rig, anim, 0);
+        CheckTrue("every bone folds onto the root, because none of them is given an offset",
+                  Near(posed.Bones[1].Position, Vector3.Zero) && Near(posed.Bones[2].Position, Vector3.Zero));
+
+        // The same track shape in a format that has not been shown to mean that is left alone.
+        anim.AnimationClass = "hkaLosslessCompressedAnimation";
+        var kept = AnimationPose.At(rig, anim, 0);
+        CheckTrue("and a format without that guarantee still keeps the rest pose",
+                  Near(kept.Bones[1].Position, new Vector3(10, 0, 0)));
     }
 
     private static void ScrubbingLandsOnDifferentPoses()

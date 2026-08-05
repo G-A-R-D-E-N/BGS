@@ -3,6 +3,27 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, what an undriven channel means
+
+Spline compression defines an undriven channel as no translation, no rotation and unit scale. The
+viewer had been substituting the skeleton's reference pose instead, which is right for a bone with no
+track at all and wrong for a track that names a channel and drives none of it.
+
+On whole body clips the two readings are the same answer. The bones such a clip leaves undriven are
+the ones the rig already places at no offset and no rotation, so nothing moves either way, which is
+why this survived being looked at. On additive clips they are not the same answer at all: across
+Dogmeat's 237 of them, up to 17 bones sit as much as 17.2 units from where the rig puts them and up
+to 20 sit as much as 91.7 degrees away. An additive clip is a delta, so the identity reading is the
+one that makes it one.
+
+The change is scoped to spline compression, which is the format that says what it means. Lossless
+compression keeps the reference pose, because nothing has shown it means the same thing and guessing
+moves bones.
+
+New command, `symrm channels`, which is the measurement above and will run on any rig: how many bone
+tracks leave each channel undriven, and how far the reference pose puts those bones from the identity
+the format would use.
+
 ## 2026-08-05, the mesh, not just the bones
 
 The Playback viewport draws the actual character. Point the tool at a `.nif`, with the Mesh button or

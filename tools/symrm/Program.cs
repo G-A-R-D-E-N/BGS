@@ -38,6 +38,7 @@ public static class Program
             case "rig": return Rig(argv);
             case "extract": return Extract(argv);
             case "pose": return Pose(argv);
+            case "channels": return Channels(argv);
             case "mesh": return Mesh(argv);
             case "remove": return Remove(argv);
             case "door": return Door(argv);
@@ -111,6 +112,13 @@ public static class Program
               commands here gets built without a mod manager in the way. Flat by default, because 531
               files called Behavior.hkx would otherwise overwrite each other; --tree keeps the
               archive's folders, which is what resolving a project chain afterwards needs.
+
+          dotnet run --project tools/symrm/symrm.csproj -- channels <skeleton.hkx> <animation.hkx | folder>
+              How many bone tracks leave each channel undriven, and for the undriven translations,
+              how far the skeleton's reference pose puts that bone from its parent. Havok treats an
+              undriven channel as zero translation and unit scale, so a track that leaves a bone's
+              translation undriven while the rig places that bone away from zero is the case where
+              the two readings disagree and one of them moves the bone.
 
           dotnet run --project tools/symrm/symrm.csproj -- pose <skeleton.hkx> <animation.hkx> [frame]
               The pose the viewport draws, printed: which bones a track drives, how far the last
@@ -601,6 +609,80 @@ public static class Program
 
     // The pose the viewport draws, printed. Same AnimationPose call the window makes, so a shape that
     // looks wrong on screen can be read as numbers here rather than argued about.
+    private static int Channels(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+
+        var skeleton = new HkxBinaryReader().ReadSkeleton(Path.GetFullPath(argv[1]));
+        string target = Path.GetFullPath(argv[2]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToArray()
+            : new[] { target };
+
+        Console.WriteLine($"{skeleton.Name}: {skeleton.BoneNames.Count} bones");
+        Console.WriteLine($"{"file",-40} {"tracks",7} {"noTrans",8} {"noRot",7} {"noScale",8} " +
+                          $"{"offsetT",8} {"maxT",8} {"offsetR",8} {"maxRdeg",8} {"offsetS",8}");
+
+        int filesRead = 0, disagreements = 0;
+        foreach (string file in files)
+        {
+            if (!new HkxBinaryReader().TryReadAnimation(file, out var animation)) continue;
+            if (animation.Tracks.Count == 0) continue;
+            if (AnimationPose.WhyNotPosable(skeleton, animation) != null) continue;
+            filesRead++;
+
+            var byBone = AnimationPose.TracksByBone(skeleton, animation);
+            int noTrans = 0, noRot = 0, noScale = 0;
+            int offsetT = 0, offsetR = 0, offsetS = 0;
+            float maxT = 0, maxR = 0;
+
+            for (int bone = 0; bone < byBone.Length; bone++)
+            {
+                int track = byBone[bone];
+                if (track < 0 || track >= animation.Tracks.Count) continue;
+
+                var data = animation.Tracks[track];
+                bool anyTrans = data.TranslationAnimated[0] || data.TranslationAnimated[1] ||
+                                data.TranslationAnimated[2];
+                bool anyScale = data.ScaleAnimated[0] || data.ScaleAnimated[1] || data.ScaleAnimated[2];
+
+                if (!anyTrans) noTrans++;
+                if (!data.RotationAnimated) noRot++;
+                if (!anyScale) noScale++;
+
+                // The disagreement: Havok puts an undriven channel at zero, one, or no rotation,
+                // while the reference pose puts it wherever the rig does. Anything away from
+                // Havok's constant means the two readings draw a different skeleton.
+                if (bone >= skeleton.ReferencePose.Count) continue;
+                var rest = skeleton.ReferencePose[bone];
+
+                if (!anyTrans && rest.Translation.Length() > 0.01f)
+                {
+                    offsetT++;
+                    maxT = Math.Max(maxT, rest.Translation.Length());
+                }
+
+                if (!data.RotationAnimated)
+                {
+                    float w = Math.Abs(System.Numerics.Quaternion.Normalize(rest.Rotation).W);
+                    float degrees = 2 * (float)(Math.Acos(Math.Min(1, w)) * 180 / Math.PI);
+                    if (degrees > 0.5f) { offsetR++; maxR = Math.Max(maxR, degrees); }
+                }
+
+                if (!anyScale && (rest.Scale - System.Numerics.Vector3.One).Length() > 0.01f) offsetS++;
+            }
+
+            if (offsetT > 0 || offsetR > 0 || offsetS > 0) disagreements++;
+            Console.WriteLine($"{Path.GetFileName(file),-40} {animation.Tracks.Count,7} {noTrans,8} " +
+                              $"{noRot,7} {noScale,8} {offsetT,8} {maxT,8:F2} {offsetR,8} {maxR,8:F1} " +
+                              $"{offsetS,8}");
+        }
+
+        Console.WriteLine($"\n{filesRead} animations read, {disagreements} where an undriven channel " +
+                          "covers a bone the rig does not place at Havok's constant");
+        return 0;
+    }
+
     private static int Pose(string[] argv)
     {
         if (argv.Length < 3) { Usage(); return 1; }
