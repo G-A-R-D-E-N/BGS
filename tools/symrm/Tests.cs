@@ -37,6 +37,7 @@ public static class Tests
         LosslessScaleFollowsTheEngine();
         AnEmptyStateIsFoundTheSameWayEverywhere();
         AddedVariablesCarryTheirDeclaredType();
+        EveryFindingPointsAtAnObject();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -568,6 +569,49 @@ public static class Tests
         Check("one empty state is found by name", 1, many.Count);
         Check("named the way the refusal prints it", "'A' in Root", many[0].ToString());
         CheckTrue("counting the states rather than guessing", refusal.Contains("1 state has"));
+    }
+
+    // A finding the canvas cannot place is a finding nobody can act on: the red outline and the jump
+    // from the problem list both key off the object id, so a finding that loses it silently drops out
+    // of both while still being printed.
+    private static void EveryFindingPointsAtAnObject()
+    {
+        Console.WriteLine("\nevery finding carries the object it is about");
+
+        string xml = GraphAuthor.DeleteNode(SmallGraph(), "94", out _);
+        var findings = GraphValidator.Check(xml);
+
+        CheckTrue("the check found something", findings.Count > 0);
+        CheckTrue("and each one that is about an object carries its id",
+                  findings.Where(f => f.Where.StartsWith('#')).All(f => f.ObjectId.Length > 0));
+        CheckTrue("with the # and any trailing words stripped off",
+                  findings.All(f => f.ObjectId.All(char.IsAsciiDigit)));
+
+        var byObject = GraphValidator.ByObject(findings);
+        CheckTrue("the empty state is one of them", byObject.ContainsKey("93"));
+        Check("and it is marked as an error", GraphValidator.Level.Error, byObject["93"]);
+
+        // Errors win over warnings on the same node, or a node with both is drawn amber and reads as
+        // something that can be left alone.
+        var mixed = GraphValidator.ByObject(new List<GraphValidator.Finding>
+        {
+            new() { Level = GraphValidator.Level.Warning, Where = "#7 thing", ObjectId = "7" },
+            new() { Level = GraphValidator.Level.Error,   Where = "#7 thing", ObjectId = "7" },
+        });
+        Check("a node with both is an error", GraphValidator.Level.Error, mixed["7"]);
+
+        Check("a finding about nothing in particular is not placed", 0,
+              GraphValidator.ByObject(new List<GraphValidator.Finding>
+              {
+                  new() { Level = GraphValidator.Level.Error, Where = "hkbBehaviorGraphData" },
+              }).Count);
+
+        // A symbol index past the end of the declared list used to report the class and member only,
+        // which named the fault without saying which of the file's objects carried it. Over the 531
+        // vanilla files those were the last 11 findings the canvas could not place.
+        var reaching = SymbolIndexFixup.ReferencesAtOrAbove(EventGraph(), events: true, 0);
+        CheckTrue("an event index reference is found at all", reaching.Count > 0);
+        CheckTrue("and it names the object that carries it", reaching.All(r => r.StartsWith('#')));
     }
 
     // No vanilla file carries a scale on a lossless compressed animation: all 856 leave both arrays

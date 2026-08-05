@@ -18,6 +18,12 @@ public static class GraphValidator
         public Level Level;
         public string Where = "";
         public string What = "";
+
+        /// The object this is about, so a view can put the mark on the right node. Taken from the
+        /// leading #id every Where already starts with, rather than threading it through the forty
+        /// odd call sites that build one.
+        public string ObjectId = "";
+
         public override string ToString() => $"{(Level == Level.Error ? "error" : "warning")}  {Where}  {What}";
     }
 
@@ -43,7 +49,26 @@ public static class GraphValidator
     }
 
     private static void Add(List<Finding> found, Level level, string where, string what) =>
-        found.Add(new Finding { Level = level, Where = where, What = what });
+        found.Add(new Finding { Level = level, Where = where, What = what, ObjectId = LeadingId(where) });
+
+    private static string LeadingId(string where)
+    {
+        if (where.Length < 2 || where[0] != '#') return "";
+        int i = 1;
+        while (i < where.Length && char.IsAsciiDigit(where[i])) i++;
+        return i > 1 ? where[1..i] : "";
+    }
+
+    /// The worst level reported against each object, for drawing a mark on it. Errors win, so a node
+    /// with one of each is drawn as an error rather than as whatever was found last.
+    public static Dictionary<string, Level> ByObject(IEnumerable<Finding> findings)
+    {
+        var worst = new Dictionary<string, Level>(StringComparer.Ordinal);
+        foreach (var f in findings.Where(f => f.ObjectId.Length > 0))
+            if (!worst.TryGetValue(f.ObjectId, out var had) || (had == Level.Warning && f.Level == Level.Error))
+                worst[f.ObjectId] = f.Level;
+        return worst;
+    }
 
     private static void CheckSymbolArrays(BehaviourGraphModel model, List<Finding> found)
     {

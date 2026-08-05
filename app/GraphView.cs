@@ -31,6 +31,7 @@ public class GraphView : Control
         public List<GraphLinks.Slot> Slots = new();
         public Color Accent;
         public bool Empty;
+        public GraphValidator.Level? Problem;
         public Point InPort => new(Bounds.X - PortRadius, Bounds.Y + HeaderHeight / 2);
         public Point OutPort(int index) =>
             new(Bounds.Right + PortRadius, Bounds.Y + HeaderHeight + RowHeight * (index + 0.5) + 2);
@@ -60,6 +61,31 @@ public class GraphView : Control
     {
         Focusable = true;
         ClipToBounds = true;
+    }
+
+    /// What the last check found, kept across rebuilds so an edit does not silently clear the marks
+    /// while the list beside the canvas still shows them.
+    private Dictionary<string, GraphValidator.Level> _problems = new();
+
+    public void Mark(Dictionary<string, GraphValidator.Level> problems)
+    {
+        _problems = problems;
+        foreach (var node in _nodes.Values)
+            node.Problem = problems.TryGetValue(node.Id, out var level) ? level : null;
+        InvalidateVisual();
+    }
+
+    /// Select a node and bring it under the viewport centre, which is the whole point of clicking a
+    /// row in the problem list: the node is usually off screen when it is the one that is wrong.
+    public bool FocusOn(string id)
+    {
+        if (!_nodes.TryGetValue(id, out var node)) return false;
+
+        SelectedId = id;
+        var centre = node.Bounds.Center;
+        _pan = new Point(Bounds.Width / 2 - centre.X * _zoom, Bounds.Height / 2 - centre.Y * _zoom);
+        InvalidateVisual();
+        return true;
     }
 
     public void Show(BehaviourGraphModel model)
@@ -94,6 +120,7 @@ public class GraphView : Control
                 Slots = slots,
                 Accent = Ux.ForClass(obj.Class),
                 Empty = empty.Contains(obj.Id),
+                Problem = _problems.TryGetValue(obj.Id, out var level) ? level : null,
                 Bounds = new Rect(at.X, at.Y, NodeWidth, height),
             };
         }
@@ -151,19 +178,35 @@ public class GraphView : Control
 
         bool selected = node.Id == SelectedId;
         var body = new SolidColorBrush(selected ? Ux.CardHover : Ux.Card);
-        var edge = new Pen(new SolidColorBrush(node.Accent), selected ? 2 : 1);
 
+        // A node the check faulted is outlined in its level's colour rather than its class colour,
+        // and gets a soft halo outside the border so it is findable while zoomed out, where a one
+        // pixel edge is a pixel.
+        Color? fault = node.Problem switch
+        {
+            GraphValidator.Level.Error => Ux.Bad,
+            GraphValidator.Level.Warning => Ux.Warn,
+            _ => node.Empty ? Ux.Bad : null,
+        };
+
+        if (fault is { } colour)
+            for (int ring = 3; ring >= 1; ring--)
+                ctx.DrawRectangle(null, new Pen(new SolidColorBrush(colour, 0.10 * ring), ring * 2 + 1),
+                                  r.Inflate(ring * 1.5), 5, 5);
+
+        var edge = new Pen(new SolidColorBrush(fault ?? node.Accent), fault != null ? 2.5 : selected ? 2 : 1);
         ctx.DrawRectangle(body, edge, r, 4, 4);
-        ctx.DrawRectangle(new SolidColorBrush(node.Accent, 0.35), null,
+        ctx.DrawRectangle(new SolidColorBrush(fault ?? node.Accent, fault != null ? 0.22 : 0.35), null,
             new Rect(r.X, r.Y, r.Width, HeaderHeight * _zoom), 4, 4);
 
         double scale = _zoom;
+        var faultBrush = fault is { } f ? new SolidColorBrush(f) : null;
         string title = node.Name.Length > 0 ? node.Name : node.Class;
         Draw(ctx, title, r.X + 6 * scale, r.Y + 4 * scale, 11 * scale,
-             node.Empty ? Ux.BadBrush : Ux.TitleBrush, r.Width - 12 * scale);
-        Draw(ctx, node.Empty ? node.Class + "  no generator" : node.Class,
+             faultBrush ?? Ux.TitleBrush, r.Width - 12 * scale);
+        Draw(ctx, node.Empty ? node.Class + "  nothing to play" : node.Class,
              r.X + 6 * scale, r.Y + (HeaderHeight + 1) * scale, 9 * scale,
-             node.Empty ? Ux.BadBrush : new SolidColorBrush(node.Accent), r.Width - 12 * scale);
+             faultBrush ?? new SolidColorBrush(node.Accent), r.Width - 12 * scale);
 
         ctx.DrawEllipse(new SolidColorBrush(node.Accent), null, ToScreen(node.InPort), PortRadius * scale, PortRadius * scale);
 
