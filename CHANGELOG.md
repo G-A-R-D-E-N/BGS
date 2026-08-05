@@ -3,6 +3,23 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, a plain build was silently read only
+
+**The jar the editing layer needs was never copied next to the program.** Only the release zip
+carried it, so anything run out of the build directory quietly dropped to read only: the tree still
+drew, because that is read straight from the binary, and the Graph, Symbols, Chain and Animation tabs
+were simply empty, because all four come from the unpacked text form. Save was off. It looked exactly
+like a tool that does not work.
+
+The build copies `tools/hkxpack-cli.jar` and both licence files to the output now, so a build and a
+release behave the same way.
+
+The message made it worse. It said editing needs a Java runtime, when Java was installed and present
+on PATH the whole time and the jar was the missing half. It names which one is missing now, says the
+four tabs are empty because of it and that the tree does not need it, says where to put the jar, and
+is drawn in the warning colour rather than as muted text nobody reads. Save's own refusal was
+similarly folded into one message and is now two.
+
 ## 2026-08-04, check graph marks the canvas
 
 **A finding now points at a node instead of scrolling past in a status line.** Check graph outlines
