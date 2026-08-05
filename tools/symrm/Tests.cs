@@ -532,7 +532,7 @@ public static class Tests
         // The views mark what this set contains, so it has to agree with what Check graph reports or
         // one of them is lying to the person reading it.
         var reported = GraphValidator.Check(after)
-            .Where(f => f.What.Contains("no generator", StringComparison.Ordinal)).ToList();
+            .Where(f => f.What.Contains("nothing to play", StringComparison.Ordinal)).ToList();
         Check("Check graph reports exactly the same count", empty.Count, reported.Count);
         CheckTrue("and reports it as an error", reported.All(f => f.Level == GraphValidator.Level.Error));
         CheckTrue("naming the state", reported.Any(f => f.Where.Contains("'A'")));
@@ -555,6 +555,18 @@ public static class Tests
         CheckTrue("and why the game cannot take it", refusal.Contains("crashes on load"));
         CheckTrue("without claiming the state has to be entered",
                   refusal.Contains("whether or not anything can enter"));
+
+        // Being stopped without being told which state, or what to do about it, is worse than not
+        // checking at all. A count on its own sends someone hunting through the tree.
+        CheckTrue("naming the state rather than only counting it", refusal.Contains("'A'"));
+        CheckTrue("and the machine it sits in", refusal.Contains("in Root"));
+        CheckTrue("saying how to fix it", refusal.Contains("give each one a generator"));
+        CheckTrue("and that deleting the state is the other way out", refusal.Contains("delete the state"));
+
+        // Four names is the cap, so a file with many does not produce an unreadable wall.
+        var many = GraphValidator.EmptyStates(BehaviourGraphModel.Parse(after));
+        Check("one empty state is found by name", 1, many.Count);
+        Check("named the way the refusal prints it", "'A' in Root", many[0].ToString());
         CheckTrue("counting the states rather than guessing", refusal.Contains("1 state has"));
     }
 

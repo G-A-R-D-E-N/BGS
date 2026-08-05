@@ -3,6 +3,20 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, the refusal now says which state and what to do
+
+Save blocking a file the game cannot load is right, but the first version of that block only said how
+many states were empty and told you to go and run Check graph. Being stopped without being told which
+state, or what to do about it, is worse than not checking at all: it turns a two second fix into a
+hunt through the tree.
+
+It now names them, with the machine each one sits in, four at a time and a count for the rest, and
+spells out both ways out: give the state a generator, or delete the state. Check graph's own wording
+carries the same advice, so the two do not read differently for the same fault.
+
+Nothing about when it refuses changed. Four checks hold the message to naming the state, naming its
+machine, and offering both fixes, and all four fail if the message goes back to a bare count.
+
 ## 2026-08-04, the state resolution figure, measured over the whole game
 
 **All 531 behaviour files, all 5329 states, nothing unresolved.** The README had been quoting a

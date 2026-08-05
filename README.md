@@ -338,7 +338,9 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   `BShkbUtils::GraphTraverser::Next`, `Fallout4.exe+0x1705DDF`, under `LoadBehaviorHelper` on the
   background clone thread. Measured on the Red Rocket garage door with one link cleared and nothing
   else changed. The tree and the graph mark such a state, Check graph reports it as an error, and
-  Save refuses to write the file at all. See #16.
+  Save refuses to write the file at all. The refusal names the states and the machines they sit in,
+  and says both ways out, because being stopped without being told which state or what to do about it
+  is worse than not checking. Give each one a generator, or delete the state. See #16.
 - A partial `variableBounds` array is never edited, only reported. See the note in `SymbolEditor`.
 - Animation scale is decoded and shown, and for **spline compressed** animations it is checked against
   real data: 130 of the 13133 vanilla ones carry a scale that is not the identity, none contains a
