@@ -32,6 +32,7 @@ format:
   extends: .dotnet
   stage: test
   script:
+    - dotnet test tools/tests/BehaviourGraph.Tests.csproj
     - dotnet run --project tools/symrm/symrm.csproj -- test
 
 # Builds the real window on a headless display and walks it, so a window that no longer opens fails
