@@ -406,9 +406,13 @@ public static class Smoke
                 // Play has to actually run a clock and stop when pressed again, not just relabel.
                 var play = Find<Button>(window).First(b => b.Content?.ToString() is "Play" or "Pause");
                 window.ScrubTo(0);
-                Click(play);
+                // Pressed without pumping the dispatcher. Play starts a repeating timer, and running
+                // jobs while it ticks never returns, so a pump here hangs the whole suite rather
+                // than failing it. IsPlaying is set as the button is pressed, so there is nothing to
+                // wait for anyway.
+                ClickOnly(play);
                 CheckTrue($"{name}: play starts a clock", window.IsPlaying || frames <= 1);
-                Click(play);
+                ClickOnly(play);
                 CheckTrue($"{name}: and pressing it again stops it", !window.IsPlaying);
 
                 // Scrubbing is a view of a file on disk. It must never make the graph dirty, or every
@@ -418,8 +422,60 @@ public static class Smoke
             }
         }
 
+        // Text typed into a property field only reaches the document when the field is left, so a
+        // value typed and then saved straight away used to be missing from what was written. Saving
+        // commits the pending fields first. This types without pressing Enter and without clicking
+        // away, then asks for that commit the way saving does, and checks the document caught it.
+        // It stops short of actually saving: writing the example file is not this test's business.
+        foreach (string path in args.Where(System.IO.File.Exists))
+        {
+            string clip = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                .IdsOfClass(window.LoadedXml, "hkbClipGenerator").FirstOrDefault() ?? "";
+            CheckTrue("a clip to edit was found", clip.Length > 0);
+            if (clip.Length == 0) continue;
+
+            window.SelectNode(clip);
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+            // A named field rather than whichever box comes first. The first one is
+            // variableBindingSet, which holds a reference and rightly refuses arbitrary text, so
+            // typing into it proves nothing about whether the commit ran.
+            var box = FieldNamed(window.GraphProperties, "playbackSpeed");
+            CheckTrue("and a field to type in", box != null);
+            if (box == null) continue;
+
+            string typed = "0.375";
+            box.Text = typed;
+            CheckTrue("typing alone does not reach the document",
+                      !window.LoadedXml.Contains(typed, StringComparison.Ordinal));
+
+            window.CommitPendingFields();
+            CheckTrue("saving takes what was still being typed with it",
+                      window.LoadedXml.Contains(typed, StringComparison.Ordinal));
+        }
+
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
+    }
+
+    /// The value box on the row whose label is this field's name.
+    private static TextBox? FieldNamed(Visual panel, string name)
+    {
+        foreach (var row in Find<DockPanel>(panel))
+        {
+            var label = row.Children.OfType<TextBlock>().FirstOrDefault();
+            if (label?.Text != name) continue;
+            return row.Children.OfType<TextBox>().FirstOrDefault();
+        }
+        return null;
+    }
+
+    /// Presses a button without pumping the dispatcher afterwards, for the ones that start
+    /// something repeating.
+    private static void ClickOnly(Button button)
+    {
+        button.Command?.Execute(button.CommandParameter);
+        button.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
     }
 
     private static void Click(Button button)

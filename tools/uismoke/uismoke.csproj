@@ -21,4 +21,10 @@
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
     <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
   </ItemGroup>
+  <!-- Without the jar the window opens read only, and the whole file driven half of this test
+       skips itself while still reporting every check it did run as passing. -->
+  <ItemGroup>
+    <None Include="../../tools/hkxpack-cli.jar" Link="tools/hkxpack-cli.jar"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

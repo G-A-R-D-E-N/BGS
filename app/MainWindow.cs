@@ -99,6 +99,7 @@ public class MainWindow : Window
     private string _xmlText = "";
     private ProjectChain? _projectChain;
     private string _selectedId = "";
+    private readonly List<Action> _fieldCommits = new();
     private bool _dirty;
 
     // The document is one string, so a step back is a copy of it. Every mutation goes through Commit,
@@ -1602,6 +1603,7 @@ public class MainWindow : Window
 
     private void ClearProps()
     {
+        _fieldCommits.Clear();
         _treeProps.Clear();
         _graphProps.Clear();
         _clipProps.Clear();
@@ -1615,6 +1617,9 @@ public class MainWindow : Window
     private void ShowProps(string objectId, BehaviourGraphModel model)
     {
         _selectedId = objectId;
+        // One list for all three panels, cleared once here rather than in FillProps, which runs
+        // three times and would leave only the last panel's boxes registered.
+        _fieldCommits.Clear();
         FillProps(_treeProps, objectId, model);
         FillProps(_graphProps, objectId, model);
         FillProps(_clipProps, objectId, model);
@@ -1639,10 +1644,22 @@ public class MainWindow : Window
             string name = p.Name;
             string original = p.Value;
             string owner = objectId;
-            field.LostFocus += (_, _) => Apply(owner, name, field, original);
+            // Committing is driven by what the box holds, not by which box has focus. Focus is the
+            // usual trigger, but a window closing has no focus change to hang off, and asking every
+            // field whether it differs is both simpler and safe: one that has not been touched
+            // commits nothing, and one already committed commits nothing twice.
+            void Commit()
+            {
+                if (field.Text == original) return;
+                Apply(owner, name, field, original);
+                original = field.Text ?? original;
+            }
+
+            _fieldCommits.Add(Commit);
+            field.LostFocus += (_, _) => Commit();
             field.KeyDown += (_, e) =>
             {
-                if (e.Key == Avalonia.Input.Key.Enter) Apply(owner, name, field, original);
+                if (e.Key == Avalonia.Input.Key.Enter) Commit();
             };
 
             var label = Ux.Label(p.Name);
@@ -2244,6 +2261,16 @@ public class MainWindow : Window
         ShowProps(objectId);
     }
 
+    /// Commits anything typed into a property field but not yet left, as leaving it would. Saving
+    /// calls this first, so a value typed and not blurred is part of what gets written rather than
+    /// missing from it. Deliberately not called when the window closes: closing discards the whole
+    /// unsaved document anyway, and writing a game file on an accidental close is worse than losing
+    /// edits that were never saved.
+    public void CommitPendingFields()
+    {
+        foreach (var commit in _fieldCommits.ToList()) commit();
+    }
+
     private void Apply(string objectId, string paramName, TextBox field, string original)
     {
         if (field.Text == original || _xmlText.Length == 0) return;
@@ -2408,6 +2435,7 @@ public class MainWindow : Window
 
     private void Save()
     {
+        CommitPendingFields();
         if (!_dirty || _xmlText.Length == 0) return;
 
         // The graph checks apply whichever way the file gets written. The hkxpack round trip warning
