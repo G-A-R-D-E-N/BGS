@@ -52,6 +52,7 @@ public static class Tests
         ("ScrubbingLandsOnDifferentPoses", ScrubbingLandsOnDifferentPoses),
         ("TracksDriveTheBonesTheyName", TracksDriveTheBonesTheyName),
         ("AnimationsForAnotherRigAreRefused", AnimationsForAnotherRigAreRefused),
+        ("AModelIsFoundOnlyWhenThereIsNoDoubt", AModelIsFoundOnlyWhenThereIsNoDoubt),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1561,4 +1562,49 @@ public static class Tests
             </hksection>
         </hkpackfile>
         """;
+
+    // A behaviour never names its model, so the only safe answers are "exactly one candidate" and
+    // "ask". These check the third case especially: several candidates must NOT resolve to one of
+    // them, and must not fall through to a later folder either, since both are guesses wearing
+    // different hats.
+    private static void AModelIsFoundOnlyWhenThereIsNoDoubt()
+    {
+        var disk = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["/behaviours"] = Array.Empty<string>(),
+            ["/project"] = new[] { "/project/Dogmeat.nif" },
+            ["/crowded"] = new[] { "/crowded/b.nif", "/crowded/a.nif" },
+            ["/assets"] = new[] { "/assets/skeleton_mesh.nif" },
+        };
+        IReadOnlyList<string> In(string folder) =>
+            disk.TryGetValue(folder, out var files) ? files : Array.Empty<string>();
+
+        var one = MeshLookup.Find(new[] { "/behaviours", "/project" }, In);
+        CheckTrue("one model beside the file is used", one.Found);
+        Check("and it is that model", "/project/Dogmeat.nif", one.Path);
+
+        var none = MeshLookup.Find(new[] { "/behaviours", "/empty" }, In);
+        CheckTrue("no model anywhere finds nothing", !none.Found);
+        CheckTrue("and says to use the button", none.Reason.Contains("Mesh..."));
+
+        var many = MeshLookup.Find(new[] { "/crowded", "/project" }, In);
+        CheckTrue("several models resolve to none of them", !many.Found);
+        CheckTrue("saying how many there were", many.Reason.Contains("2 models"));
+        CheckTrue("and naming them", many.Reason.Contains("a.nif") && many.Reason.Contains("b.nif"));
+        CheckTrue("and it does not fall through to the next folder", many.Path == null);
+
+        // Nearest first, so a model beside the behaviour wins over one beside the skeleton.
+        var nearest = MeshLookup.Find(new[] { "/project", "/assets" }, In);
+        Check("the nearest folder decides", "/project/Dogmeat.nif", nearest.Path);
+
+        var places = MeshLookup.Places("/x/Behaviors/Root.hkx", "/x", "/x/CharacterAssets/skeleton.hkt")
+                               .ToList();
+        Check("three places are searched", 3, places.Count);
+        Check("the behaviour's own folder first", "/x/Behaviors", places[0]);
+        Check("then the project root", "/x", places[1]);
+        Check("then wherever the skeleton lives", "/x/CharacterAssets", places[2]);
+
+        var deduped = MeshLookup.Places("/x/Root.hkx", "/x", "/x/skeleton.hkt").ToList();
+        Check("one folder is searched once", 1, deduped.Count);
+    }
 }

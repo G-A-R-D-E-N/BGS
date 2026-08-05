@@ -919,6 +919,23 @@ public class MainWindow : Window
         return split;
     }
 
+    // Hangs the character's own model on the skeleton when there is exactly one obvious candidate.
+    // Loading it here rather than on the first frame means the viewport is still empty until a clip
+    // is picked, which is what a mesh with no pose should look like.
+    private void FindMeshForFile()
+    {
+        var found = MeshLookup.Find(_hkxPath, _projectChain?.Root, _projectChain?.SkeletonPath);
+        if (!found.Found)
+        {
+            SetPlaybackSummary("Select a clip to see what it plays. " + found.Reason, Ux.MutedBrush);
+            return;
+        }
+
+        LoadMesh(found.Path!);
+        SetPlaybackSummary($"Select a clip to see what it plays, on {Path.GetFileName(found.Path!)}.",
+                           Ux.MutedBrush);
+    }
+
     private void BuildClipList(BehaviourGraphModel model)
     {
         _clips.Clear();
@@ -1411,6 +1428,7 @@ public class MainWindow : Window
             BuildSymbols(model);
             BuildClipList(model);
             BuildChain(java, jar);
+            FindMeshForFile();
             SetStatus($"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn.", Ux.MetaBrush);
         }
         catch (Exception ex)
