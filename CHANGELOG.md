@@ -3,6 +3,38 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, variableBounds is positional after all
+
+**The struct settles it.** The open question was what a short `variableBounds` array keys off, since
+`MTBehavior` carries 19 entries against 67 variables and the entries do not all look right for the
+variables they would land on. The answer is that it cannot key off anything: `hkbVariableBounds` is 8
+bytes holding `min` at offset 0 and `max` at offset 4 and nothing else, read out of the class the
+engine registers for it at startup rather than guessed. There is no field in it that could name a
+variable, so position is the only key there can be.
+
+So a short array means the variables past its end have no bound, and an unbounded variable inside it
+is written `0..0`. Measured over the 531 vanilla files: 224 empty, 17 the same length as the variable
+list, 87 shorter. In 85 of those 87 the last entry is a real bound rather than `0..0`, which is what a
+trailing-trimmed positional array looks like.
+
+Two statistical attempts to find a different key are recorded as having failed to separate anything:
+scoring bounds against the type of the variable at each alignment gives 79.6% for positional and
+79.7% for a one-place shift, and scoring against what the variable's name implies gives 33% and 38%.
+Neither is evidence, which is why the struct layout is what this rests on.
+
+**A removal was mishandling it, and worse than the ticket assumed.** Removing a variable took its
+bound with it only when the array was full length. The audit it tested was taken after the name had
+already been removed, so a file with three variables and two bounds looked parallel at that moment
+and the bound was removed anyway; removing the last variable then tried to remove a bounds entry that
+was never there and threw. Both are fixed by asking the only question that matters, whether the
+removed index is inside the array.
+
+Adding was already right and is unchanged: a new variable goes on the end, past a short array, so it
+needs no entry.
+
+Still not done, and now the only thing left on the ticket: nothing authors a bound. The window has no
+way to set one.
+
 ## 2026-08-04, check graph marks the canvas
 
 **A finding now points at a node instead of scrolling past in a status line.** Check graph outlines

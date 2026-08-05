@@ -79,10 +79,14 @@ Things the format makes easy to get wrong, all handled here:
   element per name in `hkbBehaviorGraphData`, one value per variable in `hkbVariableValueSet`, and
   sometimes a `variableBounds` element as well. Add a name without the others and the engine reads a
   variable with no declared type. `SymbolEditor.Audit` reports every length.
-- **`variableBounds` is not reliably parallel.** It is empty in some files, the same length as the
-  variable list in others, and in `MTBehavior` it is 19 entries against 67 variables that do not line
-  up by position. Nothing here edits a partial bounds array, because a positional edit would be a
-  guess.
+- **`variableBounds` is positional but often stops short.** Across the 531 vanilla files it is empty
+  in 224, the same length as the variable list in 17, and shorter in 87, at its most extreme 19
+  entries against `MTBehavior`'s 67 variables. Short does not mean differently keyed: `hkbVariableBounds`
+  is 8 bytes holding `min` and `max` and nothing else, read out of the class the engine registers for
+  it, so the struct has no field that could name a variable and position is the only key there can
+  be. A short array means the variables past its end have no bound, and an unbounded variable inside
+  it is written `0..0`. Removing a variable inside the array takes its bound with it; removing one
+  past the end leaves the array alone.
 - **Event ids hide under a member called `id`.** Every scalar named `*EventId` carries one, but so
   does the plain `id` member of an `hkbEventProperty` or `hkbEvent`, and that accounts for roughly a
   third of the event references in a typical graph. The field table in `SymbolIndexFixup` was read
@@ -346,7 +350,8 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   Save refuses to write the file at all. The refusal names the states and the machines they sit in,
   and says both ways out, because being stopped without being told which state or what to do about it
   is worse than not checking. Give each one a generator, or delete the state. See #16.
-- A partial `variableBounds` array is never edited, only reported. See the note in `SymbolEditor`.
+- A short `variableBounds` array is kept lined up rather than left alone: see the note in
+  `SymbolEditor`. What is still not done is authoring a bound, since nothing in the window sets one.
 - Animation scale is decoded and shown, and for **spline compressed** animations it is checked against
   real data: 130 of the 13133 vanilla ones carry a scale that is not the identity, none contains a
   zero, and the static case was confirmed against the raw bytes rather than against the reader. The

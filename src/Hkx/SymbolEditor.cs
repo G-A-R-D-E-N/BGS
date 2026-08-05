@@ -12,11 +12,11 @@ namespace OpenCommonwealth.Services.Hkx;
 // hkbBehaviorGraphData holds one variableInfos element and sometimes a variableBounds element, and
 // hkbVariableValueSet holds one value.
 //
-// variableBounds is the awkward one. Across vanilla files it is empty, or the same length as the
-// variable list, or some shorter length with no visible relationship to it: MTBehavior declares 67
-// variables and 19 bounds, and those 19 do not line up by position, with bool variables carrying a
-// max of 300 and a float variable carrying a max of 0. Nothing here edits a partial bounds array,
-// because whatever it means, a positional edit would be a guess.
+// variableBounds is the short one. Across the 531 vanilla files it is empty in 224, the same length
+// as the variable list in 17, and shorter in 87. It is still positional: hkbVariableBounds is 8
+// bytes holding min and max and nothing else, so the struct carries no way to say which variable it
+// belongs to and position is the only key there can be. A short array therefore means the variables
+// past its end have no bound, and an unbounded variable in the middle is written as 0..0.
 public static class SymbolEditor
 {
     // From PipboyBehavior.hkx: hkbRoleAttribute on a variableInfos element.
@@ -247,7 +247,10 @@ public static class SymbolEditor
         {
             var before = Audit(BehaviourGraphModel.Parse(xml));
             xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], variable ? "variableInfos" : "eventInfos", index);
-            if (variable && before.BoundsAreParallel)
+            // Bounds are positional and can stop short, so a removal inside the array has to take
+            // its entry with it or every bound above it slides onto the wrong variable. Past the
+            // end there is nothing to remove, which is why a short array is not a reason to skip.
+            if (variable && index < before.Bounds)
                 xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], "variableBounds", index);
         }
 

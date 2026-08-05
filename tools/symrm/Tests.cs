@@ -38,6 +38,7 @@ public static class Tests
         AnEmptyStateIsFoundTheSameWayEverywhere();
         AddedVariablesCarryTheirDeclaredType();
         EveryFindingPointsAtAnObject();
+        AShortBoundsArrayStaysLinedUp();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -614,6 +615,50 @@ public static class Tests
         CheckTrue("and it names the object that carries it", reaching.All(r => r.StartsWith('#')));
     }
 
+    // variableBounds is positional and is allowed to stop short: hkbVariableBounds is 8 bytes holding
+    // min and max and nothing else, so there is no field in it that could name a variable and
+    // position is the only key there can be. 87 of the 531 vanilla files ship a short one.
+    //
+    // Removing a variable inside that range therefore has to take its bound with it. Skipping it
+    // because the array is not full length slides every bound above the removed variable onto its
+    // neighbour, which is silent: the file stays valid and the wrong variable gets clamped.
+    private static void AShortBoundsArrayStaysLinedUp()
+    {
+        Console.WriteLine("\na short bounds array stays lined up when a variable is removed");
+
+        string xml = ThreeVariablesWithTwoBounds();
+        var before = SymbolEditor.Audit(BehaviourGraphModel.Parse(xml));
+        Check("three variables", 3, before.Names);
+        Check("and only two bounds", 2, before.Bounds);
+        CheckTrue("so the array is short, not parallel", !before.BoundsAreParallel);
+
+        // Removing the first variable, which is inside the bounds array.
+        string after = SymbolEditor.RemoveVariable(xml, 0, force: true, out _);
+        var counts = SymbolEditor.Audit(BehaviourGraphModel.Parse(after));
+        Check("two variables are left", 2, counts.Names);
+        Check("and one bound, because its entry went with it", 1, counts.Bounds);
+        Check("the bound left behind is the second one, not the first", "20",
+              BoundMax(after, 0));
+
+        // Removing past the end of the bounds array must not touch it.
+        string tail = SymbolEditor.RemoveVariable(xml, 2, force: true, out _);
+        var tailCounts = SymbolEditor.Audit(BehaviourGraphModel.Parse(tail));
+        Check("removing a variable past the bounds leaves them alone", 2, tailCounts.Bounds);
+        Check("with the first bound untouched", "10", BoundMax(tail, 0));
+    }
+
+    // The bound values sit in nested hkbVariableValue objects rather than as plain members, so this
+    // reads them out of the text rather than through the model's scalar view.
+    private static string BoundMax(string xml, int index)
+    {
+        int start = xml.IndexOf("name=\"variableBounds\"", StringComparison.Ordinal);
+        if (start < 0) return "";
+        var maxima = System.Text.RegularExpressions.Regex
+            .Matches(xml[start..], "name=\"max\".*?name=\"value\">(-?\\d+)<",
+                     System.Text.RegularExpressions.RegexOptions.Singleline);
+        return index < maxima.Count ? maxima[index].Groups[1].Value : "";
+    }
+
     // No vanilla file carries a scale on a lossless compressed animation: all 856 leave both arrays
     // empty with every word clear, so the static and dynamic branches never run on real data. The
     // rules below are therefore taken from the engine rather than from a file, out of
@@ -801,6 +846,77 @@ public static class Tests
                 </hkobject>
                 <hkobject class="hkbVariableValueSet" name="#92" signature="0x27812d8d">
                     <hkparam name="wordVariableValues" numelements="2">
+                        <hkobject>
+                            <hkparam name="value">0</hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="value">0</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
+
+    // Three variables, two bounds. The shape 87 vanilla files ship and the one a parallel-only rule
+    // silently mishandles.
+    private static string ThreeVariablesWithTwoBounds() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraphStringData" name="#90" signature="0xc713064e">
+                    <hkparam name="variableNames" numelements="3">
+                        <hkcstring>fFirst</hkcstring>
+                        <hkcstring>fSecond</hkcstring>
+                        <hkcstring>fThird</hkcstring>
+                    </hkparam>
+                    <hkparam name="eventNames" numelements="0"></hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphData" name="#91" signature="0x95aca5d">
+                    <hkparam name="variableInfos" numelements="3">
+                        <hkobject>
+                            <hkparam name="type">VARIABLE_TYPE_REAL</hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="type">VARIABLE_TYPE_REAL</hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="type">VARIABLE_TYPE_REAL</hkparam>
+                        </hkobject>
+                    </hkparam>
+                    <hkparam name="eventInfos" numelements="0"></hkparam>
+                    <hkparam name="variableBounds" numelements="2">
+                        <hkobject>
+                            <hkparam name="min">
+                                <hkobject class="hkbVariableValue" name="min" signature="0xb99bd6a">
+                                    <hkparam name="value">0</hkparam>
+                                </hkobject>
+                            </hkparam>
+                            <hkparam name="max">
+                                <hkobject class="hkbVariableValue" name="max" signature="0xb99bd6a">
+                                    <hkparam name="value">10</hkparam>
+                                </hkobject>
+                            </hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="min">
+                                <hkobject class="hkbVariableValue" name="min" signature="0xb99bd6a">
+                                    <hkparam name="value">0</hkparam>
+                                </hkobject>
+                            </hkparam>
+                            <hkparam name="max">
+                                <hkobject class="hkbVariableValue" name="max" signature="0xb99bd6a">
+                                    <hkparam name="value">20</hkparam>
+                                </hkobject>
+                            </hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbVariableValueSet" name="#92" signature="0x27812d8d">
+                    <hkparam name="wordVariableValues" numelements="3">
+                        <hkobject>
+                            <hkparam name="value">0</hkparam>
+                        </hkobject>
                         <hkobject>
                             <hkparam name="value">0</hkparam>
                         </hkobject>
