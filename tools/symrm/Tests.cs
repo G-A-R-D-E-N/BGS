@@ -48,6 +48,7 @@ public static class Tests
         ("APoseComposesDownTheBoneChain", APoseComposesDownTheBoneChain),
         ("AClearChannelKeepsTheReferencePose", AClearChannelKeepsTheReferencePose),
         ("SplineUndrivenChannelsReadAsIdentity", SplineUndrivenChannelsReadAsIdentity),
+        ("APackfileSurvivesBeingRebuilt", APackfileSurvivesBeingRebuilt),
         ("ScrubbingLandsOnDifferentPoses", ScrubbingLandsOnDifferentPoses),
         ("TracksDriveTheBonesTheyName", TracksDriveTheBonesTheyName),
         ("AnimationsForAnotherRigAreRefused", AnimationsForAnotherRigAreRefused),
@@ -1251,6 +1252,70 @@ public static class Tests
         CheckTrue("and a format without that guarantee still keeps the rest pose",
                   Near(kept.Bones[1].Position, new Vector3(10, 0, 0)));
     }
+
+    /// Written by hand rather than read from a file, so it runs anywhere: the real proof is
+    /// `symrm packfile`, which rebuilds every vanilla .hkx and compares the bytes. What this pins is
+    /// the part that has no second opinion in a byte comparison, namely that a section whose
+    /// contents are not a multiple of the padding still lands its later tables where its header says
+    /// they are.
+    private static void APackfileSurvivesBeingRebuilt()
+    {
+        Console.WriteLine("\na packfile taken apart and rebuilt says the same thing");
+
+        var image = new PackfileImage { Predicates = new byte[16] };
+        var section = new PackfileSection
+        {
+            // 20 bytes, name then the 0xFF the header is filled with, as a real one has.
+            TagBytes = MakeTag("__data__"),
+            Data = new byte[100],                    // deliberately not a multiple of 16
+            LocalFixups = Pair(8, 40),
+            GlobalFixups = Triple(16, 2, 64),
+            VirtualFixups = Triple(24, 0, 3),
+        };
+        image.Sections.Add(section);
+
+        var reread = PackfileImage.Read(image.Rebuild());
+        CheckTrue("one section survives", reread.Sections.Count == 1);
+        Check("named the same", "__data__", reread.Sections[0].Tag);
+        // Not 100: the data is padded up to the boundary before the first table, and the offset that
+        // says where the data ends is recorded after that padding, so the padding reads back as part
+        // of the data. That is the format's own doing and not a loss, since the padding is 0xFF and
+        // nothing points into it.
+        Check("the odd sized data comes back padded to the boundary", 112, reread.Sections[0].Data.Length);
+        Check("the bytes before the section headers survive", 16, reread.Predicates.Length);
+
+        var local = reread.Sections[0].Locals().ToList();
+        Check("one local fixup", 1, local.Count);
+        Check("pointing where it did", 40, local[0].Destination);
+
+        var virtuals = reread.Sections[0].Virtuals().ToList();
+        Check("one virtual fixup", 1, virtuals.Count);
+        Check("naming section 0, which is always __classnames__", 0, virtuals[0].Section);
+
+        // Rebuilding twice must not drift: the second pass reads its own output, so any offset that
+        // is computed from the wrong base shows up as a difference here rather than in the game.
+        byte[] once = image.Rebuild();
+        byte[] twice = PackfileImage.Read(once).Rebuild();
+        CheckTrue("rebuilding what was rebuilt gives the same bytes", once.SequenceEqual(twice));
+    }
+
+    private static byte[] MakeTag(string name)
+    {
+        var tag = new byte[20];
+        Array.Fill(tag, (byte)0xFF);
+        var ascii = System.Text.Encoding.ASCII.GetBytes(name);
+        Array.Copy(ascii, tag, ascii.Length);
+        tag[ascii.Length] = 0;
+        return tag;
+    }
+
+    private static byte[] Pair(int source, int destination) =>
+        BitConverter.GetBytes(source).Concat(BitConverter.GetBytes(destination)).ToArray();
+
+    private static byte[] Triple(int source, int section, int destination) =>
+        BitConverter.GetBytes(source)
+            .Concat(BitConverter.GetBytes(section))
+            .Concat(BitConverter.GetBytes(destination)).ToArray();
 
     private static void ScrubbingLandsOnDifferentPoses()
     {

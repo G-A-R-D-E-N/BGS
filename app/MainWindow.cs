@@ -2247,12 +2247,61 @@ public class MainWindow : Window
         SetStatus("Project checked. " + result, result.Errors > 0 ? Ux.BadBrush : Ux.MetaBrush);
     }
 
+    /// Writes the changed values straight into the file's own bytes, leaving everything else exactly
+    /// as it was on disk. Returns false when the edit is not one that can be written that way, which
+    /// is not a failure: the caller then does it the old way.
+    private bool SavedInPlace()
+    {
+        NativeSave.Plan plan;
+        try
+        {
+            plan = NativeSave.Compare(_savedXml, _xmlText);
+        }
+        catch (Exception e)
+        {
+            SetStatus("Could not work out what changed, so nothing was written: " + e.Message, Ux.BadBrush);
+            return true;
+        }
+
+        if (!plan.Possible || plan.Empty) return false;
+
+        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
+        if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return true; }
+
+        try
+        {
+            byte[] bytes = NativeSave.Apply(_hkxPath, plan);
+
+            string backup = _hkxPath + ".bak";
+            if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
+            File.WriteAllBytes(_hkxPath, bytes);
+
+            ResetHistory();
+            SetStatus($"Saved {plan.Changes.Count} " +
+                      $"change{(plan.Changes.Count == 1 ? "" : "s")} straight into the file, " +
+                      $"leaving every other byte as it was. The original is kept as " +
+                      $"{Path.GetFileName(backup)}.", Ux.MetaBrush);
+            Load();
+            return true;
+        }
+        catch (Exception e)
+        {
+            SetStatus("Not saved, and the original is untouched: " + e.Message, Ux.BadBrush);
+            return true;
+        }
+    }
+
     private void Save()
     {
         if (!_dirty || _xmlText.Length == 0) return;
 
-        string? refusal = GraphValidator.RefuseToSave(_xmlText);
+        // The graph checks apply whichever way the file gets written. The hkxpack round trip warning
+        // does not, because writing the bytes in place has no round trip to lose anything in, so it
+        // is asked for separately below rather than folded in here.
+        string? refusal = GraphValidator.RefuseToSave(_xmlText, includeRepackLosses: false);
         if (refusal != null) { SetStatus(refusal, Ux.BadBrush); return; }
+
+        if (SavedInPlace()) return;
 
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
@@ -2263,6 +2312,10 @@ public class MainWindow : Window
         // finding out at the end that the file was read only all along wastes all of them.
         string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
         if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return; }
+
+        // Only the rebuild loses things, so this is where the warning belongs.
+        string? lossy = GraphValidator.RepackWouldLose(_xmlText);
+        if (lossy != null) { SetStatus(lossy, Ux.BadBrush); return; }
 
         try
         {

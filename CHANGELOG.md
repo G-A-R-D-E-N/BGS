@@ -3,6 +3,82 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, writing packfile bytes without hkxpack in the way
+
+Every save currently goes out through hkxpack: the file becomes XML, is edited, and becomes a file
+again. That one dependency is behind three separate limitations, so removing it is one piece of work
+rather than three. Saving an animation is refused outright because the XML cannot carry
+`hkaLosslessCompressedAnimation` without losing data, animations cannot be written at all, and every
+save is only as faithful as the round trip.
+
+First half of that is in: a packfile reader and writer of our own, `src/Hkx/PackfileImage.cs`. It
+takes a `.hkx` apart into its header, sections, object bytes and three pointer tables, and puts it
+back together with every offset recomputed from the sizes of what precedes it.
+
+**Proved by rebuilding, not by inspection.** `symrm packfile` reads a file, writes it back, and
+compares the bytes. Since nothing about a packfile's structure is stored twice, a file that comes
+back identical is a file whose every offset was derived correctly. Run against all 15,320 `.hkx` in
+Fallout 4's animation archive and the 453 shipped as examples: **every one identical, none refused.**
+
+The format was read out of Fallout 4's own writer, which the game still carries, rather than guessed
+or taken from a Havok SDK. Notes and decompiles are in the F4SE workspace under
+`ReverseEngineering/03-FINDINGS.md` and `Findings/Havok/`.
+
+Two things worth knowing, both found by measuring rather than reasoning:
+
+**There are two header shapes and the difference is invisible unless you look for it.** The section
+headers do not begin at a fixed place. A field near the end of the file header gives the size of an
+area that sits between the two, and Fallout 4 uses both settings: its animation and skeleton files
+put 16 bytes there, its behaviour files put none. Reading the section headers at a fixed offset works
+on one kind and produces silent nonsense on the other.
+
+**Padding inside a table cannot be told from content.** Each table is padded up to a 16 byte boundary
+with `0xFF` and the next offset is recorded after the padding, so nothing anywhere records where the
+real entries stop. Read naively, up to one invented fixup appears per table. Entries that are
+nothing but `0xFF` are therefore skipped, which also covers a pointer the writer could not resolve.
+
+Second half is in too: the objects inside the file, and their fields.
+
+A packfile does not list its objects anywhere. What it has is one entry per object saying "an
+instance of this class sits at this offset", so the object list is that table read in order.
+`src/Hkx/HavokClasses.cs` supplies where each field sits inside an instance, from
+`HavokClassLayouts.json`, which is 935 classes read out of Fallout 4's own startup code rather than
+guessed or taken from an SDK. `src/Hkx/PackfileObjects.cs` puts the two together and reads or
+overwrites a field.
+
+Overwrite, not resize. Every offset in a packfile is derived from the sizes of what precedes it, so
+changing an object's size means rebuilding every pointer past it, while writing a value over another
+value of the same width leaves the whole file valid. Only the second is offered.
+
+**Proved against a second opinion.** `symrm crosscheck` reads every field it can out of the bytes and
+compares it to what hkxpack says the same field holds: two independent readings of one file, ours by
+byte offset and hkxpack's by its own schema. Dogmeat's behaviour alone is **4,678 field values, all
+agreeing**; across 22 behaviour files it is **5,604 values, no disagreements**. Every object in that
+file is of a class we have the layout for, Bethesda's own additions included, because those are
+registered in the game the same way Havok's are.
+
+And saving now uses it. A change to a value is written straight into the file's own bytes, leaving
+every other byte exactly as Bethesda shipped it. Anything that resizes something, adds or removes an
+object, or changes the length of a string still goes the old way through hkxpack, because those move
+what follows them and every offset in the file is derived from what precedes it. Which path a save
+takes is decided by comparing the file as loaded against the file as edited, so an edit that cannot
+be written in place is detected rather than attempted.
+
+**The blanket refusal on animation files is gone.** It was there because rebuilding through XML
+cannot carry `hkaLosslessCompressedAnimation` intact. Writing values in place never rebuilds
+anything, so there is nothing to lose, and all **856** of those files in the vanilla animation
+archive now rebuild byte for byte identically. The warning still stands, but only in front of the
+rebuild path where it is actually true.
+
+**Verified as a full save, not just as a read.** `symrm savecheck` changes a float, a whole word and
+a single byte flag, saves through the new path, and then asks three things of the file that came
+out: hkxpack can still read it, every value in it still agrees with our reading, and it differs from
+the original only where it was meant to. On Dogmeat's behaviour that is **3 values changed, exactly
+3 bytes different in a 238KB file, and 4,678 field values still agreeing with hkxpack**. Across the
+behaviour files it is the same story with no disagreements anywhere.
+
+Still to come: confirming in game, which is the gate #19 has been waiting on.
+
 ## 2026-08-05, what an undriven channel means
 
 Spline compression defines an undriven channel as no translation, no rotation and unit scale. The

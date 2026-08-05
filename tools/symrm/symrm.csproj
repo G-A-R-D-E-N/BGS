@@ -14,4 +14,7 @@
     <Compile Include="../../src/Hkx/*.cs" />
     <Compile Include="../../src/Nif/*.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../src/Hkx/HavokClassLayouts.json" />
+  </ItemGroup>
 </Project>
