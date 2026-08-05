@@ -656,9 +656,19 @@ public class MainWindow : Window
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
 
+        // Naming which one is missing matters more than it looks. Everything except the Tree comes
+        // from the unpacked text form, so without these the other four tabs are simply empty, which
+        // reads as a broken tool rather than a missing dependency.
         if (java == null || jar == null)
         {
-            SetStatus("Read only: reading needs nothing, but editing needs a Java runtime.", Ux.MutedBrush);
+            string missing = java == null && jar == null ? "Java and hkxpack are missing"
+                           : java == null ? "Java is missing"
+                           : "hkxpack-cli.jar is missing";
+            SetStatus($"Read only, so the Graph, Symbols, Chain and Animation tabs stay empty: " +
+                      $"{missing}. The tree is read straight from the binary and does not need either. " +
+                      (java == null ? "Install a Java runtime. " : "") +
+                      (jar == null ? $"Put hkxpack-cli.jar in a tools folder beside the program, at {Path.Combine(AppContext.BaseDirectory, "tools")}. " : "") +
+                      "Save stays off until then.", Ux.WarnBrush);
             return;
         }
 
@@ -1292,7 +1302,8 @@ public class MainWindow : Window
 
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-        if (java == null || jar == null) { SetStatus("Cannot save: Java is missing.", Ux.BadBrush); return; }
+        if (java == null) { SetStatus("Cannot save: no Java runtime found.", Ux.BadBrush); return; }
+        if (jar == null) { SetStatus("Cannot save: hkxpack-cli.jar not found.", Ux.BadBrush); return; }
 
         try
         {
