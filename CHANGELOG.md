@@ -3,6 +3,20 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, a new node lands where it was dropped
+
+**Dragging a wire out to empty canvas put the node at the far end of the graph.** The canvas lays
+nodes out by their depth from the root, and a node nothing points at yet has no depth, so it went into
+a column of its own past everything else, nowhere near the cursor that asked for it. The drop point is
+now carried through the menu and pinned before the canvas rebuilds, the same way a node dragged by
+hand keeps its place.
+
+**And it is wired into the slot the drag came from.** The slot was being collected and then thrown
+away: the new node was attached to whatever happened to be selected, by whichever slot its class would
+normally take, so dragging off a clip's `triggers` could hang a generator somewhere else entirely. A
+drag now names the slot, and if that slot will not take the node it says so and leaves it unattached
+rather than putting it somewhere it was not asked for.
+
 ## 2026-08-04, the fields are next to the node now, and one state at a time
 
 **The properties panel was in the wrong tab.** Clicking a node on the canvas filled a panel that only

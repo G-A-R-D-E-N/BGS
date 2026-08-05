@@ -147,6 +147,35 @@ public static class Smoke
                     canvas.ClearHighlight();
                     Check($"{name}: and clearing it releases the canvas", "", canvas.HighlightId);
                 }
+
+                // Dragging a wire out to empty canvas and picking a node type. The new node has to
+                // land under the cursor: laid out by depth it goes into a column of its own at the
+                // far end of the graph, which is where it used to appear.
+                string host = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                    .IdsOfClass(window.LoadedXml, "hkbStateMachineStateInfo")
+                    .FirstOrDefault(id => canvas.DrawnIds.Contains(id)) ?? "";
+                if (host.Length > 0)
+                {
+                    var before = canvas.DrawnIds.ToHashSet();
+                    var dropped = new Point(4321, 765);
+
+                    canvas.AddRequested?.Invoke(host, "generator", dropped);
+                    var item = canvas.ContextMenu?.ItemsSource?.OfType<MenuItem>()
+                        .FirstOrDefault(m => m.Header?.ToString() == "Add clip");
+                    CheckTrue($"{name}: dragging out to empty canvas offers a node to add", item != null);
+
+                    item?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    string added = canvas.DrawnIds.FirstOrDefault(id => !before.Contains(id)) ?? "";
+                    CheckTrue($"{name}: and the node is created", added.Length > 0);
+                    Check($"{name}: where it was dropped, not at the end of the graph",
+                          dropped, canvas.PositionOf(added) ?? new Point(-1, -1));
+
+                    var owner = OpenCommonwealth.Services.Hkx.BehaviourGraphModel
+                        .Parse(window.LoadedXml).Get(host);
+                    Check($"{name}: wired into the slot the drag came from", added, owner?.Ref("generator") ?? "");
+                }
             }
 
             // A paged view can drop the tail without saying so, which is the failure the old 300 row

@@ -101,7 +101,7 @@ public class MainWindow : Window
         _graph.UnlinkRequested += (from, field, to) => Relink(from, field, to, connect: false);
         _graph.DeleteRequested += DeleteNode;
         _graph.Refused += message => SetStatus(message, Ux.MutedBrush);
-        _graph.AddRequested += (context, _) => ShowAddMenu(context);
+        _graph.AddRequested += ShowAddMenu;
 
         var tabs = new TabControl { Padding = new Thickness(0, 8, 0, 0) };
         tabs.Items.Add(Tab("Tree", BuildTreeTab()));
@@ -1114,10 +1114,13 @@ public class MainWindow : Window
         }
     }
 
-    private void ShowAddMenu(string context)
+    // A drag out to empty canvas says two things a right click does not: which slot wanted a node,
+    // and where. Both are held until the menu is answered, because the menu is what says what kind.
+    private void ShowAddMenu(string fromId, string field, Point at)
     {
         if (_xmlText.Length == 0) return;
 
+        string parent = fromId.Length > 0 ? fromId : _graph.SelectedId;
         var items = new List<Control>();
 
         if (_graph.SelectedId.Length > 0)
@@ -1141,7 +1144,7 @@ public class MainWindow : Window
         {
             string captured = kind;
             var item = new MenuItem { Header = "Add " + captured };
-            item.Click += (_, _) => AddNode(captured, captured + "_new", "", _graph.SelectedId);
+            item.Click += (_, _) => AddNode(captured, captured + "_new", "", parent, field, at);
             items.Add(item);
         }
 
@@ -1171,14 +1174,34 @@ public class MainWindow : Window
                   Ux.MetaBrush);
     }
 
-    private void AddNode(string kind, string name, string animation, string parentId)
+    private void AddNode(string kind, string name, string animation, string parentId, string field, Point at)
     {
         if (_xmlText.Length == 0) { SetStatus("Read only: no text form loaded.", Ux.MutedBrush); return; }
 
         try
         {
-            _xmlText = GraphAuthor.AddNode(_xmlText, kind, name, animation, parentId, out string newId, out string note);
+            // A drag names the slot, so the node goes into that one rather than whichever slot the
+            // parent's class would otherwise be given. Dragging off a clip's triggers and getting a
+            // generator hung on something else is not what the wire said.
+            bool bySlot = field.Length > 0 && parentId.Length > 0;
+            _xmlText = GraphAuthor.AddNode(_xmlText, kind, name, animation, bySlot ? "" : parentId,
+                                           out string newId, out string note);
             SetDirty(true);
+            _graph.Place(newId, at);
+
+            if (bySlot)
+            {
+                try
+                {
+                    _xmlText = GraphLinks.Connect(_xmlText, parentId, field, newId, out string joined);
+                    note = $"created {name}, {joined}";
+                }
+                catch (Exception ex)
+                {
+                    note = $"created {name} but left it unattached: {ex.Message.Split('\n')[0]}";
+                }
+            }
+
             SetStatus(note + $"   (#{newId}, unsaved)", Ux.CodeBrush);
             RefreshAfterEdit(newId);
         }

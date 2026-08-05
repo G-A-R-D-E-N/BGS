@@ -56,7 +56,9 @@ public class GraphView : Control
     public Action<string, string, string>? LinkRequested;
     public Action<string, string, string>? UnlinkRequested;
     public Action<string>? DeleteRequested;
-    public Action<string, Point>? AddRequested;
+    /// The node and slot the drag came from, empty for a right click, and the point on the canvas
+    /// the new node should land on.
+    public Action<string, string, Point>? AddRequested;
 
     public GraphView()
     {
@@ -174,6 +176,19 @@ public class GraphView : Control
 
     public int DrawnCount => _nodes.Count;
     public IReadOnlyCollection<string> DrawnIds => _nodes.Keys;
+
+    public Point? PositionOf(string id) => _nodes.TryGetValue(id, out var node) ? node.Bounds.TopLeft : null;
+
+    /// Pins a node to a point before the canvas is rebuilt. A new node is otherwise laid out by its
+    /// depth from the root, which puts it in a column of its own at the far end of the graph rather
+    /// than under the cursor that asked for it.
+    public void Place(string id, Point at)
+    {
+        _placed[id] = at;
+        if (_nodes.TryGetValue(id, out var node))
+            node.Bounds = node.Bounds.WithX(at.X).WithY(at.Y);
+        InvalidateVisual();
+    }
 
     private Point ToWorld(Point screen) => new((screen.X - _pan.X) / _zoom, (screen.Y - _pan.Y) / _zoom);
     private Point ToScreen(Point world) => new(world.X * _zoom + _pan.X, world.Y * _zoom + _pan.Y);
@@ -318,7 +333,7 @@ public class GraphView : Control
             var hit = NodeAt(world);
             SelectedId = hit?.Id ?? "";
             Selected?.Invoke(SelectedId);
-            AddRequested?.Invoke(SelectedId, world);
+            AddRequested?.Invoke("", "", world);
             InvalidateVisual();
             return;
         }
@@ -385,7 +400,7 @@ public class GraphView : Control
             }
             else if (target == null)
             {
-                AddRequested?.Invoke(w.Node.Id + "" + slot.Field, ToWorld(e.GetPosition(this)));
+                AddRequested?.Invoke(w.Node.Id, slot.Field, ToWorld(e.GetPosition(this)));
             }
         }
 
