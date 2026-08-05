@@ -21,8 +21,13 @@ public static class HkxTextEdit
     // two separate matches would interleave wrongly. hkxpack writes an empty string as a
     // self closing tag, so animationBundleName and friends are only reachable through that branch.
     // Arrays are excluded for free: a numelements attribute sits between the name and the slash.
+    // The \r? is not cosmetic. hkxpack writes the platform's line ending, so on Windows every line
+    // ends \r\n, and .NET's multiline $ matches between the \r and the \n. Without it this matched
+    // nothing on Windows: every object reported zero editable fields, and every edit that goes
+    // through SetParam, which includes connecting and disconnecting nodes, failed with "no simple
+    // parameter named x". Reading and drawing the graph were unaffected, so the tool looked fine.
     private static readonly Regex SimpleParam =
-        new(@"^(?<indent>[ \t]*)<hkparam name=""(?<name>[^""]+)""(?:\s*/>|>(?<value>[^<\r\n]*)</hkparam>)[ \t]*$",
+        new(@"^(?<indent>[ \t]*)<hkparam name=""(?<name>[^""]+)""(?:\s*/>|>(?<value>[^<\r\n]*)</hkparam>)[ \t]*\r?$",
             RegexOptions.Compiled | RegexOptions.Multiline);
 
     public static string? FindJava(string configured)
@@ -80,6 +85,12 @@ public static class HkxTextEdit
         }
         return null;
     }
+
+    /// Reads unpacked XML with one line ending everywhere. Every edit in here splices in text of its
+    /// own, so a file that is half CRLF and half LF is what a mixed read produces, and the regexes
+    /// that put it back together have to agree with what is already in the string.
+    public static string ReadXml(string path) =>
+        File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r", "\n");
 
     public static string Unpack(string java, string jar, string hkxPath, string workDir)
     {

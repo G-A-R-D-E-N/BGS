@@ -90,7 +90,7 @@ public static class Headless
         if (Directory.Exists(work)) Directory.Delete(work, true);
 
         string xmlPath = HkxTextEdit.Unpack(java, jar, path, work);
-        string xml = File.ReadAllText(xmlPath);
+        string xml = HkxTextEdit.ReadXml(xmlPath);
         var model = BehaviourGraphModel.Parse(xml);
 
         Console.WriteLine($"graph  {GraphAuthor.Layout(model, 4000).Count} nodes drawn");

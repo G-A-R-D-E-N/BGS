@@ -3,6 +3,32 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, editing did not work on Windows at all
+
+**Reported from the first beta: every node shows zero editable fields, nodes cannot be connected or
+disconnected, and adding one after a delete fails.** All three are the same bug, and it is not in any
+of that code.
+
+hkxpack writes the platform's line ending, so an unpacked file on Windows is CRLF throughout. The
+regex that finds a parameter is anchored to end of line, and .NET's multiline `$` matches *between*
+the `\r` and the `\n`, so `[ \t]*$` could never match a line ending `</hkparam>\r\n`. It matched
+nothing. `ReadParams` returned an empty list, which is the zero fields, and `SetParam` threw "no
+simple parameter named x", which is every connect, disconnect and attach, since all of them write a
+reference through it.
+
+Reading and drawing the graph go through a different parser and were unaffected, which is why the
+window looked like it was working. On Linux, where hkxpack writes LF, none of it reproduced, and that
+is why it shipped.
+
+Two changes rather than one. The regex tolerates a trailing `\r`, and every read of unpacked XML now
+goes through `HkxTextEdit.ReadXml`, which normalises to LF once at the door. The second matters
+because every edit in here splices in text of its own: a file read as CRLF and spliced with LF is
+half and half, and the regexes that put it back together have to agree with what is already in the
+string.
+
+Pinned by `WindowsLineEndingsStillEdit`, which builds the same graph twice, once with each line
+ending, and asserts the field list, a field write, and a node connection on both.
+
 ## 2026-08-04, review pass before the beta
 
 Four things a read of the session's own changes turned up, all of them things the canvas remembered
