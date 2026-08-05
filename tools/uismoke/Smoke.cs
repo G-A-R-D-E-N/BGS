@@ -50,7 +50,7 @@ public static class Smoke
 
         Check("the node canvas exists", 1, canvases);
         Check("the skeleton viewport exists", 1, viewports);
-        Check("the tree, problem, symbol, chain, animation and compare grids exist", 6, grids.Count);
+        Check("the tree, problem, symbol, chain, animation, clip and compare grids exist", 7, grids.Count);
 
         // The problem list is the one that starts hidden: an empty box under the canvas before any
         // check has run would read as a check that found nothing.

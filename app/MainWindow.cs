@@ -35,6 +35,8 @@ public class MainWindow : Window
     private readonly HkGrid _symbols =
         new(("Kind", 60), ("Index", 55), ("Name", -4), ("Initial value", -2), ("Used by, in this file", -5));
     private readonly HkGrid _chain = new(("Role", 110), ("Declared in the file", -4), ("On disk", 80), ("Notes", -3));
+    private readonly HkGrid _clips = new(("Clip", -5), ("Plays", -6));
+    private readonly Inspector _clipProps = new(320);
     private readonly HkGrid _animation =
         new(("Bone or track", -4), ("Frame", 70), ("Time", 80), ("Position", -4), ("Rotation", -5),
             ("Scale", -3));
@@ -634,9 +636,12 @@ public class MainWindow : Window
         DockPanel.SetDock(scrubRow, Dock.Bottom);
         panel.Children.Add(bar);
         panel.Children.Add(scrubRow);
-        panel.Children.Add(Framed(_skeleton));
+        panel.Children.Add(WithClipPicker(Framed(_skeleton)));
 
-        SetPlaybackSummary("Open a behaviour and select a clip to see what it plays.", Ux.MutedBrush);
+        // Says that a model is a second, separate step. What plays here is the skeleton, and waiting
+        // for a character to appear on its own is waiting for something that never happens.
+        SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
+                           "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
         return panel;
     }
 
@@ -870,7 +875,61 @@ public class MainWindow : Window
         _scrubbing = false;
         _skeleton.Reset();
         _frameLabel.Text = "";
-        SetPlaybackSummary("Open a behaviour and select a clip to see what it plays.", Ux.MutedBrush);
+        // Says that a model is a second, separate step. What plays here is the skeleton, and waiting
+        // for a character to appear on its own is waiting for something that never happens.
+        SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
+                           "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
+    }
+
+    // Every clip in the file down the right hand side, with its own properties under it, so a clip
+    // can be found, played and changed without leaving playback for the tree or the graph.
+    private Control WithClipPicker(Control viewport)
+    {
+        _clips.SelectionChanged += () =>
+        {
+            if (_clips.SelectedTag is not string id || id == _selectedId) return;
+            var model = BehaviourGraphModel.Parse(_xmlText);
+            ShowProps(id, model);
+            LoadPoseFromSelection(announce: true);
+        };
+
+        var right = new Grid();
+        right.RowDefinitions.Add(new RowDefinition(new GridLength(2, GridUnitType.Star)));
+        right.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        right.RowDefinitions.Add(new RowDefinition(new GridLength(3, GridUnitType.Star)));
+
+        var horizontal = new GridSplitter { Height = 6, Background = Brushes.Transparent };
+        Grid.SetRow(horizontal, 1);
+        Grid.SetRow(_clipProps, 2);
+        right.Children.Add(_clips);
+        right.Children.Add(horizontal);
+        right.Children.Add(_clipProps);
+
+        var split = new Grid();
+        split.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(3, GridUnitType.Star)));
+        split.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        split.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(360, GridUnitType.Pixel)));
+
+        var splitter = new GridSplitter { Width = 6, Background = Brushes.Transparent };
+        Grid.SetColumn(splitter, 1);
+        Grid.SetColumn(right, 2);
+        split.Children.Add(viewport);
+        split.Children.Add(splitter);
+        split.Children.Add(right);
+        return split;
+    }
+
+    private void BuildClipList(BehaviourGraphModel model)
+    {
+        _clips.Clear();
+        foreach (var clip in model.Objects.Where(o => o.Class == "hkbClipGenerator"))
+        {
+            string animation = clip.Str("animationName");
+            _clips.Add(null, clip.Str("name"), animation.Length > 0 ? animation : "nothing")
+                  .Colour(0, Ux.TitleBrush)
+                  .Colour(1, animation.Length > 0 ? Ux.CodeBrush : Ux.MutedBrush)
+                  .Tag(clip.Id);
+        }
     }
 
     private void TogglePlay()
@@ -1205,6 +1264,7 @@ public class MainWindow : Window
     private void Load()
     {
         _tree.Clear();
+        _clips.Clear();
         ClearProps();
         _offsetToIndex.Clear();
         _objectIds = new List<string>();
@@ -1221,7 +1281,16 @@ public class MainWindow : Window
 
         string path = (_pathField.Text ?? "").Trim().Trim('"');
         if (path.Length == 0) { SetSummary("Enter the path to a .hkx file.", Ux.MutedBrush); return; }
-        if (!File.Exists(path)) { SetSummary("Not found: " + path, Ux.MutedBrush); return; }
+        if (!File.Exists(path))
+        {
+            // Says where a relative path actually landed. Relative to the working directory the app
+            // was started in, not to the file box, so the same text works from one place and not
+            // another and the bare path in the message looks correct while being wrong.
+            string full = Path.GetFullPath(path);
+            SetSummary(full == path ? "Not found: " + path
+                                    : $"Not found: {path}, which from here means {full}", Ux.BadBrush);
+            return;
+        }
         if (!HkxBinaryReader.IsFo4Hkx(path))
         {
             SetSummary("Not a Fallout 4 hk_2014.1.0-r1 packfile.", Ux.MutedBrush);
@@ -1340,6 +1409,7 @@ public class MainWindow : Window
             _graph.Show(model);
             _graph.FrameAll();
             BuildSymbols(model);
+            BuildClipList(model);
             BuildChain(java, jar);
             SetStatus($"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn.", Ux.MetaBrush);
         }
@@ -1498,6 +1568,7 @@ public class MainWindow : Window
     {
         _treeProps.Clear();
         _graphProps.Clear();
+        _clipProps.Clear();
     }
 
     // Both panels are filled, because which one is on screen depends on the tab and a node can be
@@ -1510,6 +1581,8 @@ public class MainWindow : Window
         _selectedId = objectId;
         FillProps(_treeProps, objectId, model);
         FillProps(_graphProps, objectId, model);
+        FillProps(_clipProps, objectId, model);
+        _clips.SelectByTag(objectId);
     }
 
     private void FillProps(Inspector panel, string objectId, BehaviourGraphModel model)

@@ -116,11 +116,30 @@ public sealed class ProjectChain
         foreach (string anim in DeclaredAnimations(strings))
         {
             chain.Animations.Add(anim);
-            if (!File.Exists(ResolvePath(chain.Root, anim)))
-                chain.Problems.Add("missing animation: " + anim);
+            if (File.Exists(ResolvePath(chain.Root, anim))) continue;
+
+            // A character reusing another character's animations is normal, Dogmeat borrows the
+            // vicious dog's attacks, and it climbs out of its own folder to do it. Extract one
+            // character on its own and every borrowed animation reads as missing when nothing is
+            // actually wrong with the file, so the two cases are worth telling apart.
+            string? lender = BorrowedFrom(anim);
+            chain.Problems.Add(lender != null
+                ? $"missing animation, borrowed from {lender}: {anim}. Extract {lender} alongside " +
+                  "this character and it resolves."
+                : "missing animation: " + anim);
         }
 
         return chain;
+    }
+
+    /// The character a borrowed animation belongs to, or null when the path stays inside this
+    /// character's own folder. A path like ..\ViciousDog\Animations\Attack1.hkt names the lender in
+    /// the segment after the last step upwards, so that is the one worth putting in the message.
+    public static string? BorrowedFrom(string animation)
+    {
+        var parts = animation.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        int lastUp = Array.LastIndexOf(parts, "..");
+        return lastUp >= 0 && lastUp + 1 < parts.Length ? parts[lastUp + 1] : null;
     }
 
     // Skyrim era characters list their animations in animationNames. Fallout 4 moved them into
