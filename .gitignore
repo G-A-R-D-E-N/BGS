@@ -7,3 +7,6 @@ obj/
 /out/
 /BehaviourGraphStudio-*/
 /*.zip
+
+# Local tooling config
+.claude/
