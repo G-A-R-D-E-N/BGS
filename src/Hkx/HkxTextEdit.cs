@@ -17,8 +17,12 @@ public static class HkxTextEdit
     private static readonly Regex ObjectHead =
         new(@"<hkobject class=""(?<cls>[A-Za-z0-9_]+)"" name=""#(?<id>\d+)""", RegexOptions.Compiled);
 
+    // Two shapes, one pass, because the order fields come back in is the order they are shown and
+    // two separate matches would interleave wrongly. hkxpack writes an empty string as a
+    // self closing tag, so animationBundleName and friends are only reachable through that branch.
+    // Arrays are excluded for free: a numelements attribute sits between the name and the slash.
     private static readonly Regex SimpleParam =
-        new(@"^(?<indent>[ \t]*)<hkparam name=""(?<name>[^""]+)"">(?<value>[^<\r\n]*)</hkparam>[ \t]*$",
+        new(@"^(?<indent>[ \t]*)<hkparam name=""(?<name>[^""]+)""(?:\s*/>|>(?<value>[^<\r\n]*)</hkparam>)[ \t]*$",
             RegexOptions.Compiled | RegexOptions.Multiline);
 
     public static string? FindJava(string configured)
@@ -147,7 +151,10 @@ public static class HkxTextEdit
         {
             if (replaced || m.Groups["name"].Value != paramName) return m.Value;
             replaced = true;
-            return $"{m.Groups["indent"].Value}<hkparam name=\"{paramName}\">{newValue}</hkparam>";
+            string body = newValue.Length == 0
+                ? $"<hkparam name=\"{paramName}\"/>"
+                : $"<hkparam name=\"{paramName}\">{newValue}</hkparam>";
+            return m.Groups["indent"].Value + body;
         });
 
         if (!replaced) throw new ArgumentException($"#{id} has no simple parameter named {paramName}");

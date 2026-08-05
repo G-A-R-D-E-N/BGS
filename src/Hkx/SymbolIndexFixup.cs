@@ -196,16 +196,19 @@ public static class SymbolIndexFixup
         return users;
     }
 
-    /// Every event index the file writes, in one pass. Asking per event reparses the file once per
-    /// event, which a graph declaring a hundred of them notices.
-    public static List<EventReference> EventReferences(string xml)
+    /// Every index the file writes, in one pass. Asking per symbol rescans the whole file once per
+    /// symbol: a weapon behaviour declares 142 variables and 731 events against seven megabytes of
+    /// text, which is around two minutes of scanning to answer a question one pass answers.
+    public static List<EventReference> References(string xml, bool events)
     {
         var found = new List<EventReference>();
-        foreach (var site in Sites(xml, events: true, out _))
+        foreach (var site in Sites(xml, events, out _))
             if (site.Value >= 0)
                 found.Add(new EventReference(site.Value, site.HolderClass, site.HolderParam));
         return found;
     }
+
+    public static List<EventReference> EventReferences(string xml) => References(xml, events: true);
 
     // Anything addressing a symbol the graph does not declare. -1 is the format's "none" and is not
     // an overrun.

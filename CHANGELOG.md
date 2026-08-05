@@ -3,6 +3,91 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, review pass before the beta
+
+Four things a read of the session's own changes turned up, all of them things the canvas remembered
+when it should not have:
+
+**Opening a second file kept the first one's positions.** Everything the canvas holds is keyed by
+object id, and the next file numbers its objects from one as well, so a node dragged in one file
+pinned whichever node happened to hold that number in the next. The highlight, the filter and the
+marks had the same problem. A load clears all of it now.
+
+**A file with no text form left the last graph on screen.** The canvas is only refilled once a file
+has been unpacked, so opening something that cannot be unpacked showed the previous file's nodes
+under the new file's name.
+
+**The tree marked no empty states on load.** It was built before the file was unpacked, so the
+answer was always "none", and it was only ever right after something else forced a rebuild. It is
+built again once the text form exists.
+
+**Typing in the filter reparsed the file.** Working out which states are empty is a question about
+the file, not about the filter, and it was being answered on every keystroke: seven megabytes,
+six times, to type "Sprint". Six keystrokes now cost 444ms on the weapon behaviour rather than well
+over a second. The properties panel also stopped being wiped by typing, which is the last thing you
+want when the reason you are searching is the node whose fields are open.
+
+## 2026-08-04, the search box works on the canvas, and the weapon graph is usable
+
+**The filter box only ever drove the tree.** It sits above the tabs, so on the Graph tab typing in it
+did nothing at all. It now filters whichever view is showing: matching nodes stay lit, everything else
+dims, and a wire touching a match stays lit because where a match connects is the question being
+asked. Nodes dim rather than disappear, since a node's place in the graph is most of what it tells
+you. Enter moves the view onto the first match and selects it; typing alone does not yank the view
+around.
+
+**The canvas drew 400 nodes.** `WeaponBehavior.hkx` lays out 3978, so nine tenths of it was never
+drawn and the search could not find a node that is plainly in the file. The cap is 4000 now. Wires
+off screen are dropped before their geometry is built, which is what makes that affordable: ten full
+redraws of all 3978 nodes measure 240ms.
+
+**Nodes were drawn on top of each other.** A column placed its nodes at row number times *this* node's
+height, and a node is as tall as its slot count, so anything shorter than its neighbour overlapped the
+one below. Now each column keeps a running offset. On a small graph this was barely visible; on the
+weapon graph it was most of why the canvas looked like a mess.
+
+**Opening the weapon behaviour took about two minutes.** The Symbols tab asked "what references this
+symbol" one symbol at a time, and each ask rescanned seven megabytes of text: 873 symbols, roughly 110
+seconds of pure scanning. One pass builds the whole table now. Selecting a node also parsed the file
+twice, once for the fields and once for the status line. The file opens in a couple of seconds.
+
+## 2026-08-04, a new node lands where it was dropped
+
+**Dragging a wire out to empty canvas put the node at the far end of the graph.** The canvas lays
+nodes out by their depth from the root, and a node nothing points at yet has no depth, so it went into
+a column of its own past everything else, nowhere near the cursor that asked for it. The drop point is
+now carried through the menu and pinned before the canvas rebuilds, the same way a node dragged by
+hand keeps its place.
+
+**And it is wired into the slot the drag came from.** The slot was being collected and then thrown
+away: the new node was attached to whatever happened to be selected, by whichever slot its class would
+normally take, so dragging off a clip's `triggers` could hang a generator somewhere else entirely. A
+drag now names the slot, and if that slot will not take the node it says so and leaves it unattached
+rather than putting it somewhere it was not asked for.
+
+## 2026-08-04, the fields are next to the node now, and one state at a time
+
+**The properties panel was in the wrong tab.** Clicking a node on the canvas filled a panel that only
+existed beside the tree, so the fields were built, correct, and invisible unless you switched tabs and
+lost the node you were looking at. The panel is now a control rather than a loose stack, and there is
+one beside the canvas as well as one beside the tree. Double clicking a node puts the caret in the
+first box instead of nudging the node a pixel.
+
+**An empty field could not be given a value.** hkxpack writes an empty string as a self closing tag,
+and the reader only matched `<hkparam name="x">value</hkparam>`, so `animationBundleName` and every
+other empty field was missing from the panel entirely. Both shapes are now read in one pass, so the
+order fields appear in is still the order they sit in the file, and writing an empty value puts the
+self closing form back rather than leaving `<hkparam name="x"></hkparam>` behind. Proved by editing
+`PipboyBehavior.hkx` #98 through a real hkxpack repack and reading it back: the value survives, and
+clearing it repacks clean. Arrays are excluded for free, since a `numelements` attribute sits between
+the name and the slash.
+
+**Highlighting one state.** Right click a node, "Highlight the paths of ...", and every wire not
+touching it drops to half opacity while unrelated nodes dim to 40%. The lit wires are drawn in a
+second pass so they sit on top of the dimmed ones rather than being crossed by them. Escape clears it.
+A shipped graph draws a few hundred wires over each other and following one state through that was the
+thing the canvas was worst at.
+
 ## 2026-08-04, variableBounds is positional after all
 
 **The struct settles it.** The open question was what a short `variableBounds` array keys off, since

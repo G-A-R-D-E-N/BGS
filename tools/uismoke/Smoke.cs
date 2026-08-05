@@ -112,6 +112,105 @@ public static class Smoke
                 }
             }
 
+            // The fields have to be reachable from the canvas, not only from the tree. A node's
+            // properties are useless in a tab that is not showing the node.
+            if (window.LoadedXml.Length > 0)
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                var canvas = Find<GraphView>(window).First();
+                string node = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                    .IdsOfClass(window.LoadedXml, "hkbClipGenerator")
+                    .FirstOrDefault(id => canvas.DrawnIds.Contains(id)) ?? canvas.DrawnIds.FirstOrDefault() ?? "";
+
+                if (node.Length > 0)
+                {
+                    var fields = OpenCommonwealth.Services.Hkx.HkxTextEdit.ReadParams(window.LoadedXml, node);
+                    window.SelectNode(node);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    var boxes = Find<TextBox>(window.GraphProperties);
+                    CheckTrue($"{name}: picking a node on the canvas fills the panel beside it",
+                              boxes.Count >= fields.Count && fields.Count > 0);
+                    Console.WriteLine($"        #{node}: {fields.Count} fields, {boxes.Count} boxes beside the canvas");
+
+                    // Double click is what the request asks for, so the wiring from the canvas to
+                    // the panel is what gets checked, not a synthetic mouse event.
+                    canvas.Activated?.Invoke(node);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    CheckTrue($"{name}: double click still leaves the fields there",
+                              Find<TextBox>(window.GraphProperties).Count >= fields.Count);
+
+                    canvas.Highlight(node);
+                    Check($"{name}: highlighting one node sticks", node, canvas.HighlightId);
+                    canvas.ClearHighlight();
+                    Check($"{name}: and clearing it releases the canvas", "", canvas.HighlightId);
+                }
+
+                // The filter box sits above the tabs, so it has to work on whichever one is showing.
+                // Driving only the tree meant typing in it on the Graph tab did nothing at all.
+                int drawn = canvas.DrawnCount;
+                string needle = OpenCommonwealth.Services.Hkx.BehaviourGraphModel
+                    .Parse(window.LoadedXml).Get(node)?.Str("name") ?? "";
+                if (needle.Length > 0)
+                {
+                    window.Filter(needle);
+                    CheckTrue($"{name}: the filter matches something on the canvas", canvas.MatchCount > 0);
+                    CheckTrue($"{name}: and not everything", canvas.MatchCount < drawn);
+                    CheckTrue($"{name}: the tree filters to the matches too", window.TreeGrid.RowCount > 0);
+                    Console.WriteLine($"        \"{needle}\": {canvas.MatchCount} of {drawn} nodes, " +
+                                      $"{window.TreeGrid.RowCount} tree rows");
+
+                    window.Filter("no-such-node-xyzzy");
+                    Check($"{name}: nonsense matches nothing rather than everything", 0, canvas.MatchCount);
+
+                    window.Filter("");
+                    Check($"{name}: clearing it releases the canvas", 0, canvas.MatchCount);
+                    Check($"{name}: and nothing was dropped from the canvas", drawn, canvas.DrawnCount);
+                }
+
+                // Dragging a wire out to empty canvas and picking a node type. The new node has to
+                // land under the cursor: laid out by depth it goes into a column of its own at the
+                // far end of the graph, which is where it used to appear.
+                string host = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                    .IdsOfClass(window.LoadedXml, "hkbStateMachineStateInfo")
+                    .FirstOrDefault(id => canvas.DrawnIds.Contains(id)) ?? "";
+                if (host.Length > 0)
+                {
+                    var before = canvas.DrawnIds.ToHashSet();
+                    var dropped = new Point(4321, 765);
+
+                    canvas.AddRequested?.Invoke(host, "generator", dropped);
+                    var item = canvas.ContextMenu?.ItemsSource?.OfType<MenuItem>()
+                        .FirstOrDefault(m => m.Header?.ToString() == "Add clip");
+                    CheckTrue($"{name}: dragging out to empty canvas offers a node to add", item != null);
+
+                    item?.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    string added = canvas.DrawnIds.FirstOrDefault(id => !before.Contains(id)) ?? "";
+                    CheckTrue($"{name}: and the node is created", added.Length > 0);
+                    Check($"{name}: where it was dropped, not at the end of the graph",
+                          dropped, canvas.PositionOf(added) ?? new Point(-1, -1));
+
+                    var owner = OpenCommonwealth.Services.Hkx.BehaviourGraphModel
+                        .Parse(window.LoadedXml).Get(host);
+                    Check($"{name}: wired into the slot the drag came from", added, owner?.Ref("generator") ?? "");
+
+                    // Object ids restart at #1 in the next file, so a remembered position, highlight
+                    // or filter would be applied to whatever now holds that number.
+                    canvas.Highlight(added);
+                    window.Filter("clip");
+                    window.Open(path);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    Check($"{name}: reopening drops the old highlight", "", canvas.HighlightId);
+                    Check($"{name}: and the old filter", 0, canvas.MatchCount);
+                    CheckTrue($"{name}: and does not pin nodes where the last file's were",
+                              canvas.PositionOf(host) != dropped);
+                }
+            }
+
             // A paged view can drop the tail without saying so, which is the failure the old 300 row
             // cap made visible and paging could hide. Walk every page and prove the frames shown add
             // up to the frames the file has, with the last page ending on the last frame.

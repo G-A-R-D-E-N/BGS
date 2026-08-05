@@ -21,7 +21,8 @@ public class MainWindow : Window
     private readonly TextBox _filter = Ux.Field("filter objects by name, class or animation");
     private readonly TextBlock _summary = new() { Foreground = Ux.MutedBrush, FontSize = 12 };
     private readonly TextBlock _status = new() { Foreground = Ux.MutedBrush, FontSize = 12 };
-    private readonly StackPanel _props = new() { Spacing = 6 };
+    private readonly Inspector _treeProps = new(340);
+    private readonly Inspector _graphProps = new(360);
     private readonly GraphView _graph = new();
     private readonly Button _saveButton;
 
@@ -83,7 +84,8 @@ public class MainWindow : Window
         expand.Click += (_, _) => _tree.SetAllExpanded(true);
         var collapse = Ux.Secondary("Collapse all");
         collapse.Click += (_, _) => _tree.SetAllExpanded(false);
-        _filter.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) RebuildTree(); };
+        _filter.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) ApplyFilter(); };
+        _filter.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) JumpToFirstMatch(); };
 
         var check = Ux.Secondary("Check graph");
         check.Click += (_, _) => Validate();
@@ -95,11 +97,12 @@ public class MainWindow : Window
         _symbols.SelectionChanged += OnSymbolSelected;
 
         _graph.Selected += SelectObjectId;
+        _graph.Activated += id => { SelectObjectId(id); _graphProps.FocusFirstField(); };
         _graph.LinkRequested += (from, field, to) => Relink(from, field, to, connect: true);
         _graph.UnlinkRequested += (from, field, to) => Relink(from, field, to, connect: false);
         _graph.DeleteRequested += DeleteNode;
         _graph.Refused += message => SetStatus(message, Ux.MutedBrush);
-        _graph.AddRequested += (context, _) => ShowAddMenu(context);
+        _graph.AddRequested += ShowAddMenu;
 
         var tabs = new TabControl { Padding = new Thickness(0, 8, 0, 0) };
         tabs.Items.Add(Tab("Tree", BuildTreeTab()));
@@ -176,11 +179,17 @@ public class MainWindow : Window
         _problems.Height = 150;
         _problems.SelectionChanged += OnProblemSelected;
 
+        var splitter = new GridSplitter { Width = 6, Background = Brushes.Transparent };
+
         var panel = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(_problemBar, Dock.Bottom);
         DockPanel.SetDock(_problems, Dock.Bottom);
+        DockPanel.SetDock(_graphProps, Dock.Right);
+        DockPanel.SetDock(splitter, Dock.Right);
         panel.Children.Add(_problemBar);
         panel.Children.Add(_problems);
+        panel.Children.Add(_graphProps);
+        panel.Children.Add(splitter);
         panel.Children.Add(Framed(_graph));
 
         _problems.IsVisible = false;
@@ -197,19 +206,6 @@ public class MainWindow : Window
 
     private Control BuildTreeTab()
     {
-        var right = new DockPanel { MinWidth = 340 };
-        var title = Ux.SectionTitle("Properties");
-        DockPanel.SetDock(title, Dock.Top);
-        right.Children.Add(title);
-        // Disabled rather than Auto: the panel is narrow and fixed, so anything that does not fit
-        // has to wrap or trim. Letting it scroll sideways instead just hid the left of every line.
-        right.Children.Add(new ScrollViewer
-        {
-            Content = _props,
-            Padding = new Thickness(0, 6, 8, 0),
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-        });
-
         var split = new Grid();
         split.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(3, GridUnitType.Star)));
         split.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
@@ -217,10 +213,10 @@ public class MainWindow : Window
 
         var splitter = new GridSplitter { Width = 6, Background = Brushes.Transparent };
         Grid.SetColumn(splitter, 1);
-        Grid.SetColumn(right, 2);
+        Grid.SetColumn(_treeProps, 2);
         split.Children.Add(_tree);
         split.Children.Add(splitter);
-        split.Children.Add(right);
+        split.Children.Add(_treeProps);
         return split;
     }
 
@@ -233,6 +229,13 @@ public class MainWindow : Window
     public HkGrid SymbolGrid => _symbols;
     public string FractionAnswer => _fractionAnswer.Text ?? "";
     public int AimedFrame => _aimedFrame;
+    public string LoadedXml => _xmlText;
+    public Inspector GraphProperties => _graphProps;
+    public GraphView Canvas => _graph;
+
+    /// Selects through the same handler a click on the canvas uses, so a check exercises the path a
+    /// person takes rather than a parallel one.
+    public void SelectNode(string objectId) => SelectObjectId(objectId);
 
     /// Drives the fraction lookup the way a person does, through the same field and the same handler,
     /// so a check exercises what the button exercises rather than a parallel path.
@@ -582,13 +585,17 @@ public class MainWindow : Window
     private void Load()
     {
         _tree.Clear();
-        _props.Children.Clear();
+        ClearProps();
         _offsetToIndex.Clear();
         _objectIds = new List<string>();
         _xmlText = "";
         _xmlPath = "";
         _selectedId = "";
         _projectChain = null;
+        _emptyStates = new HashSet<string>();
+        // Object ids start again at #1 in the next file, so anything the canvas remembers by id is
+        // about to be applied to a different object entirely.
+        _graph.Reset();
         SetDirty(false);
 
         string path = (_pathField.Text ?? "").Trim().Trim('"');
@@ -690,6 +697,11 @@ public class MainWindow : Window
             }
 
             var model = BehaviourGraphModel.Parse(_xmlText);
+            // The tree drew before the text form existed, so the states holding nothing were unknown
+            // when it was built. Now they are known, so it is built again.
+            _emptyStates = GraphValidator.StatesWithNoGenerator(model);
+            RebuildTree();
+
             _graph.Show(model);
             _graph.FrameAll();
             BuildSymbols(model);
@@ -709,15 +721,12 @@ public class MainWindow : Window
         && index < _objectIds.Count
         && _emptyStates.Contains(_objectIds[index]);
 
+    // The properties panel is not cleared here: the tree is rebuilt on every keystroke in the filter,
+    // and the node whose fields are open is usually the reason the filter is being typed.
     private void RebuildTree()
     {
         _tree.Clear();
-        _props.Children.Clear();
         if (_root == null) return;
-
-        _emptyStates = _xmlText.Length == 0
-            ? new HashSet<string>()
-            : GraphValidator.StatesWithNoGenerator(BehaviourGraphModel.Parse(_xmlText));
 
         string needle = (_filter.Text ?? "").Trim();
         if (needle.Length == 0)
@@ -739,6 +748,49 @@ public class MainWindow : Window
             if (++hits >= 2000) break;
         }
     }
+
+    // The box sits above the tabs and used to drive only the tree, so on the Graph tab typing in it
+    // did nothing at all. It filters whichever view is showing now. The canvas dims rather than
+    // jumping while you type; Enter is what moves the view onto the first match.
+    private void ApplyFilter()
+    {
+        RebuildTree();
+        if (_xmlText.Length == 0) return;
+
+        string needle = (_filter.Text ?? "").Trim();
+        _graph.Filter(needle);
+
+        if (needle.Length == 0)
+        {
+            SetStatus($"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn.", Ux.MetaBrush);
+            return;
+        }
+
+        int hits = _graph.MatchCount;
+        SetStatus(hits == 0
+            ? $"Nothing matches \"{needle}\"."
+            : $"{hits} node{(hits == 1 ? "" : "s")} match \"{needle}\", the rest are dimmed. " +
+              "Press Enter to go to the first one.",
+            hits == 0 ? Ux.MutedBrush : Ux.MetaBrush);
+    }
+
+    private void JumpToFirstMatch()
+    {
+        string first = _graph.FirstMatch;
+        if (first.Length == 0) return;
+
+        _graph.FocusOn(first);
+        SelectObjectId(first);
+    }
+
+    /// Drives the filter through the same handlers typing does.
+    public void Filter(string needle)
+    {
+        _filter.Text = needle;
+        ApplyFilter();
+    }
+
+    public HkGrid TreeGrid => _tree;
 
     private static bool Matches(HkxBehaviorParser.BehaviorNode o, string needle) =>
         o.ClassName.Contains(needle, StringComparison.OrdinalIgnoreCase)
@@ -768,7 +820,7 @@ public class MainWindow : Window
 
     private void OnTreeSelected()
     {
-        _props.Children.Clear();
+        ClearProps();
         _selectedId = "";
         if (_tree.SelectedTag is not int offset || _xmlText.Length == 0) return;
         if (!_offsetToIndex.TryGetValue(offset, out int index)) return;
@@ -778,30 +830,54 @@ public class MainWindow : Window
 
     private void SelectObjectId(string objectId)
     {
-        _props.Children.Clear();
+        ClearProps();
         _selectedId = "";
         if (objectId.Length == 0 || _xmlText.Length == 0) return;
-        ShowProps(objectId);
-        SetStatus(Describe(objectId), Ux.MetaBrush);
+
+        // One parse for both. On a weapon behaviour a parse is a tenth of a second, and selecting a
+        // node was paying for two of them.
+        var model = BehaviourGraphModel.Parse(_xmlText);
+        ShowProps(objectId, model);
+        SetStatus(Describe(model, objectId), Ux.MetaBrush);
     }
 
-    private string Describe(string id)
+    private string Describe(string id) => Describe(BehaviourGraphModel.Parse(_xmlText), id);
+
+    private static string Describe(BehaviourGraphModel model, string id)
     {
-        var obj = BehaviourGraphModel.Parse(_xmlText).Get(id);
+        var obj = model.Get(id);
         if (obj == null) return "#" + id;
         string name = obj.Str("name");
         return $"#{id} {obj.Class}" + (name.Length > 0 ? $" '{name}'" : "");
     }
 
-    private void ShowProps(string objectId)
+    private void ClearProps()
+    {
+        _treeProps.Clear();
+        _graphProps.Clear();
+    }
+
+    // Both panels are filled, because which one is on screen depends on the tab and a node can be
+    // reached from either. The model is parsed once and handed to both: on a shipped weapon graph
+    // that parse is the expensive part of selecting a node.
+    private void ShowProps(string objectId) => ShowProps(objectId, BehaviourGraphModel.Parse(_xmlText));
+
+    private void ShowProps(string objectId, BehaviourGraphModel model)
     {
         _selectedId = objectId;
+        FillProps(_treeProps, objectId, model);
+        FillProps(_graphProps, objectId, model);
+    }
+
+    private void FillProps(Inspector panel, string objectId, BehaviourGraphModel model)
+    {
+        panel.Clear();
         string className = HkxTextEdit.ClassOf(_xmlText, objectId);
         var parameters = HkxTextEdit.ReadParams(_xmlText, objectId);
 
         var heading = Ux.Label($"#{objectId}   {className}   {parameters.Count} editable fields");
         heading.TextWrapping = TextWrapping.Wrap;
-        _props.Children.Add(heading);
+        panel.Add(heading);
 
         foreach (var p in parameters)
         {
@@ -826,20 +902,19 @@ public class MainWindow : Window
             DockPanel.SetDock(label, Dock.Left);
             row.Children.Add(label);
             row.Children.Add(field);
-            _props.Children.Add(row);
+            panel.Add(row);
         }
 
-        AddBindingSection(objectId);
+        AddBindingSection(panel, objectId, model);
     }
 
-    private void AddBindingSection(string objectId)
+    private void AddBindingSection(Inspector panel, string objectId, BehaviourGraphModel model)
     {
-        var model = BehaviourGraphModel.Parse(_xmlText);
         var owner = model.Get(objectId);
         if (owner == null) return;
 
         var names = BindingEditor.VariableNames(model);
-        _props.Children.Add(Ux.SectionTitle("variable bindings"));
+        panel.Add(Ux.SectionTitle("variable bindings"));
 
         foreach (var b in BindingEditor.BindingsOf(model, owner))
         {
@@ -859,7 +934,7 @@ public class MainWindow : Window
             DockPanel.SetDock(remove, Dock.Right);
             row.Children.Add(remove);
             row.Children.Add(text);
-            _props.Children.Add(row);
+            panel.Add(row);
         }
 
         // Stacked rather than one row: the member path alone is wider than this panel, and a row
@@ -870,9 +945,9 @@ public class MainWindow : Window
         bind.HorizontalAlignment = HorizontalAlignment.Right;
         bind.Click += (_, _) => AddBinding(objectId, (member.Text ?? "").Trim(), (variable.Text ?? "").Trim());
 
-        _props.Children.Add(member);
-        _props.Children.Add(variable);
-        _props.Children.Add(bind);
+        panel.Add(member);
+        panel.Add(variable);
+        panel.Add(bind);
     }
 
     private void BuildSymbols(BehaviourGraphModel model)
@@ -889,12 +964,15 @@ public class MainWindow : Window
         _symbolAudit.Foreground = counts.VariablesConsistent && counts.EventsConsistent
             ? Ux.MetaBrush : Ux.BadBrush;
 
+        var readers = UsersByIndex(events: false);
+        var listeners = UsersByIndex(events: true);
+
         for (int i = 0; i < names.Count; i++)
         {
             var type = i < types.Count ? types[i] : SymbolEditor.VariableType.Int32;
             Paint(_symbols.Add(null, type.ToString().ToLowerInvariant(), i.ToString(), names[i],
                                i < values.Count ? SymbolEditor.DecodeValue(type, values[i]) : "",
-                               Users(events: false, i)).Tag($"v:{i}"));
+                               Users(readers, events: false, i)).Tag($"v:{i}"));
         }
 
         var usage = _xmlText.Length == 0
@@ -905,7 +983,7 @@ public class MainWindow : Window
         {
             usage.TryGetValue(i, out var lines);
             var row = Paint(_symbols.Add(null, "event", i.ToString(), events[i], "",
-                                         lines is { Count: > 0 } ? EventUsage.Summarise(lines) : Users(events: true, i)))
+                                         lines is { Count: > 0 } ? EventUsage.Summarise(lines) : Users(listeners, events: true, i)))
                 .Tag($"e:{i}");
             if (lines == null) continue;
 
@@ -930,10 +1008,27 @@ public class MainWindow : Window
     // consumer was found in this file, not that the symbol is dead. The Pip-Boy's iTabSync and
     // iCatSync are the worked example: nothing in the graph reads them, the game writes them and
     // reads them back, and the tab switching itself runs on events.
-    private string Users(bool events, int index)
+    // One scan for every index rather than one scan per symbol. A weapon behaviour declares 873
+    // symbols against seven megabytes of text, and asking one at a time took about two minutes of
+    // the load.
+    private Dictionary<int, List<string>> UsersByIndex(bool events)
+    {
+        var map = new Dictionary<int, List<string>>();
+        if (_xmlText.Length == 0) return map;
+
+        foreach (var reference in SymbolIndexFixup.References(_xmlText, events))
+        {
+            if (!map.TryGetValue(reference.Index, out var list))
+                map[reference.Index] = list = new List<string>();
+            list.Add(reference.ToString());
+        }
+        return map;
+    }
+
+    private string Users(Dictionary<int, List<string>> map, bool events, int index)
     {
         if (_xmlText.Length == 0) return "";
-        var users = SymbolIndexFixup.ReferencesTo(_xmlText, events, index);
+        var users = map.TryGetValue(index, out var found) ? found : new List<string>();
         if (users.Count == 0)
             return events
                 ? "nothing in this file listens for it; game code and scripts can still send it by name"
@@ -1096,23 +1191,45 @@ public class MainWindow : Window
         }
     }
 
-    private void ShowAddMenu(string context)
+    // A drag out to empty canvas says two things a right click does not: which slot wanted a node,
+    // and where. Both are held until the menu is answered, because the menu is what says what kind.
+    private void ShowAddMenu(string fromId, string field, Point at)
     {
         if (_xmlText.Length == 0) return;
 
-        var items = new List<MenuItem>();
+        string parent = fromId.Length > 0 ? fromId : _graph.SelectedId;
+        var items = new List<Control>();
+        var model = BehaviourGraphModel.Parse(_xmlText);
+
+        if (_graph.SelectedId.Length > 0)
+        {
+            string id = _graph.SelectedId;
+            var highlight = new MenuItem { Header = "Highlight the paths of " + Describe(model, id) };
+            highlight.Click += (_, _) => HighlightPaths(id);
+            items.Add(highlight);
+        }
+
+        if (_graph.HighlightId.Length > 0)
+        {
+            var clear = new MenuItem { Header = "Clear the highlight" };
+            clear.Click += (_, _) => HighlightPaths("");
+            items.Add(clear);
+        }
+
+        if (items.Count > 0) items.Add(new Separator());
+
         foreach (string kind in GraphAuthor.Kinds)
         {
             string captured = kind;
             var item = new MenuItem { Header = "Add " + captured };
-            item.Click += (_, _) => AddNode(captured, captured + "_new", "", _graph.SelectedId);
+            item.Click += (_, _) => AddNode(captured, captured + "_new", "", parent, field, at);
             items.Add(item);
         }
 
         if (_graph.SelectedId.Length > 0)
         {
             string id = _graph.SelectedId;
-            var delete = new MenuItem { Header = "Delete " + Describe(id) };
+            var delete = new MenuItem { Header = "Delete " + Describe(model, id) };
             delete.Click += (_, _) => DeleteNode(id);
             items.Add(delete);
         }
@@ -1121,14 +1238,48 @@ public class MainWindow : Window
         _graph.ContextMenu.Open(_graph);
     }
 
-    private void AddNode(string kind, string name, string animation, string parentId)
+    private void HighlightPaths(string objectId)
+    {
+        if (objectId.Length == 0)
+        {
+            _graph.ClearHighlight();
+            SetStatus("Highlight cleared.", Ux.MutedBrush);
+            return;
+        }
+
+        _graph.Highlight(objectId);
+        SetStatus($"Showing only what {Describe(objectId)} is wired to. Escape, or right click, to clear.",
+                  Ux.MetaBrush);
+    }
+
+    private void AddNode(string kind, string name, string animation, string parentId, string field, Point at)
     {
         if (_xmlText.Length == 0) { SetStatus("Read only: no text form loaded.", Ux.MutedBrush); return; }
 
         try
         {
-            _xmlText = GraphAuthor.AddNode(_xmlText, kind, name, animation, parentId, out string newId, out string note);
+            // A drag names the slot, so the node goes into that one rather than whichever slot the
+            // parent's class would otherwise be given. Dragging off a clip's triggers and getting a
+            // generator hung on something else is not what the wire said.
+            bool bySlot = field.Length > 0 && parentId.Length > 0;
+            _xmlText = GraphAuthor.AddNode(_xmlText, kind, name, animation, bySlot ? "" : parentId,
+                                           out string newId, out string note);
             SetDirty(true);
+            _graph.Place(newId, at);
+
+            if (bySlot)
+            {
+                try
+                {
+                    _xmlText = GraphLinks.Connect(_xmlText, parentId, field, newId, out string joined);
+                    note = $"created {name}, {joined}";
+                }
+                catch (Exception ex)
+                {
+                    note = $"created {name} but left it unattached: {ex.Message.Split('\n')[0]}";
+                }
+            }
+
             SetStatus(note + $"   (#{newId}, unsaved)", Ux.CodeBrush);
             RefreshAfterEdit(newId);
         }
@@ -1175,7 +1326,7 @@ public class MainWindow : Window
             var model = BehaviourGraphModel.Parse(_xmlText);
             _graph.Show(model);
             BuildSymbols(model);
-            _props.Children.Clear();
+            ClearProps();
         }
         catch (Exception ex)
         {
@@ -1227,7 +1378,7 @@ public class MainWindow : Window
         var model = BehaviourGraphModel.Parse(_xmlText);
         _graph.Show(model);
         BuildSymbols(model);
-        _props.Children.Clear();
+        ClearProps();
         ShowProps(objectId);
     }
 

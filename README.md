@@ -20,12 +20,19 @@ the game, with the evidence behind it, lives in the
   reference fields and labelled with the field that owns each link, so an edge says why it exists.
   Nodes are coloured by class family. Clip nodes show their animation path and any non-default
   playback speed inline.
-- **Editable nodes**: the common fields (`mode`, `playbackSpeed`, `userControlledTimeFraction`,
-  crop times, `startTime`, `enable`, `weight`, ids) are text boxes on the node itself. Type, tab out,
-  and the change is staged. Every other field is editable from the properties panel in the tree view.
+- **Editable nodes**: click a node and every field it has appears in the properties panel beside the
+  canvas, one text box each: `animationName`, `mode`, `playbackSpeed`, `userControlledTimeFraction`,
+  the crop times, `startTime`, `flags`, `weight`, ids, all of them. Double click a node to jump
+  straight into the first box. Type, tab out, and the change is staged. A field the file leaves empty,
+  such as `animationBundleName`, is offered as an empty box rather than hidden, so it can be given a
+  value. The same panel sits beside the tree view.
   Save writes back to `.hkx` and keeps the original as `.bak`. Before it overwrites anything it reads
   the file hkxpack just produced back out and counts it; if objects went missing on the way through,
   nothing is written and it says what was lost.
+- **Highlight one state's paths**: right click a node and pick "Highlight the paths of ...". Every
+  wire that does not touch that node drops to half opacity and every unrelated node dims, so a single
+  state's routes are readable in a graph that draws a few hundred wires over each other. Escape, or
+  right click again, clears it.
 - **Variable bindings on the node**: a node bound to a graph variable says so, in the form
   `userControlledTimeFraction driven by fRadLevel`, with the variable resolved to its name.
 - **Adding nodes**: select a node in the graph, type a name, and press one of the add buttons. The
@@ -54,7 +61,9 @@ the game, with the evidence behind it, lives in the
   centres on that node and selects it, which matters because the node that is wrong is usually the
   one off screen. Marks survive edits until the next check, so fixing one thing does not clear the
   rest of the list.
-- Filter by name, class or animation.
+- **Filter by name, class or animation**, on whichever view is showing. The tree narrows to the
+  matches; on the canvas the matches stay lit, everything else dims, and a wire touching a match stays
+  lit so you can see where it connects. Enter goes to the first match.
 
 ## Structural editing
 
