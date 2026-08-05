@@ -57,7 +57,7 @@ public static class SymbolIndexFixup
     };
 
     private static readonly Regex Token = new(
-        @"<hkobject(?:\s+class=""(?<cls>[^""]+)"")?[^>]*?(?<selfclose>/)?>" +
+        @"<hkobject(?:\s+class=""(?<cls>[^""]+)"")?(?:\s+name=""#(?<id>\d+)"")?[^>]*?(?<selfclose>/)?>" +
         @"|</hkobject>" +
         @"|<hkparam name=""(?<param>[^""]+)"">(?<value>[^<\r\n]*)</hkparam>" +
         @"|<hkparam name=""(?<open>[^""]+)""[^>]*?(?<paramclose>/)?>" +
@@ -71,6 +71,7 @@ public static class SymbolIndexFixup
         public int Value;
         public string Param = "";
         public string OwnerClass = "";
+        public string OwnerId = "";
         public string HolderClass = "";
         public string HolderParam = "";
     }
@@ -90,18 +91,23 @@ public static class SymbolIndexFixup
         var unknown = new HashSet<string>(StringComparer.Ordinal);
         var classStack = new List<string>();
         var paramStack = new List<string>();
+        var idStack = new List<string>();
 
         foreach (Match m in Token.Matches(xml))
         {
             if (m.Value.StartsWith("</hkobject", StringComparison.Ordinal))
             {
                 if (classStack.Count > 0) classStack.RemoveAt(classStack.Count - 1);
+                if (idStack.Count > 0) idStack.RemoveAt(idStack.Count - 1);
                 continue;
             }
             if (m.Value.StartsWith("<hkobject", StringComparison.Ordinal))
             {
                 if (!m.Groups["selfclose"].Success)
+                {
                     classStack.Add(m.Groups["cls"].Success ? m.Groups["cls"].Value : "");
+                    idStack.Add(m.Groups["id"].Success ? m.Groups["id"].Value : "");
+                }
                 continue;
             }
             if (m.Value.StartsWith("</hkparam", StringComparison.Ordinal))
@@ -147,8 +153,13 @@ public static class SymbolIndexFixup
                     holderClass = owner;
             }
 
+            string ownerId = "";
+            for (int i = idStack.Count - 1; i >= 0; i--)
+                if (idStack[i].Length > 0) { ownerId = idStack[i]; break; }
+
             found.Add(new Site
             {
+                OwnerId = ownerId,
                 Start = m.Groups["value"].Index,
                 Length = m.Groups["value"].Length,
                 Value = value,
@@ -203,7 +214,8 @@ public static class SymbolIndexFixup
         var users = new List<string>();
         foreach (var site in Sites(xml, events, out _))
             if (site.Value >= limit)
-                users.Add($"{site.OwnerClass}.{site.Param} uses index {site.Value}");
+                users.Add((site.OwnerId.Length > 0 ? $"#{site.OwnerId} " : "")
+                          + $"{site.OwnerClass}.{site.Param} uses index {site.Value}");
         return users;
     }
 

@@ -20,6 +20,7 @@ public static class Ux
     public static readonly Color TextDisabled = Color.Parse("#5A5A5A");
     public static readonly Color TextCode = Color.Parse("#00A0DA");
     public static readonly Color Bad = Color.Parse("#FF5555");
+    public static readonly Color Warn = Color.Parse("#E0A030");
 
     public static readonly IBrush BaseBrush = new SolidColorBrush(Base);
     public static readonly IBrush CardBrush = new SolidColorBrush(Card);
@@ -31,6 +32,7 @@ public static class Ux
     public static readonly IBrush CodeBrush = new SolidColorBrush(TextCode);
     public static readonly IBrush AccentBrush = new SolidColorBrush(Accent);
     public static readonly IBrush BadBrush = new SolidColorBrush(Bad);
+    public static readonly IBrush WarnBrush = new SolidColorBrush(Warn);
 
     public static TextBox Field(string watermark = "", double minWidth = 0) => new()
     {

@@ -49,6 +49,11 @@ the game, with the evidence behind it, lives in the
   flat 1,1,1 and printing all of them hides the ones that are not.
 - **Check graph**: looks for the mistakes hkxpack cannot, listed under Validating below. With a real
   project folder around the file it also checks every clip's animation against the folder on disk.
+  Findings do not just print: the node each one is about is **outlined red for an error and amber for
+  a warning** on the canvas, and the problem list under it names them all. Click a row and the canvas
+  centres on that node and selects it, which matters because the node that is wrong is usually the
+  one off screen. Marks survive edits until the next check, so fixing one thing does not clear the
+  rest of the list.
 - Filter by name, class or animation.
 
 ## Structural editing

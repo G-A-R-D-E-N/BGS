@@ -3,6 +3,27 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-04, check graph marks the canvas
+
+**A finding now points at a node instead of scrolling past in a status line.** Check graph outlines
+the node it is about, red for an error and amber for a warning, with a soft halo outside the border so
+it is still findable zoomed out where a one pixel edge is one pixel. The problem list under the canvas
+names every finding, and clicking a row centres the view on that node and selects it, which is the
+part that matters: the node that is wrong is almost always the one off screen.
+
+Getting there needed the findings to know what they were about. Every one already started its location
+with the object id, so a `Finding` now carries that id, taken from the text rather than threaded
+through the forty odd places that build one. Errors beat warnings on the same node, or a node with one
+of each would draw amber and read as something that can be left alone.
+
+Measured rather than assumed: over the 531 vanilla behaviour files the checker produces 208 findings
+and **all 208 can be placed on a node**. It was 197 before this. The last 11 were symbol index
+references past the end of the declared list, which named the class and the member but not which of
+the file's objects carried it, so the one fault nobody could locate was the one that needed locating
+most. The scanner tracks the enclosing object now.
+
+Marks are kept across rebuilds, so fixing one thing does not silently clear the rest of the list.
+
 ## 2026-08-04, the refusal now says which state and what to do
 
 Save blocking a file the game cannot load is right, but the first version of that block only said how

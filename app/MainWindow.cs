@@ -47,6 +47,9 @@ public class MainWindow : Window
     private readonly TextBox _symbolValue = Ux.Field("value, for a variable", 130);
     private readonly TextBlock _symbolAudit = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
 
+    private readonly HkGrid _problems = new(("", 70), ("Object", -3), ("What is wrong", -7));
+    private readonly TextBlock _problemBar = new() { Foreground = Ux.MetaBrush, FontSize = 12, Margin = new Thickness(2, 6, 2, 2) };
+
     private readonly Dictionary<int, int> _offsetToIndex = new();
     private HashSet<string> _emptyStates = new();
     private List<string> _objectIds = new();
@@ -100,7 +103,7 @@ public class MainWindow : Window
 
         var tabs = new TabControl { Padding = new Thickness(0, 8, 0, 0) };
         tabs.Items.Add(Tab("Tree", BuildTreeTab()));
-        tabs.Items.Add(Tab("Graph", Framed(_graph)));
+        tabs.Items.Add(Tab("Graph", BuildGraphTab()));
         tabs.Items.Add(Tab("Symbols", BuildSymbolsTab()));
         tabs.Items.Add(Tab("Chain", _chain));
         tabs.Items.Add(Tab("Animation", BuildAnimationTab()));
@@ -164,6 +167,32 @@ public class MainWindow : Window
             grid.Children.Add(rows[i].Control);
         }
         return grid;
+    }
+
+    // The problem list sits under the canvas rather than in a dialog, because the point of it is to
+    // be read while looking at the node it is about.
+    private Control BuildGraphTab()
+    {
+        _problems.Height = 150;
+        _problems.SelectionChanged += OnProblemSelected;
+
+        var panel = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(_problemBar, Dock.Bottom);
+        DockPanel.SetDock(_problems, Dock.Bottom);
+        panel.Children.Add(_problemBar);
+        panel.Children.Add(_problems);
+        panel.Children.Add(Framed(_graph));
+
+        _problems.IsVisible = false;
+        _problemBar.IsVisible = false;
+        return panel;
+    }
+
+    private void OnProblemSelected()
+    {
+        if (_problems.SelectedTag is not string id || id.Length == 0) return;
+        if (_graph.FocusOn(id)) SelectObjectId(id);
+        else SetStatus("That one is not drawn on the canvas.", Ux.MutedBrush);
     }
 
     private Control BuildTreeTab()
@@ -1221,7 +1250,29 @@ public class MainWindow : Window
 
         foreach (var f in findings) Console.WriteLine("check  " + f);
 
-        if (errors.Count == 0 && warnings.Count == 0)
+        _graph.Mark(GraphValidator.ByObject(findings));
+
+        _problems.Clear();
+        foreach (var f in errors.Concat(warnings))
+        {
+            bool error = f.Level == GraphValidator.Level.Error;
+            _problems.Add(null, error ? "error" : "warning", f.Where, f.What)
+                      .Colour(0, error ? Ux.BadBrush : Ux.WarnBrush)
+                      .Colour(1, Ux.CodeBrush)
+                      .Colour(2, Ux.MetaBrush)
+                      .Tag(f.ObjectId);
+        }
+
+        bool any = findings.Count > 0;
+        _problems.IsVisible = any;
+        _problemBar.IsVisible = any;
+        _problemBar.Text = any
+            ? $"{errors.Count} error{(errors.Count == 1 ? "" : "s")}, " +
+              $"{warnings.Count} warning{(warnings.Count == 1 ? "" : "s")}. " +
+              "Click one to jump to it on the canvas. Errors are outlined red, warnings amber."
+            : "";
+
+        if (!any)
         {
             SetStatus("Checked: nothing wrong found. That is not a promise the game will load it.", Ux.MetaBrush);
             return;
