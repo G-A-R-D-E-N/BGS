@@ -72,6 +72,69 @@ public static class HkxTextEdit
         return null;
     }
 
+    /// Why the picked file is not a usable Java, or null if it runs. A path that exists is not the
+    /// same as a Java that starts, and accepting one on the strength of its name is how the tool ends
+    /// up read only again on the next save with no explanation.
+    public static string? WhyNotJava(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "No file was picked.";
+        if (!File.Exists(path)) return $"{path} does not exist.";
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = path,
+                Arguments = "-version",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+
+            using var p = Process.Start(psi);
+            if (p == null) return $"{Path.GetFileName(path)} would not start.";
+
+            // java writes its version banner to stderr, not stdout.
+            string banner = p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
+            if (!p.WaitForExit(15000)) { try { p.Kill(true); } catch { } return $"{Path.GetFileName(path)} did not answer -version."; }
+            if (p.ExitCode != 0) return $"{Path.GetFileName(path)} -version failed ({p.ExitCode}).";
+            if (banner.IndexOf("version", StringComparison.OrdinalIgnoreCase) < 0)
+                return $"{Path.GetFileName(path)} ran, but did not report a Java version. Pick java or java.exe from a JDK or JRE bin folder.";
+            return null;
+        }
+        catch (Exception e)
+        {
+            return $"{Path.GetFileName(path)} could not be run: {e.Message.Split('\n')[0]}";
+        }
+    }
+
+    /// The version banner of a Java known to work, for reporting back what was accepted.
+    public static string JavaVersion(string path)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = path,
+                Arguments = "-version",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var p = Process.Start(psi)!;
+            string banner = p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
+            p.WaitForExit(15000);
+            foreach (string line in banner.Split('\n'))
+                if (line.Trim().Length > 0) return line.Trim();
+        }
+        catch
+        {
+        }
+        return "";
+    }
+
     /// An empty working directory, on a filesystem where something else may be holding a handle to
     /// the one being replaced. On Windows an antivirus scanner or the search indexer opening a file
     /// moments after it is written makes the delete fail, and it succeeds a fraction of a second
@@ -130,7 +193,6 @@ public static class HkxTextEdit
         string[] relative =
         {
             Path.Combine("tools", "hkxpack-cli.jar"),
-            Path.Combine("..", "..", "Tools", "FO4AnimForge", "tools", "extern", "hkxpack", "hkxpack-cli.jar"),
         };
         foreach (var root in new[] { AppDirectory, projectRoot })
         {

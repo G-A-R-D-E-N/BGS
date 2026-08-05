@@ -61,6 +61,43 @@ the game, with the evidence behind it, lives in the
   centres on that node and selects it, which matters because the node that is wrong is usually the
   one off screen. Marks survive edits until the next check, so fixing one thing does not clear the
   rest of the list.
+- **The character, not just the bones**: point Playback at a `.nif`, with the Mesh button or by naming
+  it on the command line beside the `.hkx`, and the mesh is skinned to the skeleton and posed with the
+  clip. Wireframe, drawn on the same 2D surface as the rest of the window, so the tool takes on no
+  new dependency. Bones are matched to the skeleton by name; any that do not match are named rather
+  than dropped, and vertices weighted only to those stay at their rest position. Nothing names a mesh
+  from inside a behaviour, a character or a skeleton, so it has to be pointed at one; the race record
+  lookup that would find it automatically is a later job.
+- **Playback tab**: select a clip generator and the animation it names is drawn on its own skeleton,
+  as lines between joints, with play, pause, step and a scrub bar. The rig comes off the project
+  chain, because a behaviour file names no skeleton and the character does. Drag to orbit, right
+  drag to pan, wheel to zoom, hover a joint for its bone name, and tick Reference pose to draw the
+  rest pose behind the animated one. Opening an animation file on its own plays it directly. Nothing
+  here writes to the file: scrubbing is a view, so it takes no undo step and cannot arm Save. An
+  animation authored against a different rig says which bone it wanted and shows the rest pose rather
+  than drawing a wrong one.
+- **Undo and redo**: Ctrl+Z and Ctrl+Y, or the buttons beside Save, back to a hundred steps. Every
+  editing path goes through one place, so nothing can change the document behind the stack's back.
+  Creating a node and wiring it up is one step, not two. The unsaved marker is measured against what
+  was last written rather than latched on, so undoing back past a save says the file matches disk.
+- **Where a symbol is used**: expand a variable or an event in the Symbols tab and every place the
+  file names it is listed, each one naming the object it sits in. Click a row and the canvas centres
+  on that node, the same jump the check results use. The other direction is on the node: a selected
+  node's panel lists the symbols it reads, writes or fires, resolved to their declared names.
+- **Which scripts send an event**: point "Scripts folder..." at a folder of Papyrus `.psc` sources and
+  each event says which scripts name it. Reported as information, never as a verdict, because the
+  engine sends plenty of events itself; a name no script sends is not evidence of anything. Silent
+  when no folder is set.
+- **Compare tab**: pick another copy of the open behaviour and read what differs, which is how a mod
+  conflict gets answered without unpacking both by hand. Added objects, removed objects, and changed
+  values with both sides shown. Ids are meaningless across files, so matching is on class and
+  contents, and hkxpack's renumbering reads as no difference at all.
+- **Check project**: the same checks run over every behaviour in the project, reported grouped by
+  file. Most real problems only exist between files: a clip that plays an animation no file in the
+  chain provides reads as fine one file at a time.
+- **Find Java**: when autodetection misses a Java install the tool goes read only, and the button next
+  to the message is how to fix it without leaving the window. The pick is checked by running
+  `-version` rather than taken on its name.
 - **Filter by name, class or animation**, on whichever view is showing. The tree narrows to the
   matches; on the canvas the matches stay lit, everything else dims, and a wire touching a match stays
   lit so you can see where it connects. Enter goes to the first match.
@@ -202,7 +239,10 @@ Linux one on a bare Debian image with no .NET and no build tools to prove it act
   reader and work without Java, but field-level editing and saving go through hkxpack. Without it the
   tool stays read-only and says so in the status line rather than pretending. hkxpack itself is
   bundled at `tools/hkxpack-cli.jar` (MIT, see `THIRD_PARTY_NOTICES.md`) and is found automatically
-  next to the executable, so only Java has to be supplied.
+  next to the executable, so only Java has to be supplied. If it is installed somewhere the search
+  does not reach, "Find Java..." in the status bar points the tool at it and remembers.
+- **Optional: a folder of Papyrus `.psc` sources**, only for showing which scripts send each animation
+  event. Nothing else needs it and nothing changes when it is not set.
 
 ## Layout
 
@@ -324,6 +364,25 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
 
 ## Known limits
 
+- The Playback viewport draws a wireframe, not a shaded character, and applies no root motion to the
+  camera, so a clip that travels walks off the middle of the view rather than staying put. What it is
+  for is seeing which animation a clip actually names and roughly what that animation does, not
+  judging how it looks in game.
+- A mesh only follows the skeleton for the bones the two agree on by name. Creature meshes match
+  cleanly: Dogmeat's 118 bone references and the Mirelurk's 95 across eight shapes all found a
+  skeleton bone. The human body mesh does not, and this is a real limit rather than a fault: it
+  weights 45 of its 58 bones to skin helper bones, `Chest_skin` and the like, which live in the mesh
+  skeleton and not in the Havok one, so those vertices hold their rest position. `symrm mesh` reports
+  the shortfall by name. Whether the residual drift on the human's remaining bones is that same
+  mismatch or something else is not established.
+- The pose itself is checked against known numbers and against real game files: a three bone rig with
+  hand-worked positions in `symrm test`, and the vanilla 95 bone character skeleton posed through
+  `symrm pose`, where the composed frame puts the pelvis at z 65, the head at z 101 and the feet near
+  the floor. What **cannot** be checked without eyes on a window is whether the projection reads
+  correctly: orbit, pan and zoom feel, whether the ground grid helps or clutters, and whether the
+  joint hover radius is comfortable. Those are the parts to look at first.
+- An animation whose class the reader cannot decode has no frames, so it cannot be drawn. That is the
+  same list the Animation tab reports and it is not specific to playback.
 - Reading is measured, not assumed, over the whole game rather than a subset. All 531 behaviour files
   in `Fallout4 - Animations.ba2`, all 5329 states: every one resolves to a generator that exists in
   its own file, across 15 generator classes, and every transition resolves its event name. Nothing is

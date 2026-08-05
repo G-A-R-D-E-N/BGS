@@ -525,6 +525,13 @@ public class HkxBinaryReader
             ulong wordS = t < wordsS.Count ? wordsS[t] : 0;
 
             var track = new HkxTrackData();
+            for (int c = 0; c < 3; c++)
+            {
+                track.TranslationAnimated[c] = LosslessType(wordT, c) != TrackClear;
+                track.ScaleAnimated[c] = LosslessType(wordS, c) != TrackClear;
+            }
+            track.RotationAnimated = LosslessType(wordR, 0) != TrackClear;
+
             for (int f = 0; f < frames; f++)
             {
                 track.Translations.Add(new Vector3(
@@ -696,6 +703,17 @@ public class HkxBinaryReader
             {
                 var mask  = masks[ti];
                 var track = anim.Tracks[ti];
+
+                // Read off the mask rather than off the decoded values, and OR across blocks: a
+                // channel driven in one block and clear in another is still a channel the animation
+                // drives. Taken here rather than inside the branches below because those can bail out
+                // through a goto on a short read.
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    if (mask.GetPosType(axis) != "identity") track.TranslationAnimated[axis] = true;
+                    if (mask.GetScaleType(axis) != "identity") track.ScaleAnimated[axis] = true;
+                }
+                if (mask.GetRotType() != "identity") track.RotationAnimated = true;
 
                 // ── POSITION ──
                 var posFrames = new List<Vector3>(framesInBlock);

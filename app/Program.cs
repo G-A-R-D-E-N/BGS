@@ -20,9 +20,23 @@ public class App : Application
             desktop.MainWindow = window;
 
             // Anything on the command line that is a file gets opened, which is what a file manager
-            // will do when the exe is set as a handler for .hkx.
-            foreach (string arg in desktop.Args ?? Array.Empty<string>())
-                if (File.Exists(arg)) { window.Open(arg); break; }
+            // will do when the exe is set as a handler for .hkx. A .nif alongside it is the mesh to
+            // draw: nothing in a behaviour, a character or a skeleton names one, so being told is
+            // the only way to know until the race record lookup exists.
+            var args = desktop.Args ?? Array.Empty<string>();
+            foreach (string arg in args)
+                if (File.Exists(arg) && !arg.EndsWith(".nif", StringComparison.OrdinalIgnoreCase))
+                {
+                    window.Open(arg);
+                    break;
+                }
+
+            foreach (string arg in args)
+                if (File.Exists(arg) && arg.EndsWith(".nif", StringComparison.OrdinalIgnoreCase))
+                {
+                    window.OpenMesh(arg);
+                    break;
+                }
         }
         base.OnFrameworkInitializationCompleted();
     }

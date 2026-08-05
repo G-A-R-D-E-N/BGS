@@ -80,6 +80,33 @@ public sealed class HkGrid : Border
         return row;
     }
 
+    /// Selects the first row carrying this tag, expanding whatever it sits under. Lets a check drive
+    /// selection the way a click does rather than calling the handler behind it.
+    public bool SelectByTag(object tag)
+    {
+        foreach (var item in _tree.Items)
+            if (Select(item as TreeViewItem, tag)) return true;
+        return false;
+    }
+
+    private bool Select(TreeViewItem? item, object tag)
+    {
+        if (item == null) return false;
+        if (item.Tag != null && item.Tag.Equals(tag))
+        {
+            _tree.SelectedItem = item;
+            return true;
+        }
+
+        foreach (var child in item.Items)
+            if (Select(child as TreeViewItem, tag))
+            {
+                item.IsExpanded = true;
+                return true;
+            }
+        return false;
+    }
+
     public void SetAllExpanded(bool expanded)
     {
         foreach (var item in _tree.Items) Walk(item as TreeViewItem, expanded);

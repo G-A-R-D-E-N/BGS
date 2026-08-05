@@ -3,6 +3,110 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, the mesh, not just the bones
+
+The Playback viewport draws the actual character. Point the tool at a `.nif`, with the Mesh button or
+by naming it on the command line beside the `.hkx`, and it is skinned to the Havok skeleton and posed
+with the clip. Wireframe rather than shaded, so the same 2D surface the rest of the window uses draws
+it and the tool takes on no new dependency.
+
+New readers under `src/Nif`: the Gamebryo packfile header, BSTriShape and BSSubIndexTriShape
+geometry, and BSSkin::Instance and BSSkin::BoneData for the weights. Every offset was read off the
+game's own files and the arithmetic closes on itself, which is what makes it checkable: the block
+table's sizes sum to eight bytes short of the file and those eight are the footer, each shape's
+declared dataSize equals its vertex count times its stride plus six per triangle, and BoneData's
+block size is four bytes of count plus exactly 68 per bone.
+
+**The fault that would have shipped.** BSSkin::BoneData writes a rotation row by row for column
+vectors and System.Numerics multiplies row vectors, so read straight across the two disagree by a
+transpose. The mesh came out plausibly shaped and wrongly placed, which reads as a camera problem
+rather than a maths one. Picked by measuring rather than reasoning: posing a mesh back onto the
+skeleton's own reference pose, which is the pose it is authored on and so must not move it, drifts
+0.245 units per vertex transposed against 50 to 107 read straight across, inverted, or both.
+
+That measurement is now part of `symrm mesh` and fails the command rather than printing a warning.
+It counts only the vertices every one of whose bones matched the skeleton, which matters: a human
+body mesh weights 45 of its 58 bones to skin helper bones no Havok skeleton carries, and counting
+those reported the binding gap as though it were a transform fault.
+
+Bone matching is by name and never by position, and a mesh bone with no skeleton bone of that name is
+named in the panel and on the console rather than dropped. Vertices weighted only to bones that did
+not match stay at their rest position instead of collapsing to the origin.
+
+Also: picking a clip in the Tree tab now loads its pose the same as picking one on the canvas does.
+The tree filled only the properties panel, so a clip chosen from that side left the viewport empty
+and the tab looked broken.
+
+## 2026-08-05, the animation a clip points at, drawn
+
+Select a clip generator and see what it plays, on its own skeleton, with play, pause, step and a
+scrub bar. The rig comes off the project chain rather than the open file, because a behaviour names
+no skeleton and the character does.
+
+The split is the same one the node canvas has with `GraphAuthor`: `AnimationPose` composes every bone
+position and `SkeletonView` only projects them, so a pose that is wrong is wrong somewhere a headless
+check can reach. `symrm pose <skeleton.hkx> <animation.hkx> [frame]` prints exactly what the viewport
+draws, and `symrm skeleton` now composes through the same code instead of its own copy of the maths.
+
+**The bug this would have shipped with.** A Havok track drives a channel or leaves it clear, and clear
+means the bone keeps its reference pose value there. Both decoders prefill a cleared channel with
+zero, identity or one, which is what the engine does to the transform before it fills anything in and
+is indistinguishable from a bone genuinely at the origin once it has. Posing on the raw value
+collapses every rotation-only bone onto its parent, which is most of a character. `HkxTrackData` now
+carries the per-axis mask flags from both decoders and `AnimationPose` falls back per channel.
+Pinned by `AClearChannelKeepsTheReferencePose`.
+
+Tracks are not bones either: `transformTrackToBoneIndices` says which bone each track drives, a bone
+with no track keeps its reference pose, and an animation authored against a different rig is refused
+by name rather than drawn wrong. Vanilla ships plenty of the last case, since a shared behaviour
+references per creature animations not every creature has.
+
+Nothing here writes to the document. Scrubbing is a view of a file on disk, so it takes no undo step
+and cannot arm Save, which the window checks assert rather than assume.
+
+Also: `symrm extract` pulls anything out of a BA2 by path substring, `--tree` keeping the archive's
+own folders, which is what resolving a project chain afterwards needs.
+
+## 2026-08-05, undo, a way out of read only, and reading two files against each other
+
+**Undo and redo.** Every edit used to rewrite the loaded document in place with no way back except
+reloading and losing the session. The document is one string, so a step back is a copy of it: every
+mutating path now goes through `MainWindow.Commit`, which is the only place the document changes
+outside a load, so nothing can edit around the stack. Ctrl+Z and Ctrl+Y, plus buttons, capped at 100
+steps. Creating a node and wiring it up is one step, not two, and so is declaring a variable and
+binding it. The unsaved marker is measured against what was last written rather than latched on, so
+undoing back past a save says the file matches disk instead of claiming there is still work to save.
+
+**Find Java.** When autodetection missed a Java install the window went read only with no way to fix
+it from inside. There is now a Find Java button, shown only when Java is what is missing. The pick is
+validated by running `-version` rather than accepted on its name, and read only is lifted by redoing
+the unpack, not by flipping a flag.
+
+**Compare tab.** Point the object walk the repack guard already uses at somebody else's file instead
+of at this file's own repack, and it reads mod conflicts: what each side added, removed, and which
+field values differ, with both sides shown. Ids are meaningless across files, so matching is on class
+and normalised contents, and renumbering alone reads as no difference. The two sequences resynchronise
+with a lookahead, so a file with an object added or removed still lines up after it.
+
+**Where a symbol is used, both directions.** `SymbolIndexFixup` already walked every site; it now
+keeps the object id it found each one in, so the Symbols tab lists usages as rows that can be clicked
+through to the node instead of as a summary string. The other direction is on the node itself: a
+selected node lists the symbols it touches, resolved to their declared names, with an index past the
+end of the declared list called out in red.
+
+**Which scripts send an event.** Option three from the closed ticket about events with no sender in
+their own file: scan a folder of Papyrus `.psc` sources for `PlayAnimation` and its siblings and show
+which scripts name each event. Information, never a verdict, and silent when no folder is set.
+Compiled `.pex` is deliberately not read: its string table holds every string the script uses, so
+matching against it would claim a sender for names the script only prints.
+
+**Check project.** The same checks, run over every behaviour in the project and reported grouped by
+file. A clip playing an animation no file in the chain provides reads as fine one file at a time.
+
+Also: the hkxpack fallback no longer names another project's folder layout, and `LICENSE` is the
+canonical MIT text with nothing appended, so licence detectors read it as MIT. The scope note that
+used to sit at the bottom of it now heads `THIRD_PARTY_NOTICES.md`.
+
 ## 2026-08-05, editing did not work on Windows at all
 
 **Reported from the first beta: every node shows zero editable fields, nodes cannot be connected or

@@ -8,7 +8,9 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using OpenCommonwealth.Services.Hkx;
+using OpenCommonwealth.Services.Nif;
 
 namespace BehaviourStudio.App;
 
@@ -25,6 +27,9 @@ public class MainWindow : Window
     private readonly Inspector _graphProps = new(360);
     private readonly GraphView _graph = new();
     private readonly Button _saveButton;
+    private readonly Button _undoButton;
+    private readonly Button _redoButton;
+    private readonly Button _findJava;
 
     private readonly HkGrid _tree = new(("Node", -4), ("Havok class", -3), ("Animation", -4), ("Offset", 90));
     private readonly HkGrid _symbols =
@@ -47,6 +52,36 @@ public class MainWindow : Window
     private readonly TextBox _symbolName = Ux.Field("name", 170);
     private readonly TextBox _symbolValue = Ux.Field("value, for a variable", 130);
     private readonly TextBlock _symbolAudit = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private PapyrusEvents.Index _papyrus = new();
+    private bool _papyrusScanned;
+
+    private readonly SkeletonView _skeleton = new();
+    private readonly TextBlock _playbackSummary =
+        new() { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _frameLabel = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private readonly Slider _scrub = new() { Minimum = 0, Maximum = 0, SmallChange = 1, LargeChange = 5 };
+    private Button _playButton = Ux.Secondary("Play");
+    private HkxSkeleton? _poseSkeleton;
+    private HkxAnimationData? _poseAnimation;
+    private string _poseSource = "";
+    private int _poseFrame;
+    private bool _scrubbing;
+    private DispatcherTimer? _clock;
+    private HkxSkeleton? _cachedSkeleton;
+    private string _cachedSkeletonFor = "";
+
+    // The mesh, its edges worked out once, and which skeleton bone each of its own bones is. All
+    // three are per shape and none of them change while scrubbing, so only the vertex positions are
+    // recomputed per frame.
+    private readonly List<(NifShape Shape, SkinnedMesh.Binding Binding, List<(int From, int To)> Edges)>
+        _meshShapes = new();
+    private string _meshPath = "";
+
+    private readonly HkGrid _diff =
+        new(("Change", 80), ("Havok class", -3), ("Field or name", -3), ("In the open file", -4),
+            ("In the other file", -4));
+    private readonly TextBlock _diffSummary =
+        new() { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap };
 
     private readonly HkGrid _problems = new(("", 70), ("Object", -3), ("What is wrong", -7));
     private readonly TextBlock _problemBar = new() { Foreground = Ux.MetaBrush, FontSize = 12, Margin = new Thickness(2, 6, 2, 2) };
@@ -63,6 +98,15 @@ public class MainWindow : Window
     private ProjectChain? _projectChain;
     private string _selectedId = "";
     private bool _dirty;
+
+    // The document is one string, so a step back is a copy of it. Every mutation goes through Commit,
+    // which is the only place _xmlText is allowed to change outside a load, so nothing can edit
+    // behind the stack's back. Depth is capped because a long session on a seven megabyte weapon
+    // behaviour would otherwise keep every version of it alive.
+    private const int UndoDepth = 100;
+    private readonly List<string> _undo = new();
+    private readonly List<string> _redo = new();
+    private string _savedXml = "";
 
     public MainWindow()
     {
@@ -89,9 +133,26 @@ public class MainWindow : Window
 
         var check = Ux.Secondary("Check graph");
         check.Click += (_, _) => Validate();
+        var checkProject = Ux.Secondary("Check project");
+        checkProject.Click += async (_, _) => await ValidateProject();
         _saveButton = Ux.Primary("Save to .hkx");
         _saveButton.IsEnabled = false;
         _saveButton.Click += (_, _) => Save();
+
+        _undoButton = Ux.Secondary("Undo");
+        _undoButton.IsEnabled = false;
+        _undoButton.Click += (_, _) => Undo();
+        ToolTip.SetTip(_undoButton, "Ctrl+Z");
+        _redoButton = Ux.Secondary("Redo");
+        _redoButton.IsEnabled = false;
+        _redoButton.Click += (_, _) => Redo();
+        ToolTip.SetTip(_redoButton, "Ctrl+Y");
+
+        _findJava = Ux.Secondary("Find Java...");
+        _findJava.IsVisible = false;
+        _findJava.Click += async (_, _) => await PickJava();
+
+        KeyDown += OnWindowKey;
 
         _tree.SelectionChanged += OnTreeSelected;
         _symbols.SelectionChanged += OnSymbolSelected;
@@ -110,6 +171,8 @@ public class MainWindow : Window
         tabs.Items.Add(Tab("Symbols", BuildSymbolsTab()));
         tabs.Items.Add(Tab("Chain", _chain));
         tabs.Items.Add(Tab("Animation", BuildAnimationTab()));
+        tabs.Items.Add(Tab("Playback", BuildPlaybackTab()));
+        tabs.Items.Add(Tab("Compare", BuildDiffTab()));
 
         Content = new Border
         {
@@ -120,7 +183,7 @@ public class MainWindow : Window
                 (Ux.Pill(_summary), false),
                 (Bar(_filter, expand, collapse), false),
                 (tabs, true),
-                (Bar(Ux.Pill(_status), check, _saveButton), false)),
+                (Bar(Ux.Pill(_status), _findJava, _undoButton, _redoButton, checkProject, check, _saveButton), false)),
         };
 
         SetSummary("No file loaded.", Ux.MutedBrush);
@@ -226,6 +289,7 @@ public class MainWindow : Window
     public string FramePageLabel => _framePage.Text ?? "";
     public int AnimationFrameCount => _animationData?.NumFrames ?? 0;
     public int AnimationTrackCount => _animationData?.Tracks.Count ?? 0;
+    public int AnimationAnnotationCount => _animationData?.Annotations.Count ?? 0;
     public HkGrid SymbolGrid => _symbols;
     public string FractionAnswer => _fractionAnswer.Text ?? "";
     public int AimedFrame => _aimedFrame;
@@ -236,6 +300,18 @@ public class MainWindow : Window
     /// Selects through the same handler a click on the canvas uses, so a check exercises the path a
     /// person takes rather than a parallel one.
     public void SelectNode(string objectId) => SelectObjectId(objectId);
+
+    /// The same, from the tree's end: sets the tree's own selection and lets its handler run, rather
+    /// than calling what that handler calls. The two used to reach different places.
+    public bool SelectFromTree(string objectId)
+    {
+        int index = _objectIds.IndexOf(objectId);
+        if (index < 0) return false;
+
+        foreach (var (offset, at) in _offsetToIndex)
+            if (at == index) return _tree.SelectByTag(offset);
+        return false;
+    }
 
     /// Drives the fraction lookup the way a person does, through the same field and the same handler,
     /// so a check exercises what the button exercises rather than a parallel path.
@@ -491,6 +567,517 @@ public class MainWindow : Window
         return annotation.Length > 0 ? annotation : $"track {track}";
     }
 
+    // A clip generator names an animation, and until now the only way to know what that animation was
+    // was to remember it. Nothing here writes to the document: scrubbing and playing are views of a
+    // file on disk, so they take no undo step and cannot make the graph dirty.
+    private Control BuildPlaybackTab()
+    {
+        _playButton.Click += (_, _) => TogglePlay();
+
+        var first = Ux.Secondary("|<");
+        first.Click += (_, _) => ShowFrame(0, stop: true);
+        var back = Ux.Secondary("<");
+        back.Click += (_, _) => ShowFrame(_poseFrame - 1, stop: true);
+        var forward = Ux.Secondary(">");
+        forward.Click += (_, _) => ShowFrame(_poseFrame + 1, stop: true);
+        var last = Ux.Secondary(">|");
+        last.Click += (_, _) => ShowFrame(int.MaxValue, stop: true);
+
+        var fit = Ux.Secondary("Fit");
+        fit.Click += (_, _) => _skeleton.Frame();
+
+        var reference = new CheckBox
+        {
+            Content = "Reference pose",
+            Foreground = Ux.MetaBrush,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        reference.IsCheckedChanged += (_, _) =>
+        {
+            _skeleton.ShowReference = reference.IsChecked == true;
+            _skeleton.InvalidateVisual();
+        };
+
+        var reload = Ux.Secondary("From selected node");
+        reload.Click += (_, _) => LoadPoseFromSelection(announce: true);
+
+        var mesh = Ux.Secondary("Mesh...");
+        mesh.Click += async (_, _) => await PickMesh();
+        ToolTip.SetTip(mesh, "A .nif to draw on this skeleton");
+        var clearMesh = Ux.Secondary("No mesh");
+        clearMesh.Click += (_, _) => { ClearMesh(); ShowFrame(_poseFrame, stop: false); };
+
+        _scrub.PropertyChanged += (_, e) =>
+        {
+            // Set from code as well as dragged, so without this every ShowFrame would call itself
+            // back through the slider.
+            if (e.Property != Avalonia.Controls.Primitives.RangeBase.ValueProperty || _scrubbing) return;
+            ShowFrame((int)Math.Round(_scrub.Value), stop: true);
+        };
+
+        _skeleton.BoneHovered += _ => _skeleton.InvalidateVisual();
+
+        var transport = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        foreach (var control in new Control[]
+                 { _playButton, first, back, forward, last, fit, reference, reload, mesh, clearMesh })
+            transport.Children.Add(control);
+
+        var bar = Bar(Ux.Pill(_playbackSummary), transport);
+        bar.Margin = new Thickness(0, 0, 0, 8);
+
+        var scrubRow = Bar(_scrub, Ux.Pill(_frameLabel));
+        scrubRow.Margin = new Thickness(0, 8, 0, 0);
+
+        var panel = new DockPanel();
+        DockPanel.SetDock(bar, Dock.Top);
+        DockPanel.SetDock(scrubRow, Dock.Bottom);
+        panel.Children.Add(bar);
+        panel.Children.Add(scrubRow);
+        panel.Children.Add(Framed(_skeleton));
+
+        SetPlaybackSummary("Open a behaviour and select a clip to see what it plays.", Ux.MutedBrush);
+        return panel;
+    }
+
+    /// The rig this behaviour belongs to. The behaviour file does not name one; the character does,
+    /// which is why this comes off the chain rather than off the open file. Cached because selecting
+    /// a clip resolves it, and re-reading a 95 bone skeleton off disk on every click is felt.
+    private HkxSkeleton? PoseSkeleton()
+    {
+        if (_cachedSkeletonFor == _hkxPath && _cachedSkeleton != null) return _cachedSkeleton;
+
+        _cachedSkeletonFor = _hkxPath;
+        _cachedSkeleton = _projectChain?.Skeleton ?? SiblingSkeleton(_hkxPath);
+        return _cachedSkeleton;
+    }
+
+    // Selecting a clip is what asks the question, so selecting one is what answers it. Silent when
+    // the selection is not a clip, or names an animation that is not on disk: a behaviour is mostly
+    // nodes that play nothing, and a message per click would be noise.
+    private void LoadPoseFromSelection(bool announce)
+    {
+        if (_xmlText.Length == 0 || _selectedId.Length == 0)
+        {
+            if (announce) SetPlaybackSummary("Select a clip generator in the graph or the tree first.", Ux.MutedBrush);
+            return;
+        }
+
+        string animation = "";
+        foreach (var p in HkxTextEdit.ReadParams(_xmlText, _selectedId))
+            if (p.Name == "animationName") animation = p.Value.Trim();
+
+        if (animation.Length == 0)
+        {
+            if (announce)
+                SetPlaybackSummary($"{Describe(_selectedId)} names no animation, so there is nothing to play.",
+                                   Ux.MutedBrush);
+            return;
+        }
+
+        string root = _projectChain?.Root ?? Path.GetDirectoryName(Path.GetFullPath(_hkxPath)) ?? "";
+        string path = ProjectChain.ResolvePath(root, animation);
+        if (!File.Exists(path))
+        {
+            if (announce)
+                SetPlaybackSummary($"'{animation}' is not on disk under {root}, so it cannot be played. " +
+                                   "Check graph reports the same thing.", Ux.BadBrush);
+            return;
+        }
+
+        LoadPose(path, animation);
+    }
+
+    private void LoadPose(string animationPath, string label)
+    {
+        if (_poseSource == animationPath) return;
+
+        Stop();
+        _poseSkeleton = PoseSkeleton();
+
+        HkxAnimationData animation;
+        try
+        {
+            if (!new HkxBinaryReader().TryReadAnimation(animationPath, out animation))
+            {
+                SetPlaybackSummary($"{label}: {animation.AnimationClass} is not decoded, so it cannot be drawn.",
+                                   Ux.BadBrush);
+                ClearPose();
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            SetPlaybackSummary($"Could not read {label}: {ex.Message.Split('\n')[0]}", Ux.BadBrush);
+            ClearPose();
+            return;
+        }
+
+        string? refusal = AnimationPose.WhyNotPosable(_poseSkeleton, animation);
+        if (refusal != null)
+        {
+            SetPlaybackSummary($"{label}: {refusal}", Ux.WarnBrush);
+            // The rig is still worth drawing: it is the thing the reader is trying to place the
+            // animation onto, and an empty box says nothing at all.
+            if (_poseSkeleton != null) _skeleton.Show(AnimationPose.ReferencePose(_poseSkeleton));
+            _poseAnimation = null;
+            _poseSource = "";
+            _scrub.Maximum = 0;
+            return;
+        }
+
+        _poseAnimation = animation;
+        _poseSource = animationPath;
+        _poseFrame = 0;
+
+        var reference = AnimationPose.ReferencePose(_poseSkeleton!);
+        var opening = AnimationPose.At(_poseSkeleton!, animation, 0);
+        _skeleton.Show(opening, reference);
+        UpdateMesh(opening, _poseSkeleton!);
+
+        _scrubbing = true;
+        _scrub.Maximum = Math.Max(0, animation.NumFrames - 1);
+        _scrub.Value = 0;
+        _scrubbing = false;
+
+        int driven = 0;
+        foreach (int track in AnimationPose.TracksByBone(_poseSkeleton!, animation)) if (track >= 0) driven++;
+
+        SetPlaybackSummary(
+            $"{label}   {animation.NumFrames} frames at {1f / Math.Max(animation.FrameDuration, 0.0001f):F0} fps, " +
+            $"{animation.Duration:F2}s   {driven} of {_poseSkeleton!.BoneNames.Count} bones driven   " +
+            $"on {_poseSkeleton.Name}", Ux.MetaBrush);
+        UpdateFrameLabel();
+    }
+
+    // The behaviour chain names no mesh, and neither does the skeleton, so the only honest way to
+    // find one today is to be told. Pointing at a .nif is that, and the race record lookup that would
+    // do it automatically is a separate job.
+    private async Task PickMesh()
+    {
+        var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Which mesh to draw on this skeleton",
+            AllowMultiple = false,
+            SuggestedStartLocation = await StartFolder(),
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Meshes") { Patterns = new[] { "*.nif", "*.NIF" } },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        string? path = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (path != null) LoadMesh(path);
+    }
+
+    private void LoadMesh(string path)
+    {
+        var skeleton = PoseSkeleton();
+        if (skeleton == null)
+        {
+            SetPlaybackSummary("No skeleton is resolved for this file, so a mesh has nothing to hang on.",
+                               Ux.BadBrush);
+            return;
+        }
+
+        ClearMesh();
+        try
+        {
+            var nif = NifFile.Read(path);
+            foreach (var shape in NifGeometry.Shapes(nif))
+            {
+                var binding = SkinnedMesh.Bind(shape, skeleton);
+                _meshShapes.Add((shape, binding, SkinnedMesh.Edges(shape)));
+            }
+        }
+        catch (Exception ex)
+        {
+            ClearMesh();
+            SetPlaybackSummary($"Could not read {Path.GetFileName(path)}: {ex.Message.Split('\n')[0]}",
+                               Ux.BadBrush);
+            return;
+        }
+
+        if (_meshShapes.Count == 0)
+        {
+            SetPlaybackSummary($"{Path.GetFileName(path)} holds no drawable shape.", Ux.MutedBrush);
+            return;
+        }
+
+        _meshPath = path;
+        Settings.Set("last_mesh_folder", Path.GetDirectoryName(path) ?? "");
+
+        int vertices = _meshShapes.Sum(m => m.Shape.Vertices.Count);
+        int edges = _meshShapes.Sum(m => m.Edges.Count);
+
+        // A bone the mesh names and the skeleton does not is the failure that shows up as a limb
+        // quietly missing, so it is named here rather than left to be noticed.
+        var missing = _meshShapes.SelectMany(m => m.Binding.Unmatched).Distinct().ToList();
+        float drift = _meshShapes.Max(m => SkinnedMesh.BindError(m.Shape, m.Binding, skeleton));
+
+        string report = $"{Path.GetFileName(path)}   {_meshShapes.Count} shapes, {vertices} vertices, " +
+                        $"{edges} edges   drift from the rest pose {drift:F2}";
+        if (missing.Count > 0)
+            report += $"   {missing.Count} bone{(missing.Count == 1 ? "" : "s")} did not match this " +
+                      $"skeleton: {string.Join(", ", missing.Take(6))}" +
+                      (missing.Count > 6 ? ", and more" : "") +
+                      ". Vertices weighted only to those stay at their rest position.";
+
+        SetPlaybackSummary(report, missing.Count > 0 ? Ux.WarnBrush : Ux.MetaBrush);
+        ShowFrame(_poseFrame, stop: false);
+        _skeleton.Frame();
+    }
+
+    private void ClearMesh()
+    {
+        _meshShapes.Clear();
+        _meshPath = "";
+        _skeleton.ShowMesh(null);
+    }
+
+    // Only the vertex positions are recomputed per frame. The edge list and the bone matching are
+    // worked out when the mesh is loaded and do not change while scrubbing.
+    private void UpdateMesh(AnimationPose.Pose pose, HkxSkeleton skeleton)
+    {
+        if (_meshShapes.Count == 0) { _skeleton.ShowMesh(null); return; }
+
+        int total = _meshShapes.Sum(m => m.Edges.Count);
+        var segments = new (System.Numerics.Vector3, System.Numerics.Vector3)[total];
+
+        int at = 0;
+        foreach (var (shape, binding, edges) in _meshShapes)
+        {
+            var posed = SkinnedMesh.Pose(shape, binding, pose, skeleton);
+            foreach (var (from, to) in edges)
+                segments[at++] = (posed[from], posed[to]);
+        }
+
+        _skeleton.ShowMesh(segments);
+    }
+
+    private void ClearPose()
+    {
+        Stop();
+        _poseAnimation = null;
+        _poseSource = "";
+        _poseFrame = 0;
+        _cachedSkeleton = null;
+        _cachedSkeletonFor = "";
+        _scrubbing = true;
+        _scrub.Maximum = 0;
+        _scrub.Value = 0;
+        _scrubbing = false;
+        _skeleton.Reset();
+        _frameLabel.Text = "";
+        SetPlaybackSummary("Open a behaviour and select a clip to see what it plays.", Ux.MutedBrush);
+    }
+
+    private void TogglePlay()
+    {
+        if (_poseAnimation == null || _poseAnimation.NumFrames <= 1)
+        {
+            SetPlaybackSummary("Nothing loaded to play. Select a clip, or press From selected node.", Ux.MutedBrush);
+            return;
+        }
+
+        if (_clock != null) { Stop(); return; }
+
+        _clock = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(Math.Clamp(_poseAnimation.FrameDuration, 1 / 120f, 1)),
+        };
+        // Looping rather than stopping at the end: nearly every clip in a behaviour graph is a loop,
+        // and one that is not still reads better repeating than freezing on its last frame.
+        _clock.Tick += (_, _) => ShowFrame(_poseFrame + 1 > _scrub.Maximum ? 0 : _poseFrame + 1, stop: false);
+        _clock.Start();
+        _playButton.Content = "Pause";
+    }
+
+    private void Stop()
+    {
+        _clock?.Stop();
+        _clock = null;
+        _playButton.Content = "Play";
+    }
+
+    private void ShowFrame(int frame, bool stop)
+    {
+        if (stop) Stop();
+        if (_poseAnimation == null || _poseSkeleton == null) return;
+
+        _poseFrame = Math.Clamp(frame, 0, Math.Max(0, _poseAnimation.NumFrames - 1));
+
+        // Update, not Show: re-fitting on every frame would jump the camera about as the pose's own
+        // bounds change under it.
+        var posed = AnimationPose.At(_poseSkeleton, _poseAnimation, _poseFrame);
+        _skeleton.Update(posed);
+        UpdateMesh(posed, _poseSkeleton);
+
+        _scrubbing = true;
+        _scrub.Value = _poseFrame;
+        _scrubbing = false;
+        UpdateFrameLabel();
+    }
+
+    private void UpdateFrameLabel()
+    {
+        var animation = _poseAnimation;
+        _frameLabel.Text = animation == null
+            ? ""
+            : $"frame {_poseFrame} of {Math.Max(animation.NumFrames - 1, 0)}   " +
+              $"{_poseFrame * animation.FrameDuration:F3}s   " +
+              $"fraction {(animation.NumFrames > 1 ? (float)_poseFrame / (animation.NumFrames - 1) : 0f):0.###}";
+    }
+
+    private void SetPlaybackSummary(string text, IBrush brush)
+    {
+        _playbackSummary.Text = text;
+        _playbackSummary.Foreground = brush;
+    }
+
+    /// Read only, for the window checks.
+    public SkeletonView Viewport => _skeleton;
+    public int PoseFrame => _poseFrame;
+    public int PoseFrameCount => _poseAnimation?.NumFrames ?? 0;
+    public string PlaybackSummary => _playbackSummary.Text ?? "";
+    public bool IsPlaying => _clock != null;
+
+    /// Drives playback through the same handlers the buttons use.
+    public void ScrubTo(int frame) => ShowFrame(frame, stop: true);
+    public void LoadPoseFrom(string animationPath) => LoadPose(animationPath, Path.GetFileName(animationPath));
+    public AnimationPose.Pose? PoseNow =>
+        _poseSkeleton == null ? null : AnimationPose.At(_poseSkeleton, _poseAnimation, _poseFrame);
+
+    // Two mods edit one behaviour and the question is what each of them touched. The object walk is
+    // the same one the repack guard uses; the only difference is that it is pointed at somebody
+    // else's file instead of at this file's own repack.
+    private Control BuildDiffTab()
+    {
+        var compare = Ux.Secondary("Compare with...");
+        compare.Click += async (_, _) => await CompareWith();
+
+        var bar = Bar(Ux.Pill(_diffSummary), compare);
+        bar.Margin = new Thickness(0, 0, 0, 8);
+
+        var panel = new DockPanel();
+        DockPanel.SetDock(bar, Dock.Top);
+        panel.Children.Add(bar);
+        panel.Children.Add(_diff);
+
+        _diffSummary.Text = "Open a behaviour, then pick another copy of it to see what differs.";
+        _diffSummary.Foreground = Ux.MutedBrush;
+        return panel;
+    }
+
+    private async Task CompareWith()
+    {
+        if (_xmlText.Length == 0)
+        {
+            SetDiffSummary("Open a behaviour file first. Comparing needs the text form of both sides.", Ux.MutedBrush);
+            return;
+        }
+
+        var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Compare against which file",
+            AllowMultiple = false,
+            SuggestedStartLocation = await StartFolder(),
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Havok files") { Patterns = new[] { "*.hkx", "*.HKX" } },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        string? other = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (other == null) return;
+
+        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
+        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
+        if (java == null || jar == null)
+        {
+            SetDiffSummary("Comparing needs Java and hkxpack, the same as saving does.", Ux.BadBrush);
+            return;
+        }
+
+        _diff.Clear();
+        SetDiffSummary($"Unpacking {Path.GetFileName(other)}...", Ux.MutedBrush);
+
+        BehaviourDiff.Result result;
+        try
+        {
+            string mine = _xmlText;
+            result = await Task.Run(() => ComputeDiff(mine, other, java, jar));
+        }
+        catch (Exception ex)
+        {
+            SetDiffSummary($"Could not read {Path.GetFileName(other)}: {ex.Message.Split('\n')[0]}", Ux.BadBrush);
+            return;
+        }
+
+        ShowDiff(Path.GetFileName(other), result);
+    }
+
+    private static BehaviourDiff.Result ComputeDiff(string mine, string other, string java, string jar)
+    {
+        string work = Path.Combine(Path.GetTempPath(), "bgs_compare");
+        HkxTextEdit.ResetDirectory(work);
+        string xml = HkxTextEdit.Unpack(java, jar, other, work);
+        return BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(HkxTextEdit.ReadXml(xml)));
+    }
+
+    /// Runs the comparison through the same code the picker feeds, so a check exercises what a person
+    /// does rather than a parallel path. Returns what the panel now says.
+    public string CompareLoadedWith(string other)
+    {
+        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
+        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
+        if (_xmlText.Length == 0 || java == null || jar == null) return "";
+
+        ShowDiff(Path.GetFileName(other), ComputeDiff(_xmlText, other, java, jar));
+        return _diffSummary.Text ?? "";
+    }
+
+    private void ShowDiff(string otherName, BehaviourDiff.Result result)
+    {
+        _diff.Clear();
+        SetDiffSummary($"{Path.GetFileName(_hkxPath)} against {otherName}: {result}",
+                       result.Identical ? Ux.MetaBrush : Ux.TitleBrush);
+
+        foreach (var group in new[] { BehaviourDiff.Kind.Changed, BehaviourDiff.Kind.Removed, BehaviourDiff.Kind.Added })
+        {
+            var lines = result.Lines.Where(l => l.Kind == group).ToList();
+            if (lines.Count == 0) continue;
+
+            var head = _diff.Add(null, group.ToString().ToLowerInvariant(), $"{lines.Count}")
+                            .Colour(0, group == BehaviourDiff.Kind.Changed ? Ux.WarnBrush : Ux.CodeBrush)
+                            .Colour(1, Ux.TitleBrush);
+            if (lines.Count > 200) head.Collapse();
+
+            foreach (var line in lines.Take(2000))
+                _diff.Add(head, "", line.Class, line.Where, line.Was, line.Now)
+                     .Colour(1, Ux.CodeBrush).Colour(2, Ux.TitleBrush)
+                     .Colour(3, Ux.MetaBrush).Colour(4, Ux.MetaBrush);
+
+            if (lines.Count > 2000)
+                _diff.Add(head, "", $"and {lines.Count - 2000} more").Colour(1, Ux.MutedBrush);
+        }
+
+        if (result.Identical)
+            _diff.Add(null, "", "no difference", "the two files hold the same objects with the same values")
+                 .Colour(2, Ux.MutedBrush);
+    }
+
+    private void SetDiffSummary(string text, IBrush brush)
+    {
+        _diffSummary.Text = text;
+        _diffSummary.Foreground = brush;
+    }
+
+    /// Read only, for the window checks.
+    public HkGrid DiffGrid => _diff;
+
     private Control BuildSymbolsTab()
     {
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -524,6 +1111,11 @@ public class MainWindow : Window
             bar.Children.Add(button);
         }
 
+        var papyrus = Ux.Secondary("Scripts folder...");
+        papyrus.Click += async (_, _) => await PickScriptsFolder();
+        ToolTip.SetTip(papyrus, "A folder of .psc sources, to show which scripts send each event");
+        bar.Children.Add(papyrus);
+
         bar.Children.Add(Ux.Pill(_symbolAudit));
 
         var panel = new DockPanel();
@@ -532,6 +1124,28 @@ public class MainWindow : Window
         panel.Children.Add(bar);
         panel.Children.Add(_symbols);
         return panel;
+    }
+
+    // A transition can listen for an event nothing in its own file sends, which looks broken and
+    // usually is not: the sender is a script. Pointing at the Papyrus sources answers it. Optional
+    // throughout, and silent when it is not set.
+    private async Task PickScriptsFolder()
+    {
+        var picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Where the Papyrus .psc sources are",
+            AllowMultiple = false,
+        });
+
+        string? folder = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (folder == null) return;
+
+        Settings.Set("scripts", folder);
+        _papyrusScanned = true;
+        _papyrus = await Task.Run(() => PapyrusEvents.Scan(folder));
+        SetStatus(_papyrus.ToString(), _papyrus.ScriptsRead == 0 ? Ux.MutedBrush : Ux.MetaBrush);
+
+        if (_xmlText.Length > 0) BuildSymbols(BehaviourGraphModel.Parse(_xmlText));
     }
 
     // Opens where the last file came from. Behaviours, characters, skeletons and animations all sit
@@ -582,6 +1196,12 @@ public class MainWindow : Window
         Load();
     }
 
+    /// The mesh to draw on this file's skeleton, named from outside because nothing inside a
+    /// behaviour, a character or a skeleton names one.
+    public void OpenMesh(string nifPath) => LoadMesh(nifPath);
+
+    public int MeshEdges => _skeleton.DrawnEdges;
+
     private void Load()
     {
         _tree.Clear();
@@ -596,7 +1216,8 @@ public class MainWindow : Window
         // Object ids start again at #1 in the next file, so anything the canvas remembers by id is
         // about to be applied to a different object entirely.
         _graph.Reset();
-        SetDirty(false);
+        ClearPose();
+        ResetHistory();
 
         string path = (_pathField.Text ?? "").Trim().Trim('"');
         if (path.Length == 0) { SetSummary("Enter the path to a .hkx file.", Ux.MutedBrush); return; }
@@ -619,9 +1240,13 @@ public class MainWindow : Window
             Settings.Set("last_path", path);
             Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
             SetSummary(isAnimation
-                ? $"{Path.GetFileName(path)}   an animation, not a behaviour. See the Animation tab."
+                ? $"{Path.GetFileName(path)}   an animation, not a behaviour. See the Animation and Playback tabs."
                 : "Parsed as FO4 hkx, but no root object was resolved.", Ux.MutedBrush);
             SetStatus(_animationSummary.Text ?? "", _animationSummary.Foreground ?? Ux.MutedBrush);
+
+            // An animation opened on its own has no clip pointing at it, so the selection path never
+            // fires. It is still the thing on screen, so it is what plays.
+            if (_animationData != null) LoadPose(path, Path.GetFileName(path));
             return;
         }
 
@@ -656,6 +1281,11 @@ public class MainWindow : Window
         Settings.Set("last_path", path);
         Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
         PrepareEditing();
+
+        // An animation file parses as a graph of objects too, so it comes down this path rather than
+        // the one above. Either way, if the open file holds frames then it is the thing on screen and
+        // it is what plays.
+        if (_animationData != null) LoadPose(path, Path.GetFileName(path));
     }
 
     private void PrepareEditing()
@@ -671,13 +1301,16 @@ public class MainWindow : Window
             string missing = java == null && jar == null ? "Java and hkxpack are missing"
                            : java == null ? "Java is missing"
                            : "hkxpack-cli.jar is missing";
+            _findJava.IsVisible = java == null;
             SetStatus($"Read only, so the Graph, Symbols, Chain and Animation tabs stay empty: " +
                       $"{missing}. The tree is read straight from the binary and does not need either. " +
-                      (java == null ? "Install a Java runtime. " : "") +
+                      (java == null ? "Install a Java runtime, or press Find Java if one is already installed somewhere this did not look. " : "") +
                       (jar == null ? $"Put hkxpack-cli.jar in a tools folder beside the program, at {Path.Combine(AppContext.BaseDirectory, "tools")}. " : "") +
                       "Save stays off until then.", Ux.WarnBrush);
             return;
         }
+
+        _findJava.IsVisible = false;
 
         try
         {
@@ -687,10 +1320,12 @@ public class MainWindow : Window
             _xmlPath = HkxTextEdit.Unpack(java, jar, _hkxPath, work);
             _xmlText = HkxTextEdit.ReadXml(_xmlPath);
             _objectIds = HkxTextEdit.ObjectIds(_xmlText);
+            ResetHistory();
 
             if (_objectIds.Count != _objects.Count)
             {
                 _xmlText = "";
+                ResetHistory();
                 SetStatus($"Read only: object counts disagree ({_objects.Count} binary vs {_objectIds.Count} xml).",
                           Ux.MutedBrush);
                 return;
@@ -711,6 +1346,7 @@ public class MainWindow : Window
         catch (Exception ex)
         {
             _xmlText = "";
+            ResetHistory();
             SetStatus("Read only: " + ex.Message.Split('\n')[0], Ux.MutedBrush);
         }
     }
@@ -818,6 +1454,9 @@ public class MainWindow : Window
         foreach (var child in node.Children) AddTreeNode(child, row, seen, ref rows);
     }
 
+    // Through the same handler a canvas click uses, not a parallel one. Filling only the properties
+    // panel here is what left the tree unable to load a pose, and would leave it behind again the
+    // next time selecting a node has to do something else as well.
     private void OnTreeSelected()
     {
         ClearProps();
@@ -825,7 +1464,7 @@ public class MainWindow : Window
         if (_tree.SelectedTag is not int offset || _xmlText.Length == 0) return;
         if (!_offsetToIndex.TryGetValue(offset, out int index)) return;
         if (index < 0 || index >= _objectIds.Count) return;
-        ShowProps(_objectIds[index]);
+        SelectObjectId(_objectIds[index]);
     }
 
     private void SelectObjectId(string objectId)
@@ -839,6 +1478,10 @@ public class MainWindow : Window
         var model = BehaviourGraphModel.Parse(_xmlText);
         ShowProps(objectId, model);
         SetStatus(Describe(model, objectId), Ux.MetaBrush);
+
+        // Selecting a clip is what asks what it plays, so it is what answers it. Quiet when the
+        // selection plays nothing, which is most nodes in a graph.
+        LoadPoseFromSelection(announce: false);
     }
 
     private string Describe(string id) => Describe(BehaviourGraphModel.Parse(_xmlText), id);
@@ -905,7 +1548,35 @@ public class MainWindow : Window
             panel.Add(row);
         }
 
+        AddSymbolSection(panel, objectId, model);
         AddBindingSection(panel, objectId, model);
+    }
+
+    // The other direction of the usages question: not who touches this symbol, but which symbols this
+    // node touches. An index on its own says nothing, so each one is resolved to its declared name.
+    private void AddSymbolSection(Inspector panel, string objectId, BehaviourGraphModel model)
+    {
+        var events = SymbolIndexFixup.UsagesOf(_xmlText, events: true, objectId);
+        var variables = SymbolIndexFixup.UsagesOf(_xmlText, events: false, objectId);
+        if (events.Count == 0 && variables.Count == 0) return;
+
+        var eventNames = SymbolEditor.EventNames(model);
+        var variableNames = SymbolEditor.VariableNames(model);
+        panel.Add(Ux.SectionTitle("symbols this node touches"));
+
+        foreach (var (use, names, kind) in
+                 events.Select(u => (u, eventNames, "event"))
+                       .Concat(variables.Select(u => (u, variableNames, "variable"))))
+        {
+            string name = use.Index >= 0 && use.Index < names.Count
+                ? names[use.Index]
+                : $"index {use.Index}, which this graph does not declare";
+
+            var text = Ux.Label($"{use.Member} -> {kind} {name}");
+            text.TextWrapping = TextWrapping.Wrap;
+            if (use.Index >= names.Count) text.Foreground = Ux.BadBrush;
+            panel.Add(text);
+        }
     }
 
     private void AddBindingSection(Inspector panel, string objectId, BehaviourGraphModel model)
@@ -950,8 +1621,20 @@ public class MainWindow : Window
         panel.Add(bind);
     }
 
+    // Scanned once, on the first build that needs it, rather than at startup: a full Base folder is
+    // several thousand files and nobody who never opens the Symbols tab should pay for it.
+    private void EnsurePapyrus()
+    {
+        if (_papyrusScanned) return;
+        _papyrusScanned = true;
+
+        string folder = Settings.Get("scripts");
+        if (folder.Length > 0) _papyrus = PapyrusEvents.Scan(folder);
+    }
+
     private void BuildSymbols(BehaviourGraphModel model)
     {
+        EnsurePapyrus();
         _symbols.Clear();
 
         var names = SymbolEditor.VariableNames(model);
@@ -966,13 +1649,27 @@ public class MainWindow : Window
 
         var readers = UsersByIndex(events: false);
         var listeners = UsersByIndex(events: true);
+        var variableSites = _xmlText.Length == 0
+            ? new List<SymbolIndexFixup.Usage>()
+            : SymbolIndexFixup.Usages(_xmlText, events: false);
 
         for (int i = 0; i < names.Count; i++)
         {
             var type = i < types.Count ? types[i] : SymbolEditor.VariableType.Int32;
-            Paint(_symbols.Add(null, type.ToString().ToLowerInvariant(), i.ToString(), names[i],
-                               i < values.Count ? SymbolEditor.DecodeValue(type, values[i]) : "",
-                               Users(readers, events: false, i)).Tag($"v:{i}"));
+            var row = Paint(_symbols.Add(null, type.ToString().ToLowerInvariant(), i.ToString(), names[i],
+                                         i < values.Count ? SymbolEditor.DecodeValue(type, values[i]) : "",
+                                         Users(readers, events: false, i)).Tag($"v:{i}"));
+
+            // Every reader as its own row, so "is this variable used" is answered by looking rather
+            // than by reading the whole file, and each answer can be clicked through to the node.
+            var sites = variableSites.Where(u => u.Index == i)
+                                     .GroupBy(u => (u.ObjectId, u.Owner, u.Member)).ToList();
+            if (sites.Count == 0) continue;
+
+            row.Collapse();
+            foreach (var site in sites)
+                AddUsageRow(row, "reads it", site.Key.ObjectId, site.Key.Owner, site.Key.Member,
+                            site.Count(), "");
         }
 
         var usage = _xmlText.Length == 0
@@ -982,21 +1679,63 @@ public class MainWindow : Window
         for (int i = 0; i < events.Count; i++)
         {
             usage.TryGetValue(i, out var lines);
+            string scripts = PapyrusEvents.Describe(_papyrus, events[i]);
+            string summary = lines is { Count: > 0 } ? EventUsage.Summarise(lines) : Users(listeners, events: true, i);
             var row = Paint(_symbols.Add(null, "event", i.ToString(), events[i], "",
-                                         lines is { Count: > 0 } ? EventUsage.Summarise(lines) : Users(listeners, events: true, i)))
+                                         scripts.Length > 0 ? $"{summary}; {scripts}" : summary))
                 .Tag($"e:{i}");
-            if (lines == null) continue;
 
-            row.Collapse();
-            foreach (var line in lines)
-                _symbols.Add(row, EventUsage.Describe(line.Role), line.Count > 1 ? $"x{line.Count}" : "",
-                             line.Site, "", line.Note)
-                        .Colour(0, line.Role == EventUsage.Role.Raised ? Ux.MetaBrush : Ux.MutedBrush)
-                        .Colour(1, Ux.DisabledBrush).Colour(2, Ux.CodeBrush).Colour(4, Ux.MutedBrush);
+            if (lines != null)
+            {
+                row.Collapse();
+                foreach (var line in lines)
+                {
+                    string what = EventUsage.Describe(line.Role);
+                    if (line.ObjectIds.Count == 0)
+                    {
+                        _symbols.Add(row, what, line.Count > 1 ? $"x{line.Count}" : "", line.Site, "", line.Note)
+                                .Colour(0, line.Role == EventUsage.Role.Raised ? Ux.MetaBrush : Ux.MutedBrush)
+                                .Colour(1, Ux.DisabledBrush).Colour(2, Ux.CodeBrush).Colour(4, Ux.MutedBrush);
+                        continue;
+                    }
+
+                    foreach (string id in line.ObjectIds)
+                        AddUsageRow(row, what, id, line.Site, "", 0, line.Note);
+                }
+            }
+
+            // Papyrus is reported as information, never as a verdict: the engine sends events itself,
+            // so a name no script sends is not evidence of anything.
+            if (scripts.Length == 0) continue;
+            if (lines == null) row.Collapse();
+            _symbols.Add(row, "papyrus", "", scripts, "", "scripts address events by name, not by index")
+                    .Colour(0, Ux.MutedBrush).Colour(2, Ux.MetaBrush).Colour(4, Ux.DisabledBrush);
         }
 
         if (names.Count == 0 && events.Count == 0)
             _symbols.Add(null, "", "", "this graph declares no variables or events").Colour(2, Ux.DisabledBrush);
+    }
+
+    // One place that names a symbol, tagged with the object so selecting it goes there. The object's
+    // own name is what a reader recognises; the class alone is not, since a graph holds hundreds of
+    // the same class.
+    private void AddUsageRow(HkRow parent, string what, string objectId, string owner, string member,
+                             int count, string note)
+    {
+        string where = member.Length > 0 ? $"{owner}.{member}" : owner;
+        string named = objectId.Length > 0 ? $"#{objectId} {NameOf(objectId)}" : "";
+
+        _symbols.Add(parent, what, count > 1 ? $"x{count}" : "", where, named, note)
+                .Colour(0, Ux.MutedBrush).Colour(1, Ux.DisabledBrush).Colour(2, Ux.CodeBrush)
+                .Colour(3, Ux.TitleBrush).Colour(4, Ux.MutedBrush)
+                .Tag(objectId.Length > 0 ? "#" + objectId : "");
+    }
+
+    private string NameOf(string objectId)
+    {
+        foreach (var p in HkxTextEdit.ReadParams(_xmlText, objectId))
+            if (p.Name == "name" && p.Value.Length > 0) return p.Value;
+        return HkxTextEdit.ClassOf(_xmlText, objectId);
     }
 
     private static HkRow Paint(HkRow row) => row
@@ -1067,6 +1806,17 @@ public class MainWindow : Window
     // screen rather than on whatever was typed last.
     private void OnSymbolSelected()
     {
+        // A usage row is a place to go, not a symbol to edit. Same jump the problem list uses, so a
+        // result found here lands the same way a result found by Check graph does.
+        if (_symbols.SelectedTag is string jump && jump.StartsWith('#'))
+        {
+            string id = jump[1..];
+            SelectObjectId(id);
+            if (!_graph.FocusOn(id))
+                SetStatus($"{Describe(id)} is not drawn on the canvas; its fields are in the panel.", Ux.MutedBrush);
+            return;
+        }
+
         if (!SelectedSymbol(out bool variable, out int index)) return;
 
         var model = BehaviourGraphModel.Parse(_xmlText);
@@ -1087,7 +1837,9 @@ public class MainWindow : Window
     {
         variable = false;
         index = -1;
-        if (_symbols.SelectedTag is not string tag || tag.Length < 3) return false;
+        // Usage rows are tagged with an object id and live in the same tree, so the shape of the tag
+        // is what separates them, not its length.
+        if (_symbols.SelectedTag is not string tag || tag.Length < 3 || tag[1] != ':') return false;
         variable = tag[0] == 'v';
         return int.TryParse(tag[2..], out index);
     }
@@ -1179,8 +1931,7 @@ public class MainWindow : Window
 
         try
         {
-            _xmlText = edit(_xmlText);
-            SetDirty(true);
+            Commit(edit(_xmlText));
             var model = BehaviourGraphModel.Parse(_xmlText);
             _graph.Show(model);
             BuildSymbols(model);
@@ -1262,16 +2013,15 @@ public class MainWindow : Window
             // parent's class would otherwise be given. Dragging off a clip's triggers and getting a
             // generator hung on something else is not what the wire said.
             bool bySlot = field.Length > 0 && parentId.Length > 0;
-            _xmlText = GraphAuthor.AddNode(_xmlText, kind, name, animation, bySlot ? "" : parentId,
-                                           out string newId, out string note);
-            SetDirty(true);
+            string xml = GraphAuthor.AddNode(_xmlText, kind, name, animation, bySlot ? "" : parentId,
+                                             out string newId, out string note);
             _graph.Place(newId, at);
 
             if (bySlot)
             {
                 try
                 {
-                    _xmlText = GraphLinks.Connect(_xmlText, parentId, field, newId, out string joined);
+                    xml = GraphLinks.Connect(xml, parentId, field, newId, out string joined);
                     note = $"created {name}, {joined}";
                 }
                 catch (Exception ex)
@@ -1280,6 +2030,9 @@ public class MainWindow : Window
                 }
             }
 
+            // Creating the node and wiring it up is one action to whoever did it, so it is one step
+            // back, not two.
+            Commit(xml);
             SetStatus(note + $"   (#{newId}, unsaved)", Ux.CodeBrush);
             RefreshAfterEdit(newId);
         }
@@ -1295,11 +2048,10 @@ public class MainWindow : Window
 
         try
         {
-            _xmlText = connect
+            Commit(connect
                 ? GraphLinks.Connect(_xmlText, fromId, field, toId, out string note)
-                : GraphLinks.Disconnect(_xmlText, fromId, field, toId, out note);
+                : GraphLinks.Disconnect(_xmlText, fromId, field, toId, out note));
 
-            SetDirty(true);
             SetStatus(note + "   (unsaved)", Ux.CodeBrush);
 
             var model = BehaviourGraphModel.Parse(_xmlText);
@@ -1319,8 +2071,7 @@ public class MainWindow : Window
 
         try
         {
-            _xmlText = GraphAuthor.DeleteNode(_xmlText, objectId, out string note);
-            SetDirty(true);
+            Commit(GraphAuthor.DeleteNode(_xmlText, objectId, out string note));
             SetStatus(note + "   (unsaved)", Ux.CodeBrush);
 
             var model = BehaviourGraphModel.Parse(_xmlText);
@@ -1341,15 +2092,18 @@ public class MainWindow : Window
             var names = BindingEditor.VariableNames(BehaviourGraphModel.Parse(_xmlText));
             int index = names.FindIndex(n => n.Equals(variableName, StringComparison.OrdinalIgnoreCase));
 
+            string xml = _xmlText;
+            string declared = "";
             if (index < 0)
             {
-                _xmlText = BindingEditor.AddVariable(_xmlText, variableName, out index);
-                SetStatus($"declared variable '{variableName}' at index {index}", Ux.CodeBrush);
+                xml = BindingEditor.AddVariable(xml, variableName, out index);
+                declared = $"declared variable '{variableName}' at index {index}, and ";
             }
 
-            _xmlText = BindingEditor.AddBinding(_xmlText, objectId, memberPath, index);
-            SetDirty(true);
-            SetStatus($"#{objectId}.{memberPath} driven by {variableName}   (unsaved)", Ux.CodeBrush);
+            // Declaring the variable and binding it is one action, so undo takes both back together
+            // rather than leaving an orphan variable behind.
+            Commit(BindingEditor.AddBinding(xml, objectId, memberPath, index));
+            SetStatus($"{declared}#{objectId}.{memberPath} driven by {variableName}   (unsaved)", Ux.CodeBrush);
             RefreshAfterEdit(objectId);
         }
         catch (Exception ex)
@@ -1362,8 +2116,7 @@ public class MainWindow : Window
     {
         try
         {
-            _xmlText = BindingEditor.RemoveBinding(_xmlText, setId, index);
-            SetDirty(true);
+            Commit(BindingEditor.RemoveBinding(_xmlText, setId, index));
             SetStatus($"removed binding {index} from #{setId}   (unsaved)", Ux.CodeBrush);
             RefreshAfterEdit(objectId);
         }
@@ -1388,8 +2141,7 @@ public class MainWindow : Window
 
         try
         {
-            _xmlText = HkxTextEdit.SetParam(_xmlText, objectId, paramName, field.Text ?? "");
-            SetDirty(true);
+            Commit(HkxTextEdit.SetParam(_xmlText, objectId, paramName, field.Text ?? ""));
             SetStatus($"#{objectId}.{paramName} = {field.Text}   (unsaved)", Ux.CodeBrush);
         }
         catch (Exception ex)
@@ -1444,6 +2196,57 @@ public class MainWindow : Window
                   errors.Count > 0 ? Ux.BadBrush : Ux.MutedBrush);
     }
 
+    // Most real problems only exist between files, so the same checks run over every behaviour the
+    // project owns and report once. Results carry a file, and a node in another file cannot be jumped
+    // to on this file's canvas, so the click handler says so rather than silently doing nothing.
+    private async Task ValidateProject()
+    {
+        var chain = _projectChain;
+        if (chain == null || chain.Root.Length == 0)
+        {
+            SetStatus("No project resolved for this file, so there is no chain to check. See the Chain tab.",
+                      Ux.MutedBrush);
+            return;
+        }
+
+        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
+        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
+        if (java == null || jar == null)
+        {
+            SetStatus("Checking the project needs Java and hkxpack, the same as saving does.", Ux.BadBrush);
+            return;
+        }
+
+        _problems.Clear();
+        _problems.IsVisible = _problemBar.IsVisible = true;
+        _problemBar.Text = "Reading the project...";
+
+        var progress = new Progress<string>(s => SetStatus("Checking " + s, Ux.MutedBrush));
+        var result = await Task.Run(() => ProjectCheck.Run(chain, java, jar, s => ((IProgress<string>)progress).Report(s)));
+
+        foreach (var file in result.Files.Where(f => f.Error.Length > 0 || f.Findings.Count > 0))
+        {
+            var head = _problems.Add(null, file.Error.Length > 0 ? "unread" : $"{file.Errors}e {file.Warnings}w",
+                                     file.Name, file.Error.Length > 0 ? file.Error : "")
+                                .Colour(0, file.Error.Length > 0 || file.Errors > 0 ? Ux.BadBrush : Ux.WarnBrush)
+                                .Colour(1, Ux.TitleBrush);
+            if (file.Findings.Count > 30) head.Collapse();
+
+            foreach (var f in file.Findings.OrderBy(f => f.Level))
+                _problems.Add(head, f.Level == GraphValidator.Level.Error ? "error" : "warning", f.Where, f.What)
+                         .Colour(0, f.Level == GraphValidator.Level.Error ? Ux.BadBrush : Ux.WarnBrush)
+                         .Colour(1, Ux.CodeBrush).Colour(2, Ux.MetaBrush)
+                         .Tag(file.Path == _hkxPath ? f.ObjectId : "");
+        }
+
+        if (result.Files.All(f => f.Error.Length == 0 && f.Findings.Count == 0))
+            _problems.Add(null, "", "nothing wrong found", "across every behaviour in this project")
+                     .Colour(2, Ux.MutedBrush);
+
+        _problemBar.Text = result + ". Only findings in the open file can be jumped to on the canvas.";
+        SetStatus("Project checked. " + result, result.Errors > 0 ? Ux.BadBrush : Ux.MetaBrush);
+    }
+
     private void Save()
     {
         if (!_dirty || _xmlText.Length == 0) return;
@@ -1477,7 +2280,7 @@ public class MainWindow : Window
             if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
             File.Copy(packed, _hkxPath, true);
 
-            SetDirty(false);
+            ResetHistory();
             SetStatus($"Saved. The original is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
             Load();
         }
@@ -1503,10 +2306,133 @@ public class MainWindow : Window
         return RepackCheck.Compare(RepackCheck.Take(_xmlText), RepackCheck.Take(HkxTextEdit.ReadXml(xml)));
     }
 
-    private void SetDirty(bool dirty)
+    private void OnWindowKey(object? sender, Avalonia.Input.KeyEventArgs e)
     {
-        _dirty = dirty;
-        _saveButton.IsEnabled = dirty;
+        bool control = e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Control);
+        if (!control) return;
+        bool shift = e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Shift);
+
+        if (e.Key == Avalonia.Input.Key.Z && !shift) { Undo(); e.Handled = true; }
+        else if (e.Key == Avalonia.Input.Key.Y || (e.Key == Avalonia.Input.Key.Z && shift)) { Redo(); e.Handled = true; }
+    }
+
+    /// The only place the loaded document changes outside a load. Every editing path routes here so
+    /// the step back is taken before the change lands, and so nothing can mutate around the stack.
+    private void Commit(string newXml)
+    {
+        if (newXml == _xmlText) return;
+
+        _undo.Add(_xmlText);
+        if (_undo.Count > UndoDepth) _undo.RemoveAt(0);
+        _redo.Clear();
+        _xmlText = newXml;
+        RefreshDirty();
+    }
+
+    private void ResetHistory()
+    {
+        _undo.Clear();
+        _redo.Clear();
+        _savedXml = _xmlText;
+        RefreshDirty();
+    }
+
+    // Dirty is measured against what was last written rather than latched on, so undoing back past
+    // the last save says so instead of claiming there is still something to write.
+    private void RefreshDirty()
+    {
+        _dirty = _xmlText.Length > 0 && _xmlText != _savedXml;
+        _saveButton.IsEnabled = _dirty;
+        _undoButton.IsEnabled = _undo.Count > 0;
+        _redoButton.IsEnabled = _redo.Count > 0;
+    }
+
+    private void Undo()
+    {
+        if (_undo.Count == 0) { SetStatus("Nothing to undo.", Ux.MutedBrush); return; }
+        _redo.Add(_xmlText);
+        _xmlText = _undo[^1];
+        _undo.RemoveAt(_undo.Count - 1);
+        AfterHistoryMove("Undone");
+    }
+
+    private void Redo()
+    {
+        if (_redo.Count == 0) { SetStatus("Nothing to redo.", Ux.MutedBrush); return; }
+        _undo.Add(_xmlText);
+        _xmlText = _redo[^1];
+        _redo.RemoveAt(_redo.Count - 1);
+        AfterHistoryMove("Redone");
+    }
+
+    // The tree, the canvas, the symbol table and the properties panel all read from the document, so
+    // all four are rebuilt. Leaving any of them showing the old version is worse than not having undo.
+    private void AfterHistoryMove(string what)
+    {
+        RefreshDirty();
+
+        var model = BehaviourGraphModel.Parse(_xmlText);
+        _objectIds = HkxTextEdit.ObjectIds(_xmlText);
+        _emptyStates = GraphValidator.StatesWithNoGenerator(model);
+        RebuildTree();
+        _graph.Show(model);
+        BuildSymbols(model);
+        ClearProps();
+        if (_selectedId.Length > 0 && model.Get(_selectedId) != null) ShowProps(_selectedId, model);
+
+        SetStatus($"{what}. {_undo.Count} step{(_undo.Count == 1 ? "" : "s")} back, " +
+                  $"{_redo.Count} forward." + (_dirty ? "   (unsaved)" : "   this now matches the file on disk"),
+                  Ux.MetaBrush);
+    }
+
+    // Java that autodetection missed. Validated by running it rather than accepted on its name, so a
+    // wrong pick says so here instead of at the next save.
+    private async Task PickJava()
+    {
+        var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Find the Java launcher",
+            AllowMultiple = false,
+            SuggestedStartLocation = await JavaStartFolder(),
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Java launcher") { Patterns = new[] { "java", "java.exe" } },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        string? path = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (path == null) return;
+
+        SetStatus($"Running {Path.GetFileName(path)} -version...", Ux.MutedBrush);
+        string? bad = await Task.Run(() => HkxTextEdit.WhyNotJava(path));
+        if (bad != null) { SetStatus(bad + " Nothing was changed.", Ux.BadBrush); return; }
+
+        string version = await Task.Run(() => HkxTextEdit.JavaVersion(path));
+        Settings.Set("java", path);
+        _findJava.IsVisible = false;
+        SetStatus($"Java accepted: {version}", Ux.MetaBrush);
+
+        // Read only is lifted by redoing the unpack, not by flipping a flag: the four tabs that were
+        // empty are empty because the text form was never produced.
+        if (_hkxPath.Length > 0 && _root != null) PrepareEditing();
+    }
+
+    private async Task<IStorageFolder?> JavaStartFolder()
+    {
+        string[] candidates =
+        {
+            Path.GetDirectoryName(Settings.Get("java")) ?? "",
+            Path.Combine(Environment.GetEnvironmentVariable("JAVA_HOME") ?? "", "bin"),
+            @"C:\Program Files\Java",
+            "/usr/lib/jvm",
+        };
+
+        foreach (string dir in candidates)
+            if (dir.Length > 0 && Directory.Exists(dir))
+                return await StorageProvider.TryGetFolderFromPathAsync(dir);
+
+        return null;
     }
 
     private void SetSummary(string text, IBrush brush)
