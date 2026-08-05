@@ -28,7 +28,7 @@ public static class EventUsage
         Referenced,
     }
 
-    public readonly record struct Line(Role Role, string Site, string Note, int Count);
+    public readonly record struct Line(Role Role, string Site, string Note, int Count, IReadOnlyList<string> ObjectIds);
 
     private sealed record Known(Role Role, string Note);
 
@@ -86,10 +86,11 @@ public static class EventUsage
     public static Dictionary<int, List<Line>> ByEvent(string xml)
     {
         var byEvent = new Dictionary<int, List<Line>>();
-        foreach (var group in SymbolIndexFixup.EventReferences(xml).GroupBy(r => r.Index))
+        foreach (var group in SymbolIndexFixup.Usages(xml, events: true).GroupBy(r => r.Index))
         {
             var lines = group.GroupBy(r => r.ToString())
-                .Select(g => new Line(RoleOf(g.Key), g.Key, NoteFor(g.Key), g.Count()))
+                .Select(g => new Line(RoleOf(g.Key), g.Key, NoteFor(g.Key), g.Count(),
+                                      g.Select(u => u.ObjectId).Where(id => id.Length > 0).Distinct().ToList()))
                 .OrderBy(l => l.Role).ThenByDescending(l => l.Count).ThenBy(l => l.Site, StringComparer.Ordinal)
                 .ToList();
             byEvent[group.Key] = lines;

@@ -42,6 +42,14 @@ public static class Tests
         ("WindowsLineEndingsStillEdit", WindowsLineEndingsStillEdit),
         ("RepackDriftCatchesAChangedValue", RepackDriftCatchesAChangedValue),
         ("AnAnimationIsRefusedForSaving", AnAnimationIsRefusedForSaving),
+        ("TwoFilesDiffToWhatEachChanged", TwoFilesDiffToWhatEachChanged),
+        ("EverySymbolUsageNamesItsObject", EverySymbolUsageNamesItsObject),
+        ("PapyrusSendersAreReportedNotJudged", PapyrusSendersAreReportedNotJudged),
+        ("APoseComposesDownTheBoneChain", APoseComposesDownTheBoneChain),
+        ("AClearChannelKeepsTheReferencePose", AClearChannelKeepsTheReferencePose),
+        ("ScrubbingLandsOnDifferentPoses", ScrubbingLandsOnDifferentPoses),
+        ("TracksDriveTheBonesTheyName", TracksDriveTheBonesTheyName),
+        ("AnimationsForAnotherRigAreRefused", AnimationsForAnotherRigAreRefused),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -783,7 +791,9 @@ public static class Tests
     private static EventUsage.Line Line(Dictionary<int, List<EventUsage.Line>> usage, int index)
     {
         var lines = Lines(usage, index);
-        return lines.Count > 0 ? lines[0] : new EventUsage.Line(EventUsage.Role.Referenced, "not found", "", 0);
+        return lines.Count > 0
+            ? lines[0]
+            : new EventUsage.Line(EventUsage.Role.Referenced, "not found", "", 0, Array.Empty<string>());
     }
 
     // A variable lives in three arrays at once, and the one that silently went missing was its
@@ -1099,6 +1109,313 @@ public static class Tests
         CheckTrue("and the refusal names the class",
                   refusal?.Contains("hkaLosslessCompressedAnimation") == true);
         CheckTrue("and says the original is untouched", refusal?.Contains("untouched") == true);
+    }
+
+    // A three bone chain along X, each bone one unit out from its parent. Small enough that every
+    // world position below can be worked out by hand, which is the point: the arithmetic is checked
+    // against known numbers rather than against whatever the code happens to produce.
+    private static HkxSkeleton ThreeBoneChain() => new()
+    {
+        Name = "TestRig",
+        BoneNames = { "Root", "Middle", "Tip" },
+        ParentIndices = { -1, 0, 1 },
+        ReferencePose =
+        {
+            new HkxBonePose(new Vector3(0, 0, 0), Quaternion.Identity, Vector3.One),
+            new HkxBonePose(new Vector3(10, 0, 0), Quaternion.Identity, Vector3.One),
+            new HkxBonePose(new Vector3(10, 0, 0), Quaternion.Identity, Vector3.One),
+        },
+    };
+
+    private static HkxTrackData FullTrack(params (Vector3 Pos, Quaternion Rot)[] frames)
+    {
+        var track = new HkxTrackData { RotationAnimated = true };
+        for (int a = 0; a < 3; a++) track.TranslationAnimated[a] = true;
+        foreach (var (pos, rot) in frames)
+        {
+            track.Translations.Add(pos);
+            track.Rotations.Add(rot);
+            track.Scales.Add(Vector3.One);
+        }
+        return track;
+    }
+
+    private static void APoseComposesDownTheBoneChain()
+    {
+        Console.WriteLine("\na pose composes parent relative transforms down the chain");
+
+        var rig = ThreeBoneChain();
+        var rest = AnimationPose.ReferencePose(rig);
+
+        Check("every bone is posed", 3, rest.Bones.Count);
+        CheckTrue("the root sits at the origin", Near(rest.Bones[0].Position, new Vector3(0, 0, 0)));
+        CheckTrue("the middle bone is one offset out", Near(rest.Bones[1].Position, new Vector3(10, 0, 0)));
+        CheckTrue("and the tip is two, because offsets accumulate",
+                  Near(rest.Bones[2].Position, new Vector3(20, 0, 0)));
+
+        Check("a line is drawn for every bone that has a parent", 2, rest.Links.Count);
+        CheckTrue("root to middle", rest.Links.Contains((0, 1)));
+        CheckTrue("middle to tip", rest.Links.Contains((1, 2)));
+
+        // The whole reason transforms are stored parent relative: rotating a parent has to swing
+        // everything below it. A quarter turn about Z takes the chain from along X to along Y.
+        var quarter = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2);
+        var anim = new HkxAnimationData
+        {
+            NumFrames = 1,
+            NumTracks = 3,
+            FrameDuration = 1f / 30f,
+            TrackToBoneIndices = { 0, 1, 2 },
+        };
+        anim.Tracks.Add(FullTrack((Vector3.Zero, quarter)));
+        anim.Tracks.Add(FullTrack((new Vector3(10, 0, 0), Quaternion.Identity)));
+        anim.Tracks.Add(FullTrack((new Vector3(10, 0, 0), Quaternion.Identity)));
+
+        var turned = AnimationPose.At(rig, anim, 0);
+        CheckTrue("rotating the root swings the middle bone onto Y",
+                  Near(turned.Bones[1].Position, new Vector3(0, 10, 0)));
+        CheckTrue("and carries the tip with it",
+                  Near(turned.Bones[2].Position, new Vector3(0, 20, 0)));
+        CheckTrue("the root itself has not moved", Near(turned.Bones[0].Position, Vector3.Zero));
+    }
+
+    // The trap that makes a viewport look broken rather than wrong. Havok leaves a channel clear when
+    // the animation does not drive it, and both decoders prefill a cleared channel with zero, which is
+    // indistinguishable afterwards from a bone genuinely at the origin. Posing on the raw value
+    // collapses every rotation-only bone onto its parent, which is most of a character.
+    private static void AClearChannelKeepsTheReferencePose()
+    {
+        Console.WriteLine("\na channel the animation does not drive keeps the reference pose");
+
+        var rig = ThreeBoneChain();
+        var anim = new HkxAnimationData
+        {
+            NumFrames = 1,
+            NumTracks = 3,
+            FrameDuration = 1f / 30f,
+            TrackToBoneIndices = { 0, 1, 2 },
+        };
+
+        // What a rotation-only track looks like coming out of either decoder: translation present in
+        // the list, zero in value, and flagged as not driven.
+        for (int i = 0; i < 3; i++)
+        {
+            var track = new HkxTrackData { RotationAnimated = true };
+            track.Translations.Add(Vector3.Zero);
+            track.Rotations.Add(Quaternion.Identity);
+            track.Scales.Add(Vector3.One);
+            anim.Tracks.Add(track);
+        }
+
+        var posed = AnimationPose.At(rig, anim, 0);
+        CheckTrue("the middle bone keeps its offset rather than collapsing",
+                  Near(posed.Bones[1].Position, new Vector3(10, 0, 0)));
+        CheckTrue("and so does the tip", Near(posed.Bones[2].Position, new Vector3(20, 0, 0)));
+        Check("which is the reference pose exactly", 0f, AnimationPose.Distance(posed, AnimationPose.ReferencePose(rig)));
+
+        // And the opposite: a driven translation of zero really does mean the origin.
+        anim.Tracks[1] = FullTrack((Vector3.Zero, Quaternion.Identity));
+        var collapsed = AnimationPose.At(rig, anim, 0);
+        CheckTrue("a driven zero translation is honoured",
+                  Near(collapsed.Bones[1].Position, Vector3.Zero));
+    }
+
+    private static void ScrubbingLandsOnDifferentPoses()
+    {
+        Console.WriteLine("\nscrubbing to different frames gives different poses");
+
+        var rig = ThreeBoneChain();
+        var half = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI);
+        var anim = new HkxAnimationData
+        {
+            NumFrames = 3,
+            NumTracks = 3,
+            FrameDuration = 0.5f,
+            Duration = 1.0f,
+            TrackToBoneIndices = { 0, 1, 2 },
+        };
+        anim.Tracks.Add(FullTrack(
+            (Vector3.Zero, Quaternion.Identity),
+            (Vector3.Zero, Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2)),
+            (Vector3.Zero, half)));
+        for (int i = 0; i < 2; i++)
+            anim.Tracks.Add(FullTrack(
+                (new Vector3(10, 0, 0), Quaternion.Identity),
+                (new Vector3(10, 0, 0), Quaternion.Identity),
+                (new Vector3(10, 0, 0), Quaternion.Identity)));
+
+        var first = AnimationPose.At(rig, anim, 0);
+        var last = AnimationPose.At(rig, anim, anim.NumFrames - 1);
+
+        CheckTrue("frame 0 and the last frame are not the same pose", AnimationPose.Distance(first, last) > 1f);
+        CheckTrue("frame 0 is the chain along X", Near(first.Bones[2].Position, new Vector3(20, 0, 0)));
+        CheckTrue("the last frame has turned it right around", Near(last.Bones[2].Position, new Vector3(-20, 0, 0)));
+
+        Check("the frame number is carried on the pose", 2, last.Frame);
+        Check("with the time that frame plays at", 1.0f, last.Time);
+
+        // Scrubbing past either end lands on an end rather than throwing or drawing nothing.
+        Check("scrubbing before the start clamps", 0, AnimationPose.At(rig, anim, -5).Frame);
+        Check("and past the end clamps", 2, AnimationPose.At(rig, anim, 99).Frame);
+        Check("clamped low is the same pose as frame 0", 0f, AnimationPose.Distance(AnimationPose.At(rig, anim, -5), first));
+
+        // The scrub bar is driven by the fraction a clip generator uses, so the two have to agree on
+        // which frame that is.
+        Check("the halfway fraction lands on the middle frame", 1, anim.FrameAt(0.5f));
+        CheckTrue("and that frame is neither end",
+                  AnimationPose.Distance(AnimationPose.At(rig, anim, anim.FrameAt(0.5f)), first) > 1f);
+    }
+
+    private static void TracksDriveTheBonesTheyName()
+    {
+        Console.WriteLine("\ntracks drive the bones they name, not the bones in order");
+
+        var rig = ThreeBoneChain();
+        var anim = new HkxAnimationData { NumFrames = 1, NumTracks = 1, FrameDuration = 1f / 30f };
+
+        // One track, and it names the last bone. Driving bone 0 from track 0 would move the whole
+        // chain instead of the tip, which is the failure this mapping exists to prevent.
+        anim.TrackToBoneIndices.Add(2);
+        anim.Tracks.Add(FullTrack((new Vector3(0, 5, 0), Quaternion.Identity)));
+
+        var byBone = AnimationPose.TracksByBone(rig, anim);
+        Check("the root is driven by nothing", -1, byBone[0]);
+        Check("the middle bone too", -1, byBone[1]);
+        Check("and the tip by track 0", 0, byBone[2]);
+
+        var posed = AnimationPose.At(rig, anim, 0);
+        CheckTrue("the undriven bones sit where the skeleton puts them",
+                  Near(posed.Bones[1].Position, new Vector3(10, 0, 0)));
+        CheckTrue("and only the named bone moved", Near(posed.Bones[2].Position, new Vector3(10, 5, 0)));
+
+        // No mapping in the file at all. One track per bone in order is the only reading left, and it
+        // is only safe while the counts agree.
+        var unnamed = new HkxAnimationData { NumFrames = 1, NumTracks = 1, FrameDuration = 1f / 30f };
+        unnamed.Tracks.Add(FullTrack((Vector3.Zero, Quaternion.Identity)));
+        CheckTrue("one track and three bones with no mapping drives nothing",
+                  AnimationPose.TracksByBone(rig, unnamed).All(t => t == -1));
+
+        var matched = new HkxAnimationData { NumFrames = 1, NumTracks = 3, FrameDuration = 1f / 30f };
+        for (int i = 0; i < 3; i++) matched.Tracks.Add(FullTrack((Vector3.Zero, Quaternion.Identity)));
+        CheckTrue("matching counts with no mapping fall back to order",
+                  AnimationPose.TracksByBone(rig, matched).SequenceEqual(new[] { 0, 1, 2 }));
+    }
+
+    // A shared behaviour naming an animation authored for another creature is the ordinary case, not
+    // a broken file, so this has to say which rig rather than refuse in the abstract.
+    private static void AnimationsForAnotherRigAreRefused()
+    {
+        Console.WriteLine("\nan animation for another rig says so rather than drawing a wrong pose");
+
+        var rig = ThreeBoneChain();
+        var good = new HkxAnimationData { NumFrames = 2, NumTracks = 1, TrackToBoneIndices = { 1 } };
+        good.Tracks.Add(FullTrack((Vector3.Zero, Quaternion.Identity), (Vector3.Zero, Quaternion.Identity)));
+        Check("an animation this rig can carry is not refused", null, AnimationPose.WhyNotPosable(rig, good));
+
+        var wrongRig = new HkxAnimationData { NumFrames = 2, NumTracks = 1, TrackToBoneIndices = { 40 } };
+        wrongRig.Tracks.Add(FullTrack((Vector3.Zero, Quaternion.Identity), (Vector3.Zero, Quaternion.Identity)));
+        string refused = AnimationPose.WhyNotPosable(rig, wrongRig) ?? "";
+        CheckTrue("one driving a bone this rig does not have is refused", refused.Length > 0);
+        CheckTrue("naming the bone it wanted", refused.Contains("40"));
+        CheckTrue("and how many this rig has", refused.Contains("3"));
+
+        CheckTrue("no skeleton at all says so plainly",
+                  (AnimationPose.WhyNotPosable(null, good) ?? "").Contains("No skeleton"));
+        CheckTrue("an animation that decoded to nothing says that instead",
+                  (AnimationPose.WhyNotPosable(rig, new HkxAnimationData()) ?? "").Contains("no frames"));
+    }
+
+    private static bool Near(Vector3 a, Vector3 b) => Vector3.Distance(a, b) < 0.001f;
+
+    // A usage list is only navigable if every entry knows which object it is in. One that does not is
+    // a row that looks clickable and goes nowhere.
+    private static void EverySymbolUsageNamesItsObject()
+    {
+        Console.WriteLine("\nevery symbol usage names the object it sits in");
+
+        string xml = EventGraph();
+        var events = SymbolIndexFixup.Usages(xml, events: true);
+
+        CheckTrue("the graph writes event indices at all", events.Count > 0);
+        CheckTrue("and every one of them names an object", events.All(u => u.ObjectId.Length > 0));
+        CheckTrue("with a member to go with it", events.All(u => u.Member.Length > 0));
+
+        // The same walk the Symbols tab lists from, so a row that appears there is a row that resolves
+        // back to the object it claims.
+        foreach (var lines in EventUsage.ByEvent(xml).Values)
+            CheckTrue("event rows carry the objects they came from", lines.All(l => l.ObjectIds.Count > 0));
+
+        string first = events[0].ObjectId;
+        var backwards = SymbolIndexFixup.UsagesOf(xml, events: true, first);
+        CheckTrue("and the reverse lookup finds the same site", backwards.Any(u => u.Index == events[0].Index));
+        CheckTrue("without straying into other objects", backwards.All(u => u.ObjectId == first));
+    }
+
+    // The point of this one is what it does NOT say. A name no script sends is the ordinary case,
+    // because the engine sends events itself, so the wording must not read as a fault.
+    private static void PapyrusSendersAreReportedNotJudged()
+    {
+        Console.WriteLine("\npapyrus senders are reported, never judged");
+
+        string folder = Path.Combine(Path.GetTempPath(), "bgs_psc_test");
+        HkxTextEdit.ResetDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "DoorScript.psc"), """
+            Scriptname DoorScript extends ObjectReference
+            Event OnActivate(ObjectReference akActionRef)
+                Self.PlayAnimation("OpenAnim")
+                Self.PlayAnimationAndWait("CloseAnim", "doneClosing")
+                Debug.Trace("OpenAnim is not sent from here")
+            EndEvent
+            """);
+
+        var index = PapyrusEvents.Scan(folder);
+        Check("the script was read", 1, index.ScriptsRead);
+        Check("the animation it plays is attributed", "DoorScript.psc", index.Senders("OpenAnim").FirstOrDefault());
+        Check("so is the wait event", "DoorScript.psc", index.Senders("doneClosing").FirstOrDefault());
+        Check("a string that is only printed is not a send", 0, index.Senders("OpenAnim is not sent from here").Count);
+
+        // Papyrus is case insensitive and the graphs are not consistent about it.
+        Check("names match without case", "DoorScript.psc", index.Senders("openanim").FirstOrDefault());
+
+        string quiet = PapyrusEvents.Describe(index, "somethingNobodySends");
+        CheckTrue("an unsent name says only that nothing was found", quiet == "no sender found in the scanned scripts");
+        CheckTrue("and never calls it dead, unused or broken",
+                  !new[] { "dead", "unused", "broken", "wrong" }
+                      .Any(w => quiet.Contains(w, StringComparison.OrdinalIgnoreCase)));
+        Check("with no folder set, nothing is said at all", "", PapyrusEvents.Describe(new PapyrusEvents.Index(), "OpenAnim"));
+
+        Directory.Delete(folder, true);
+    }
+
+    // Two mods editing one behaviour is the case this has to read cleanly: the ids will not line up,
+    // and the object counts may not either.
+    private static void TwoFilesDiffToWhatEachChanged()
+    {
+        Console.WriteLine("\ntwo files diff to what each one changed");
+
+        string mine = SmallGraph();
+        string theirs = Regex.Replace(mine, @"#(\d+)", m => "#" + (int.Parse(m.Groups[1].Value) + 400));
+
+        var same = BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(theirs));
+        CheckTrue("renumbering alone is not a difference", same.Identical);
+
+        string edited = theirs.Replace("<hkparam name=\"animationName\">b.hkx</hkparam>",
+                                       "<hkparam name=\"animationName\">theirs.hkx</hkparam>");
+        var changed = BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(edited));
+        Check("one changed value is one line", 1, changed.Changed);
+        Check("nothing was added", 0, changed.Added);
+        Check("nothing was removed", 0, changed.Removed);
+        CheckTrue("and it names the field", changed.Lines[0].Where == "animationName");
+        CheckTrue("with both sides of it",
+                  changed.Lines[0].Was == "b.hkx" && changed.Lines[0].Now == "theirs.hkx");
+
+        // A whole object gone, so the two sequences are different lengths and have to resynchronise.
+        string shortened = Regex.Replace(theirs,
+            @"\s*<hkobject class=""hkbClipGenerator"" name=""#497""[\s\S]*?</hkobject>", "");
+        var dropped = BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(shortened));
+        Check("a dropped object reads as one removal", 1, dropped.Removed);
+        Check("and invents nothing", 0, dropped.Added);
+        CheckTrue("naming what went", dropped.Lines.Any(l => l.Where == "Spare"));
     }
 
     private static string SmallGraph() => """

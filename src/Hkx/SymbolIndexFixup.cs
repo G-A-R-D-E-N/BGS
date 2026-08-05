@@ -210,6 +210,37 @@ public static class SymbolIndexFixup
 
     public static List<EventReference> EventReferences(string xml) => References(xml, events: true);
 
+    /// One site, with the object it lives in, so a list of usages can be clicked through to the node
+    /// rather than only read. Same walk as References; the difference is that this keeps the id.
+    public readonly record struct Usage(int Index, string Owner, string Member, string ObjectId, string OwnerClass)
+    {
+        public override string ToString() => $"{Owner}.{Member}";
+    }
+
+    public static List<Usage> Usages(string xml, bool events)
+    {
+        var found = new List<Usage>();
+        foreach (var site in Sites(xml, events, out _))
+            if (site.Value >= 0)
+                found.Add(new Usage(site.Value, site.HolderClass, site.HolderParam, site.OwnerId, site.OwnerClass));
+        return found;
+    }
+
+    /// Every symbol one object touches, for reading the relationship from the node's end. The same
+    /// index can be written more than once by one object, so repeats are folded here rather than
+    /// listed.
+    public static List<Usage> UsagesOf(string xml, bool events, string objectId)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var found = new List<Usage>();
+        foreach (var use in Usages(xml, events))
+        {
+            if (use.ObjectId != objectId) continue;
+            if (seen.Add($"{use.Index} {use.Member}")) found.Add(use);
+        }
+        return found;
+    }
+
     // Anything addressing a symbol the graph does not declare. -1 is the format's "none" and is not
     // an overrun.
     public static List<string> ReferencesAtOrAbove(string xml, bool events, int limit)

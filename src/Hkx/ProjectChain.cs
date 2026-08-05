@@ -25,6 +25,12 @@ public sealed class ProjectChain
     public readonly List<string> Bones = new();
     public readonly List<string> Problems = new();
 
+    // The rig itself, not only its bone names. Posing an animation needs the parent indices and the
+    // reference pose, and the chain is the only thing that knows which rig this behaviour belongs to:
+    // the behaviour file does not name one, the character does.
+    public HkxSkeleton? Skeleton;
+    public string SkeletonPath = "";
+
     public static ProjectChain Resolve(string anyHkxPath, string java, string jar)
     {
         var chain = new ProjectChain();
@@ -92,6 +98,8 @@ public sealed class ProjectChain
                 {
                     var skeleton = new HkxBinaryReader().ReadSkeleton(rigPath);
                     chain.Bones.AddRange(skeleton.BoneNames);
+                    chain.Skeleton = skeleton;
+                    chain.SkeletonPath = rigPath;
                     link.Note = $"{skeleton.BoneNames.Count} bones";
                 }
                 catch (Exception ex)

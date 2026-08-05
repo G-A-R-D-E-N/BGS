@@ -42,6 +42,18 @@ public class HkxTrackData
     public List<Quaternion> Rotations { get; set; } = new();
     public List<Vector3> Scales { get; set; } = new();
 
+    // Which channels the animation actually drives, per axis, because a Havok track mask is per axis.
+    // A channel left clear is not a channel set to zero: the bone keeps whatever the skeleton's
+    // reference pose says. Both decoders prefill a cleared channel with 0, identity or 1, which is
+    // what the engine does to the transform before it fills anything in, and is indistinguishable
+    // afterwards from a bone genuinely sitting at the origin. Posing without this collapses every
+    // rotation-only bone onto its parent, which is most of a character.
+    public bool[] TranslationAnimated { get; } = new bool[3];
+    public bool[] ScaleAnimated { get; } = new bool[3];
+    public bool RotationAnimated { get; set; }
+
+    public bool AnyTranslationAnimated => TranslationAnimated[0] || TranslationAnimated[1] || TranslationAnimated[2];
+
     /// Whether this track's scale is worth showing. Almost every track in the game is a flat 1,1,1,
     /// so printing all of them hides the ones that are not, and a track that only looks unscaled
     /// because the decode returned nothing is a different thing from one that really is 1,1,1.

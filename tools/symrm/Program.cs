@@ -36,6 +36,9 @@ public static class Program
             case "scale": return Scale(argv);
             case "skeleton": return Skeleton(argv);
             case "rig": return Rig(argv);
+            case "extract": return Extract(argv);
+            case "pose": return Pose(argv);
+            case "mesh": return Mesh(argv);
             case "remove": return Remove(argv);
             case "door": return Door(argv);
             case "link": return Link(argv);
@@ -102,6 +105,18 @@ public static class Program
               Emits the skeleton as JSON for an importer to build a rig from, and reads it straight
               back to prove the bone count, names and parents survived. A directory sweeps every
               skeleton under CharacterAssets and reports which roots fork.
+
+          dotnet run --project tools/symrm/symrm.csproj -- extract <archive.ba2> <substring> <outDir> [.ext] [--tree]
+              Anything from a BA2 whose path contains the substring, which is how a corpus for the
+              commands here gets built without a mod manager in the way. Flat by default, because 531
+              files called Behavior.hkx would otherwise overwrite each other; --tree keeps the
+              archive's folders, which is what resolving a project chain afterwards needs.
+
+          dotnet run --project tools/symrm/symrm.csproj -- pose <skeleton.hkx> <animation.hkx> [frame]
+              The pose the viewport draws, printed: which bones a track drives, how far the last
+              frame is from the first, and every bone's world position at a frame. Same
+              AnimationPose call the window makes, so a shape that looks wrong on screen can be read
+              as numbers here.
 
           dotnet run --project tools/symrm/symrm.csproj -- remove <behaviour.hkx>
               The symbol removal round trip. Adds a variable and an event, refuses to remove one
@@ -570,6 +585,141 @@ public static class Program
     // Answers one question before any rig work starts: is the reference pose stored parent relative
     // or already in world space. Composing a chain and looking at where the bones land settles it,
     // and guessing it wrong would put every bone in the wrong place.
+    // Anything out of a BA2 whose path contains a substring, which is how a corpus for the checks
+    // below gets built without a mod manager in the way.
+    private static int Extract(string[] argv)
+    {
+        if (argv.Length < 4) { Usage(); return 1; }
+
+        bool tree = Array.IndexOf(argv, "--tree") >= 0;
+        string extension = argv.Length > 4 && argv[4] != "--tree" ? argv[4] : ".hkx";
+        int written = Ba2.ExtractMatching(Path.GetFullPath(argv[1]), argv[2], Path.GetFullPath(argv[3]),
+                                          extension, Console.WriteLine, tree);
+        Console.WriteLine($"wrote {written} files to {Path.GetFullPath(argv[3])}");
+        return written > 0 ? 0 : 1;
+    }
+
+    // The pose the viewport draws, printed. Same AnimationPose call the window makes, so a shape that
+    // looks wrong on screen can be read as numbers here rather than argued about.
+    private static int Pose(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+
+        var skeleton = new HkxBinaryReader().ReadSkeleton(Path.GetFullPath(argv[1]));
+        if (!new HkxBinaryReader().TryReadAnimation(Path.GetFullPath(argv[2]), out var animation))
+        {
+            Console.WriteLine($"{Path.GetFileName(argv[2])}: {animation.AnimationClass} is not decoded");
+            return 1;
+        }
+
+        Console.WriteLine($"{skeleton.Name}: {skeleton.BoneNames.Count} bones");
+        Console.WriteLine($"{Path.GetFileName(argv[2])}: {animation.GetSummary()}");
+
+        string? refusal = AnimationPose.WhyNotPosable(skeleton, animation);
+        if (refusal != null) { Console.WriteLine("refused: " + refusal); return 1; }
+
+        var driven = AnimationPose.TracksByBone(skeleton, animation);
+        Console.WriteLine($"{driven.Count(t => t >= 0)} of {skeleton.BoneNames.Count} bones are driven by a track");
+
+        int frame = argv.Length > 3 && int.TryParse(argv[3], out int n) ? n : 0;
+        var first = AnimationPose.At(skeleton, animation, 0);
+        var last = AnimationPose.At(skeleton, animation, animation.NumFrames - 1);
+        var here = AnimationPose.At(skeleton, animation, frame);
+
+        Console.WriteLine($"\nframe 0 to frame {animation.NumFrames - 1}: " +
+                          $"{AnimationPose.Distance(first, last):F3} units of movement summed over every bone");
+        Console.WriteLine($"reference pose to frame 0: " +
+                          $"{AnimationPose.Distance(AnimationPose.ReferencePose(skeleton), first):F3}");
+
+        Console.WriteLine($"\nframe {here.Frame} at {here.Time:F3}s");
+        Console.WriteLine($"  {"bone",-28} {"world position",-34} {"moved since frame 0",-12} driven by");
+        foreach (var bone in here.Bones.Take(24))
+        {
+            var p = bone.Position;
+            float moved = System.Numerics.Vector3.Distance(p, first.Bones[bone.Index].Position);
+            Console.WriteLine($"  {bone.Name,-28} {p.X,10:F3}{p.Y,11:F3}{p.Z,11:F3}   {moved,10:F3}   " +
+                              (driven[bone.Index] >= 0 ? $"track {driven[bone.Index]}" : "reference pose"));
+        }
+        if (here.Bones.Count > 24) Console.WriteLine($"  ... and {here.Bones.Count - 24} more");
+        return 0;
+    }
+
+    // What the mesh reader got out of a NIF, and how well it lines up with a skeleton. The bone
+    // matching is the part worth printing: a mesh bone with no skeleton bone of that name is the
+    // failure that shows up as a limb quietly missing from a drawing.
+    private static int Mesh(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        var nif = OpenCommonwealth.Services.Nif.NifFile.Read(Path.GetFullPath(argv[1]));
+        Console.WriteLine($"{Path.GetFileName(argv[1])}: NIF {nif.Version:x} user {nif.UserVersion} " +
+                          $"BSVersion {nif.BsVersion}, {nif.BlockCount} blocks, {nif.Strings.Count} strings");
+
+        var shapes = OpenCommonwealth.Services.Nif.NifGeometry.Shapes(nif);
+        Console.WriteLine($"{shapes.Count} drawable shape{(shapes.Count == 1 ? "" : "s")}");
+        foreach (var s in shapes)
+            Console.WriteLine($"  {s}  {OpenCommonwealth.Services.Nif.SkinnedMesh.Edges(s).Count} unique edges");
+
+        if (argv.Length < 3) return shapes.Count > 0 ? 0 : 1;
+
+        var skeleton = new HkxBinaryReader().ReadSkeleton(Path.GetFullPath(argv[2]));
+        Console.WriteLine($"\nagainst {skeleton.Name}, {skeleton.BoneNames.Count} bones");
+
+        int unmatched = 0;
+        float worstDrift = 0;
+        foreach (var s in shapes)
+        {
+            var binding = OpenCommonwealth.Services.Nif.SkinnedMesh.Bind(s, skeleton);
+            Console.WriteLine($"  {s.Name,-26} {binding}");
+            unmatched += binding.Unmatched.Count;
+
+            // The mesh is authored on the skeleton's own reference pose, so posing it back onto that
+            // pose must not move it. Anything above about half a unit means the bind transforms are
+            // being composed wrongly, whatever the drawing looks like.
+            float drift = OpenCommonwealth.Services.Nif.SkinnedMesh
+                .BindError(s, binding, skeleton, out int measured);
+            if (measured > 0) worstDrift = Math.Max(worstDrift, drift);
+
+            Console.WriteLine($"    rest pose drift {drift:F3} per vertex, over the {measured} of " +
+                              $"{s.Vertices.Count} vertices whose bones all matched" +
+                              (measured > 0 && drift > DriftLimit ? "   THE BIND TRANSFORMS ARE NOT COMPOSING"
+                               : measured == 0 ? "   nothing to measure, no vertex is fully bound" : ""));
+
+            var rest = AnimationPose.ReferencePose(skeleton);
+            var posed = OpenCommonwealth.Services.Nif.SkinnedMesh.Pose(s, binding, rest, skeleton);
+
+            var min = new System.Numerics.Vector3(float.MaxValue);
+            var max = new System.Numerics.Vector3(float.MinValue);
+            int bad = 0;
+            foreach (var p in posed)
+            {
+                if (float.IsNaN(p.X) || float.IsNaN(p.Y) || float.IsNaN(p.Z)) { bad++; continue; }
+                min = System.Numerics.Vector3.Min(min, p);
+                max = System.Numerics.Vector3.Max(max, p);
+            }
+            Console.WriteLine($"    posed on the reference pose: bounds {min.X:F1},{min.Y:F1},{min.Z:F1} " +
+                              $"to {max.X:F1},{max.Y:F1},{max.Z:F1}" + (bad > 0 ? $", {bad} NaN" : ""));
+        }
+
+        // A bone the skeleton does not have is reported and not failed: a shared mesh naming a bone a
+        // particular rig lacks is ordinary. Drift is different. It means the bind transforms are
+        // being composed wrongly, which is wrong for every mesh in the game at once, so it fails.
+        Console.WriteLine(unmatched == 0
+            ? "\nevery mesh bone found a skeleton bone"
+            : $"\n{unmatched} mesh bone reference(s) had no skeleton bone of that name");
+
+        bool ok = worstDrift <= DriftLimit;
+        Console.WriteLine(ok
+            ? $"PASS  worst rest pose drift {worstDrift:F3}, under the {DriftLimit:F1} limit"
+            : $"FAIL  worst rest pose drift {worstDrift:F3}, over the {DriftLimit:F1} limit");
+        return ok ? 0 : 1;
+    }
+
+    // Half a unit per vertex. Half precision vertex positions alone cost about a quarter of a unit on
+    // a body a hundred units long, so this is loose enough not to trip on the format and tight enough
+    // that any transform read the wrong way round, which costs tens of units, cannot pass.
+    private const float DriftLimit = 0.5f;
+
     private static int Skeleton(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -578,17 +728,9 @@ public static class Program
         Console.WriteLine($"{skeleton.Name}: {skeleton.BoneNames.Count} bones, " +
                           $"{skeleton.ParentIndices.Count} parent indices, {skeleton.ReferencePose.Count} poses");
 
-        var world = new System.Numerics.Matrix4x4[skeleton.BoneNames.Count];
-        for (int i = 0; i < skeleton.BoneNames.Count; i++)
-        {
-            var p = i < skeleton.ReferencePose.Count ? skeleton.ReferencePose[i] : new HkxBonePose();
-            var local = System.Numerics.Matrix4x4.CreateScale(p.Scale)
-                      * System.Numerics.Matrix4x4.CreateFromQuaternion(p.Rotation)
-                      * System.Numerics.Matrix4x4.CreateTranslation(p.Translation);
-
-            int parent = i < skeleton.ParentIndices.Count ? skeleton.ParentIndices[i] : -1;
-            world[i] = parent >= 0 && parent < i ? local * world[parent] : local;
-        }
+        // Composed through AnimationPose rather than here, so the corpus tool and the viewport cannot
+        // disagree about where a bone is.
+        var rest = AnimationPose.ReferencePose(skeleton);
 
         string wanted = argv.Length > 2 ? argv[2] : "Hand";
         int leaf = skeleton.BoneNames.FindIndex(n => n.Contains(wanted, StringComparison.OrdinalIgnoreCase));
@@ -602,7 +744,7 @@ public static class Program
         foreach (int i in chain)
         {
             var t = skeleton.ReferencePose[i].Translation;
-            var w = world[i].Translation;
+            var w = rest.Bones[i].Position;
             Console.WriteLine($"  {skeleton.BoneNames[i],-28} " +
                               $"{t.X,10:F3}{t.Y,11:F3}{t.Z,11:F3}   " +
                               $"{w.X,10:F3}{w.Y,11:F3}{w.Z,11:F3}");

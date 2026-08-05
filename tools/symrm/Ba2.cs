@@ -16,8 +16,12 @@ namespace BehaviourStudio.Tools;
 // not touch.
 public static class Ba2
 {
+    /// keepFolders writes the archive's own folder structure instead of flattening the path into the
+    /// file name. Flat is right for a corpus, where 531 files called Behavior.hkx would overwrite each
+    /// other; the tree is right when something has to resolve a project chain afterwards, because
+    /// every reference inside those files is relative to the project folder.
     public static int ExtractMatching(string archivePath, string substring, string outputDir,
-                                      string extension, Action<string> log)
+                                      string extension, Action<string> log, bool keepFolders = false)
     {
         using var stream = File.OpenRead(archivePath);
         using var reader = new BinaryReader(stream);
@@ -66,7 +70,12 @@ public static class Ba2
 
             // The archive path becomes the file name, so two behaviours called Behavior.hkx in
             // different folders do not overwrite each other.
-            File.WriteAllBytes(Path.Combine(outputDir, name.Replace('/', '_')), data);
+            string target = keepFolders
+                ? Path.Combine(outputDir, name.Replace('/', Path.DirectorySeparatorChar))
+                : Path.Combine(outputDir, name.Replace('/', '_'));
+
+            if (keepFolders) Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.WriteAllBytes(target, data);
             written++;
         }
         return written;

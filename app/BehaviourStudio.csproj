@@ -23,6 +23,7 @@
   <ItemGroup>
     <Compile Include="*.cs" />
     <Compile Include="../src/Hkx/*.cs" />
+    <Compile Include="../src/Nif/*.cs" />
   </ItemGroup>
   <!-- Without the jar beside it the program silently drops to read only: the tree still draws from
        the binary, and the other four tabs come from the unpacked text form, so they are simply

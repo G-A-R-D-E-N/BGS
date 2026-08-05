@@ -13,6 +13,7 @@
     <Compile Include="*.cs" />
     <Compile Include="../../app/*.cs" />
     <Compile Include="../../src/Hkx/*.cs" />
+    <Compile Include="../../src/Nif/*.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.2.3" />

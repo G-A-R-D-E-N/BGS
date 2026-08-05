@@ -1,5 +1,9 @@
 # Third party notices
 
+`LICENSE` covers the tool's own source and nothing else. Software written by others and shipped
+alongside it is listed below with its own licence. Fallout 4 and its file formats are Bethesda's;
+nothing in this repository is derived from their code or ships their assets.
+
 Software distributed with this tool that was written by someone else.
 
 ## hkxpack

@@ -30,11 +30,12 @@ public static class Smoke
         Check("there is one tab control", 1, tabs.Count);
 
         var headers = tabs[0].Items.OfType<TabItem>().Select(t => t.Header?.ToString()).ToList();
-        Check("tabs", "Tree, Graph, Symbols, Chain, Animation", string.Join(", ", headers));
+        Check("tabs", "Tree, Graph, Symbols, Chain, Animation, Playback, Compare", string.Join(", ", headers));
 
         // A TabControl only builds the selected tab, so each one has to be visited to prove it is
         // whole. Visiting them also exercises the switching itself.
         var canvases = 0;
+        var viewports = 0;
         var grids = new System.Collections.Generic.List<HkGrid>();
         var buttons = new System.Collections.Generic.List<string?>();
         for (int i = 0; i < tabs[0].ItemCount; i++)
@@ -42,23 +43,42 @@ public static class Smoke
             tabs[0].SelectedIndex = i;
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
             canvases += Find<GraphView>(window).Count;
+            viewports += Find<SkeletonView>(window).Count;
             grids.AddRange(Find<HkGrid>(window));
             buttons.AddRange(Find<Button>(window).Select(b => b.Content?.ToString()));
         }
 
         Check("the node canvas exists", 1, canvases);
-        Check("the tree, problem, symbol, chain and animation grids exist", 5, grids.Count);
+        Check("the skeleton viewport exists", 1, viewports);
+        Check("the tree, problem, symbol, chain, animation and compare grids exist", 6, grids.Count);
 
         // The problem list is the one that starts hidden: an empty box under the canvas before any
         // check has run would read as a check that found nothing.
         Check("the problem list is hidden until a check has run", 1, grids.Count(g => !g.IsVisible));
         foreach (string expected in new[]
-                 { "Open", "Browse...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove" })
+                 { "Open", "Browse...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove",
+                   "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
+                   "Play", "From selected node", "Fit" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
+
+        // Nothing loaded, so the viewport must be empty rather than drawing a rig from the last file.
+        tabs[0].SelectedIndex = headers.IndexOf("Playback");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        Check("the viewport draws nothing before a clip is picked", 0, window.Viewport.DrawnBones);
+        CheckTrue("and is not playing", !window.IsPlaying);
 
         tabs[0].SelectedIndex = 0;
         CheckTrue("save is disabled until something changes",
             Find<Button>(window).First(b => b.Content?.ToString() == "Save to .hkx").IsEnabled == false);
+
+        foreach (string idle in new[] { "Undo", "Redo" })
+            CheckTrue($"{idle} is disabled with nothing loaded",
+                Find<Button>(window).First(b => b.Content?.ToString() == idle).IsEnabled == false);
+
+        // The Java picker is the recovery path out of read only, so it must stay hidden while nothing
+        // is wrong: a permanently visible one reads as a step everybody has to take.
+        CheckTrue("the Java picker stays hidden until Java is actually missing",
+            Find<Button>(window).First(b => b.Content?.ToString() == "Find Java...").IsVisible == false);
 
         // Opening a real file through the window, so what the panel actually says is checked rather
         // than assumed from what the reader returns. Paths come in on the command line because the
@@ -68,7 +88,7 @@ public static class Smoke
             window.Open(path);
             // The panel has to be the selected tab or it is never built, so searching the visual
             // tree for its text finds nothing however correct the text is.
-            tabs[0].SelectedIndex = tabs[0].ItemCount - 1;
+            tabs[0].SelectedIndex = headers.IndexOf("Animation");
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
             string name = System.IO.Path.GetFileName(path);
@@ -198,6 +218,38 @@ public static class Smoke
                         .Parse(window.LoadedXml).Get(host);
                     Check($"{name}: wired into the slot the drag came from", added, owner?.Ref("generator") ?? "");
 
+                    // Undo has to put the document back and take the node off the canvas with it,
+                    // not only flip the unsaved marker.
+                    string afterAdd = window.LoadedXml;
+                    var save = Find<Button>(window).First(b => b.Content?.ToString() == "Save to .hkx");
+                    var undo = Find<Button>(window).First(b => b.Content?.ToString() == "Undo");
+                    var redo = Find<Button>(window).First(b => b.Content?.ToString() == "Redo");
+
+                    CheckTrue($"{name}: undo is offered once something has changed", undo.IsEnabled);
+                    Click(undo);
+                    CheckTrue($"{name}: undo takes the node off the canvas", !canvas.DrawnIds.Contains(added));
+                    CheckTrue($"{name}: and the document is back to what was opened",
+                              window.LoadedXml.Length > 0 && window.LoadedXml != afterAdd);
+                    CheckTrue($"{name}: so there is nothing left to save", !save.IsEnabled);
+                    CheckTrue($"{name}: and nothing left to undo", !undo.IsEnabled);
+
+                    CheckTrue($"{name}: redo is offered after an undo", redo.IsEnabled);
+                    Click(redo);
+                    Check($"{name}: redo puts the document back exactly", afterAdd, window.LoadedXml);
+                    CheckTrue($"{name}: and the node is drawn again", canvas.DrawnIds.Contains(added));
+                    CheckTrue($"{name}: with the unsaved marker back on", save.IsEnabled);
+
+                    Click(undo);
+
+                    // A file compared with itself is the one answer that cannot be wrong, and it
+                    // proves the unpack, the census and the walk all ran.
+                    string said = window.CompareLoadedWith(path);
+                    if (said.Length == 0)
+                        Console.WriteLine("        compare: skipped, the window opened read only");
+                    else
+                        CheckTrue($"{name}: a file compared with itself reports no difference",
+                                  said.Contains("same objects", StringComparison.Ordinal));
+
                     // Object ids restart at #1 in the next file, so a remembered position, highlight
                     // or filter would be applied to whatever now holds that number.
                     canvas.Highlight(added);
@@ -216,6 +268,11 @@ public static class Smoke
             // up to the frames the file has, with the last page ending on the last frame.
             if (window.AnimationFrameCount > 0)
             {
+                // The paging buttons only exist while their own tab is built, and the canvas section
+                // above leaves the Graph tab selected.
+                tabs[0].SelectedIndex = headers.IndexOf("Animation");
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
                 var button = Find<Button>(window)
                     .Where(b => !string.IsNullOrEmpty(b.Content?.ToString()))
                     .GroupBy(b => b.Content!.ToString()!)
@@ -263,13 +320,101 @@ public static class Smoke
                 CheckTrue($"{name}: and it says so", window.FractionAnswer.Contains("not a number"));
 
                 // Filtering to one bone is the difference between a browser and a wall of 95 tracks.
-                string bone = window.AnimationGrid.RowCount > 0 ? "no-such-bone-xyzzy" : "";
-                window.FilterBones(bone);
-                CheckTrue($"{name}: a filter matching nothing says so rather than showing everything",
-                          window.AnimationGrid.RowCount <= 2);
+                // Counted against the tracks rather than against every row: annotations are rows too
+                // and they are not filtered, so a clip with seven of them is still showing seven.
+                int unfiltered = window.AnimationGrid.RowCount;
+                window.FilterBones("no-such-bone-xyzzy");
+                int filtered = window.AnimationGrid.RowCount;
+                CheckTrue($"{name}: a filter matching nothing leaves the annotations and one line saying so",
+                          filtered < unfiltered && filtered <= window.AnimationAnnotationCount + 1);
                 window.FilterBones("");
-                CheckTrue($"{name}: clearing the filter brings the tracks back",
-                          window.AnimationGrid.RowCount > 2);
+                Check($"{name}: clearing the filter brings the tracks back", unfiltered, window.AnimationGrid.RowCount);
+            }
+
+            // Playback. Only reachable when a skeleton resolved for this file, which for a loose
+            // animation means a CharacterAssets folder beside it; when it did not, the window says so
+            // rather than drawing nothing, and there is no pose to check.
+            tabs[0].SelectedIndex = headers.IndexOf("Playback");
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+            // The tree has to reach the same place the canvas does. It used to fill only the
+            // properties panel, so a clip picked in the tree left the viewport empty and the tab
+            // looked broken from that side.
+            if (window.LoadedXml.Length > 0)
+            {
+                tabs[0].SelectedIndex = headers.IndexOf("Tree");
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                string fromTree = "";
+                foreach (string clip in OpenCommonwealth.Services.Hkx.HkxTextEdit
+                             .IdsOfClass(window.LoadedXml, "hkbClipGenerator"))
+                {
+                    window.SelectFromTree(clip);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    if (window.PoseFrameCount > 0) { fromTree = clip; break; }
+                }
+
+                if (fromTree.Length > 0)
+                    Console.WriteLine($"        tree selection loaded a pose from #{fromTree}");
+                CheckTrue($"{name}: picking a clip in the tree loads the pose too, not only the canvas",
+                          fromTree.Length == 0 || window.PoseFrameCount > 0);
+
+                tabs[0].SelectedIndex = headers.IndexOf("Playback");
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            }
+
+            // Selecting a clip is what loads a pose, so a behaviour needs one selected. Walked rather
+            // than taking the first: most clips in a graph name an animation the folder does not have,
+            // which is the ordinary case Check graph already warns about.
+            if (window.PoseFrameCount == 0 && window.LoadedXml.Length > 0)
+                foreach (string clip in OpenCommonwealth.Services.Hkx.HkxTextEdit
+                             .IdsOfClass(window.LoadedXml, "hkbClipGenerator"))
+                {
+                    window.SelectNode(clip);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    if (window.PoseFrameCount > 0) break;
+                }
+
+            if (window.PoseFrameCount == 0)
+            {
+                Console.WriteLine($"        playback: {window.PlaybackSummary}");
+            }
+            else
+            {
+                int frames = window.PoseFrameCount;
+                Console.WriteLine($"        playback: {window.PlaybackSummary}");
+
+                CheckTrue($"{name}: the viewport drew the whole skeleton", window.Viewport.DrawnBones > 1);
+
+                window.ScrubTo(0);
+                var atStart = window.PoseNow!;
+                window.ScrubTo(frames - 1);
+                var atEnd = window.PoseNow!;
+
+                Check($"{name}: scrubbing to the last frame lands on it", frames - 1, window.PoseFrame);
+                CheckTrue($"{name}: and frame 0 and the last frame are different poses",
+                          OpenCommonwealth.Services.Hkx.AnimationPose.Distance(atStart, atEnd) > 0.01f);
+                CheckTrue($"{name}: with no bone landing on a NaN",
+                          atEnd.Bones.All(b => !float.IsNaN(b.Position.X) && !float.IsNaN(b.Position.Y)
+                                                                          && !float.IsNaN(b.Position.Z)));
+
+                window.ScrubTo(-10);
+                Check($"{name}: scrubbing before the start clamps", 0, window.PoseFrame);
+                window.ScrubTo(frames + 500);
+                Check($"{name}: and past the end clamps", frames - 1, window.PoseFrame);
+
+                // Play has to actually run a clock and stop when pressed again, not just relabel.
+                var play = Find<Button>(window).First(b => b.Content?.ToString() is "Play" or "Pause");
+                window.ScrubTo(0);
+                Click(play);
+                CheckTrue($"{name}: play starts a clock", window.IsPlaying || frames <= 1);
+                Click(play);
+                CheckTrue($"{name}: and pressing it again stops it", !window.IsPlaying);
+
+                // Scrubbing is a view of a file on disk. It must never make the graph dirty, or every
+                // look at an animation would arm the save button.
+                CheckTrue($"{name}: scrubbing leaves the document alone",
+                          !Find<Button>(window).First(b => b.Content?.ToString() == "Save to .hkx").IsEnabled);
             }
         }
 
