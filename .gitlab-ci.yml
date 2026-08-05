@@ -32,6 +32,7 @@ format:
   extends: .dotnet
   stage: test
   script:
+    - dotnet test tools/tests/BehaviourGraph.Tests.csproj
     - dotnet run --project tools/symrm/symrm.csproj -- test
 
 # Builds the real window on a headless display and walks it, so a window that no longer opens fails
@@ -99,24 +100,33 @@ standalone:
     - test -s tools/apache-2.0.txt
     - java -jar tools/hkxpack-cli.jar | head -3
 
+# On main these run on their own, which is how a merge cuts a release. Anywhere else they wait
+# for somebody to press play in the pipeline view, so a branch can be handed to a tester as a real
+# download without merging it first. allow_failure keeps an unpressed button from holding the
+# pipeline open or reading as a failure.
+.publishable:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - when: manual
+      allow_failure: true
+
 upload:
+  extends: .publishable
   stage: release
   image: curlimages/curl:latest
   needs: [linux, windows, standalone]
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - |
       for z in BehaviourGraphStudio-linux-x64.zip BehaviourGraphStudio-win-x64.zip; do
         curl -sf --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$z" "$PACKAGE_REGISTRY/$z"
       done
 
+# Not manual itself: it needs upload, so on a branch it simply follows once upload has been
+# pressed, and stays skipped while upload does. One button, not two.
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   needs: [upload]
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - echo "release for $CI_COMMIT_SHORT_SHA"
   release:

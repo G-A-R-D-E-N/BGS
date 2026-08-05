@@ -16,33 +16,53 @@ public static class Tests
     private static int _failed;
     private static int _ran;
 
+    /// One entry per group of checks, named so a runner can report them individually. The console
+    /// runner walks the whole list; a test host runs them one at a time through RunOne.
+    public static readonly (string Name, Action Check)[] Cases =
+    {
+        ("DetachedSubtreeStaysDrawn", DetachedSubtreeStaysDrawn),
+        ("ReplacingLinkSaysWhatItDisplaced", ReplacingLinkSaysWhatItDisplaced),
+        ("BlenderChildIsWrapped", BlenderChildIsWrapped),
+        ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
+        ("StructuralObjectsAreProtected", StructuralObjectsAreProtected),
+        ("PortTypesRefuseNonsense", PortTypesRefuseNonsense),
+        ("BundledHkxPackIsFound", BundledHkxPackIsFound),
+        ("Fo4CharacterListsItsAnimations", Fo4CharacterListsItsAnimations),
+        ("MissingClipAnimationIsReported", MissingClipAnimationIsReported),
+        ("RepackDriftNamesWhatMoved", RepackDriftNamesWhatMoved),
+        ("AnUnreachableStateIsReported", AnUnreachableStateIsReported),
+        ("EventUsageSaysWhoSendsAndWhoListens", EventUsageSaysWhoSendsAndWhoListens),
+        ("ScaleIsShownOnlyWhenItIsRealScale", ScaleIsShownOnlyWhenItIsRealScale),
+        ("AFractionLandsOnAFrame", AFractionLandsOnAFrame),
+        ("LosslessScaleFollowsTheEngine", LosslessScaleFollowsTheEngine),
+        ("AnEmptyStateIsFoundTheSameWayEverywhere", AnEmptyStateIsFoundTheSameWayEverywhere),
+        ("AddedVariablesCarryTheirDeclaredType", AddedVariablesCarryTheirDeclaredType),
+        ("EveryFindingPointsAtAnObject", EveryFindingPointsAtAnObject),
+        ("AShortBoundsArrayStaysLinedUp", AShortBoundsArrayStaysLinedUp),
+        ("WindowsLineEndingsStillEdit", WindowsLineEndingsStillEdit),
+        ("RepackDriftCatchesAChangedValue", RepackDriftCatchesAChangedValue),
+        ("AnAnimationIsRefusedForSaving", AnAnimationIsRefusedForSaving),
+    };
+
+    /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
+    /// so they are reset here rather than shared with whatever ran before.
+    public static int RunOne(string name)
+    {
+        var match = Array.Find(Cases, c => c.Name == name);
+        if (match.Check == null) throw new ArgumentException($"no test case called {name}");
+
+        _failed = 0;
+        _ran = 0;
+        match.Check();
+        return _failed;
+    }
+
     public static int Run()
     {
         _failed = 0;
         _ran = 0;
 
-        DetachedSubtreeStaysDrawn();
-        ReplacingLinkSaysWhatItDisplaced();
-        BlenderChildIsWrapped();
-        AnyNodeCanBeDeleted();
-        StructuralObjectsAreProtected();
-        PortTypesRefuseNonsense();
-        BundledHkxPackIsFound();
-        Fo4CharacterListsItsAnimations();
-        MissingClipAnimationIsReported();
-        RepackDriftNamesWhatMoved();
-        AnUnreachableStateIsReported();
-        EventUsageSaysWhoSendsAndWhoListens();
-        ScaleIsShownOnlyWhenItIsRealScale();
-        AFractionLandsOnAFrame();
-        LosslessScaleFollowsTheEngine();
-        AnEmptyStateIsFoundTheSameWayEverywhere();
-        AddedVariablesCarryTheirDeclaredType();
-        EveryFindingPointsAtAnObject();
-        AShortBoundsArrayStaysLinedUp();
-        WindowsLineEndingsStillEdit();
-        RepackDriftCatchesAChangedValue();
-        AnAnimationIsRefusedForSaving();
+        foreach (var (_, check) in Cases) check();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
