@@ -91,6 +91,15 @@ public class MainWindow : Window
     private readonly Dictionary<int, int> _offsetToIndex = new();
     private HashSet<string> _emptyStates = new();
     private List<string> _objectIds = new();
+
+    // The open file's own bytes, which is where the properties panel gets its values. Null when the
+    // file could not be taken apart, in which case the panel falls back to hkxpack for everything.
+    private PackfileObjects? _bytes;
+
+    // Fields changed since the file was read, as "objectId.field". An edit lands in the text form
+    // and not in the bytes until it is saved, so for these the text form is the newer of the two and
+    // reading the bytes would put the old value back on screen under the person typing.
+    private readonly HashSet<string> _editedFields = new(StringComparer.Ordinal);
     private List<HkxBehaviorParser.BehaviorNode> _objects = new();
     private HkxBehaviorParser.BehaviorNode? _root;
 
@@ -1326,6 +1335,8 @@ public class MainWindow : Window
         ClearProps();
         _offsetToIndex.Clear();
         _objectIds = new List<string>();
+        _bytes = null;
+        _editedFields.Clear();
         _xmlText = "";
         _xmlPath = "";
         _selectedId = "";
@@ -1392,6 +1403,11 @@ public class MainWindow : Window
         _root = root;
         _objects = new List<HkxBehaviorParser.BehaviorNode>(HkxBehaviorParser.LastObjects);
         for (int i = 0; i < _objects.Count; i++) _offsetToIndex[_objects[i].Offset] = i;
+
+        // Not fatal if it fails: the panel falls back to hkxpack field by field, so a file this
+        // cannot take apart still shows its values, just none of them from the bytes.
+        try { _bytes = new PackfileObjects(PackfileImage.Read(path)); }
+        catch (Exception) { _bytes = null; }
 
         var classes = new HashSet<string>();
         int clips = 0;
@@ -1648,13 +1664,47 @@ public class MainWindow : Window
         _clips.SelectByTag(objectId);
     }
 
+    /// The values the panel shows, read from the file's own bytes wherever they can be, and from
+    /// hkxpack's text for the fields they cannot: a struct written inline is the only kind left, and
+    /// a handful of those should not decide where the other forty values come from.
+    private List<PanelFields.Field> PanelValues(string objectId,
+                                                IReadOnlyList<HkxTextEdit.Param> parameters)
+    {
+        var plain = parameters.Select(p => (p.Name, p.Value, p.Own)).ToList();
+
+        int index = _objectIds.IndexOf(objectId);
+        if (_bytes == null || index < 0 || index >= _bytes.Instances.Count)
+            return plain.Select(p => new PanelFields.Field(p.Name, p.Value,
+                                                          PanelFields.Source.Fallback, p.Value))
+                        .ToList();
+
+        // The id the rest of the window is keyed on, for whatever an object points at. Both lists are
+        // in file order and the load refuses to go on unless they are the same length, so the
+        // position in one is the position in the other.
+        string Reference(PackfileObjects.Instance? target, bool wasNull)
+        {
+            if (wasNull) return "null";
+            if (target == null) return "";
+            int at = _bytes.IndexOf(target);
+            return at >= 0 && at < _objectIds.Count ? "#" + _objectIds[at] : "";
+        }
+
+        var edited = new HashSet<string>(
+            _editedFields.Where(f => f.StartsWith(objectId + ".", StringComparison.Ordinal))
+                         .Select(f => f[(objectId.Length + 1)..]), StringComparer.Ordinal);
+
+        return PanelFields.For(_bytes, _bytes.Instances[index], plain, Reference, edited);
+    }
+
     private void FillProps(Inspector panel, string objectId, BehaviourGraphModel model)
     {
         panel.Clear();
         string className = HkxTextEdit.ClassOf(_xmlText, objectId);
-        var parameters = HkxTextEdit.ReadParams(_xmlText, objectId);
+        var parameters = PanelValues(objectId, HkxTextEdit.ReadParams(_xmlText, objectId));
 
-        var heading = Ux.Label($"#{objectId}   {className}   {parameters.Count} editable fields");
+        int fromXml = parameters.Count(p => p.From == PanelFields.Source.Fallback);
+        var heading = Ux.Label($"#{objectId}   {className}   {parameters.Count} editable fields" +
+                               (fromXml > 0 ? $", {fromXml} of them read through hkxpack" : ""));
         heading.TextWrapping = TextWrapping.Wrap;
         panel.Add(heading);
 
@@ -2300,6 +2350,7 @@ public class MainWindow : Window
         try
         {
             Commit(HkxTextEdit.SetParam(_xmlText, objectId, paramName, field.Text ?? ""));
+            _editedFields.Add(objectId + "." + paramName);
             SetStatus($"#{objectId}.{paramName} = {field.Text}   (unsaved)", Ux.CodeBrush);
 
             // Retimes a preview that is already running, so an edited speed shows up without having

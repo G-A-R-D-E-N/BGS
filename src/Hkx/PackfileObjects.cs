@@ -76,6 +76,15 @@ public sealed class PackfileObjects
         return Encoding.ASCII.GetString(_classNames.Data, at, end - at);
     }
 
+    /// Where an object sits in the list, which is how anything outside here names one. The list is
+    /// in the order the virtual fixups give, which is the order the file stores them in.
+    public int IndexOf(Instance instance)
+    {
+        for (int i = 0; i < _instances.Count; i++)
+            if (_instances[i].Offset == instance.Offset) return i;
+        return -1;
+    }
+
     public IEnumerable<Instance> OfClass(string className) =>
         _instances.Where(i => i.ClassName == className);
 

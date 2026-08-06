@@ -41,6 +41,7 @@ public static class Program
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
             case "names": return Names(argv);
+            case "panel": return Panel(argv);
             case "objects": return Objects(argv);
             case "crosscheck": return CrossCheck(argv);
             case "savecheck": return SaveCheck(argv);
@@ -922,6 +923,102 @@ public static class Program
     // out of the game, hkxpack's by its own schema. Agreement across a whole file is what turns
     // "these offsets look plausible" into "these offsets are right", and it is the check that has to
     // pass before anything writes bytes for real.
+    /// What the properties panel would show for every object in a file, against what hkxpack says
+    /// about the same fields.
+    ///
+    /// Not the same question as `crosscheck`, and that is the point of having both. Crosscheck asks
+    /// whether the byte reader agrees with hkxpack. This asks whether the values that reach the
+    /// window agree with hkxpack, which is a different thing, because between the two sits the
+    /// choice of which fields come from the bytes and which fall back. A fallback that silently
+    /// returned the wrong value instead of falling back would pass the first check and fail this
+    /// one.
+    ///
+    /// It calls the same `PanelFields.For` the window calls, so what it reports is what is on
+    /// screen rather than a second implementation of it.
+    private static int Panel(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string file = Path.GetFullPath(argv[1]);
+        string work = Path.Combine(Path.GetTempPath(),
+                                   "symrm-panel-" + Path.GetFileNameWithoutExtension(file));
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+
+        string xmlText = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+        var ids = HkxTextEdit.ObjectIds(xmlText);
+        var objects = new PackfileObjects(PackfileImage.Read(file));
+
+        if (ids.Count != objects.Instances.Count)
+        {
+            Console.WriteLine($"{Path.GetFileName(file)}: the window would refuse this file, " +
+                              $"{objects.Instances.Count} objects in the bytes against {ids.Count} in the xml");
+            return 1;
+        }
+
+        string Reference(PackfileObjects.Instance? target, bool wasNull)
+        {
+            if (wasNull) return "null";
+            if (target == null) return "";
+            int at = objects.IndexOf(target);
+            return at >= 0 && at < ids.Count ? "#" + ids[at] : "";
+        }
+
+        int shown = 0, fromBytes = 0, fell = 0, agreed = 0;
+        var byClassFallback = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var disagreements = new List<string>();
+
+        for (int i = 0; i < ids.Count; i++)
+        {
+            var xml = HkxTextEdit.ReadParams(xmlText, ids[i])
+                                 .Select(p => (p.Name, p.Value, p.Own)).ToList();
+            var fields = PanelFields.For(objects, objects.Instances[i], xml, Reference);
+
+            for (int f = 0; f < fields.Count; f++)
+            {
+                shown++;
+                if (fields[f].From == PanelFields.Source.Fallback)
+                {
+                    fell++;
+                    string what = objects.Instances[i].ClassName + "." + fields[f].Name;
+                    byClassFallback[what] = byClassFallback.GetValueOrDefault(what) + 1;
+                }
+                else fromBytes++;
+
+                // Against hkxpack's own text for the same field, whichever way the value came. A
+                // fallback compares to the thing it was taken from and must therefore always agree;
+                // if one ever does not, the fallback is not doing what it says.
+                // hkxpack's text is read out of the file rather than parsed, so an escape is still
+                // an escape: `Speed &gt; TrotMaxSpeed`. The bytes hold the character itself. The
+                // panel is right to show the character, so the escape is undone here rather than
+                // counted as a difference.
+                string theirs = System.Net.WebUtility.HtmlDecode(xml[f].Value);
+                // Against the raw form as well as the shown one: an enum shows its name and
+                // hkxpack sometimes prints the number, and those are the same value.
+                if (Same(fields[f].Raw, theirs) || Same(fields[f].Value, theirs))
+                {
+                    agreed++;
+                    continue;
+                }
+
+                if (disagreements.Count < 20)
+                    disagreements.Add($"#{ids[i]} {objects.Instances[i].ClassName}.{fields[f].Name} " +
+                                      $"({fields[f].From}): panel shows '{fields[f].Value}', " +
+                                      $"hkxpack says '{theirs}'");
+            }
+        }
+
+        Console.WriteLine($"{Path.GetFileName(file)}: {shown} values on the panel, " +
+                          $"{fromBytes} from the bytes, {fell} fallen back to hkxpack, " +
+                          $"{agreed} agreeing, {shown - agreed} not");
+
+        foreach (var (what, count) in byClassFallback.OrderByDescending(f => f.Value).Take(8))
+            Console.WriteLine($"  fell back: {what} x{count}");
+        foreach (string line in disagreements) Console.WriteLine("  " + line);
+
+        return shown == agreed ? 0 : 1;
+    }
+
     /// Builds the table of what an enum's numbers are called, by reading every enum and flags field
     /// out of the bytes and setting it beside what hkxpack calls the same field. The names are not
     /// in the class dump, so this is where they come from.

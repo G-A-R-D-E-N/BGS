@@ -12,6 +12,14 @@ public static class HkxTextEdit
     {
         public string Name = "";
         public string Value = "";
+
+        /// Whether the field belongs to the object itself rather than to something written inside
+        /// it. An object's block runs to the start of the next one, so it carries the inline
+        /// objects nested in it as well, and their fields look exactly like the object's own. They
+        /// are shown and edited the same way, but they cannot be read out of the object's bytes,
+        /// because they are not at any offset the object's class describes. Telling them apart is
+        /// the difference between falling back for one and quietly reading the wrong field.
+        public bool Own = true;
     }
 
     private static readonly Regex ObjectHead =
@@ -266,8 +274,37 @@ public static class HkxTextEdit
 
         string block = xmlText.Substring(start, length);
         foreach (Match m in SimpleParam.Matches(block))
-            result.Add(new Param { Name = m.Groups["name"].Value, Value = m.Groups["value"].Value });
+            result.Add(new Param
+            {
+                Name = m.Groups["name"].Value,
+                Value = Decode(m.Groups["value"].Value),
+                Own = Depth(block, m.Index) == 1,
+            });
         return result;
+    }
+
+    /// A value is XML, so what sits in the file is `&gt;` where the value is `>`. Read undoes that
+    /// and write puts it back, in step, so what a person sees and types is the value itself.
+    /// Untouched, an expression like `cond(x &gt; 0.0, 1.0, -1.0)` was shown with the escape in it
+    /// and anything typed with an `&` in it wrote a file no XML reader would take back.
+    private static string Decode(string value) => System.Net.WebUtility.HtmlDecode(value);
+
+    private static string Escape(string value) =>
+        value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+    /// How many objects are open at a position: 1 inside the object itself, more inside something
+    /// written inline in it. Counted rather than parsed, because the text is not well formed XML
+    /// until the block is closed and this has to work on a block that was cut out of a larger file.
+    private static int Depth(string block, int at)
+    {
+        int depth = 0;
+        for (int i = 0; i < at; i++)
+        {
+            if (block[i] != '<') continue;
+            if (string.CompareOrdinal(block, i, "<hkobject", 0, 9) == 0) depth++;
+            else if (string.CompareOrdinal(block, i, "</hkobject", 0, 10) == 0) depth--;
+        }
+        return depth;
     }
 
     public static string SetParam(string xmlText, string id, string paramName, string newValue)
@@ -284,7 +321,7 @@ public static class HkxTextEdit
             replaced = true;
             string body = newValue.Length == 0
                 ? $"<hkparam name=\"{paramName}\"/>"
-                : $"<hkparam name=\"{paramName}\">{newValue}</hkparam>";
+                : $"<hkparam name=\"{paramName}\">{Escape(newValue)}</hkparam>";
             return m.Groups["indent"].Value + body;
         });
 
