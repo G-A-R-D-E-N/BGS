@@ -386,14 +386,16 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   joint hover radius is comfortable. Those are the parts to look at first.
 - An animation whose class the reader cannot decode has no frames, so it cannot be drawn. That is the
   same list the Animation tab reports and it is not specific to playback.
-- **Reading a file without hkxpack is nearly complete, and is not yet what the window does.** The
-  byte reader now handles every field type in a behaviour except a struct written inline, which the
-  class dump does not name the class of: references between objects, arrays of all kinds, enums and
-  flags by name, strings, and every width of number. Measured against hkxpack file by file with
-  `symrm crosscheck`: across 76 vanilla behaviours, 53,956 field values compared and all of them
-  agreeing, with 519 inline structs reported as unread rather than passed over. What has not changed
-  is where the window gets its values from: opening a file for editing still goes out through
-  hkxpack's XML, so Java is still required to edit. See #34.
+- **The properties panel reads the file, and falls back to hkxpack one field at a time.** The byte
+  reader handles every field type in a behaviour except a struct written inline, which the class dump
+  does not name the class of: references between objects, arrays of all kinds, enums and flags by
+  name, strings, and every width of number. Measured two ways against hkxpack across 76 vanilla
+  behaviours: `symrm crosscheck` compares the reader, 53,956 values and all agreeing; `symrm panel`
+  compares what the panel itself would display, 94,616 values of which 48,655 come from the bytes and
+  45,961 fall back, all agreeing. The fallbacks are mostly fields of objects written inside the
+  selected one, such as a transition inside a state machine, which are not at any offset the
+  selected object's class describes. **Java is still needed to open a file for editing**, because the
+  panel's field list, and every fallback in it, still comes from the XML. See #34.
 - Reading is measured, not assumed, over the whole game rather than a subset. All 531 behaviour files
   in `Fallout4 - Animations.ba2`, all 5329 states: every one resolves to a generator that exists in
   its own file, across 15 generator classes, and every transition resolves its event name. Nothing is

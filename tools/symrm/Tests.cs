@@ -58,6 +58,8 @@ public static class Tests
         ("WideAndVectorFieldsReadFromTheBytes", WideAndVectorFieldsReadFromTheBytes),
         ("ReferencesAndArraysReadFromTheBytes", ReferencesAndArraysReadFromTheBytes),
         ("AnUnseenEnumValueIsNotNamed", AnUnseenEnumValueIsNotNamed),
+        ("ThePanelFallsBackOneFieldAtATime", ThePanelFallsBackOneFieldAtATime),
+        ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1466,6 +1468,80 @@ public static class Tests
               HavokEnums.Shipped.Name(bits, 6));
         Check("a combination holding a bit with no name is refused whole", null,
               HavokEnums.Shipped.Name(bits, 6 | 1 << 20));
+    }
+
+    /// The panel reads from the bytes and falls back to hkxpack for one field at a time. What must
+    /// not happen is the third thing: reading a field off the bytes that is not that object's field
+    /// and showing the answer as though it were.
+    private static void ThePanelFallsBackOneFieldAtATime()
+    {
+        Console.WriteLine("\nthe panel falls back one field at a time");
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        var objects = new PackfileObjects(image);
+        var clip = objects.Instances.Single();
+
+        // hkxpack's side of the same object. The stale playbackSpeed is deliberate: the file says
+        // 2.5 and this says otherwise, so which one comes back says which was read.
+        var xml = new List<(string, string, bool)>
+        {
+            ("animationName", "wrong.hkx", true),
+            ("playbackSpeed", "9.0", true),
+            ("animationBundleName", "", true),
+            ("startTime", "0.0", true),
+            // A field of an object written inside this one. `id` is a real member of hkbNode, so
+            // reading it off this object would find a number, and it would be the wrong number.
+            ("id", "-1", false),
+            // Nothing in the class has this name at all.
+            ("madeUpField", "kept", true),
+        };
+
+        var fields = PanelFields.For(objects, clip, xml, (_, wasNull) => wasNull ? "null" : "");
+
+        Check("the name comes from the bytes, not from the text", "A.hkx",
+              fields[0].Value);
+        Check("and so does a value the text disagrees with", "2.5", fields[1].Value);
+        Check("a null string is an empty box rather than a symbol", "", fields[2].Value);
+        Check("everything readable is marked as read", PanelFields.Source.Bytes, fields[3].From);
+
+        Check("a field belonging to an object written inline falls back", PanelFields.Source.Fallback,
+              fields[4].From);
+        Check("and keeps hkxpack's value rather than a number read off the wrong object", "-1",
+              fields[4].Value);
+        Check("a field the class does not have falls back too", PanelFields.Source.Fallback,
+              fields[5].From);
+        Check("with its value intact", "kept", fields[5].Value);
+
+        // An edit lives in the text form until it is saved, so for that one field the text is newer
+        // than the bytes and has to win, or typing would be undone by the next redraw.
+        var edited = PanelFields.For(objects, clip, xml, (_, _) => "",
+                                     new HashSet<string> { "playbackSpeed" });
+        Check("an edited field shows the edit, not the bytes", "9.0", edited[1].Value);
+        Check("and says so", PanelFields.Source.Edited, edited[1].From);
+    }
+
+    /// A value is XML. `cond(x &gt; 0.0, 1.0, -1.0)` is an expression with a greater than sign in
+    /// it, and it was being shown with the escape still in it, which is not what it says.
+    private static void AnEscapedValueIsShownAsItself()
+    {
+        Console.WriteLine("\nan escaped value is shown as itself");
+
+        const string xml =
+            "<hkobject class=\"hkbExpressionDataArray\" name=\"#90\" signature=\"0x0\">\n" +
+            "\t<hkparam name=\"expression\">a &gt; b &amp;&amp; c</hkparam>\n" +
+            "</hkobject>\n";
+
+        var read = HkxTextEdit.ReadParams(xml, "90");
+        Check("the escape is undone on the way in", "a > b && c", read[0].Value);
+
+        string written = HkxTextEdit.SetParam(xml, "90", "expression", "x < y & z");
+        CheckTrue("and put back on the way out", written.Contains("x &lt; y &amp; z"));
+        Check("so a round trip gives back what was typed", "x < y & z",
+              HkxTextEdit.ReadParams(written, "90")[0].Value);
+
+        // Left alone, this wrote a file no XML reader would take back, which is worse than showing
+        // the escape.
+        CheckTrue("and the file stays readable", written.Contains("&amp;&amp;") == false);
     }
 
     /// One hkbClipGenerator in a packfile of two sections, which is the least a reader needs: a name

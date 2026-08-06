@@ -3,6 +3,43 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, the properties panel reads the file rather than the text form
+
+The panel used to take every value from hkxpack's XML. It reads them out of the file's own bytes
+now, and where it cannot, it falls back to the XML **for that one field** rather than for the whole
+panel. Across the sample below that is 48,655 values read from the file against 45,961 still coming
+through hkxpack, in the same panels, side by side.
+
+The fallback is not a small corner. Nearly half the rows in a properties panel belong to objects
+written *inside* the object rather than to the object itself: a state machine's block carries its
+transitions, and each transition's `eventId` and `enterTime` look exactly like fields of the machine.
+They are shown and edited the same way, and they cannot be read from the machine's bytes, because
+they are not at any offset the machine's class describes.
+
+**Which is how this nearly went wrong.** `hkbStateMachine` has an `hkbEvent` written inside it, and
+both of them have an `id`. Reading `id` off the state machine found a real field at a real offset
+and returned a real number — the wrong one. It agreed with nothing and would have been shown as
+fact. Fields now carry whether they belong to the object itself, and only those are read from the
+bytes.
+
+**Checked against what the panel actually displays, not against the reader.** `symrm panel` runs the
+same `PanelFields.For` the window runs and compares every value it produces to hkxpack's text for
+the same field. Across the same 76 vanilla behaviours: **94,616 values shown, 48,655 of them from
+the bytes, 45,961 fallen back, and all 94,616 agreeing.** That is a different question from
+`crosscheck`, which asks whether the reader agrees with hkxpack: a fallback that quietly returned a
+wrong value instead of falling back would pass that check and fail this one.
+
+`crosscheck` still reports 53,956 values agreeing across the same files, so nothing regressed on the
+way.
+
+One more thing it turned up, which predates all of this: a value is XML, so an expression like
+`cond(fAccelOrDecel &gt; 0.0, ...)` was being shown with the escape still in it, and anything typed
+with an `&` in it wrote a file no XML reader would take back. Values are unescaped on the way in and
+escaped on the way out now.
+
+Java is still needed to open a file for editing, because the panel's field list, and every fallback
+in it, still comes from the XML.
+
 ## 2026-08-05, reading a whole file out of its own bytes
 
 The rest of the reading side, towards taking hkxpack off it. Values still reach the properties panel
