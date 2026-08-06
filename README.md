@@ -390,9 +390,9 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   reader handles every field type in a behaviour except a struct written inline, which the class dump
   does not name the class of: references between objects, arrays of all kinds, enums and flags by
   name, strings, and every width of number. Measured two ways against hkxpack across 76 vanilla
-  behaviours: `symrm crosscheck` compares the reader, 53,956 values and all agreeing; `symrm panel`
-  compares what the panel itself would display, 94,616 values of which 48,655 come from the bytes and
-  45,961 fall back, all agreeing. The fallbacks are mostly fields of objects written inside the
+  behaviours, and then over all 531: `symrm crosscheck` compares the reader, **258,933 values and all
+  of them agreeing**; `symrm panel` compares what the panel itself would display, **485,793 values of
+  which 231,693 come from the bytes and 254,100 fall back**, all agreeing. The fallbacks are mostly fields of objects written inside the
   selected one, such as a transition inside a state machine, which are not at any offset the
   selected object's class describes. **Java is still needed to open a file for editing**, because the
   panel's field list, and every fallback in it, still comes from the XML. See #34.
