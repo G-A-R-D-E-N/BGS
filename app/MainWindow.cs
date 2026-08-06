@@ -1823,8 +1823,8 @@ public class MainWindow : Window
     // node touches. An index on its own says nothing, so each one is resolved to its declared name.
     private void AddSymbolSection(Inspector panel, string objectId, BehaviourGraphModel model)
     {
-        var events = SymbolIndexFixup.UsagesOf(_xmlText, events: true, objectId);
-        var variables = SymbolIndexFixup.UsagesOf(_xmlText, events: false, objectId);
+        var events = UsagesOf(true, objectId);
+        var variables = UsagesOf(false, objectId);
         if (events.Count == 0 && variables.Count == 0) return;
 
         var eventNames = SymbolEditor.EventNames(model);
@@ -1916,9 +1916,7 @@ public class MainWindow : Window
 
         var readers = UsersByIndex(events: false);
         var listeners = UsersByIndex(events: true);
-        var variableSites = _xmlText.Length == 0
-            ? new List<SymbolIndexFixup.Usage>()
-            : SymbolIndexFixup.Usages(_xmlText, events: false);
+        var variableSites = Usages(events: false);
 
         for (int i = 0; i < names.Count; i++)
         {
@@ -1939,9 +1937,12 @@ public class MainWindow : Window
                             site.Count(), "");
         }
 
-        var usage = _xmlText.Length == 0
-            ? new Dictionary<int, List<EventUsage.Line>>()
-            : EventUsage.ByEvent(_xmlText);
+        // The text form while there is one, because an edit rewrites it and the bytes on disk are
+        // out of date until the file is saved. The reading taken when the file was opened otherwise,
+        // which is what fills the roles with no Java on the machine.
+        var usage = _xmlText.Length > 0 ? EventUsage.ByEvent(_xmlText)
+                  : _bytes != null ? EventUsage.ByEvent(_bytes)
+                  : new Dictionary<int, List<EventUsage.Line>>();
 
         for (int i = 0; i < events.Count; i++)
         {
@@ -2017,12 +2018,30 @@ public class MainWindow : Window
     // One scan for every index rather than one scan per symbol. A weapon behaviour declares 873
     // symbols against seven megabytes of text, and asking one at a time took about two minutes of
     // the load.
+    /// Where every index is written, out of the text while there is any and out of the file's own
+    /// bytes when there is not.
+    ///
+    /// The text is preferred for the same reason the model is: an edit rewrites it, so it is the
+    /// current state of the graph and the bytes on disk are behind until the file is saved. The two
+    /// walks were compared across every vanilla behaviour, 21,624 usages, and agreed on all of them.
+    private List<SymbolIndexFixup.Usage> Usages(bool events) =>
+        _xmlText.Length > 0 ? SymbolIndexFixup.Usages(_xmlText, events)
+        : _bytes != null ? SymbolIndexFixup.Usages(_bytes, events)
+        : new List<SymbolIndexFixup.Usage>();
+
+    private List<SymbolIndexFixup.Usage> UsagesOf(bool events, string objectId) =>
+        _xmlText.Length > 0 ? SymbolIndexFixup.UsagesOf(_xmlText, events, objectId)
+        : _bytes != null ? SymbolIndexFixup.UsagesOf(_bytes, events, objectId)
+        : new List<SymbolIndexFixup.Usage>();
+
     private Dictionary<int, List<string>> UsersByIndex(bool events)
     {
         var map = new Dictionary<int, List<string>>();
-        if (_xmlText.Length == 0) return map;
+        var references = _xmlText.Length > 0 ? SymbolIndexFixup.References(_xmlText, events)
+                       : _bytes != null ? SymbolIndexFixup.References(_bytes, events)
+                       : new List<SymbolIndexFixup.EventReference>();
 
-        foreach (var reference in SymbolIndexFixup.References(_xmlText, events))
+        foreach (var reference in references)
         {
             if (!map.TryGetValue(reference.Index, out var list))
                 map[reference.Index] = list = new List<string>();
@@ -2439,9 +2458,18 @@ public class MainWindow : Window
     // finding out in game.
     private void Validate()
     {
-        if (_xmlText.Length == 0) { SetStatus("Nothing loaded to check.", Ux.MutedBrush); return; }
+        if (_xmlText.Length == 0 && _reading.Objects.Count == 0)
+        {
+            SetStatus("Nothing loaded to check.", Ux.MutedBrush);
+            return;
+        }
 
-        var findings = GraphValidator.Check(_xmlText, _projectChain);
+        // Every check runs either way now. With no text the model and the index walk both come from
+        // the file's own bytes, so the checker sees the same graph it would have seen through
+        // hkxpack rather than a smaller one.
+        var findings = _xmlText.Length > 0
+            ? GraphValidator.Check(_xmlText, _projectChain)
+            : GraphValidator.Check(_reading, _projectChain, _bytes);
         var errors = findings.Where(f => f.Level == GraphValidator.Level.Error).ToList();
         var warnings = findings.Where(f => f.Level == GraphValidator.Level.Warning).ToList();
 

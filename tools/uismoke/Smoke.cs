@@ -114,29 +114,23 @@ public static class Smoke
                 var said = Find<TextBlock>(window).Select(t => t.Text ?? "")
                     .Where(t => roles.Any(r => t.Contains(r, StringComparison.Ordinal))).ToList();
 
-                // The symbols themselves come from the file's own bytes now, so they are built with
-                // or without Java. What each event is used for does not: that is a scan of the text
-                // form for every place an index appears, including nesting the model does not carry,
-                // so with no text the rows are there and the roles are not. Checked as two separate
-                // things rather than one, because "no rows at all" and "rows without roles" are
-                // different states and only the first is a fault.
+                // Both of these are built from the file's own bytes now, so both are asserted with
+                // or without Java rather than one of them being excused.
+                //
+                // The roles were the last thing here still needing hkxpack. What an event is used for
+                // is a scan of every place an index is written, including inside structs nested
+                // deeper than the graph model carries, so the model genuinely cannot answer it. That
+                // was read as needing the text form. It needs the places, and the bytes have them.
                 CheckTrue($"{name}: the symbols are built from the file itself",
                           window.SymbolGrid.RowCount > 0);
+                CheckTrue($"{name}: events say who sends and who listens", said.Count > 0);
+                CheckTrue($"{name}: and no row calls an event dead or unused",
+                          !said.Any(t => t.Contains("dead", StringComparison.OrdinalIgnoreCase)
+                                      || t.Contains("unused", StringComparison.OrdinalIgnoreCase)));
 
-                if (window.LoadedXml.Length == 0)
-                {
-                    Console.WriteLine($"        symbols: {window.SymbolGrid.RowCount} rows, no roles " +
-                                      "without a text form to scan");
-                }
-                else
-                {
-                    CheckTrue($"{name}: events say who sends and who listens", said.Count > 0);
-                    CheckTrue($"{name}: and no row calls an event dead or unused",
-                              !said.Any(t => t.Contains("dead", StringComparison.OrdinalIgnoreCase)
-                                          || t.Contains("unused", StringComparison.OrdinalIgnoreCase)));
-                    Console.WriteLine($"        symbols: {window.SymbolGrid.RowCount} rows, " +
-                                      $"{said.Count} of them naming a role, e.g. \"{said.FirstOrDefault()}\"");
-                }
+                Console.WriteLine($"        symbols: {window.SymbolGrid.RowCount} rows, " +
+                                  $"{said.Count} of them naming a role, e.g. \"{said.FirstOrDefault()}\"" +
+                                  (window.LoadedXml.Length == 0 ? "  (read with no Java)" : ""));
             }
 
             // The canvas is drawn from the model, and the model comes from the file's own bytes, so

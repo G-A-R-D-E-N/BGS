@@ -43,6 +43,7 @@ public static class Program
             case "packfile": return Packfile(argv);
             case "model": return Model(argv);
             case "consumers": return Consumers(argv);
+            case "symbols": return Symbols(argv);
             case "classes": return Classes(argv);
             case "fields": return Fields(argv);
             case "signatures": return Signatures(argv);
@@ -1388,6 +1389,7 @@ public static class Program
             : new List<string> { target };
 
         int clean = 0, bad = 0, unreadable = 0, compared = 0, differing = 0;
+        int roleLines = 0, roleAgreeing = 0, roleDiffering = 0;
         bool one = files.Count == 1;
 
         foreach (string file in files)
@@ -1405,12 +1407,37 @@ public static class Program
                 continue;
             }
 
-            var second = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(file)));
+            var objects = new PackfileObjects(PackfileImage.Read(file));
+            var second = NativeGraphModel.From(objects);
             if (second == null)
             {
                 unreadable++;
                 Console.WriteLine($"{Path.GetFileName(file)}: no reading from the bytes");
                 continue;
+            }
+
+            // What each event is used for, from the text and from the bytes. Not part of the model
+            // comparison because it is not read from the model: it is a walk of every place an index
+            // is written, including nesting the model does not carry, which is why it was the last
+            // thing here still needing Java. Compared here because this is where both readings of a
+            // file are already open.
+            var told = Roles(EventUsage.ByEvent(xml));
+            var read = Roles(EventUsage.ByEvent(objects));
+            roleLines += Math.Max(told.Count, read.Count);
+
+            for (int i = 0; i < Math.Max(told.Count, read.Count); i++)
+            {
+                string fromText = i < told.Count ? told[i] : "(nothing)";
+                string fromBytes = i < read.Count ? read[i] : "(nothing)";
+
+                if (string.Equals(fromText, fromBytes, StringComparison.Ordinal)) roleAgreeing++;
+                else
+                {
+                    roleDiffering++;
+                    if (roleDiffering <= 10)
+                        Console.WriteLine($"{Path.GetFileName(file)} roles: {fromText}\n" +
+                                          $"  against {fromBytes}");
+                }
             }
 
             var result = ConsumerDiff.Compare(BehaviourGraphModel.Parse(xml), second);
@@ -1427,8 +1454,134 @@ public static class Program
 
         Console.WriteLine($"\n{clean} file(s) behaving the same, {bad} not, {unreadable} without a " +
                           $"reading, {compared} output(s) compared, {differing} differing");
+        Console.WriteLine($"event roles: {roleLines} line(s) compared, {roleAgreeing} agreeing, " +
+                          $"{roleDiffering} not");
+
+        return bad == 0 && roleDiffering == 0 ? 0 : 1;
+    }
+
+    /// Where every event and variable index is written, read out of the text and out of the bytes,
+    /// set beside each other.
+    ///
+    /// This is the last thing the symbols tab needed hkxpack for. The graph model cannot answer it,
+    /// because these indices sit deeper than the one level of nesting the model records, so the byte
+    /// side walks the class table rather than the model. Two different walks over two different
+    /// forms of the same file, which is what makes agreement worth anything.
+    private static int Symbols(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToList()
+            : new List<string> { target };
+
+        int clean = 0, bad = 0, compared = 0, differing = 0;
+        bool one = files.Count == 1;
+
+        foreach (string file in files)
+        {
+            string work = WorkDirectory("symrm-symbols-", file);
+            string xml;
+            try
+            {
+                HkxTextEdit.ResetDirectory(work);
+                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message.Split('\n')[0]}");
+                continue;
+            }
+
+            var objects = new PackfileObjects(PackfileImage.Read(file));
+            var problems = new List<string>();
+
+            foreach (bool events in new[] { true, false })
+            {
+                var text = SymbolIndexFixup.Usages(xml, events);
+                var bytes = SymbolIndexFixup.Usages(objects, events);
+                compared += text.Count;
+
+                string what = events ? "events" : "variables";
+                if (text.Count != bytes.Count)
+                {
+                    problems.Add($"{what}: {text.Count} usage(s) in the text against {bytes.Count}");
+                    continue;
+                }
+
+                for (int i = 0; i < text.Count; i++)
+                    if (!Same(text[i], bytes[i]))
+                    {
+                        problems.Add($"{what} {i}: {Spell(text[i])} against {Spell(bytes[i])}");
+                        if (problems.Count > 8) break;
+                    }
+            }
+
+            // What the symbols tab actually draws under each event, not only the sites it is built
+            // from. The rows are the thing a person sees, so agreeing on the sites and disagreeing
+            // on the rows would still be a different tab.
+            var rowsText = EventUsage.ByEvent(xml);
+            var rowsBytes = EventUsage.ByEvent(objects);
+            compared += rowsText.Sum(e => e.Value.Count);
+
+            if (rowsText.Count != rowsBytes.Count)
+                problems.Add($"events with usage: {rowsText.Count} in the text against {rowsBytes.Count}");
+            else
+                foreach (var (index, lines) in rowsText.OrderBy(e => e.Key))
+                {
+                    if (!rowsBytes.TryGetValue(index, out var mine))
+                    {
+                        problems.Add($"event {index}: {lines.Count} line(s) in the text against none");
+                        continue;
+                    }
+                    if (EventUsage.Summarise(lines) != EventUsage.Summarise(mine))
+                        problems.Add($"event {index}: \"{EventUsage.Summarise(lines)}\" against " +
+                                     $"\"{EventUsage.Summarise(mine)}\"");
+                }
+
+            var unknownText = SymbolIndexFixup.UnknownIndexFields(xml);
+            var unknownBytes = SymbolIndexFixup.UnknownIndexFields(objects);
+            compared++;
+            if (!unknownText.SequenceEqual(unknownBytes, StringComparer.Ordinal))
+                problems.Add($"unrecognised index fields: {unknownText.Count} in the text " +
+                             $"against {unknownBytes.Count}");
+
+            differing += problems.Count;
+            if (problems.Count == 0) clean++; else bad++;
+
+            if (one || problems.Count > 0)
+            {
+                Console.WriteLine($"{Path.GetFileName(file)}: {compared} usage(s) compared, " +
+                                  $"{problems.Count} differing");
+                foreach (string problem in problems) Console.WriteLine("  " + problem);
+            }
+        }
+
+        Console.WriteLine($"\n{clean} file(s) agreeing, {bad} not, {compared} usage(s) compared, " +
+                          $"{differing} differing");
 
         return bad == 0 ? 0 : 1;
+    }
+
+    private static bool Same(SymbolIndexFixup.Usage a, SymbolIndexFixup.Usage b) =>
+        a.Index == b.Index && a.Owner == b.Owner && a.Member == b.Member &&
+        a.ObjectId == b.ObjectId && a.OwnerClass == b.OwnerClass;
+
+    private static string Spell(SymbolIndexFixup.Usage u) =>
+        $"#{u.ObjectId} {u.OwnerClass} {u.Owner}.{u.Member}={u.Index}";
+
+    /// Every event's roles as lines, so two readings of them can be set beside each other.
+    private static List<string> Roles(Dictionary<int, List<EventUsage.Line>> byEvent)
+    {
+        var lines = new List<string>();
+        foreach (var (index, sites) in byEvent.OrderBy(e => e.Key))
+            foreach (var site in sites)
+                lines.Add($"event {index} {site.Role} {site.Site} x{site.Count} " +
+                          string.Join(",", site.ObjectIds));
+        return lines;
     }
 
     /// The fields hkxpack reads at the wrong stride: an array whose elements are a struct aligned to
