@@ -996,12 +996,25 @@ public static class Program
         "stringptr" or "cstring" => objects.ReadString(instance, member.Name) ?? "∅",
         "bool" or "int8" or "uint8" or "int16" or "uint16" or "int32" or "uint32"
             => Narrow(objects.ReadInt(instance, member.Name), member.Type),
+        "ulong" or "uint64" => objects.ReadULong(instance, member.Name)?.ToString(),
+        "vector4" or "quaternion" => Floats(objects.ReadFloats(instance, member.Name, 4)),
+        "qstransform" => Floats(objects.ReadFloats(instance, member.Name, 12)),
         _ => null,
     };
+
+    /// Printed the way hkxpack prints a vector, so the comparison is between two spellings of the
+    /// same thing rather than between a spelling and a shape.
+    private static string? Floats(float[]? values) =>
+        values == null ? null : "(" + string.Join(" ", values.Select(v => v.ToString("R"))) + ")";
 
     /// hkxpack and a raw read spell the same value differently: 1 against 1.0, true against 1, and a
     /// null pointer against an empty element. Comparing the text as typed would report every one of
     /// those as a disagreement and drown the real ones.
+    private static List<float> Numbers(string text) =>
+        System.Text.RegularExpressions.Regex.Matches(text, @"-?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?")
+            .Select(m => float.Parse(m.Value, System.Globalization.CultureInfo.InvariantCulture))
+            .ToList();
+
     private static bool Same(string ours, string theirs)
     {
         if (string.Equals(ours, theirs, StringComparison.Ordinal)) return true;
@@ -1009,6 +1022,18 @@ public static class Program
 
         if (float.TryParse(ours, out float a) && float.TryParse(theirs, out float b))
             return Math.Abs(a - b) <= 1e-6f * Math.Max(1f, Math.Abs(b));
+
+        // A vector is a list of numbers and the two sides spell them differently: 0 against 0.0,
+        // and hkxpack breaks a transform over several lines. Compared number by number, which is
+        // the only comparison that says anything about the bytes.
+        if (ours.StartsWith('(') && theirs.Contains('.'))
+        {
+            var mine = Numbers(ours);
+            var yours = Numbers(theirs);
+            return mine.Count > 0 && mine.Count == yours.Count &&
+                   mine.Zip(yours).All(p => Math.Abs(p.First - p.Second) <=
+                                            1e-6f * Math.Max(1f, Math.Abs(p.Second)));
+        }
 
         if (ours is "true" or "false")
             return theirs.Equals(ours, StringComparison.OrdinalIgnoreCase) ||

@@ -90,6 +90,29 @@ public sealed class PackfileObjects
             : BitConverter.ToInt32(_data.Data, at.Value);
     }
 
+    /// Eight bytes rather than four. `hkbNode.userData` is the common one, and reading it as an int
+    /// would come back right only while the top half happens to be zero.
+    public ulong? ReadULong(Instance instance, string field)
+    {
+        int? at = FieldAt(instance, field);
+        return at == null || at + 8 > _data.Data.Length
+            ? null
+            : BitConverter.ToUInt64(_data.Data, at.Value);
+    }
+
+    /// A run of floats laid out one after another: four of them for a vector or a quaternion, twelve
+    /// for a transform. Returns null rather than a short answer when the object does not reach that
+    /// far, because a half read transform is worse than no transform.
+    public float[]? ReadFloats(Instance instance, string field, int count)
+    {
+        int? at = FieldAt(instance, field);
+        if (at == null || at + 4 * count > _data.Data.Length) return null;
+
+        var values = new float[count];
+        for (int i = 0; i < count; i++) values[i] = BitConverter.ToSingle(_data.Data, at.Value + i * 4);
+        return values;
+    }
+
     /// A string field holds a pointer, not characters, so the value is wherever this object's local
     /// fixup for that exact offset points. No fixup means the pointer is null, which is a real state
     /// and not a failure.

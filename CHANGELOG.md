@@ -3,6 +3,38 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, reading the wider fields out of the bytes
+
+Groundwork for taking hkxpack off the reading side as well as the writing side. Values still reach
+the properties panel through hkxpack's XML; what changed is how much of a file the byte reader can
+account for on its own, which is the thing that has to be true first.
+
+Three kinds of field it could not read before:
+
+- **Eight byte values.** `hkbNode.userData` is one, and 430 of Dogmeat's 906 objects carry it.
+  Reading it as an int is right only while the top half happens to be zero.
+- **Vectors and quaternions**, four floats in a row.
+- **Transforms**, twelve.
+
+Measured the only way that means anything: `symrm crosscheck` reads every field it can out of the
+bytes and compares it to what hkxpack says the same field holds. Across the same 76 vanilla
+behaviours the rename work was proved on, it now compares **32,736 field values, up from 29,689, and
+all 32,736 agree**. Dogmeat's own file goes from 4,678 to 5,109, none disagreeing.
+
+The 3,047 new values are almost entirely `userData`. The vectors and transforms read correctly and
+are barely exercised, because hkxpack does not write out the runtime fields they mostly sit on —
+`hkbClipGenerator.extractedMotion` and `hkbBlendingTransitionEffect`'s six pose fields never appear
+in its XML, so there is nothing to compare them against. They are checked by hand instead, in
+`symrm test`.
+
+One fix came out of it. A vector was being compared as text, so `(0 1 0 0)` and `(0.0 1.0 0.0 0.0)`
+read as a disagreement. Numbers are compared as numbers now.
+
+What still needs hkxpack to read: pointers between objects, arrays, and enums. Enums are the awkward
+one and are not a byte problem: hkxpack writes `MODE_SINGLE_PLAY` and the bytes hold `0`, so reading
+them means having the value names, which the class dump did not keep. That is the same table #36
+needs.
+
 ## 2026-08-05, a name can be any length it likes
 
 Renaming an animation is the commonest edit anyone makes here, and it was the one thing the new save
