@@ -26,9 +26,12 @@ the game, with the evidence behind it, lives in the
   straight into the first box. Type, tab out, and the change is staged. A field the file leaves empty,
   such as `animationBundleName`, is offered as an empty box rather than hidden, so it can be given a
   value. The same panel sits beside the tree view.
-  Save writes back to `.hkx` and keeps the original as `.bak`. Before it overwrites anything it reads
-  the file hkxpack just produced back out and counts it; if objects went missing on the way through,
-  nothing is written and it says what was lost.
+  Save writes back to `.hkx` and keeps the original as `.bak`. A changed value goes straight into the
+  file's own bytes; a changed name goes on the end of the file and its pointer is aimed at it, which
+  is how a longer name is written without moving anything already there. Only an edit that changes
+  the number of objects or the length of an array is rebuilt through hkxpack, and before that
+  overwrites anything it reads the file hkxpack just produced back out and counts it; if objects went
+  missing on the way through, nothing is written and it says what was lost.
 - **Highlight one state's paths**: right click a node and pick "Highlight the paths of ...". Every
   wire that does not touch that node drops to half opacity and every unrelated node dims, so a single
   state's routes are readable in a graph that draws a few hundred wires over each other. Escape, or

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 
 namespace OpenCommonwealth.Services.Hkx;
@@ -191,6 +192,48 @@ public sealed class PackfileSection
     {
         for (int i = at; i < at + length; i++) if (table[i] != 0xFF) return false;
         return true;
+    }
+
+    /// Puts bytes at the end of this section's data and says where they landed.
+    ///
+    /// This is how a value that changes size gets written without moving anything. Nothing in the
+    /// format requires a string, or an object, to sit in any particular place: what makes a byte
+    /// mean something is a fixup pointing at it. So the new bytes go on the end, where no offset
+    /// anybody already holds can reach, and only the fixup that names them has to change. Whatever
+    /// the pointer held before is left where it is, unreferenced, which is what an unreferenced run
+    /// of bytes in this format already looks like.
+    public int AppendData(byte[] bytes)
+    {
+        int at = Data.Length;
+        Array.Resize(ref Data, at + bytes.Length);
+        bytes.CopyTo(Data, at);
+        return at;
+    }
+
+    /// Points the local fixup for a source offset at a new destination, adding one when the field
+    /// held no pointer at all.
+    ///
+    /// The order of the table is left exactly as it was found, and a new entry goes on the end.
+    /// Sorting it looked tidier and was wrong: Fallout 4's own tables are not in source order, 383
+    /// of Dogmeat's 1587 entries move if you sort them, so a sort rewrites most of a table to no
+    /// purpose and hides a real change among the noise. Nothing reads this table by position.
+    public void SetLocal(int source, int destination)
+    {
+        var entries = Locals().ToList();
+        int existing = entries.FindIndex(e => e.Source == source);
+        if (existing >= 0) entries[existing] = (source, destination);
+        else entries.Add((source, destination));
+
+        // Rewritten from the entries rather than patched in place, because adding one lengthens the
+        // table. The trailing 0xFF it was padded with is not carried over: the rebuild pads every
+        // table to the boundary itself, so putting it back here would pad the padding.
+        var table = new byte[entries.Count * 8];
+        for (int i = 0; i < entries.Count; i++)
+        {
+            BitConverter.GetBytes(entries[i].Source).CopyTo(table, i * 8);
+            BitConverter.GetBytes(entries[i].Destination).CopyTo(table, i * 8 + 4);
+        }
+        LocalFixups = table;
     }
 
     /// A pointer into another section.

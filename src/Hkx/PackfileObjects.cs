@@ -129,6 +129,27 @@ public sealed class PackfileObjects
         return true;
     }
 
+    /// Changes a string, at whatever length it wants to be.
+    ///
+    /// The text goes on the end of the section and the field's fixup is pointed at it, so no byte
+    /// that anything else refers to moves and no offset recorded anywhere becomes wrong. A field
+    /// that held no pointer at all gains one, which is how a name the file left empty gets a value.
+    /// The bytes the pointer used to name stay where they are and stop being referenced.
+    public bool WriteString(Instance instance, string field, string value)
+    {
+        int? at = FieldAt(instance, field);
+        if (at == null || at + 8 > _data.Data.Length) return false;
+
+        if (ReadString(instance, field) == value) return true;
+
+        var bytes = Encoding.UTF8.GetBytes(value);
+        var withTerminator = new byte[bytes.Length + 1];
+        bytes.CopyTo(withTerminator, 0);
+
+        _data.SetLocal(at.Value, _data.AppendData(withTerminator));
+        return true;
+    }
+
     /// How much of this file we can account for. An unknown class is not fatal, but it is the number
     /// worth watching: it says how much of a file an edit could not reason about.
     public (int Known, int Unknown) Coverage()

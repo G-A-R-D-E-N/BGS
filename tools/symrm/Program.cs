@@ -679,17 +679,24 @@ public static class Program
         File.WriteAllBytes(savedPath, saved);
 
         byte[] before = File.ReadAllBytes(file);
-        int changedBytes = before.Length == saved.Length
-            ? Enumerable.Range(0, saved.Length).Count(i => before[i] != saved[i])
-            : -1;
+        bool sameSize = before.Length == saved.Length;
+        int changedBytes = Enumerable.Range(0, Math.Min(before.Length, saved.Length))
+                                     .Count(i => before[i] != saved[i]);
 
-        Console.WriteLine($"{Path.GetFileName(file)}: {plan.Changes.Count} value(s) changed, " +
-                          (changedBytes < 0
-                              ? $"BUT THE FILE CHANGED SIZE, {before.Length} to {saved.Length}"
-                              : $"{changedBytes} bytes differ from the original"));
-        foreach (var change in plan.Changes.Take(4)) Console.WriteLine("    " + change);
+        // A plan holding text grows the file, because the new text goes on the end rather than over
+        // what was there. Anything else changing size is a fault: it means something moved.
+        string size = sameSize
+            ? $"{changedBytes} bytes differ from the original"
+            : plan.Grows
+                ? $"{before.Length} bytes to {saved.Length}, as appending text does, " +
+                  $"{changedBytes} of the original bytes differ"
+                : $"BUT THE FILE CHANGED SIZE WITHOUT APPENDING ANYTHING, {before.Length} to {saved.Length}";
 
-        if (changedBytes < 0) return 1;
+        Console.WriteLine($"{Path.GetFileName(file)}: {plan.Changes.Count} value(s) changed, {size}");
+        foreach (var change in plan.Changes.Take(5)) Console.WriteLine("    " + change);
+
+        if (!sameSize && !plan.Grows) return 1;
+        if (!sameSize && !OnlyAppended(before, saved, plan)) return 1;
 
         // The saved file has to survive being read by the other implementation, and then agree with
         // ours field for field. Reusing crosscheck means the number quoted here is the same measure
@@ -758,27 +765,92 @@ public static class Program
     /// a packfile is derived from the sizes of what precedes it. That has to be a hard refusal rather
     /// than a best effort, so this hands it a longer string and requires two things: that the plan
     /// says no, and that applying that plan throws rather than writing something.
+    /// A file that grew will differ from the original over thousands of bytes, and almost all of that
+    /// is innocent: the fixup tables follow the data inside the section, so appending text pushes
+    /// them along without changing a word of what they say. A raw byte count cannot tell that apart
+    /// from real damage, so this compares the pieces instead of the bytes. Everything must be
+    /// unchanged except the data the text was added to, and the destination of the fixups that were
+    /// deliberately repointed.
+    private static bool OnlyAppended(byte[] before, byte[] after, NativeSave.Plan plan)
+    {
+        var was = PackfileImage.Read(before);
+        var now = PackfileImage.Read(after);
+
+        if (was.Sections.Count != now.Sections.Count)
+        {
+            Console.WriteLine("  append check: FAILED, the section count changed");
+            return false;
+        }
+
+        for (int i = 0; i < was.Sections.Count; i++)
+        {
+            var (a, b) = (was.Sections[i], now.Sections[i]);
+
+            if (b.Data.Length < a.Data.Length)
+            {
+                Console.WriteLine($"  append check: FAILED, section {a.Tag} shrank");
+                return false;
+            }
+
+            // The data the text was added to also holds the values written over in place, so it is
+            // not expected to be identical. What it must not do is differ anywhere else: a value
+            // write touches at most the four bytes of the field it names.
+            int touched = Enumerable.Range(0, a.Data.Length).Count(k => a.Data[k] != b.Data[k]);
+            int allowed = 4 * plan.Changes.Count(c => !c.Text);
+            if (touched > allowed)
+            {
+                Console.WriteLine($"  append check: FAILED, {touched} byte(s) of {a.Tag} changed, " +
+                                  $"more than the {allowed} the planned values can account for");
+                return false;
+            }
+
+            if (!b.Globals().SequenceEqual(a.Globals()) || !b.Virtuals().SequenceEqual(a.Virtuals()))
+            {
+                Console.WriteLine($"  append check: FAILED, section {a.Tag} moved a pointer it should not have");
+                return false;
+            }
+
+            var (locals, wasLocals) = (b.Locals().ToList(), a.Locals().ToList());
+            if (locals.Count != wasLocals.Count)
+            {
+                Console.WriteLine($"  append check: FAILED, section {a.Tag} gained or lost a local fixup");
+                return false;
+            }
+
+            int moved = locals.Zip(wasLocals).Count(p => p.First != p.Second);
+            int expected = plan.Changes.Count(c => c.Text);
+            if (a.Tag == "__data__" && moved != expected)
+            {
+                Console.WriteLine($"  append check: FAILED, {moved} pointer(s) moved for {expected} text change(s)");
+                return false;
+            }
+        }
+
+        Console.WriteLine($"  append check: everything before the added text is untouched, " +
+                          $"{plan.Changes.Count(c => c.Text)} pointer(s) repointed");
+        return true;
+    }
+
     private static bool ResizeIsRefused(string file, string originalXml)
     {
-        // animationName rather than the first name in the document. The first one belongs to an
-        // inline struct inside hkRootLevelContainer, so lengthening it is refused for being inside
-        // an array of struct, whatever the string rule says. The guard would then still pass with
-        // strings wrongly marked writable, which is the one regression it exists to catch.
+        // A string is now written by appending, so the guard has to stand somewhere that still moves
+        // what follows it. An array of strings is the nearest thing: changing one name inside it
+        // changes the array, and an array cannot grow without shifting every object after it.
         var match = System.Text.RegularExpressions.Regex.Match(
-            originalXml, "<hkparam name=\"animationName\">([^<]{3,})</hkparam>");
+            originalXml, "<hkparam name=\"(eventNames|variableNames)\" numelements=\"[1-9][0-9]*\">.{3,}?</hkparam>",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
         if (!match.Success)
         {
-            Console.WriteLine("  resize guard: no string field to lengthen here, skipped");
+            Console.WriteLine("  resize guard: no array of strings here, skipped");
             return true;
         }
 
-        string longer = match.Value.Replace(match.Groups[1].Value,
-                                            match.Groups[1].Value + "_longer_than_it_was");
+        string longer = match.Value.Replace("</hkparam>", "\n\t\t\t\tan_added_name\n</hkparam>");
         var plan = NativeSave.Compare(originalXml, ReplaceFirst(originalXml, match.Value, longer));
 
         if (plan.Possible)
         {
-            Console.WriteLine("  resize guard: FAILED, lengthening a string was accepted as writable");
+            Console.WriteLine("  resize guard: FAILED, growing an array was accepted as writable");
             return false;
         }
 
@@ -791,8 +863,8 @@ public static class Program
         catch (InvalidOperationException)
         {
             // The reason matters as much as the refusal. A refusal that arrives for some other
-            // reason leaves the string rule itself untested.
-            if (plan.Refusal?.Contains("stringptr", StringComparison.Ordinal) != true)
+            // reason leaves the array rule itself untested.
+            if (plan.Refusal?.Contains("array", StringComparison.Ordinal) != true)
             {
                 Console.WriteLine($"  resize guard: FAILED, refused for the wrong reason, {plan.Refusal}");
                 return false;
@@ -829,6 +901,12 @@ public static class Program
         // it exercises a real save of the very format that used to be refused.
         Try("<hkparam name=\"duration\">[0-9.]+</hkparam>",
             "<hkparam name=\"duration\">3.5</hkparam>");
+
+        // A name longer than the one it replaces, which is the case a value save could not do at all
+        // until strings were written by appending. Longer on purpose: a shorter one could be written
+        // over the old bytes and would prove nothing.
+        Try("<hkparam name=\"animationName\">[^<]{3,}</hkparam>",
+            "<hkparam name=\"animationName\">Animations\\Renamed_By_Symrm_Longer.hkx</hkparam>");
         return edits;
     }
 
@@ -936,7 +1014,12 @@ public static class Program
             return theirs.Equals(ours, StringComparison.OrdinalIgnoreCase) ||
                    theirs == (ours == "true" ? "1" : "0");
 
-        return false;
+        // A string ending in a space cannot survive XML: the value sits on its own indented line, so
+        // every reader trims it, hkxpack's and ours alike. `GenericButton01`'s Behavior00 has one,
+        // `OBJSwitchToggleLightOff `, which read as the only disagreement in the whole corpus and is
+        // nothing of the sort. Compared without it, and only at the end, because a space in the
+        // middle of a name is a real difference.
+        return ours.TrimEnd() == theirs.TrimEnd() && ours.TrimEnd().Length > 0;
     }
 
     // What the object layer sees in a file: every object, its class, and the fields of whichever
