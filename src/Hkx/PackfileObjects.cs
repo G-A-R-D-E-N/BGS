@@ -102,103 +102,56 @@ public sealed class PackfileObjects
         return at >= 0 && at < _data.Data.Length ? at : null;
     }
 
-    public float? ReadFloat(Instance instance, string field)
-    {
-        int? at = FieldAt(instance, field);
-        return at == null || at + 4 > _data.Data.Length
-            ? null
-            : BitConverter.ToSingle(_data.Data, at.Value);
-    }
+    /// The reads, by offset.
+    ///
+    /// Everything below comes in two shapes: a named field of an object, and a plain offset. The
+    /// offset is the real one. A struct written inside an object sits at no offset that object's
+    /// class describes, so anything that walks into one has an address and not a name, and the
+    /// named form is that same read with the address worked out first.
+    public float? ReadFloatAt(int at) =>
+        at < 0 || at + 4 > _data.Data.Length ? null : BitConverter.ToSingle(_data.Data, at);
 
-    public int? ReadInt(Instance instance, string field)
-    {
-        int? at = FieldAt(instance, field);
-        return at == null || at + 4 > _data.Data.Length
-            ? null
-            : BitConverter.ToInt32(_data.Data, at.Value);
-    }
+    public int? ReadIntAt(int at) =>
+        at < 0 || at + 4 > _data.Data.Length ? null : BitConverter.ToInt32(_data.Data, at);
 
     /// Eight bytes rather than four. `hkbNode.userData` is the common one, and reading it as an int
     /// would come back right only while the top half happens to be zero.
-    public ulong? ReadULong(Instance instance, string field)
-    {
-        int? at = FieldAt(instance, field);
-        return at == null || at + 8 > _data.Data.Length
-            ? null
-            : BitConverter.ToUInt64(_data.Data, at.Value);
-    }
+    public ulong? ReadULongAt(int at) =>
+        at < 0 || at + 8 > _data.Data.Length ? null : BitConverter.ToUInt64(_data.Data, at);
 
     /// A run of floats laid out one after another: four of them for a vector or a quaternion, twelve
     /// for a transform. Returns null rather than a short answer when the object does not reach that
     /// far, because a half read transform is worse than no transform.
-    public float[]? ReadFloats(Instance instance, string field, int count)
+    public float[]? ReadFloatsAt(int at, int count)
     {
-        int? at = FieldAt(instance, field);
-        if (at == null || at + 4 * count > _data.Data.Length) return null;
+        if (at < 0 || count < 0 || at + 4 * count > _data.Data.Length) return null;
 
         var values = new float[count];
-        for (int i = 0; i < count; i++) values[i] = BitConverter.ToSingle(_data.Data, at.Value + i * 4);
+        for (int i = 0; i < count; i++) values[i] = BitConverter.ToSingle(_data.Data, at + i * 4);
         return values;
     }
 
-    /// A string field holds a pointer, not characters, so the value is wherever this object's local
-    /// fixup for that exact offset points. No fixup means the pointer is null, which is a real state
-    /// and not a failure.
-    public string? ReadString(Instance instance, string field)
-    {
-        int? at = FieldAt(instance, field);
-        return at == null ? null : TextAt(Aim(at.Value));
-    }
-
-    private string? TextAt(int? destination)
-    {
-        if (destination == null || destination < 0 || destination >= _data.Data.Length) return null;
-
-        int end = Array.IndexOf(_data.Data, (byte)0, destination.Value);
-        return end < 0 ? null : Encoding.UTF8.GetString(_data.Data, destination.Value, end - destination.Value);
-    }
-
-    /// Where the pointer stored at an offset aims, or null when nothing points from there, which is
-    /// how the format spells a null pointer: the eight bytes hold zero and no fixup names them.
-    private int? Aim(int at) => _pointsAt.TryGetValue(at, out int destination) ? destination : null;
+    /// A string field holds a pointer, not characters, so the value is wherever the fixup for that
+    /// exact offset points. No fixup means the pointer is null, which is a real state and not a
+    /// failure.
+    public string? ReadStringAt(int at) => TextAt(Aim(at));
 
     /// The object a reference field names, or null when the field is null. A pointer that lands
     /// somewhere no object begins is reported as unresolved rather than as the nearest object,
     /// because the nearest object is a guess and this is meant to be a reading.
-    public Instance? ReadRef(Instance instance, string field, out bool wasNull)
+    public Instance? ReadRefAt(int at, out bool wasNull)
     {
         wasNull = false;
-        int? at = FieldAt(instance, field);
-        if (at == null) return null;
 
-        int? destination = Aim(at.Value);
+        int? destination = Aim(at);
         if (destination == null) { wasNull = true; return null; }
 
         return _startsAt.TryGetValue(destination.Value, out var target) ? target : null;
     }
 
-    /// An hkArray is a pointer, a count, and a capacity with flags packed into its top bits. The
-    /// pointer is a fixup like any other, and an empty array has none, which is why a missing fixup
-    /// here means no elements rather than a fault.
-    public sealed record Elements(int At, int Count);
-
-    public Elements? ReadArray(Instance instance, string field)
+    public IReadOnlyList<string?>? ReadStringArrayAt(int at)
     {
-        int? at = FieldAt(instance, field);
-        if (at == null || at + 12 > _data.Data.Length) return null;
-
-        int count = BitConverter.ToInt32(_data.Data, at.Value + 8);
-        if (count < 0) return null;
-
-        int? destination = Aim(at.Value);
-        if (destination == null) return count == 0 ? new Elements(0, 0) : null;
-
-        return new Elements(destination.Value, count);
-    }
-
-    public IReadOnlyList<string?>? ReadStringArray(Instance instance, string field)
-    {
-        var array = ReadArray(instance, field);
+        var array = ArrayAt(at);
         if (array == null) return null;
 
         var values = new List<string?>(array.Count);
@@ -211,9 +164,9 @@ public sealed class PackfileObjects
         return values;
     }
 
-    public IReadOnlyList<Instance?>? ReadRefArray(Instance instance, string field)
+    public IReadOnlyList<Instance?>? ReadRefArrayAt(int at)
     {
-        var array = ReadArray(instance, field);
+        var array = ArrayAt(at);
         if (array == null) return null;
 
         var values = new List<Instance?>(array.Count);
@@ -232,16 +185,118 @@ public sealed class PackfileObjects
 
     /// Elements that are numbers rather than pointers, laid out one after another. `width` is how
     /// many bytes each takes and `read` turns those bytes into the value.
-    public IReadOnlyList<T>? ReadValueArray<T>(Instance instance, string field, int width,
-                                               Func<byte[], int, T> read)
+    public IReadOnlyList<T>? ReadValueArrayAt<T>(int at, int width, Func<byte[], int, T> read)
     {
-        var array = ReadArray(instance, field);
+        var array = ArrayAt(at);
         if (array == null || array.At + array.Count * width > _data.Data.Length) return null;
 
         var values = new List<T>(array.Count);
         for (int i = 0; i < array.Count; i++) values.Add(read(_data.Data, array.At + i * width));
         return values;
     }
+
+    public float? ReadFloat(Instance instance, string field) =>
+        FieldAt(instance, field) is { } at ? ReadFloatAt(at) : null;
+
+    public int? ReadInt(Instance instance, string field) =>
+        FieldAt(instance, field) is { } at ? ReadIntAt(at) : null;
+
+    public ulong? ReadULong(Instance instance, string field) =>
+        FieldAt(instance, field) is { } at ? ReadULongAt(at) : null;
+
+    public float[]? ReadFloats(Instance instance, string field, int count) =>
+        FieldAt(instance, field) is { } at ? ReadFloatsAt(at, count) : null;
+
+    public string? ReadString(Instance instance, string field) =>
+        FieldAt(instance, field) is { } at ? ReadStringAt(at) : null;
+
+    public Instance? ReadRef(Instance instance, string field, out bool wasNull)
+    {
+        wasNull = false;
+        return FieldAt(instance, field) is { } at ? ReadRefAt(at, out wasNull) : null;
+    }
+
+    private string? TextAt(int? destination)
+    {
+        if (destination == null || destination < 0 || destination >= _data.Data.Length) return null;
+
+        int end = Array.IndexOf(_data.Data, (byte)0, destination.Value);
+        return end < 0 ? null : Encoding.UTF8.GetString(_data.Data, destination.Value, end - destination.Value);
+    }
+
+    /// Where the pointer stored at an offset aims, or null when nothing points from there, which is
+    /// how the format spells a null pointer: the eight bytes hold zero and no fixup names them.
+    private int? Aim(int at) => _pointsAt.TryGetValue(at, out int destination) ? destination : null;
+
+    /// An hkArray is a pointer, a count, and a capacity with flags packed into its top bits. The
+    /// pointer is a fixup like any other, and an empty array has none, which is why a missing fixup
+    /// here means no elements rather than a fault.
+    public sealed record Elements(int At, int Count);
+
+    public Elements? ReadArray(Instance instance, string field)
+    {
+        int? at = FieldAt(instance, field);
+        return at == null ? null : ArrayAt(at.Value);
+    }
+
+    /// The same, by offset rather than by name. A struct written inside an object is not at any
+    /// offset that object's class describes, so reading one means working out where it sits and
+    /// asking from there.
+    public Elements? ArrayAt(int at)
+    {
+        if (at < 0 || at + 12 > _data.Data.Length) return null;
+
+        int count = BitConverter.ToInt32(_data.Data, at + 8);
+        if (count < 0) return null;
+
+        int? destination = Aim(at);
+        if (destination == null) return count == 0 ? new Elements(0, 0) : null;
+
+        return new Elements(destination.Value, count);
+    }
+
+    /// Every class the file names, with the signature it stores in front of the name. A class name
+    /// in `__classnames__` is four bytes of signature, one separator, the text, and a terminator.
+    public IEnumerable<(uint Signature, string Name)> ClassNames()
+    {
+        var blob = _classNames.Data;
+        for (int at = 0; at + 5 < blob.Length; )
+        {
+            int end = Array.IndexOf(blob, (byte)0, at + 5);
+            if (end < 0) yield break;
+
+            yield return (BitConverter.ToUInt32(blob, at), Encoding.ASCII.GetString(blob, at + 5, end - at - 5));
+            at = end + 1;
+        }
+    }
+
+    /// Where a class's name sits inside `__classnames__`, which is what a new object's entry in the
+    /// virtual table has to point at. Null when the file does not name that class, and a caller that
+    /// gets null must refuse rather than add the name: growing that section is a different problem
+    /// with its own offsets, and no vanilla file has needed it.
+    public int? ClassNameOffset(string className)
+    {
+        var blob = _classNames.Data;
+        for (int at = 0; at + 5 < blob.Length; )
+        {
+            int end = Array.IndexOf(blob, (byte)0, at + 5);
+            if (end < 0) return null;
+
+            if (Encoding.ASCII.GetString(blob, at + 5, end - at - 5) == className) return at + 5;
+            at = end + 1;
+        }
+        return null;
+    }
+
+    public IReadOnlyList<string?>? ReadStringArray(Instance instance, string field) =>
+        FieldAt(instance, field) is { } at ? ReadStringArrayAt(at) : null;
+
+    public IReadOnlyList<Instance?>? ReadRefArray(Instance instance, string field) =>
+        FieldAt(instance, field) is { } at ? ReadRefArrayAt(at) : null;
+
+    public IReadOnlyList<T>? ReadValueArray<T>(Instance instance, string field, int width,
+                                               Func<byte[], int, T> read) =>
+        FieldAt(instance, field) is { } at ? ReadValueArrayAt(at, width, read) : null;
 
     /// Overwrites a field in place. Same width in, same width out, so nothing moves and every offset
     /// in the file stays valid. Returns false when the field is not one we can place, rather than

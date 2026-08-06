@@ -114,22 +114,35 @@ public static class Smoke
                 var said = Find<TextBlock>(window).Select(t => t.Text ?? "")
                     .Where(t => roles.Any(r => t.Contains(r, StringComparison.Ordinal))).ToList();
 
-                // Symbols are only built once the file has been unpacked, which needs a Java runtime
-                // and the bundled jar. Without them the window is read only by design, so there is
-                // nothing here to check and saying so beats failing.
-                if (window.SymbolGrid.RowCount == 0)
-                {
-                    Console.WriteLine("        symbols: none built, the window opened read only");
-                }
-                else
-                {
-                    CheckTrue($"{name}: events say who sends and who listens", said.Count > 0);
-                    CheckTrue($"{name}: and no row calls an event dead or unused",
-                              !said.Any(t => t.Contains("dead", StringComparison.OrdinalIgnoreCase)
-                                          || t.Contains("unused", StringComparison.OrdinalIgnoreCase)));
-                    Console.WriteLine($"        symbols: {window.SymbolGrid.RowCount} rows, " +
-                                      $"{said.Count} of them naming a role, e.g. \"{said.FirstOrDefault()}\"");
-                }
+                // Both of these are built from the file's own bytes now, so both are asserted with
+                // or without Java rather than one of them being excused.
+                //
+                // The roles were the last thing here still needing hkxpack. What an event is used for
+                // is a scan of every place an index is written, including inside structs nested
+                // deeper than the graph model carries, so the model genuinely cannot answer it. That
+                // was read as needing the text form. It needs the places, and the bytes have them.
+                CheckTrue($"{name}: the symbols are built from the file itself",
+                          window.SymbolGrid.RowCount > 0);
+                CheckTrue($"{name}: events say who sends and who listens", said.Count > 0);
+                CheckTrue($"{name}: and no row calls an event dead or unused",
+                          !said.Any(t => t.Contains("dead", StringComparison.OrdinalIgnoreCase)
+                                      || t.Contains("unused", StringComparison.OrdinalIgnoreCase)));
+
+                Console.WriteLine($"        symbols: {window.SymbolGrid.RowCount} rows, " +
+                                  $"{said.Count} of them naming a role, e.g. \"{said.FirstOrDefault()}\"" +
+                                  (window.LoadedXml.Length == 0 ? "  (read with no Java)" : ""));
+            }
+
+            // The canvas is drawn from the model, and the model comes from the file's own bytes, so
+            // it fills whether or not Java is present. Checked outside the text guard below on
+            // purpose: inside it, a window that drew nothing would skip the check and pass.
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                int drawn = Find<GraphView>(window).First().DrawnIds.Count;
+                Console.WriteLine($"        canvas: {drawn} node(s) drawn");
+                CheckTrue($"{name}: the canvas draws the graph", drawn > 0);
             }
 
             // The fields have to be reachable from the canvas, not only from the tree. A node's
@@ -429,6 +442,15 @@ public static class Smoke
         // It stops short of actually saving: writing the example file is not this test's business.
         foreach (string path in args.Where(System.IO.File.Exists))
         {
+            // Editing is done by rewriting the text form, so with no Java there is no document to
+            // type into and nothing here to check. The window is still readable, which is what the
+            // checks above cover.
+            if (window.LoadedXml.Length == 0)
+            {
+                Console.WriteLine("        editing: skipped, the window opened without a text form");
+                continue;
+            }
+
             string clip = OpenCommonwealth.Services.Hkx.HkxTextEdit
                 .IdsOfClass(window.LoadedXml, "hkbClipGenerator").FirstOrDefault() ?? "";
             CheckTrue("a clip to edit was found", clip.Length > 0);

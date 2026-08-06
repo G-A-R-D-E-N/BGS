@@ -10,6 +10,11 @@ namespace OpenCommonwealth.Services.Hkx;
 // file beside hkxpack's reading of the same file, and that says nothing about the window unless the
 // window is reading through the same code. One renderer, two callers.
 //
+// It reads at an offset rather than by field name, and that is not a detail. Half the values in a
+// properties panel belong to structs written inside the object, which sit at no offset the object's
+// own class describes; asking for one of those by name finds a different field that happens to
+// share it. `hkbStateMachine` and the `hkbEvent` written inside it both have an `id`.
+//
 // What it will not do is answer approximately. A field it cannot render returns null, and the caller
 // decides what to do about that: the checker counts it, the window falls back to hkxpack for that
 // one field. Neither of them is handed a number where a name belongs.
@@ -19,127 +24,206 @@ public static class FieldRender
     /// differently: the window uses the id the rest of it is keyed on, the checker uses a position.
     public delegate string Reference(PackfileObjects.Instance? target, bool wasNull);
 
-    /// The value, or null when this is not a field we can read.
+    /// How a float is spelled, for the same reason references have one: the two callers want
+    /// different text for the same bits. A panel wants "0.1" because that is what somebody typed; a
+    /// reading being set against hkxpack's own text wants "0.10000000149011612" because that is what
+    /// is written in the file. One renderer, two spellings, chosen by whoever is asking.
+    public delegate string Real(float value);
+
+    /// The shortest text that reads back as the same float. What a person should see.
+    public static readonly Real Shortest = value => value.ToString("R");
+
+    /// The float widened to a double and written out the way Java does, which is what hkxpack puts
+    /// in its XML.
+    public static readonly Real LikeHkxPack = HkxNumber.Text;
+
+    /// The value at an offset, or null when this is not a field we can read.
+    ///
+    /// `owner` is the class that declares the member, which an enum needs: the names of its values
+    /// are declared on that class or one of its parents, and the member only carries which enum.
     ///
     /// `expected` is hkxpack's own text for the same field, when the caller has it. It is used for
     /// one thing: an enum whose value has no name can still be compared as a number if that is what
     /// hkxpack printed, and only the caller knows whether it did.
-    public static string? Render(PackfileObjects objects, PackfileObjects.Instance instance,
-                                 HavokClasses.Member member, Reference reference,
-                                 string? expected = null)
+    ///
+    /// `element` picks one out of a fixed length C array. `hkReal[8]` is written as eight separate
+    /// fields, so each of them is this member read four bytes further along.
+    public static string? Render(PackfileObjects objects, int at, string owner,
+                                 HavokClassTypes.Member member, Reference reference,
+                                 string? expected = null, int element = 0,
+                                 HavokClassTypes? types = null, Real? real = null)
     {
-        if (member.Type.StartsWith("enum of", StringComparison.Ordinal) ||
-            member.Type.StartsWith("flags of", StringComparison.Ordinal))
+        types ??= HavokClassTypes.Shipped;
+        real ??= Shortest;
+
+        if (member.VType is "TYPE_ENUM" or "TYPE_FLAGS")
         {
-            long? value = Number(objects, instance, member);
+            long? value = Number(objects, at, member.VSub);
             if (value == null) return null;
 
-            string? name = HavokEnums.Shipped.Name(HavokEnums.Key(member), value.Value);
+            // The name is looked up with the signed value and printed with the unsigned one, and
+            // both of those are deliberate. An enum declares `VARIABLE_TYPE_INVALID = -1`, so a
+            // byte of 0xFF only finds its name signed; hkxpack prints the byte as it sits, so 0xFF
+            // reads back as 255 and a comparison against -1 would call the same byte a difference.
+            string? name = types.NameOf(owner, member, value.Value);
+            long printed = Unsigned(value.Value, member.VSub);
             // Both, because hkxpack prints whichever it feels like: a name when it has one for the
             // exact value, and the bare number when the value is a combination of flags. Carrying
             // the number as well as the name lets a comparison meet it either way.
-            if (name != null) return $"{value}:{name}";
+            if (name != null) return $"{printed}:{name}";
 
             // With no name of our own the number is still the whole value, when that is what the
             // other side printed. It is only unreadable when hkxpack has a name and we do not.
-            return expected == null || long.TryParse(expected, out _) ? value.ToString() : null;
+            return expected == null || long.TryParse(expected, out _) ? printed.ToString() : null;
         }
 
-        switch (member.Type)
+        // One of a fixed length array's elements. Everything below reads a single value, so the
+        // offset is moved along and the rest is unchanged.
+        if (member.ArrSize > 0) at += element * Width(member.VType);
+
+        switch (member.VType)
         {
-            case "real": return objects.ReadFloat(instance, member.Name)?.ToString("R");
-            case "stringptr":
-            case "cstring": return objects.ReadString(instance, member.Name) ?? "∅";
+            case "TYPE_REAL": return objects.ReadFloatAt(at) is float one ? real(one) : null;
+            case "TYPE_STRINGPTR":
+            case "TYPE_CSTRING": return objects.ReadStringAt(at) ?? "∅";
 
-            case "bool" or "int8" or "uint8" or "int16" or "uint16" or "int32" or "uint32":
-                return Narrow(objects.ReadInt(instance, member.Name), member.Type);
-            case "ulong":
-            case "uint64": return objects.ReadULong(instance, member.Name)?.ToString();
+            case "TYPE_BOOL":
+            case "TYPE_CHAR":
+            case "TYPE_INT8" or "TYPE_UINT8" or "TYPE_INT16" or "TYPE_UINT16"
+                or "TYPE_INT32" or "TYPE_UINT32":
+                return Narrow(objects.ReadIntAt(at), member.VType);
 
-            case "vector4":
-            case "quaternion": return Floats(objects.ReadFloats(instance, member.Name, 4));
-            case "qstransform": return Floats(objects.ReadFloats(instance, member.Name, 12));
+            case "TYPE_ULONG":
+            case "TYPE_INT64":
+            case "TYPE_UINT64": return objects.ReadULongAt(at)?.ToString();
 
-            case "pointer":
-            case "pointer of struct":
+            case "TYPE_VECTOR4":
+            case "TYPE_QUATERNION": return Floats(objects.ReadFloatsAt(at, 4), real);
+            // Anything wider than four floats is written as a run of bracketed fours rather than as
+            // one long bracket, which is how hkxpack writes it and how the file reads back. A
+            // qstransform is three of them: `(0 0 0 1)(0 0 0 1)(1 1 1 1)`.
+            case "TYPE_ROTATION":
+            case "TYPE_MATRIX3": return Floats(objects.ReadFloatsAt(at, 12), real);
+            case "TYPE_QSTRANSFORM": return Floats(objects.ReadFloatsAt(at, 12), real);
+            case "TYPE_TRANSFORM":
+            case "TYPE_MATRIX4": return Floats(objects.ReadFloatsAt(at, 16), real);
+
+            case "TYPE_POINTER":
             {
-                var target = objects.ReadRef(instance, member.Name, out bool wasNull);
+                var target = objects.ReadRefAt(at, out bool wasNull);
                 return reference(target, wasNull);
             }
 
-            case "array of pointer":
+            case "TYPE_ARRAY": return Array(objects, at, member, reference, real);
+
+            // A half is two bytes of float and nothing here has ever had to read one; saying so is
+            // better than printing the two bytes as though they were a number.
+            default: return null;
+        }
+    }
+
+    private static string? Array(PackfileObjects objects, int at, HavokClassTypes.Member member,
+                                 Reference reference, Real real)
+    {
+        switch (member.VSub)
+        {
+            case "TYPE_POINTER":
             {
-                var targets = objects.ReadRefArray(instance, member.Name);
+                var targets = objects.ReadRefArrayAt(at);
                 return targets == null
                     ? null
                     : List(targets.Count, targets.Select(t => reference(t, t == null)));
             }
 
-            case "array of stringptr":
+            case "TYPE_STRINGPTR":
+            case "TYPE_CSTRING":
             {
-                var values = objects.ReadStringArray(instance, member.Name);
+                var values = objects.ReadStringArrayAt(at);
                 return values == null ? null : List(values.Count, values.Select(v => v ?? "∅"));
             }
 
-            // Only the count. The class dump does not name the class of a struct written inline, so
-            // there is nothing to read the elements with, and a count is not a reading of them.
-            case "array of struct":
+            // Only the count. An array of structs is written as a run of nested objects, and the
+            // fields inside them are listed in their own right rather than as this one value.
+            case "TYPE_STRUCT":
             {
-                var array = objects.ReadArray(instance, member.Name);
+                var array = objects.ArrayAt(at);
                 return array == null ? null : List(array.Count, "structs");
             }
 
-            case "array of vector4":
-            case "array of quaternion": return Grouped(objects, instance, member.Name, 16, 4);
-            case "array of matrix4": return Grouped(objects, instance, member.Name, 64, 16);
-            case "array of qstransform": return Grouped(objects, instance, member.Name, 48, 12);
+            case "TYPE_VECTOR4":
+            case "TYPE_QUATERNION": return Grouped(objects, at, 16, 4, real);
+            case "TYPE_QSTRANSFORM": return Grouped(objects, at, 48, 12, real);
+            case "TYPE_TRANSFORM":
+            case "TYPE_MATRIX4": return Grouped(objects, at, 64, 16, real);
 
-            case "array of uint8":
-                return Listed(objects.ReadValueArray(instance, member.Name, 1, (b, at) => b[at]));
-            // Unsigned, the same way a lone int8 or int16 is read: hkxpack prints the bytes as they
-            // sit, so a parent index of 0xFFFF is 65535 there rather than -1, and a reading that
-            // spells it differently in an array than on its own agrees with neither.
-            case "array of int8":
-                return Listed(objects.ReadValueArray(instance, member.Name, 1, (b, at) => b[at]));
-            case "array of real":
-                return Listed(objects.ReadValueArray(instance, member.Name, 4, BitConverter.ToSingle));
-            case "array of int16":
-                return Listed(objects.ReadValueArray(instance, member.Name, 2, BitConverter.ToUInt16));
-            case "array of uint16":
-                return Listed(objects.ReadValueArray(instance, member.Name, 2, BitConverter.ToUInt16));
-            case "array of int32":
-                return Listed(objects.ReadValueArray(instance, member.Name, 4, BitConverter.ToInt32));
-            case "array of uint32":
-                return Listed(objects.ReadValueArray(instance, member.Name, 4, BitConverter.ToUInt32));
+            // Unsigned for the signed widths too, the same way a lone int8 or int16 is read:
+            // hkxpack prints the bytes as they sit, so a parent index of 0xFFFF is 65535 there
+            // rather than -1, and a reading that spells it differently in an array than on its own
+            // agrees with neither.
+            case "TYPE_BOOL":
+            case "TYPE_CHAR":
+            case "TYPE_INT8":
+            case "TYPE_UINT8":
+                return Listed(objects.ReadValueArrayAt(at, 1, (b, o) => b[o]));
+            case "TYPE_INT16":
+            case "TYPE_UINT16":
+                return Listed(objects.ReadValueArrayAt(at, 2, BitConverter.ToUInt16));
+            case "TYPE_REAL":
+            {
+                var reals = objects.ReadValueArrayAt(at, 4, BitConverter.ToSingle);
+                return reals == null ? null : List(reals.Count, reals.Select(v => real(v)));
+            }
+            case "TYPE_INT32":
+                return Listed(objects.ReadValueArrayAt(at, 4, BitConverter.ToInt32));
+            case "TYPE_UINT32":
+                return Listed(objects.ReadValueArrayAt(at, 4, BitConverter.ToUInt32));
+            case "TYPE_UINT64":
+            case "TYPE_INT64":
+                return Listed(objects.ReadValueArrayAt(at, 8, BitConverter.ToUInt64));
 
             default: return null;
         }
     }
 
-    /// Whether a field is one the window shows as a single box. An array of anything is not: hkxpack
-    /// writes it over several lines and the window has never offered it for editing.
-    public static bool IsOneValue(HavokClasses.Member member) =>
-        !member.Type.StartsWith("array of", StringComparison.Ordinal) &&
-        member.Type != "struct";
-
-    /// An enum's number, at whatever width the field is. Signed where the type is: `enum of int8`
+    /// An enum's number, at whatever width the field is. Signed where the type is: an enum of int8
     /// holding 0xFF is -1, and looking up 255 would miss the entry.
-    public static long? Number(PackfileObjects objects, PackfileObjects.Instance instance,
-                               HavokClasses.Member member)
+    public static long? Number(PackfileObjects objects, int at, string width)
     {
-        int? whole = objects.ReadInt(instance, member.Name);
+        int? whole = objects.ReadIntAt(at);
         if (whole == null) return null;
 
-        return member.Type switch
+        return width switch
         {
-            "enum of int8" => (sbyte)whole.Value,
-            "enum of uint8" => (byte)whole.Value,
-            "enum of int16" or "flags of int16" => (short)whole.Value,
-            "enum of uint16" or "flags of uint16" => (ushort)whole.Value,
-            "enum of uint32" or "flags of uint32" => (uint)whole.Value,
+            "TYPE_INT8" => (sbyte)whole.Value,
+            "TYPE_UINT8" or "TYPE_CHAR" => (byte)whole.Value,
+            "TYPE_INT16" => (short)whole.Value,
+            "TYPE_UINT16" => (ushort)whole.Value,
+            "TYPE_UINT32" => (uint)whole.Value,
             _ => whole.Value,
         };
     }
+
+    /// The same bits read without a sign, which is how hkxpack writes them out.
+    public static long Unsigned(long value, string width) => width switch
+    {
+        "TYPE_INT8" or "TYPE_UINT8" or "TYPE_CHAR" => value & 0xFF,
+        "TYPE_INT16" or "TYPE_UINT16" => value & 0xFFFF,
+        "TYPE_INT32" => value & 0xFFFFFFFFL,
+        _ => value,
+    };
+
+    /// How much room one value of a type takes, for stepping through a fixed length array of them.
+    private static int Width(string vtype) => vtype switch
+    {
+        "TYPE_BOOL" or "TYPE_CHAR" or "TYPE_INT8" or "TYPE_UINT8" => 1,
+        "TYPE_INT16" or "TYPE_UINT16" or "TYPE_HALF" => 2,
+        "TYPE_INT64" or "TYPE_UINT64" or "TYPE_ULONG" or "TYPE_POINTER"
+            or "TYPE_STRINGPTR" or "TYPE_CSTRING" => 8,
+        "TYPE_VECTOR4" or "TYPE_QUATERNION" => 16,
+        "TYPE_QSTRANSFORM" => 48,
+        "TYPE_TRANSFORM" or "TYPE_MATRIX4" => 64,
+        _ => 4,
+    };
 
     /// The name on its own, without the number in front. What a person reads.
     public static string Plain(string rendered)
@@ -148,38 +232,52 @@ public static class FieldRender
         return colon > 0 && long.TryParse(rendered[..colon], out _) ? rendered[(colon + 1)..] : rendered;
     }
 
-    private static string? Grouped(PackfileObjects objects, PackfileObjects.Instance instance,
-                                   string field, int stride, int floats)
+    /// An array whose elements are several floats each: a vector, a transform, a matrix. Read as one
+    /// long run and cut into elements, because that is how they sit in the file.
+    private static string? Grouped(PackfileObjects objects, int at, int stride, int floats, Real real)
     {
-        var array = objects.ReadArray(instance, field);
+        var array = objects.ArrayAt(at);
         if (array == null) return null;
 
-        var all = objects.ReadValueArray(instance, field, stride,
-                                         (b, at) => Enumerable.Range(0, floats)
-                                                              .Select(i => BitConverter.ToSingle(b, at + i * 4))
-                                                              .ToArray());
-        return all == null ? null : List(array.Count, all.Select(e => Floats(e)!));
+        var all = objects.ReadValueArrayAt(at, stride,
+                                           (b, o) => Enumerable.Range(0, floats)
+                                                               .Select(i => BitConverter.ToSingle(b, o + i * 4))
+                                                               .ToArray());
+        return all == null ? null : List(array.Count, all.Select(e => Floats(e, real)!));
     }
 
     /// A field narrower than four bytes still reads as four, so the extra has to be masked off or a
     /// one byte flag reports whatever its neighbours happen to hold.
-    private static string? Narrow(int? value, string type)
+    private static string? Narrow(int? value, string vtype)
     {
         if (value is not int raw) return null;
-        return type switch
+        return vtype switch
         {
-            "bool" => ((raw & 0xFF) != 0).ToString().ToLowerInvariant(),
-            // Masked rather than sign extended, both of them. hkxpack prints the bytes as they
-            // sit, so an animationBindingIndex of 0xFFFF is 65535 there and not -1, and matching it
-            // is what 53,956 compared values were checked against.
-            "int8" or "uint8" => (raw & 0xFF).ToString(),
-            "int16" or "uint16" => (raw & 0xFFFF).ToString(),
+            "TYPE_BOOL" => ((raw & 0xFF) != 0).ToString().ToLowerInvariant(),
+            // Masked rather than sign extended: hkxpack prints the bytes as they sit, so an
+            // animationBindingIndex of 0xFFFF is 65535 there and not -1.
+            "TYPE_INT8" or "TYPE_UINT8" or "TYPE_CHAR" => (raw & 0xFF).ToString(),
+            "TYPE_INT16" or "TYPE_UINT16" => (raw & 0xFFFF).ToString(),
             _ => raw.ToString(),
         };
     }
 
-    public static string? Floats(float[]? values) =>
-        values == null ? null : "(" + string.Join(" ", values.Select(v => v.ToString("R"))) + ")";
+    /// Four floats to a bracket. One vector is one bracket; a transform is four of them run
+    /// together with nothing between, which is what puts the closing and opening bracket of two
+    /// neighbours in the same whitespace separated token.
+    public static string? Floats(float[]? values, Real? real = null)
+    {
+        real ??= Shortest;
+        if (values == null) return null;
+
+        var text = new System.Text.StringBuilder();
+        for (int at = 0; at < values.Length; at += 4)
+            text.Append('(')
+                .Append(string.Join(" ", values.Skip(at).Take(4).Select(v => real(v))))
+                .Append(')');
+
+        return text.Length == 0 ? "()" : text.ToString();
+    }
 
     private static string? Listed<T>(IReadOnlyList<T>? values) =>
         values == null ? null : List(values.Count, values.Select(v => v?.ToString() ?? ""));

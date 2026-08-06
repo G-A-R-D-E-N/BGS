@@ -57,10 +57,28 @@ public static class Tests
         ("AStringIsWrittenAtWhateverLength", AStringIsWrittenAtWhateverLength),
         ("WideAndVectorFieldsReadFromTheBytes", WideAndVectorFieldsReadFromTheBytes),
         ("ReferencesAndArraysReadFromTheBytes", ReferencesAndArraysReadFromTheBytes),
-        ("AnUnseenEnumValueIsNotNamed", AnUnseenEnumValueIsNotNamed),
-        ("ThePanelFallsBackOneFieldAtATime", ThePanelFallsBackOneFieldAtATime),
+        ("AnUndeclaredEnumValueIsNotNamed", AnUndeclaredEnumValueIsNotNamed),
+        ("TheModelComparisonCatchesFaultsPutThereOnPurpose", TheModelComparisonCatchesFaultsPutThereOnPurpose),
+        ("AFloatIsSpelledTheWayHkxPackSpellsIt", AFloatIsSpelledTheWayHkxPackSpellsIt),
+        ("AnAppendedObjectLandsWhereItsNumberSaysItWill", AnAppendedObjectLandsWhereItsNumberSaysItWill),
+        ("RemovingAnObjectIsRefusedAndOrphaningIsNot", RemovingAnObjectIsRefusedAndOrphaningIsNot),
+        ("AnEnumFieldOffersItsDeclaredValues", AnEnumFieldOffersItsDeclaredValues),
+        ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
+        ("TheConsumerComparisonCatchesADifferentAnswer", TheConsumerComparisonCatchesADifferentAnswer),
+        ("APointerIsRewiredByMovingItsFixup", APointerIsRewiredByMovingItsFixup),
+        ("APointerChangeIsPlannedAsOne", APointerChangeIsPlannedAsOne),
+        ("ThePointerTableKeepsTheOrderItWasWrittenIn", ThePointerTableKeepsTheOrderItWasWrittenIn),
+        ("AnAddedObjectHasToLandWhereItsIdSays", AnAddedObjectHasToLandWhereItsIdSays),
+        ("TheReadingFromTheBytesRefusesWhatItCannotDescribe", TheReadingFromTheBytesRefusesWhatItCannotDescribe),
+        ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
         ("ASpaceInAValueIsKept", ASpaceInAValueIsKept),
+        ("TheClassTableKnowsWhatTheDumpCannot", TheClassTableKnowsWhatTheDumpCannot),
+        ("AFieldListIsBuiltWithoutHkxPack", AFieldListIsBuiltWithoutHkxPack),
+        ("AClassSignedDifferentlyIsRefused", AClassSignedDifferentlyIsRefused),
+        ("AMisSignedFileIsNotWrittenInto", AMisSignedFileIsNotWrittenInto),
+        ("AnEnumIsNamedSignedAndPrintedUnsigned", AnEnumIsNamedSignedAndPrintedUnsigned),
+        ("APaddedStructIsKnownFromHkxPacksIdeaOfIt", APaddedStructIsKnownFromHkxPacksIdeaOfIt),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1445,80 +1463,85 @@ public static class Tests
               elements?[1]?.Offset);
     }
 
-    /// The names of an enum's values were read off vanilla files rather than taken from a
-    /// specification, so a value no vanilla file uses has no name. That has to read as "no name"
-    /// rather than as a number or an invented one: a wrong name is the kind of wrong nobody checks.
-    private static void AnUnseenEnumValueIsNotNamed()
+    /// A value the class table does not declare has no name, and has to read as "no name" rather
+    /// than as an invented one: a wrong name is the kind of wrong nobody checks.
+    ///
+    /// These names used to be measured off vanilla files, one field at a time, and kept in a table
+    /// of their own. The class table declares them instead, 1,007 values against the measurement's
+    /// 47, and the two agreed on all 47 before the measurement was removed.
+    private static void AnUndeclaredEnumValueIsNotNamed()
     {
-        Console.WriteLine("\nan enum value nobody has seen is left unnamed");
+        Console.WriteLine("\nan enum value the table does not declare is left unnamed");
 
-        var mode = HavokClasses.Shipped.Field("hkbClipGenerator", "mode")!;
-        string key = HavokEnums.Key(mode);
+        var types = HavokClassTypes.Shipped;
+        var mode = types.Members("hkbClipGenerator").First(m => m.Name == "mode");
 
-        Check("the key names the class that declares the field", "hkbClipGenerator.mode", key);
-        Check("a value vanilla uses is named", "MODE_SINGLE_PLAY", HavokEnums.Shipped.Name(key, 0));
-        Check("a value nothing uses is not", null, HavokEnums.Shipped.Name(key, 99));
-        Check("neither is a field with no table at all", null,
-              HavokEnums.Shipped.Name("hkbNothing.nowhere", 0));
+        Check("the field names the enum that gives its values names", "PlaybackMode", mode.EType);
+        Check("a declared value is named", "MODE_SINGLE_PLAY",
+              types.NameOf("hkbClipGenerator", mode, 0));
+        Check("an undeclared one is not", null, types.NameOf("hkbClipGenerator", mode, 99));
+        Check("neither is a field whose enum the table has never heard of", null,
+              types.NameOf("hkbNothing", new HavokClassTypes.Member { EType = "Nowhere" }, 0));
 
         // Flags combine, and a combination is only as good as its parts.
-        var flags = HavokClasses.Shipped.Field("hkbBlendingTransitionEffect", "flags")!;
-        string bits = HavokEnums.Key(flags);
-        Check("a single flag is named", "FLAG_SYNC", HavokEnums.Shipped.Name(bits, 2));
-        Check("so is a combination of named flags", "FLAG_SYNC|FLAG_IGNORE_TO_WORLD_FROM_MODEL",
-              HavokEnums.Shipped.Name(bits, 6));
+        var flags = types.Members("hkbBlendingTransitionEffect").First(m => m.Name == "flags");
+
+        Check("a single flag is named", "FLAG_SYNC",
+              types.NameOf("hkbBlendingTransitionEffect", flags, 2));
+        Check("so is a combination of declared flags", "FLAG_SYNC|FLAG_IGNORE_TO_WORLD_FROM_MODEL",
+              types.NameOf("hkbBlendingTransitionEffect", flags, 6));
         Check("a combination holding a bit with no name is refused whole", null,
-              HavokEnums.Shipped.Name(bits, 6 | 1 << 20));
+              types.NameOf("hkbBlendingTransitionEffect", flags, 6 | 1 << 20));
     }
 
     /// The panel reads from the bytes and falls back to hkxpack for one field at a time. What must
     /// not happen is the third thing: reading a field off the bytes that is not that object's field
     /// and showing the answer as though it were.
-    private static void ThePanelFallsBackOneFieldAtATime()
+    /// The panel's list of names used to be hkxpack's list of names. It is the class table's now,
+    /// and hkxpack is left holding one thing: a value to fall back to, field by field.
+    private static void ThePanelReadsItsListFromTheTable()
     {
-        Console.WriteLine("\nthe panel falls back one field at a time");
+        Console.WriteLine("\nthe panel reads its list from the table");
 
         var image = ClipInAPackfile("A.hkx", out _);
         var objects = new PackfileObjects(image);
         var clip = objects.Instances.Single();
 
-        // hkxpack's side of the same object. The stale playbackSpeed is deliberate: the file says
-        // 2.5 and this says otherwise, so which one comes back says which was read.
-        var xml = new List<(string, string, bool)>
-        {
-            ("animationName", "wrong.hkx", true),
-            ("playbackSpeed", "9.0", true),
-            ("animationBundleName", "", true),
-            ("startTime", "0.0", true),
-            // A field of an object written inside this one. `id` is a real member of hkbNode, so
-            // reading it off this object would find a number, and it would be the wrong number.
-            ("id", "-1", false),
-            // Nothing in the class has this name at all.
-            ("madeUpField", "kept", true),
-        };
+        var names = ClassFields.NamesOf(objects, clip)!;
+        CheckTrue("the list holds the fields hkxpack writes",
+                  names.Contains("animationName") && names.Contains("playbackSpeed"));
+        CheckTrue("and not the running state it does not",
+                  !names.Contains("localTime") && !names.Contains("atEnd"));
 
+        // Every value hkxpack's side could offer is wrong on purpose. What comes back says which
+        // side was read.
+        var xml = names.Select(n => (n, "from-hkxpack")).ToList();
         var fields = PanelFields.For(objects, clip, xml, (_, wasNull) => wasNull ? "null" : "");
 
-        Check("the name comes from the bytes, not from the text", "A.hkx",
-              fields[0].Value);
-        Check("and so does a value the text disagrees with", "2.5", fields[1].Value);
-        Check("a null string is an empty box rather than a symbol", "", fields[2].Value);
-        Check("everything readable is marked as read", PanelFields.Source.Bytes, fields[3].From);
-
-        Check("a field belonging to an object written inline falls back", PanelFields.Source.Fallback,
-              fields[4].From);
-        Check("and keeps hkxpack's value rather than a number read off the wrong object", "-1",
-              fields[4].Value);
-        Check("a field the class does not have falls back too", PanelFields.Source.Fallback,
-              fields[5].From);
-        Check("with its value intact", "kept", fields[5].Value);
+        Check("one field per name in the table's list", names.Count, fields.Count);
+        Check("the name comes from the bytes", "A.hkx",
+              fields[names.IndexOf("animationName")].Value);
+        Check("and so does a number the text disagrees with", "2.5",
+              fields[names.IndexOf("playbackSpeed")].Value);
+        Check("a null string is an empty box rather than a symbol", "",
+              fields[names.IndexOf("animationBundleName")].Value);
+        Check("nothing fell back to hkxpack", 0,
+              fields.Count(f => f.From == PanelFields.Source.Fallback));
 
         // An edit lives in the text form until it is saved, so for that one field the text is newer
         // than the bytes and has to win, or typing would be undone by the next redraw.
         var edited = PanelFields.For(objects, clip, xml, (_, _) => "",
                                      new HashSet<string> { "playbackSpeed" });
-        Check("an edited field shows the edit, not the bytes", "9.0", edited[1].Value);
-        Check("and says so", PanelFields.Source.Edited, edited[1].From);
+        int speed = names.IndexOf("playbackSpeed");
+        Check("an edited field shows the edit, not the bytes", "from-hkxpack", edited[speed].Value);
+        Check("and says so", PanelFields.Source.Edited, edited[speed].From);
+
+        // The load path puts the byte reader aside when it cannot trust it; this is the same idea
+        // one level down. Two lists that do not line up means one of them is wrong about this file.
+        var short_ = PanelFields.For(objects, clip, xml.Take(3).ToList(), (_, _) => "");
+        Check("a list that does not line up with hkxpack's degrades to hkxpack's", 3, short_.Count);
+        Check("and reads none of it from the bytes", 3,
+              short_.Count(f => f.From == PanelFields.Source.Fallback));
     }
 
     /// A value is XML. `cond(x &gt; 0.0, 1.0, -1.0)` is an expression with a greater than sign in
@@ -1559,16 +1582,228 @@ public static class Tests
         Check("both ends survive the read", " StateMachine00 ",
               objects.ReadString(clip, "animationName"));
 
-        var xml = new List<(string, string, bool)> { ("animationName", "StateMachine00", true) };
-        var shown = PanelFields.For(objects, clip, xml, (_, _) => "");
+        var names = ClassFields.NamesOf(objects, clip)!;
+        var shown = PanelFields.For(objects, clip, names.Select(n => (n, "tidied")).ToList(),
+                                    (_, _) => "");
         Check("and the panel shows what the file holds rather than the tidied text",
-              " StateMachine00 ", shown[0].Value);
+              " StateMachine00 ", shown[names.IndexOf("animationName")].Value);
 
         // A number in an array is spelled the way a number on its own is. hkxpack prints the bytes
         // as they sit, so 0xFFFF is 65535 in both places; -1 in one and 65535 in the other agrees
         // with neither.
         var parents = HavokClasses.Shipped.Field("hkaSkeleton", "parentIndices");
         CheckTrue("a skeleton's parent indices are an array of int16", parents?.Type == "array of int16");
+    }
+
+    /// The two halves of a class description, and what each one is for. The dump read out of the
+    /// game knows where a field sits and how big an instance is; hkxpack's database knows which
+    /// fields are ever written, what an inline struct is an instance of, and what an enum's numbers
+    /// are called. Neither is enough on its own.
+    private static void TheClassTableKnowsWhatTheDumpCannot()
+    {
+        Console.WriteLine("\nthe class table knows what the dump cannot");
+
+        var types = HavokClassTypes.Shipped;
+        CheckTrue("the table is there at all", types.Count > 900);
+
+        var clip = types["hkbClipGenerator"]!;
+        Check("a signature, which the dump has none of", 0xd4cc9f6u, clip.Signature);
+        Check("and a size, which hkxpack has none of", 352, clip.Size);
+        Check("the same size the dump gives", HavokClasses.Shipped["hkbClipGenerator"]!.Size, clip.Size);
+
+        var members = types.Members("hkbClipGenerator");
+        Check("inherited members come first, in the order they are declared", "memSizeAndRefCount",
+              members[0].Name);
+        CheckTrue("and the class's own come after its parent's",
+                  members.ToList().FindIndex(m => m.Name == "animationName") >
+                  members.ToList().FindIndex(m => m.Name == "name"));
+
+        var mode = members.Single(m => m.Name == "mode");
+        Check("an enum member names its enum", "PlaybackMode", mode.EType);
+        Check("and the values have names", "MODE_USER_CONTROLLED", types.NameOf("hkbClipGenerator", mode, 2));
+        Check("a value nothing declares stays unnamed", null, types.NameOf("hkbClipGenerator", mode, 99));
+
+        // The fact the whole table exists for: what an inline struct is an instance of.
+        var transitions = types.Members("hkbStateMachineTransitionInfoArray")
+                               .Single(m => m.Name == "transitions");
+        Check("an array of structs names the class of its elements", "hkbStateMachineTransitionInfo",
+              transitions.CType);
+        Check("which has a size, so the elements can be stepped through", 72,
+              types["hkbStateMachineTransitionInfo"]!.Size);
+
+        var ignored = types.Members("hkbStateMachineTransitionInfoArray")
+                           .Where(m => !m.Written).Select(m => m.Name).ToList();
+        CheckTrue("and the members the engine never writes are marked",
+                  ignored.Contains("hasEventlessTransitions"));
+
+        // Flags combine, and a combination is only as good as its parts.
+        var flags = types.Members("hkbBlendingTransitionEffect").Single(m => m.Name == "flags");
+        Check("flags read as their names", "FLAG_SYNC|FLAG_IGNORE_TO_WORLD_FROM_MODEL",
+              types.NameOf("hkbBlendingTransitionEffect", flags, 6));
+        Check("a combination holding a bit with no name is refused whole", null,
+              types.NameOf("hkbBlendingTransitionEffect", flags, 6 | 1 << 20));
+    }
+
+    /// The list of fields an object holds, built from the table and the file rather than from
+    /// hkxpack's text. The corpus proof is `symrm fields`; this pins the shape of the walk.
+    private static void AFieldListIsBuiltWithoutHkxPack()
+    {
+        Console.WriteLine("\na field list is built without hkxpack");
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        var objects = new PackfileObjects(image);
+        var names = ClassFields.NamesOf(objects, objects.Instances.Single());
+
+        CheckTrue("a list comes back at all", names != null);
+        CheckTrue("it holds the fields hkxpack writes", names!.Contains("animationName") &&
+                                                        names.Contains("playbackSpeed"));
+        CheckTrue("and not the ones it never writes", !names.Contains("localTime") &&
+                                                      !names.Contains("atEnd"));
+        // triggers is a pointer, written as a reference on one line; animDatas is an array, written
+        // as its own block and never offered as a value.
+        CheckTrue("a pointer is a field", names.Contains("triggers"));
+        CheckTrue("an array is not", !names.Contains("animDatas"));
+
+        var order = HavokClassTypes.Shipped.Members("hkbClipGenerator")
+                                   .Where(m => m.Written && m.VType != "TYPE_ARRAY" &&
+                                               m.VType != "TYPE_STRUCT")
+                                   .Select(m => m.Name).ToList();
+        Check("in the order the file writes them", string.Join(",", order), string.Join(",", names));
+    }
+
+    /// A file whose classes are signed differently was written against a different definition than
+    /// the one this build holds, and reading a value out of it by offset would be quiet nonsense.
+    private static void AClassSignedDifferentlyIsRefused()
+    {
+        Console.WriteLine("\na class signed differently is refused");
+
+        var types = HavokClassTypes.Shipped;
+        uint right = types["hkbClipGenerator"]!.Signature;
+
+        Check("a file signed the way we expect raises nothing", 0,
+              types.SignatureProblems(new[] { (right, "hkbClipGenerator") }).Count);
+
+        var wrong = types.SignatureProblems(new[] { (right ^ 1u, "hkbClipGenerator") });
+        Check("one signed differently raises exactly one", 1, wrong.Count);
+        CheckTrue("and the message names the class", wrong[0].Contains("hkbClipGenerator"));
+
+        var unknown = types.SignatureProblems(new[] { (1u, "hkbSomethingWeHaveNeverSeen") });
+        Check("so does a class we have no definition for", 1, unknown.Count);
+
+        // The file the test packfile is built from carries its own names, and they have to pass.
+        var image = ClipInAPackfile("A.hkx", out _);
+        Check("the names a real packfile carries pass", 0,
+              types.SignatureProblems(new PackfileObjects(image).ClassNames()).Count);
+    }
+
+    /// Refusing to *read* a file whose classes we do not describe is the smaller half. Writing into
+    /// one is the half that does damage: every offset written comes from this build's idea of the
+    /// class, so a value would land in somebody else's field and the file would still look valid.
+    private static void AMisSignedFileIsNotWrittenInto()
+    {
+        Console.WriteLine("\na file signed for other classes is not written into");
+
+        string good = Path.Combine(Path.GetTempPath(), "symrm-signed-right.hkx");
+        string bad = Path.Combine(Path.GetTempPath(), "symrm-signed-wrong.hkx");
+
+        ClipInAPackfile("A.hkx", out _).Save(good);
+
+        // The same file with one bit of one signature turned over, which is what a class whose
+        // members moved would look like.
+        var wrong = ClipInAPackfile("A.hkx", out _);
+        var names = wrong.Section("__classnames__")!;
+        names.Data[0] ^= 0x01;
+        wrong.Save(bad);
+
+        var nothing = new NativeSave.Plan(new List<NativeSave.Change>(), null);
+        CheckTrue("a plan that changes nothing is possible either way", nothing.Possible);
+
+        try
+        {
+            NativeSave.Apply(good, nothing);
+            CheckTrue("a file signed the way we expect is written", true);
+        }
+        catch (Exception e)
+        {
+            CheckTrue("a file signed the way we expect is written: " + e.Message, false);
+        }
+
+        try
+        {
+            NativeSave.Apply(bad, nothing);
+            CheckTrue("a file signed for other classes is refused", false);
+        }
+        catch (InvalidOperationException e)
+        {
+            CheckTrue("a file signed for other classes is refused", true);
+            CheckTrue("and the refusal names the class", e.Message.Contains("hkbClipGenerator"));
+            CheckTrue("and says nothing was written",
+                      e.Message.Contains("nothing was written"));
+        }
+
+        File.Delete(good);
+        File.Delete(bad);
+    }
+
+    /// A byte of 0xFF in an enum of int8 is -1 to whoever declared the names and 255 to whoever
+    /// prints the bytes. Both are the same byte, and a reading that picks one loses either the name
+    /// or the comparison.
+    private static void AnEnumIsNamedSignedAndPrintedUnsigned()
+    {
+        Console.WriteLine("\nan enum is named signed and printed unsigned");
+
+        var types = HavokClassTypes.Shipped;
+        var type = types.Members("hkbVariableInfo").Single(m => m.Name == "type");
+        Check("the declaration really does go negative", "VARIABLE_TYPE_INVALID",
+              types.NameOf("hkbVariableInfo", type, -1));
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        var objects = new PackfileObjects(image);
+        var clip = objects.Instances.Single();
+        int mode = types.Members("hkbClipGenerator").Single(m => m.Name == "mode").Offset;
+        var member = types.Members("hkbClipGenerator").Single(m => m.Name == "mode");
+        var data = image.Section("__data__")!.Data;
+
+        data[clip.Offset + mode] = 2;
+        Check("a value with a name reads as its name", "2:MODE_USER_CONTROLLED",
+              FieldRender.Render(objects, clip.Offset + mode, "hkbClipGenerator", member, (_, _) => ""));
+
+        // 0xFF is not one of the playback modes, so there is no name and only the number is left.
+        // Printed the way hkxpack prints it, or the same byte would read as a difference.
+        data[clip.Offset + mode] = 0xFF;
+        Check("a value with none reads as the byte, unsigned", "255",
+              FieldRender.Render(objects, clip.Offset + mode, "hkbClipGenerator", member,
+                                 (_, _) => "", "255"));
+    }
+
+    /// Where hkxpack is wrong rather than us, and how it is told apart from where we are.
+    private static void APaddedStructIsKnownFromHkxPacksIdeaOfIt()
+    {
+        Console.WriteLine("\na padded struct is known from hkxpack's idea of it");
+
+        var types = HavokClassTypes.Shipped;
+
+        // 16 aligned because it holds vectors and transforms: the game says an instance is 528
+        // bytes, and the end of its last member rounded up to eight is 520. Every element after the
+        // first of an array of these is somewhere hkxpack does not look.
+        Check("the game's size for the bone data", 528, types["BSLookAtModifierBoneData"]!.Size);
+        CheckTrue("and it is padded past what hkxpack would work out",
+                  types.PaddedBeyondHkxPack("BSLookAtModifierBoneData"));
+
+        // 8 aligned, so both arrive at 72 and every one of the 36,340 field lists agreed.
+        Check("a struct with nothing wider than a pointer", 72,
+              types["hkbStateMachineTransitionInfo"]!.Size);
+        CheckTrue("is not padded past it",
+                  !types.PaddedBeyondHkxPack("hkbStateMachineTransitionInfo"));
+
+        // Neither is a class smaller than the rounding itself. hkbVariableInfo is six bytes, which
+        // is neither eight nor sixteen, and hkxpack strides it perfectly well: 309 arrays of them
+        // in the vanilla corpus agree. Calling it padded would let a real disagreement in any of
+        // those pass as somebody else's fault, which is worse than not checking.
+        Check("a class smaller than the rounding itself", 6, types["hkbVariableInfo"]!.Size);
+        CheckTrue("is not called padded", !types.PaddedBeyondHkxPack("hkbVariableInfo"));
+        Check("nor is a four byte one", 4, types["hkbEventInfo"]!.Size);
+        CheckTrue("either", !types.PaddedBeyondHkxPack("hkbEventInfo"));
     }
 
     /// One hkbClipGenerator in a packfile of two sections, which is the least a reader needs: a name
@@ -1580,8 +1815,12 @@ public static class Tests
         nameField = classes.Field("hkbClipGenerator", "animationName")!.Offset;
         int speed = classes.Field("hkbClipGenerator", "playbackSpeed")!.Offset;
 
-        // Five bytes of bookkeeping precede a class name, and the fixup points past them at the text.
+        // Five bytes of bookkeeping precede a class name: the class signature, then a separator.
+        // The real signature rather than zeroes, because a file carrying the wrong one is refused,
+        // and a fixture that could not survive its own checks is not a fixture.
         var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
         System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
 
         var text = System.Text.Encoding.UTF8.GetBytes(animation);
@@ -1947,5 +2186,676 @@ public static class Tests
 
         var fits = NativeSave.Compare(Before, Before.Replace(">0<", ">3<"));
         CheckTrue("one that fits is accepted", fits.Possible);
+    }
+
+    /// hkxpack is Java, and Java writes a float by widening it to a double. Every one of these was
+    /// read out of a vanilla file rather than worked out from the rule, because the rule is a
+    /// reading of Java's documentation and the file is the thing being matched.
+    private static void AFloatIsSpelledTheWayHkxPackSpellsIt()
+    {
+        Console.WriteLine("\na float is spelled the way hkxpack spells it");
+
+        // Plain, and always with a digit after the point. This is the whole of the first pass'
+        // 2,397 disagreements on Dogmeat: shortest round trip says "1", the file says "1.0".
+        Check("one", "1.0", HkxNumber.Text(1.0f));
+        Check("zero", "0.0", HkxNumber.Text(0.0f));
+        Check("a half", "0.5", HkxNumber.Text(0.5f));
+
+        // Negative zero is in these files, in a vector on hkbFootIkModifier, and is not the same
+        // text as zero.
+        Check("negative zero", "-0.0", HkxNumber.Text(-0.0f));
+
+        // The digits are the double's, not the float's, which is why there are seventeen of them.
+        Check("a tenth", "0.10000000149011612", HkxNumber.Text(0.1f));
+        Check("nine tenths", "0.8999999761581421", HkxNumber.Text(0.9f));
+        Check("seven tenths", "0.699999988079071", HkxNumber.Text(0.7f));
+        Check("two tenths", "0.20000000298023224", HkxNumber.Text(0.2f));
+        Check("a negative", "-0.23399999737739563", HkxNumber.Text(-0.234f));
+
+        // Below a thousandth Java switches to scientific notation, and these two are read straight
+        // off hkbFootIkControlData.enabled1 and enabled2 in a vanilla alien behaviour.
+        Check("a very small number", "3.8432640863340837E-34", HkxNumber.Text(3.8432640863340837E-34));
+        Check("one small enough to be subnormal", "8.127531093083939E-44",
+              HkxNumber.Text(8.127531093083939E-44));
+
+        // The two edges of where Java stops writing plainly.
+        Check("just inside the small edge", "0.001", HkxNumber.Text(0.001));
+        Check("just outside it", "9.99E-4", HkxNumber.Text(0.000999));
+        Check("just inside the large edge", "9999999.0", HkxNumber.Text(9999999.0));
+        Check("just outside it", "1.0E7", HkxNumber.Text(1.0E7));
+
+        Check("not a number", "NaN", HkxNumber.Text(float.NaN));
+        Check("and the infinities", "-Infinity", HkxNumber.Text(float.NegativeInfinity));
+    }
+
+    /// The other half of the comparison: not whether the two readings hold the same values, but
+    /// whether the tool does the same thing with them.
+    ///
+    /// Same rule as the field comparison. A run that reports no difference proves nothing unless the
+    /// thing can report one, and this one has more room to quietly agree than the field walk does,
+    /// because every consumer here is capable of returning an empty list and two empty lists match.
+    private static void TheConsumerComparisonCatchesADifferentAnswer()
+    {
+        Console.WriteLine("\nthe consumer comparison catches a different answer");
+
+        var clean = ConsumerDiff.Compare(Reading(), Reading());
+        CheckTrue("two readings of one file behave the same", clean.Clean);
+        Check("across every consumer", 13, clean.Compared);
+
+        ConsumerDiff.Result After(Action<BehaviourGraphModel> change) =>
+            ConsumerDiff.Compare(Reading(), Broken(change));
+
+        // Two, not one, and the second is the more interesting. Pointing a wire at an object that is
+        // not there changes the canvas, and it also gives the checker a dangling reference to
+        // report, so a single wrong value surfaces in two places. That is what a consumer comparison
+        // is for: the same fault reaching everything downstream of it.
+        var rewired = After(m => m.Objects[0].Scalars["triggers"] = "#404");
+        Check("a wire pointing at nothing shows up twice", 2, rewired.Differences.Count);
+        Check("once in the checker", "checker findings", rewired.Differences[0].Consumer);
+        Check("and once in the wiring", "the wiring", rewired.Differences[1].Consumer);
+        CheckTrue("naming the line it is on",
+                  rewired.Differences[1].What.StartsWith("line 1 of", StringComparison.Ordinal));
+
+        // A class change moves the object out of the shapes table, so it stops having wires at all.
+        var reclassed = After(m => m.Objects[0].Class = "hkbNothing");
+        CheckTrue("a class the wiring does not know about is a difference too", !reclassed.Clean);
+
+        // Nothing to compare is not the same as agreeing. Two readings of nothing agree, and that
+        // has to stay true or every empty file would report a fault.
+        var nothing = ConsumerDiff.Compare(new BehaviourGraphModel(), new BehaviourGraphModel());
+        CheckTrue("two readings of an empty file still agree", nothing.Clean);
+
+        // But a reading of nothing set against a real one does not.
+        CheckTrue("a reading of nothing does not agree with a real one",
+                  !ConsumerDiff.Compare(Reading(), new BehaviourGraphModel()).Clean);
+    }
+
+    /// Anything wider than four floats is written as a run of bracketed fours, not as one bracket
+    /// holding the lot. Read off a vanilla skeleton's reference pose, where a qstransform is three
+    /// of them run together with nothing between.
+    ///
+    /// It reads as a formatting detail and is not. The parser splits an array's text on whitespace,
+    /// so `1.0)(0.0` is one token, and a reading that wrote one long bracket gave twelve tokens
+    /// where the file gives ten. That is what the corpus sweep caught it as: a reference pose with
+    /// the wrong number of elements in it.
+    private static void WideFloatFieldsAreWrittenInBracketedFours()
+    {
+        Console.WriteLine("\nwide float fields are written in bracketed fours");
+
+        Check("one vector is one bracket", "(1 2 3 4)",
+              FieldRender.Floats(new[] { 1f, 2f, 3f, 4f }));
+        Check("a qstransform is three, run together",
+              "(0 0 0 1)(0 0 0 1)(1 1 1 1)",
+              FieldRender.Floats(new[] { 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f, 1f, 1f, 1f, 1f }));
+        Check("and a transform is four", 4,
+              FieldRender.Floats(new float[16])!.Count(c => c == '('));
+
+        // The token count is the thing the parser sees, and the only reason the grouping matters.
+        Check("which splits into ten tokens, not twelve", 10,
+              FieldRender.Floats(new float[12])!
+                         .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length);
+    }
+
+    /// The reading built from the bytes, on a file small enough to say what should be in it.
+    ///
+    /// The corpus sweep is what proves this against real data. These are the three things a sweep
+    /// cannot show: that the numbering starts where hkxpack starts it, that a file the class table
+    /// cannot describe gets refused whole rather than read with holes in it, and that a build with
+    /// no table at all refuses rather than throwing.
+    private static void TheReadingFromTheBytesRefusesWhatItCannotDescribe()
+    {
+        Console.WriteLine("\nthe reading from the bytes refuses what it cannot describe");
+
+        var objects = new PackfileObjects(ClipInAPackfile("A.hkx", out _));
+
+        var model = NativeGraphModel.From(objects);
+        CheckTrue("a file the table describes is read", model != null);
+        Check("with the object in it", 1, model!.Objects.Count);
+        Check("numbered where hkxpack starts numbering", "90", model.Objects[0].Id);
+        Check("and named by its class", "hkbClipGenerator", model.Objects[0].Class);
+        Check("its string read from the bytes", "A.hkx", model.Objects[0].Str("animationName"));
+        Check("and its number spelled like the file", "2.5", model.Objects[0].Str("playbackSpeed"));
+
+        // No table, no reading. A build shipped without the data file has to fall back to hkxpack
+        // rather than produce a model of nothing, which would compare as every field missing.
+        Check("a build with no class table reads nothing", null,
+              NativeGraphModel.From(objects, HavokClassTypes.Parse(Stream("""
+                  { "classes": {} }
+                  """))));
+
+        // A table that knows other classes but not this one is the case that matters: it is what a
+        // mod file built against a different Havok would look like, and half a reading of one of
+        // those is worse than none.
+        var elsewhere = HavokClassTypes.Parse(Stream("""
+            { "classes": { "hkbNothing": { "signature": "0x00000001", "members": [] } } }
+            """));
+        Check("nor does one that does not describe this class", null,
+              NativeGraphModel.From(objects, elsewhere));
+    }
+
+    private static System.IO.Stream Stream(string json) =>
+        new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+
+    /// Rewiring a node, in bytes.
+    ///
+    /// It reads as a structural edit because the graph's shape changes, and it is not one in the
+    /// file. No object moves, nothing is appended, the file does not change length: one entry in the
+    /// pointer table names a different destination. That is why it can be written in place when
+    /// adding a node still cannot.
+    private static void APointerIsRewiredByMovingItsFixup()
+    {
+        Console.WriteLine("\na pointer is rewired by moving its fixup");
+
+        var classes = HavokClasses.Shipped;
+        int size = classes["hkbClipGenerator"]!.Size;
+        int binding = classes.Field("hkbClipGenerator", "variableBindingSet")!.Offset;
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        var data = image.Section("__data__")!;
+        int second = data.AppendData(new byte[size]);
+        data.VirtualFixups = data.VirtualFixups.Concat(Triple(second, 0, 5)).ToArray();
+
+        var objects = new PackfileObjects(image);
+        var clip = objects.Instances[0];
+
+        // Nothing points anywhere yet, and a field with no fixup is null rather than a pointer to
+        // offset zero, which would be a real object.
+        objects.ReadRef(clip, "variableBindingSet", out bool emptyToStart);
+        CheckTrue("a field with no fixup starts null", emptyToStart);
+
+        // Aimed at something, from nothing.
+        data.SetGlobal(binding, image.Sections.IndexOf(data), second);
+        var pointed = new PackfileObjects(image).ReadRef(clip, "variableBindingSet", out bool none);
+        CheckTrue("after pointing it, it is not null", !none);
+        Check("and it names the object it was aimed at", second, pointed?.Offset);
+        Check("with one entry in the table", 1, data.Globals().Count());
+
+        // Aimed somewhere else. This is the rewire, and it must move the entry rather than add one.
+        data.SetGlobal(binding, image.Sections.IndexOf(data), clip.Offset);
+        var moved = new PackfileObjects(image).ReadRef(clip, "variableBindingSet", out _);
+        Check("repointing it names the new object", clip.Offset, moved?.Offset);
+        Check("and does not add a second entry for the same field", 1, data.Globals().Count());
+
+        // Set to nothing. The entry goes, rather than being left aiming at offset zero.
+        data.SetGlobal(binding, 0, -1);
+        objects = new PackfileObjects(image);
+        objects.ReadRef(clip, "variableBindingSet", out bool cleared);
+        CheckTrue("clearing it reads as null", cleared);
+        Check("because the entry is gone, not aimed at zero", 0, data.Globals().Count());
+
+        // The file is the same size throughout. Nothing here appends or moves a byte.
+        Check("and the data never changed length", size + size, data.Data.Length - "A.hkx".Length - 1);
+    }
+
+    /// Adding an object, and the two things that have to hold for it to be safe.
+    ///
+    /// Everything downstream turns an object id into a position: the id is hkxpack's numbering, which
+    /// counts from #90 in the order the objects sit in the file. A new object is appended, so it is
+    /// last in the file and must therefore carry the last id. The editor numbers a new object one
+    /// past the highest, so that holds, and it is checked rather than trusted because getting it
+    /// wrong aims a pointer at the wrong object without saying anything.
+    private static void AnAddedObjectHasToLandWhereItsIdSays()
+    {
+        Console.WriteLine("\nan added object has to land where its id says");
+
+        const string One = """
+            <hkpackfile><hksection name="__data__">
+            <hkobject name="#0090" class="hkbClipGenerator" signature="0x333b85b9">
+                <hkparam name="userPartitionMask">0</hkparam>
+            </hkobject></hksection></hkpackfile>
+            """;
+
+        string Extra(string id) => One.Replace("</hksection>",
+            $"""
+            <hkobject name="#{id}" class="hkbClipGenerator" signature="0x333b85b9">
+                <hkparam name="userPartitionMask">7</hkparam>
+            </hkobject></hksection>
+            """);
+
+        var added = NativeSave.Compare(One, Extra("0091"));
+        CheckTrue("adding one is writable", added.Possible);
+        CheckTrue("planned as an addition", added.Changes[0].Added);
+        Check("naming the id it will have", "#0091", added.Changes[0].Value);
+        Check("and its fields come with it", "userPartitionMask", added.Changes[1].Field);
+        Check("as a value on the new object rather than the old one", 1, added.Changes[1].Index);
+
+        // Removing is a different operation and is not written in place yet. Saying so beats
+        // pretending, because the fallback through hkxpack still does it correctly.
+        var removed = NativeSave.Compare(Extra("0091"), One);
+        CheckTrue("removing one is refused", !removed.Possible);
+        CheckTrue("and the refusal says what it was",
+                  removed.Refusal?.Contains("removed", StringComparison.Ordinal) == true);
+
+        // Renumbering breaks the id to position mapping for every object, not just the new one.
+        string renumbered = Extra("0091").Replace("#0090", "#0500");
+        CheckTrue("renumbering the existing objects is refused",
+                  !NativeSave.Compare(One, renumbered).Possible);
+
+        // The assertion that matters, made where it can be acted on. An id that does not match the
+        // position the object would land at is refused at the point of writing.
+        var image = ClipInAPackfile("A.hkx", out _);
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "symrm-add-probe.hkx");
+        image.Save(path);
+
+        var wrong = new NativeSave.Plan(
+            new List<NativeSave.Change> { new("hkbClipGenerator", 1, "", "#0500", Added: true) }, null);
+
+        string said = "";
+        try { NativeSave.Apply(path, wrong); }
+        catch (InvalidOperationException e) { said = e.Message; }
+
+        CheckTrue("an added object whose id does not match where it lands is refused",
+                  said.Contains("#0500", StringComparison.Ordinal));
+        CheckTrue("and the refusal says which id it would have had",
+                  said.Contains("#91", StringComparison.Ordinal));
+
+        // A class the file does not name cannot have an object added, because the entry that says
+        // what class an object is has to point at a name that is already there.
+        var unnamed = new NativeSave.Plan(
+            new List<NativeSave.Change> { new("hkbBlenderGenerator", 0, "", "#91", Added: true) }, null);
+
+        said = "";
+        try { NativeSave.Apply(path, unnamed); }
+        catch (InvalidOperationException e) { said = e.Message; }
+
+        CheckTrue("a class the file does not name is refused",
+                  said.Contains("not named in this file", StringComparison.Ordinal));
+
+        System.IO.File.Delete(path);
+    }
+
+    /// Where an entry sits in the pointer table is not free.
+    ///
+    /// The table is written in the order the writer walked the objects, which is not offset order:
+    /// an array's element pointers are written while the array is being walked, before the fields
+    /// that follow it in the owning object. On Dogmeat 22 of the 1,151 steps go backwards and every
+    /// one is an array.
+    ///
+    /// This was found the hard way. Resizing an array by dropping its element entries and appending
+    /// the new ones made hkxpack read every element of that array as null, while our own reader,
+    /// which looks entries up by source, read it perfectly. Sorting the table by source, tried next
+    /// on the theory that something binary searched it, made hkxpack misread more than a hundred
+    /// fields instead. So order is load bearing, and the fix was to put the new entries back where
+    /// the old ones were.
+    private static void ThePointerTableKeepsTheOrderItWasWrittenIn()
+    {
+        Console.WriteLine("\nthe pointer table keeps the order it was written in");
+
+        var section = new PackfileSection();
+        var written = new[] { (96, 2, 500), (32, 2, 100), (64, 2, 300) };
+        section.SetGlobals(written);
+
+        Check("the entries come back in the order they went in", "96,32,64",
+              string.Join(",", section.Globals().Select(g => g.Source)));
+        CheckTrue("with their sections and destinations intact",
+                  section.Globals().SequenceEqual(written));
+
+        // Setting one that is already there leaves it where it is rather than moving it to the end.
+        section.SetGlobal(32, 2, 999);
+        Check("changing one does not move it", "96,32,64",
+              string.Join(",", section.Globals().Select(g => g.Source)));
+        Check("and it holds the new destination", 999,
+              section.Globals().First(g => g.Source == 32).Destination);
+
+        // A new one has nowhere else to go, so it goes on the end.
+        section.SetGlobal(128, 2, 700);
+        Check("a new entry goes on the end", "96,32,64,128",
+              string.Join(",", section.Globals().Select(g => g.Source)));
+
+        // Clearing drops it rather than leaving it aimed at zero, which would be a real object.
+        section.SetGlobal(64, 0, -1);
+        Check("clearing one removes it", "96,32,128",
+              string.Join(",", section.Globals().Select(g => g.Source)));
+    }
+
+    /// The planner has to tell a pointer change from a value change, and has to refuse a pointer set
+    /// to something that is not an object.
+    private static void APointerChangeIsPlannedAsOne()
+    {
+        Console.WriteLine("\na pointer change is planned as one");
+
+        const string Before = """
+            <hkpackfile><hksection name="__data__">
+            <hkobject name="#0090" class="hkbStateMachineStateInfo" signature="0xed7f9d0">
+                <hkparam name="generator">#0091</hkparam>
+                <hkparam name="stateId">0</hkparam>
+            </hkobject></hksection></hkpackfile>
+            """;
+
+        var rewired = NativeSave.Compare(Before, Before.Replace(">#0091<", ">#0092<"));
+        CheckTrue("aiming a pointer at another object is writable", rewired.Possible);
+        Check("as one change", 1, rewired.Changes.Count);
+        CheckTrue("marked as a pointer rather than a value", rewired.Changes[0].Ref);
+        CheckTrue("and not as text, which is what would grow the file", !rewired.Grows);
+
+        var cleared = NativeSave.Compare(Before, Before.Replace(">#0091<", ">null<"));
+        CheckTrue("clearing a pointer is writable too", cleared.Possible);
+        CheckTrue("and is still a pointer change", cleared.Changes[0].Ref);
+
+        foreach (string rubbish in new[] { "#", "12", "#12a", "elsewhere", "" })
+        {
+            var plan = NativeSave.Compare(Before, Before.Replace(">#0091<", $">{rubbish}<"));
+            CheckTrue($"a generator of '{rubbish}' is refused", !plan.Possible);
+        }
+
+        // An array of pointers made longer. Planned as an array rather than as a value, and it grows
+        // the file, because the new run of pointers goes on the end.
+        const string Machine = """
+            <hkpackfile><hksection name="__data__">
+            <hkobject name="#0090" class="hkbStateMachine" signature="0x816c1dcb">
+                <hkparam name="states" numelements="2">#0091
+            #0092</hkparam>
+            </hkobject></hksection></hkpackfile>
+            """;
+
+        var longer = NativeSave.Compare(Machine, Machine.Replace("numelements=\"2\"", "numelements=\"3\"")
+                                                        .Replace("#0092<", "#0092 #0091<"));
+        CheckTrue("a longer array of pointers is writable", longer.Possible);
+        CheckTrue("planned as an array", longer.Changes[0].Array);
+        CheckTrue("and it grows the file", longer.Grows);
+        Check("with the elements it was given", "#0091 #0092 #0091", longer.Changes[0].Value);
+
+        var rubbishElement = NativeSave.Compare(Machine, Machine.Replace("#0092<", "elsewhere<"));
+        CheckTrue("an element that is not an object id is refused", !rubbishElement.Possible);
+    }
+
+    /// An enum field offers its declared names instead of asking for one to be typed, and only when
+    /// offering them cannot lose anything.
+    ///
+    /// The three refusals are the point of the test. A flags field is a combination of bits and is
+    /// usually not any single declared name, so a list would replace it with whichever entry the
+    /// user picked. A field whose enum the table does not describe gets no invented list. And a file
+    /// holding a number no name covers has to stay typeable, because a list would offer no way to
+    /// keep what is already there.
+    private static void AnEnumFieldOffersItsDeclaredValues()
+    {
+        Console.WriteLine("\nan enum field offers its declared values");
+
+        var types = HavokClassTypes.Shipped;
+        var image = ClipInAPackfile("A.hkx", out _);
+        var objects = new PackfileObjects(image);
+        var instance = objects.Instances[0];
+
+        var names = ClassFields.NamesOf(objects, instance)!;
+        var xml = names.Select(n => (n, "")).ToList();
+        var shown = PanelFields.For(objects, instance, xml, (_, _) => "null", null, types);
+
+        var mode = shown.First(f => f.Name == "mode");
+        Check("a clip's mode is offered as a list", 5, mode.Options.Count);
+        CheckTrue("holding the names the game registers",
+                  mode.Options.Contains("MODE_SINGLE_PLAY", StringComparer.Ordinal));
+        Check("in the order the enum declares them, not alphabetical",
+              "MODE_SINGLE_PLAY", mode.Options[0]);
+        CheckTrue("and the value in the file is one of them",
+                  mode.Options.Contains(mode.Value, StringComparer.Ordinal));
+
+        // A flags field is a combination, so it is never offered as a list of single values.
+        var flags = types.Members("hkbBlendingTransitionEffect").First(m => m.Name == "flags");
+        Check("a flags field is not offered as a list", "TYPE_FLAGS", flags.VType);
+
+        var ordinary = shown.First(f => f.Name == "animationName");
+        Check("a field that is not an enum stays a plain box", 0, ordinary.Options.Count);
+        CheckTrue("and still holds its value", ordinary.Value.Length > 0);
+    }
+
+    /// What removal refuses, which today is most of it.
+    ///
+    /// Written before the orphan path so the refusals are the thing being described rather than
+    /// whatever fell out of the implementation. Two of these are meant to keep failing until #19
+    /// comes back from the game: full removal renumbers every object after the hole, and there is no
+    /// way to check a renumber against the engine from here.
+    private static void RemovingAnObjectIsRefusedAndOrphaningIsNot()
+    {
+        Console.WriteLine("\nremoving an object is refused and orphaning is not");
+
+        // Full removal, through the front end the editor's save goes down. Still refused, and meant
+        // to stay refused until #19 comes back: dropping an object renumbers every one after it, and
+        // a renumber cannot be checked against the engine from here. The refusal itself is covered
+        // by AnAddedObjectHasToLandWhereItsIdSays, which owns that fixture.
+        var image = ClipInAPackfile("A.hkx", out _);
+
+        // An id the file does not have. The message names the range rather than saying no, because
+        // an off by one here is the difference between two objects.
+        string refused = "";
+        try { NativeRemove.Orphan(image, 4000); }
+        catch (InvalidOperationException e) { refused = e.Message; }
+        CheckTrue("an id the file does not hold is refused",
+                  refused.Contains("#4000", StringComparison.Ordinal));
+        CheckTrue("and the refusal says what the file does hold",
+                  refused.Contains("#" + NativeGraphModel.FirstId, StringComparison.Ordinal));
+
+        // Nothing points at the only object in this fixture, so orphaning it is a no change rather
+        // than an error. Saying "reached from nowhere" is the useful answer.
+        var already = NativeRemove.Orphan(image, NativeGraphModel.FirstId);
+        CheckTrue("orphaning something nothing reaches changes nothing", !already.Reached);
+        Check("no pointer cleared", 0, already.PointersCleared);
+        Check("no element dropped", 0, already.ElementsDropped);
+
+        // And the file is untouched by that, byte for byte, rather than merely still valid.
+        var untouched = ClipInAPackfile("A.hkx", out _);
+        NativeRemove.Orphan(untouched, NativeGraphModel.FirstId);
+        CheckTrue("leaving the file exactly as it was",
+                  untouched.Rebuild().SequenceEqual(ClipInAPackfile("A.hkx", out _).Rebuild()));
+    }
+
+    /// Putting a new object into a file without moving anything already in it.
+    ///
+    /// The corpus proof is the one that matters, since it is hkxpack that has to agree about what
+    /// the new object is called. These are the parts a corpus run cannot show: that the numbering is
+    /// worked out before the write rather than read back afterwards, that a class the file has never
+    /// named gets added to the name table, and that a class nobody can lay out is refused instead of
+    /// written as a guess.
+    private static void AnAppendedObjectLandsWhereItsNumberSaysItWill()
+    {
+        Console.WriteLine("\nan appended object lands where its number says it will");
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        int before = new PackfileObjects(image).Instances.Count;
+
+        var added = NativeAppend.Object(image, "hkbClipGenerator");
+
+        Check("the file had one object", 1, before);
+        Check("and the new one is the next number", NativeGraphModel.FirstId + 1, added.Id);
+        Check("second of its class", 1, added.Index);
+        CheckTrue("landing on a sixteen byte boundary", added.Offset % NativeAppend.Alignment == 0);
+
+        var after = new PackfileObjects(image);
+        Check("the file now holds two", 2, after.Instances.Count);
+        Check("the first one did not move", 0, after.Instances[0].Offset);
+        Check("and the new one is where it said", added.Offset, after.Instances[1].Offset);
+        Check("holding the class asked for", "hkbClipGenerator", after.Instances[1].ClassName);
+
+        // A class the file already names is not named twice.
+        var names = image.Section("__classnames__")!;
+        int length = names.Data.Length;
+        NativeAppend.Object(image, "hkbClipGenerator");
+        Check("a class already in the name table is not added again", length, names.Data.Length);
+
+        // One it has never named is, and the reader has to be able to find it afterwards. This is
+        // the path that failed against hkxpack until the section's 0xFF padding was taken off
+        // before appending, while every check on our own side passed.
+        var fresh = NativeAppend.Object(image, "hkbStateMachine");
+        CheckTrue("a class it has never named makes the table longer", names.Data.Length > length);
+        Check("and reads back as itself", "hkbStateMachine",
+              new PackfileObjects(image).Instances[^1].ClassName);
+        Check("with the number it was promised", fresh.Id,
+              NativeGraphModel.FirstId + new PackfileObjects(image).Instances.Count - 1);
+
+        CheckTrue("no 0xFF filler is left inside the name table",
+                  !names.Data.SkipLast(1).Any(b => b == 0xFF));
+
+        // A class with no size cannot be laid out, and guessing one writes an object the game will
+        // read the wrong number of bytes from.
+        string refused = "";
+        try { NativeAppend.Object(image, "hkbNotAClass"); }
+        catch (InvalidOperationException e) { refused = e.Message; }
+        CheckTrue("a class the table does not describe is refused",
+                  refused.Contains("hkbNotAClass", StringComparison.Ordinal));
+    }
+
+    /// A file holding one of each shape the graph model has a bucket for: plain fields, an array of
+    /// references, a struct written inline under a name, and an array of structs written without
+    /// one.
+    private const string TwoObjects = """
+        <hkobject class="hkbClipGenerator" name="#90">
+            <hkparam name="name">walk</hkparam>
+            <hkparam name="mode">MODE_SINGLE_PLAY</hkparam>
+            <hkparam name="triggers" numelements="2">#91 #92</hkparam>
+            <hkparam name="range">
+                <hkobject name="range">
+                    <hkparam name="min">0.0</hkparam>
+                    <hkparam name="max">1.0</hkparam>
+                </hkobject>
+            </hkparam>
+            <hkparam name="states" numelements="2">
+                <hkobject>
+                    <hkparam name="id">3</hkparam>
+                </hkobject>
+                <hkobject>
+                    <hkparam name="id">4</hkparam>
+                </hkobject>
+            </hkparam>
+        </hkobject>
+        <hkobject class="hkbStateMachine" name="#91">
+            <hkparam name="name">root</hkparam>
+        </hkobject>
+        """;
+
+    private static BehaviourGraphModel Reading() => BehaviourGraphModel.Parse(TwoObjects);
+
+    /// A second reading of the same file with something wrong put into it on purpose.
+    private static BehaviourGraphModel Broken(Action<BehaviourGraphModel> change)
+    {
+        var reading = Reading();
+        change(reading);
+        return reading;
+    }
+
+    /// The comparison that will decide whether a graph model built from the bytes is the same as the
+    /// one built from hkxpack's text, checked before it is trusted to say so.
+    ///
+    /// A clean run means nothing on its own. Anything that returns "no disagreements" without
+    /// looking at a single field passes that way, and it would pass every file in the corpus too, so
+    /// this breaks a reading on purpose in each of the ways a wrong producer could break one and
+    /// asks for the count back. The count is asserted exactly rather than as "more than none",
+    /// because a comparison that reports one fault as forty is not one that can be read.
+    private static void TheModelComparisonCatchesFaultsPutThereOnPurpose()
+    {
+        Console.WriteLine("\nthe model comparison catches faults put there on purpose");
+
+        var clean = ModelDiff.Compare(Reading(), Reading());
+        CheckTrue("two readings of one file agree", clean.Clean);
+        Check("over both objects", 2, clean.Objects);
+
+        // The check on the check. A comparison that walks nothing agrees with everything, so the
+        // count of what it walked is asserted against the count of what is in the file. Worked out
+        // from the reading rather than written down as a number, so it stays true if the fixture
+        // grows a field.
+        var one = Reading();
+        int inTheFile = one.Objects.Sum(o => 2 + o.Scalars.Count
+                                           + o.Lists.Sum(l => 1 + l.Value.Count)
+                                           + o.Structs.Sum(s => s.Value.Count)
+                                           + o.StructLists.Sum(s => 1 + s.Value.Sum(e => e.Count)));
+        Check("having compared every field the file holds", inTheFile, clean.Compared);
+
+        int Faults(Action<BehaviourGraphModel> break_) =>
+            ModelDiff.Compare(Reading(), Broken(break_)).Total;
+
+        string Where(Action<BehaviourGraphModel> break_)
+        {
+            var second = Reading();
+            break_(second);
+            return ModelDiff.Compare(Reading(), second).Shown.FirstOrDefault()?.Where ?? "nothing";
+        }
+
+        Check("an object missing altogether", 1, Faults(m => m.Objects.RemoveAt(1)));
+        Check("an id that does not match", 1, Faults(m => m.Objects[0].Id = "999"));
+        Check("a class that does not match", 1, Faults(m => m.Objects[0].Class = "hkbNothing"));
+
+        Check("a field the second reading does not have", 1,
+              Faults(m => m.Objects[0].Scalars.Remove("name")));
+        Check("a field only the second reading has", 1,
+              Faults(m => m.Objects[0].Scalars["extra"] = "1"));
+        Check("a field holding something else", 1,
+              Faults(m => m.Objects[0].Scalars["mode"] = "MODE_LOOPING"));
+
+        Check("an array of a different length", 1,
+              Faults(m => m.Objects[0].Lists["triggers"].RemoveAt(0)));
+        Check("an array element holding something else", 1,
+              Faults(m => m.Objects[0].Lists["triggers"][1] = "#99"));
+
+        Check("a field inside an inline struct", 1,
+              Faults(m => m.Objects[0].Structs["range"]["max"] = "2.0"));
+        Check("a struct array of a different length", 1,
+              Faults(m => m.Objects[0].StructLists["states"].RemoveAt(1)));
+        Check("a field inside one of its elements", 1,
+              Faults(m => m.Objects[0].StructLists["states"][1]["id"] = "5"));
+
+        // The lesson from the field crosscheck, where six vanilla values carry meaningful spaces: a
+        // comparison that tidies up is agreeing with itself rather than with the file.
+        Check("a value differing only by a space", 1,
+              Faults(m => m.Objects[0].Scalars["name"] = "walk "));
+
+        // Naming where it went wrong is half of what the comparison is for. A count with no address
+        // sends somebody looking through nine hundred objects by hand.
+        Check("and the disagreement names the object and the field",
+              "#90 hkbClipGenerator.mode", Where(m => m.Objects[0].Scalars["mode"] = "MODE_LOOPING"));
+        Check("naming the element too, inside a struct array",
+              "#90 hkbClipGenerator.states[1].id",
+              Where(m => m.Objects[0].StructLists["states"][1]["id"] = "5"));
+
+        // Everything wrong at once still has to come back readable rather than as a wall. An empty
+        // reading is not the case to use for that: the object counts differ, so there is nothing to
+        // walk into and it reports one disagreement rather than many. A reading of the right shape
+        // holding the wrong values everywhere is the case that produces a wall.
+        var wrong = Reading();
+        foreach (var o in wrong.Objects)
+        {
+            foreach (string key in o.Scalars.Keys.ToList()) o.Scalars[key] += "x";
+            foreach (var s in o.Structs.Values)
+                foreach (string key in s.Keys.ToList()) s[key] += "x";
+            foreach (var list in o.StructLists.Values)
+                foreach (var element in list)
+                    foreach (string key in element.Keys.ToList()) element[key] += "x";
+        }
+
+        // The one excuse the comparison accepts, and the checks that it stays one. hkxpack sizes a
+        // sixteen aligned struct by rounding up to eight, so every element after the first in an
+        // array of one is read eight bytes early. That is hkxpack being wrong, so it is counted
+        // apart rather than failing the file, and the earlier lesson from the padded class predicate
+        // applies: an excuse that is too wide is worse than no excuse, because it hides real faults.
+        ModelDiff.Result Excusing(ModelDiff.Strided excuse) =>
+            ModelDiff.Compare(Reading(), Broken(m => m.Objects[0].StructLists["states"][1]["id"] = "5"),
+                              40, excuse);
+
+        var named = Excusing((cls, field) => cls == "hkbClipGenerator" && field == "states");
+        Check("a mis-strided struct array is not a disagreement", 0, named.Total);
+        Check("but is counted and reported", 1, named.Strided);
+
+        var elsewhere = Excusing((cls, field) => cls == "hkbClipGenerator" && field == "triggers");
+        Check("an excuse for another field excuses nothing", 1, elsewhere.Total);
+        Check("and claims nothing", 0, elsewhere.Strided);
+
+        var wrongClass = Excusing((cls, field) => cls == "hkbStateMachine" && field == "states");
+        Check("nor does one for another class", 1, wrongClass.Total);
+
+        Check("a plain field is never excused, whatever the predicate says", 1,
+              ModelDiff.Compare(Reading(), Broken(m => m.Objects[0].Scalars["mode"] = "MODE_LOOPING"),
+                                40, (_, _) => true).Total);
+
+        // The excuse is decided as the difference is found, not by picking it back out of the shown
+        // examples, so it holds when there are no examples left to pick from. The first attempt did
+        // filter the examples, and a file with more differences than the cap came back reporting a
+        // count with nothing to show for it.
+        var capped = ModelDiff.Compare(Reading(),
+                                       Broken(m => m.Objects[0].StructLists["states"][1]["id"] = "5"),
+                                       0, (cls, field) => field == "states");
+        Check("the excuse holds with no examples kept", 0, capped.Total);
+        Check("and is still counted", 1, capped.Strided);
+
+        var everything = ModelDiff.Compare(Reading(), wrong, cap: 3);
+        CheckTrue("a reading wrong about every value disagrees", !everything.Clean);
+        Check("about all seven of them", 7, everything.Total);
+        Check("with the examples capped", 3, everything.Shown.Count);
     }
 }

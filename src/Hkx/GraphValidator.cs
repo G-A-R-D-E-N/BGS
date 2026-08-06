@@ -33,11 +33,33 @@ public static class GraphValidator
     public static List<Finding> Check(string xml, ProjectChain? chain = null)
     {
         var model = BehaviourGraphModel.Parse(xml);
+        var found = Check(model, chain);
+
+        // The one check that needs the text as well as the model, because it walks the file looking
+        // for indices into the symbol arrays and those sit in places the model does not carry.
+        CheckSymbolIndices(xml, model, found);
+
+        return found;
+    }
+
+    /// Everything that can be decided from the model alone.
+    ///
+    /// Split out so the same checks can be run against a model built from the file's own bytes and
+    /// set beside the ones from hkxpack's text. Comparing the two readings field by field says they
+    /// hold the same values; running the checks on both says the tool behaves the same way on them,
+    /// which is the thing anybody actually cares about.
+    public static List<Finding> Check(BehaviourGraphModel model, ProjectChain? chain = null,
+                                      PackfileObjects? objects = null)
+    {
         var found = new List<Finding>();
+
+        // The symbol index pass needs to see every place an index is written, including nesting the
+        // model does not carry, so it walks the file rather than the model. Given the bytes it walks
+        // those; given nothing it is left out, which is what happens on a reading that has neither.
+        if (objects != null) CheckSymbolIndices(objects, model, found);
 
         CheckSymbolArrays(model, found);
         CheckDanglingReferences(model, found);
-        CheckSymbolIndices(xml, model, found);
         CheckStateMachines(model, found);
         CheckReachableStates(model, found);
         CheckBlenders(model, found);
@@ -101,6 +123,22 @@ public static class GraphValidator
                             Add(found, Level.Error, $"#{obj.Id} {obj.Class}.{field}.{member}",
                                 $"points at {value}, which is not in this file");
         }
+    }
+
+    private static void CheckSymbolIndices(PackfileObjects objects, BehaviourGraphModel model,
+                                           List<Finding> found)
+    {
+        foreach (string unknown in SymbolIndexFixup.UnknownIndexFields(objects))
+            Add(found, Level.Warning, unknown,
+                "looks like an event or variable index but is not in the known table, so removing a symbol will refuse");
+
+        int variables = SymbolEditor.VariableNames(model).Count;
+        int events = SymbolEditor.EventNames(model).Count;
+
+        foreach (string user in SymbolIndexFixup.ReferencesAtOrAbove(objects, events: false, variables))
+            Add(found, Level.Error, user, $"but this graph declares only {variables} variables");
+        foreach (string user in SymbolIndexFixup.ReferencesAtOrAbove(objects, events: true, events))
+            Add(found, Level.Error, user, $"but this graph declares only {events} events");
     }
 
     private static void CheckSymbolIndices(string xml, BehaviourGraphModel model, List<Finding> found)
