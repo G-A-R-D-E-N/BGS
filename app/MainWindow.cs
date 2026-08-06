@@ -35,6 +35,8 @@ public class MainWindow : Window
     private readonly HkGrid _symbols =
         new(("Kind", 60), ("Index", 55), ("Name", -4), ("Initial value", -2), ("Used by, in this file", -5));
     private readonly HkGrid _chain = new(("Role", 110), ("Declared in the file", -4), ("On disk", 80), ("Notes", -3));
+    private readonly HkGrid _clips = new(("Clip", -5), ("Plays", -6));
+    private readonly Inspector _clipProps = new(320);
     private readonly HkGrid _animation =
         new(("Bone or track", -4), ("Frame", 70), ("Time", 80), ("Position", -4), ("Rotation", -5),
             ("Scale", -3));
@@ -97,6 +99,7 @@ public class MainWindow : Window
     private string _xmlText = "";
     private ProjectChain? _projectChain;
     private string _selectedId = "";
+    private readonly List<Action> _fieldCommits = new();
     private bool _dirty;
 
     // The document is one string, so a step back is a copy of it. Every mutation goes through Commit,
@@ -634,9 +637,12 @@ public class MainWindow : Window
         DockPanel.SetDock(scrubRow, Dock.Bottom);
         panel.Children.Add(bar);
         panel.Children.Add(scrubRow);
-        panel.Children.Add(Framed(_skeleton));
+        panel.Children.Add(WithClipPicker(Framed(_skeleton)));
 
-        SetPlaybackSummary("Open a behaviour and select a clip to see what it plays.", Ux.MutedBrush);
+        // Says that a model is a second, separate step. What plays here is the skeleton, and waiting
+        // for a character to appear on its own is waiting for something that never happens.
+        SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
+                           "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
         return panel;
     }
 
@@ -771,14 +777,16 @@ public class MainWindow : Window
         if (path != null) LoadMesh(path);
     }
 
-    private void LoadMesh(string path)
+    /// Returns false when the mesh could not be drawn, having already said why. The caller must not
+    /// then overwrite that with a message about the mesh it thinks it loaded.
+    private bool LoadMesh(string path)
     {
         var skeleton = PoseSkeleton();
         if (skeleton == null)
         {
             SetPlaybackSummary("No skeleton is resolved for this file, so a mesh has nothing to hang on.",
                                Ux.BadBrush);
-            return;
+            return false;
         }
 
         ClearMesh();
@@ -796,13 +804,13 @@ public class MainWindow : Window
             ClearMesh();
             SetPlaybackSummary($"Could not read {Path.GetFileName(path)}: {ex.Message.Split('\n')[0]}",
                                Ux.BadBrush);
-            return;
+            return false;
         }
 
         if (_meshShapes.Count == 0)
         {
             SetPlaybackSummary($"{Path.GetFileName(path)} holds no drawable shape.", Ux.MutedBrush);
-            return;
+            return false;
         }
 
         _meshPath = path;
@@ -827,6 +835,25 @@ public class MainWindow : Window
         SetPlaybackSummary(report, missing.Count > 0 ? Ux.WarnBrush : Ux.MetaBrush);
         ShowFrame(_poseFrame, stop: false);
         _skeleton.Frame();
+        return true;
+    }
+
+    /// Writes beside the target and moves the finished file into place. WriteAllBytes truncates
+    /// before it writes, so a disk filling up or a mod manager taking the file mid write would leave
+    /// the game's own file empty, with nothing but the backup to show it ever had contents.
+    private static void ReplaceFile(string path, byte[] bytes)
+    {
+        string staging = path + ".writing";
+        try
+        {
+            File.WriteAllBytes(staging, bytes);
+            File.Move(staging, path, overwrite: true);
+        }
+        catch
+        {
+            try { if (File.Exists(staging)) File.Delete(staging); } catch (IOException) { }
+            throw;
+        }
     }
 
     private void ClearMesh()
@@ -870,7 +897,79 @@ public class MainWindow : Window
         _scrubbing = false;
         _skeleton.Reset();
         _frameLabel.Text = "";
-        SetPlaybackSummary("Open a behaviour and select a clip to see what it plays.", Ux.MutedBrush);
+        // Says that a model is a second, separate step. What plays here is the skeleton, and waiting
+        // for a character to appear on its own is waiting for something that never happens.
+        SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
+                           "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
+    }
+
+    // Every clip in the file down the right hand side, with its own properties under it, so a clip
+    // can be found, played and changed without leaving playback for the tree or the graph.
+    private Control WithClipPicker(Control viewport)
+    {
+        _clips.SelectionChanged += () =>
+        {
+            if (_clips.SelectedTag is not string id || id == _selectedId) return;
+            var model = BehaviourGraphModel.Parse(_xmlText);
+            ShowProps(id, model);
+            LoadPoseFromSelection(announce: true);
+        };
+
+        var right = new Grid();
+        right.RowDefinitions.Add(new RowDefinition(new GridLength(2, GridUnitType.Star)));
+        right.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        right.RowDefinitions.Add(new RowDefinition(new GridLength(3, GridUnitType.Star)));
+
+        var horizontal = new GridSplitter { Height = 6, Background = Brushes.Transparent };
+        Grid.SetRow(horizontal, 1);
+        Grid.SetRow(_clipProps, 2);
+        right.Children.Add(_clips);
+        right.Children.Add(horizontal);
+        right.Children.Add(_clipProps);
+
+        var split = new Grid();
+        split.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(3, GridUnitType.Star)));
+        split.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        split.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(360, GridUnitType.Pixel)));
+
+        var splitter = new GridSplitter { Width = 6, Background = Brushes.Transparent };
+        Grid.SetColumn(splitter, 1);
+        Grid.SetColumn(right, 2);
+        split.Children.Add(viewport);
+        split.Children.Add(splitter);
+        split.Children.Add(right);
+        return split;
+    }
+
+    // Hangs the character's own model on the skeleton when there is exactly one obvious candidate.
+    // Loading it here rather than on the first frame means the viewport is still empty until a clip
+    // is picked, which is what a mesh with no pose should look like.
+    private void FindMeshForFile()
+    {
+        var found = MeshLookup.Find(_hkxPath, _projectChain?.Root, _projectChain?.SkeletonPath);
+        if (!found.Found)
+        {
+            SetPlaybackSummary("Select a clip to see what it plays. " + found.Reason, Ux.MutedBrush);
+            return;
+        }
+
+        if (!LoadMesh(found.Path!)) return;
+
+        SetPlaybackSummary($"Select a clip to see what it plays, on {Path.GetFileName(found.Path!)}.",
+                           Ux.MutedBrush);
+    }
+
+    private void BuildClipList(BehaviourGraphModel model)
+    {
+        _clips.Clear();
+        foreach (var clip in model.Objects.Where(o => o.Class == "hkbClipGenerator"))
+        {
+            string animation = clip.Str("animationName");
+            _clips.Add(null, clip.Str("name"), animation.Length > 0 ? animation : "nothing")
+                  .Colour(0, Ux.TitleBrush)
+                  .Colour(1, animation.Length > 0 ? Ux.CodeBrush : Ux.MutedBrush)
+                  .Tag(clip.Id);
+        }
     }
 
     private void TogglePlay()
@@ -883,15 +982,33 @@ public class MainWindow : Window
 
         if (_clock != null) { Stop(); return; }
 
+        // The selected clip's own playbackSpeed, so changing it here shows the change here. Without
+        // this the preview always ran at the animation's native rate and an edited speed looked like
+        // an edit that had not taken, when it had and had been saved.
         _clock = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(Math.Clamp(_poseAnimation.FrameDuration, 1 / 120f, 1)),
+            Interval = TimeSpan.FromSeconds(
+                Math.Clamp(_poseAnimation.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4)),
         };
         // Looping rather than stopping at the end: nearly every clip in a behaviour graph is a loop,
         // and one that is not still reads better repeating than freezing on its last frame.
         _clock.Tick += (_, _) => ShowFrame(_poseFrame + 1 > _scrub.Maximum ? 0 : _poseFrame + 1, stop: false);
         _clock.Start();
         _playButton.Content = "Pause";
+    }
+
+    /// How fast the selected clip says to play, or full speed when nothing sensible is set. Zero and
+    /// negative are treated as full speed rather than as a stopped or reversed preview: the engine
+    /// reads them as its own thing, and guessing which would be inventing behaviour.
+    private float SelectedPlaybackSpeed()
+    {
+        if (_xmlText.Length == 0 || _selectedId.Length == 0) return 1f;
+
+        foreach (var p in HkxTextEdit.ReadParams(_xmlText, _selectedId))
+            if (p.Name == "playbackSpeed" && float.TryParse(p.Value, out float speed))
+                return speed > 0f ? speed : 1f;
+
+        return 1f;
     }
 
     private void Stop()
@@ -1205,6 +1322,7 @@ public class MainWindow : Window
     private void Load()
     {
         _tree.Clear();
+        _clips.Clear();
         ClearProps();
         _offsetToIndex.Clear();
         _objectIds = new List<string>();
@@ -1221,7 +1339,16 @@ public class MainWindow : Window
 
         string path = (_pathField.Text ?? "").Trim().Trim('"');
         if (path.Length == 0) { SetSummary("Enter the path to a .hkx file.", Ux.MutedBrush); return; }
-        if (!File.Exists(path)) { SetSummary("Not found: " + path, Ux.MutedBrush); return; }
+        if (!File.Exists(path))
+        {
+            // Says where a relative path actually landed. Relative to the working directory the app
+            // was started in, not to the file box, so the same text works from one place and not
+            // another and the bare path in the message looks correct while being wrong.
+            string full = Path.GetFullPath(path);
+            SetSummary(full == path ? "Not found: " + path
+                                    : $"Not found: {path}, which from here means {full}", Ux.BadBrush);
+            return;
+        }
         if (!HkxBinaryReader.IsFo4Hkx(path))
         {
             SetSummary("Not a Fallout 4 hk_2014.1.0-r1 packfile.", Ux.MutedBrush);
@@ -1340,7 +1467,9 @@ public class MainWindow : Window
             _graph.Show(model);
             _graph.FrameAll();
             BuildSymbols(model);
+            BuildClipList(model);
             BuildChain(java, jar);
+            FindMeshForFile();
             SetStatus($"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn.", Ux.MetaBrush);
         }
         catch (Exception ex)
@@ -1496,8 +1625,10 @@ public class MainWindow : Window
 
     private void ClearProps()
     {
+        _fieldCommits.Clear();
         _treeProps.Clear();
         _graphProps.Clear();
+        _clipProps.Clear();
     }
 
     // Both panels are filled, because which one is on screen depends on the tab and a node can be
@@ -1508,8 +1639,13 @@ public class MainWindow : Window
     private void ShowProps(string objectId, BehaviourGraphModel model)
     {
         _selectedId = objectId;
+        // One list for all three panels, cleared once here rather than in FillProps, which runs
+        // three times and would leave only the last panel's boxes registered.
+        _fieldCommits.Clear();
         FillProps(_treeProps, objectId, model);
         FillProps(_graphProps, objectId, model);
+        FillProps(_clipProps, objectId, model);
+        _clips.SelectByTag(objectId);
     }
 
     private void FillProps(Inspector panel, string objectId, BehaviourGraphModel model)
@@ -1530,10 +1666,22 @@ public class MainWindow : Window
             string name = p.Name;
             string original = p.Value;
             string owner = objectId;
-            field.LostFocus += (_, _) => Apply(owner, name, field, original);
+            // Committing is driven by what the box holds, not by which box has focus. Focus is the
+            // usual trigger, but a window closing has no focus change to hang off, and asking every
+            // field whether it differs is both simpler and safe: one that has not been touched
+            // commits nothing, and one already committed commits nothing twice.
+            void Commit()
+            {
+                if (field.Text == original) return;
+                Apply(owner, name, field, original);
+                original = field.Text ?? original;
+            }
+
+            _fieldCommits.Add(Commit);
+            field.LostFocus += (_, _) => Commit();
             field.KeyDown += (_, e) =>
             {
-                if (e.Key == Avalonia.Input.Key.Enter) Apply(owner, name, field, original);
+                if (e.Key == Avalonia.Input.Key.Enter) Commit();
             };
 
             var label = Ux.Label(p.Name);
@@ -2135,6 +2283,16 @@ public class MainWindow : Window
         ShowProps(objectId);
     }
 
+    /// Commits anything typed into a property field but not yet left, as leaving it would. Saving
+    /// calls this first, so a value typed and not blurred is part of what gets written rather than
+    /// missing from it. Deliberately not called when the window closes: closing discards the whole
+    /// unsaved document anyway, and writing a game file on an accidental close is worse than losing
+    /// edits that were never saved.
+    public void CommitPendingFields()
+    {
+        foreach (var commit in _fieldCommits.ToList()) commit();
+    }
+
     private void Apply(string objectId, string paramName, TextBox field, string original)
     {
         if (field.Text == original || _xmlText.Length == 0) return;
@@ -2143,6 +2301,12 @@ public class MainWindow : Window
         {
             Commit(HkxTextEdit.SetParam(_xmlText, objectId, paramName, field.Text ?? ""));
             SetStatus($"#{objectId}.{paramName} = {field.Text}   (unsaved)", Ux.CodeBrush);
+
+            // Retimes a preview that is already running, so an edited speed shows up without having
+            // to stop and start playback to see it.
+            if (paramName == "playbackSpeed" && objectId == _selectedId && _clock != null)
+                _clock.Interval = TimeSpan.FromSeconds(
+                    Math.Clamp(_poseAnimation!.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4));
         }
         catch (Exception ex)
         {
@@ -2247,12 +2411,62 @@ public class MainWindow : Window
         SetStatus("Project checked. " + result, result.Errors > 0 ? Ux.BadBrush : Ux.MetaBrush);
     }
 
+    /// Writes the changed values straight into the file's own bytes, leaving everything else exactly
+    /// as it was on disk. Returns false when the edit is not one that can be written that way, which
+    /// is not a failure: the caller then does it the old way.
+    private bool SavedInPlace()
+    {
+        NativeSave.Plan plan;
+        try
+        {
+            plan = NativeSave.Compare(_savedXml, _xmlText);
+        }
+        catch (Exception e)
+        {
+            SetStatus("Could not work out what changed, so nothing was written: " + e.Message, Ux.BadBrush);
+            return true;
+        }
+
+        if (!plan.Possible || plan.Empty) return false;
+
+        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
+        if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return true; }
+
+        try
+        {
+            byte[] bytes = NativeSave.Apply(_hkxPath, plan);
+
+            string backup = _hkxPath + ".bak";
+            if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
+            ReplaceFile(_hkxPath, bytes);
+
+            ResetHistory();
+            SetStatus($"Saved {plan.Changes.Count} " +
+                      $"change{(plan.Changes.Count == 1 ? "" : "s")} straight into the file, " +
+                      $"leaving every other byte as it was. The original is kept as " +
+                      $"{Path.GetFileName(backup)}.", Ux.MetaBrush);
+            Load();
+            return true;
+        }
+        catch (Exception e)
+        {
+            SetStatus("Not saved, and the original is untouched: " + e.Message, Ux.BadBrush);
+            return true;
+        }
+    }
+
     private void Save()
     {
+        CommitPendingFields();
         if (!_dirty || _xmlText.Length == 0) return;
 
-        string? refusal = GraphValidator.RefuseToSave(_xmlText);
+        // The graph checks apply whichever way the file gets written. The hkxpack round trip warning
+        // does not, because writing the bytes in place has no round trip to lose anything in, so it
+        // is asked for separately below rather than folded in here.
+        string? refusal = GraphValidator.RefuseToSave(_xmlText, includeRepackLosses: false);
         if (refusal != null) { SetStatus(refusal, Ux.BadBrush); return; }
+
+        if (SavedInPlace()) return;
 
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
@@ -2263,6 +2477,10 @@ public class MainWindow : Window
         // finding out at the end that the file was read only all along wastes all of them.
         string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
         if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return; }
+
+        // Only the rebuild loses things, so this is where the warning belongs.
+        string? lossy = GraphValidator.RepackWouldLose(_xmlText);
+        if (lossy != null) { SetStatus(lossy, Ux.BadBrush); return; }
 
         try
         {

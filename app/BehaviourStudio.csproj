@@ -39,4 +39,7 @@
     <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../src/Hkx/HavokClassLayouts.json" />
+  </ItemGroup>
 </Project>

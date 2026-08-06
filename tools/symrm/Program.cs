@@ -38,6 +38,11 @@ public static class Program
             case "rig": return Rig(argv);
             case "extract": return Extract(argv);
             case "pose": return Pose(argv);
+            case "channels": return Channels(argv);
+            case "packfile": return Packfile(argv);
+            case "objects": return Objects(argv);
+            case "crosscheck": return CrossCheck(argv);
+            case "savecheck": return SaveCheck(argv);
             case "mesh": return Mesh(argv);
             case "remove": return Remove(argv);
             case "door": return Door(argv);
@@ -111,6 +116,32 @@ public static class Program
               commands here gets built without a mod manager in the way. Flat by default, because 531
               files called Behavior.hkx would otherwise overwrite each other; --tree keeps the
               archive's folders, which is what resolving a project chain afterwards needs.
+
+          dotnet run --project tools/symrm/symrm.csproj -- objects <file.hkx> [class]
+              Every object in a file and what class it is, or with a class named, that class's
+              fields read straight out of the bytes. Also reports how many objects are of a class
+              whose field layout we do not have, which is the number worth watching.
+
+          dotnet run --project tools/symrm/symrm.csproj -- crosscheck <file.hkx>
+              Reads every field it can out of the bytes and compares it against what hkxpack says
+              the same field holds. Two independent readings of one file, ours by byte offset and
+              hkxpack's by its own schema, so agreement across a whole file is what says the offsets
+              are right rather than plausible. Needs Java and the jar. Exits non zero on any
+              disagreement.
+
+          dotnet run --project tools/symrm/symrm.csproj -- packfile <file.hkx | folder>
+              Takes a .hkx apart and puts it back together, and reports whether the result is the
+              same file. This is the gate on writing .hkx bytes without hkxpack in the way: every
+              offset in a packfile is derived from the sizes of what precedes it, so a byte for byte
+              match means the derivation is right. Exits non zero on any file that differs or cannot
+              be read. Needs no game and no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- channels <skeleton.hkx> <animation.hkx | folder>
+              How many bone tracks leave each channel undriven, and for the undriven translations,
+              how far the skeleton's reference pose puts that bone from its parent. Havok treats an
+              undriven channel as zero translation and unit scale, so a track that leaves a bone's
+              translation undriven while the rig places that bone away from zero is the case where
+              the two readings disagree and one of them moves the bone.
 
           dotnet run --project tools/symrm/symrm.csproj -- pose <skeleton.hkx> <animation.hkx> [frame]
               The pose the viewport draws, printed: which bones a track drives, how far the last
@@ -601,6 +632,550 @@ public static class Program
 
     // The pose the viewport draws, printed. Same AnimationPose call the window makes, so a shape that
     // looks wrong on screen can be read as numbers here rather than argued about.
+    // Puts a real edit through the whole save path and then checks the file that came out, which is
+    // a stronger question than whether reading agrees. Changes a few values, writes them into the
+    // bytes, and then asks three things of the result: hkxpack can still read it, every value in it
+    // still agrees with our reading of it, and it differs from the original only where it was meant
+    // to. The last is the one that catches a save that quietly damages something elsewhere.
+    private static int SaveCheck(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string file = Path.GetFullPath(argv[1]);
+        // Named after the file rather than shared. savecheck calls crosscheck, which unpacks into a
+        // directory of its own, and a fixed name means one run wiping the directory another run is
+        // still reading from. That showed up as hkxpack "produced no XML" on a file that passes on
+        // its own, which reads as a bug in the save rather than in the harness around it.
+        string work = Path.Combine(Path.GetTempPath(),
+                                   "symrm-savecheck-" + Path.GetFileNameWithoutExtension(file));
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+
+        string xmlFile = HkxTextEdit.Unpack(_java, _jar, file, work);
+        string original = HkxTextEdit.ReadXml(xmlFile);
+
+        if (!NullSaveIsByteIdentical(file, original)) return 1;
+        if (!ResizeIsRefused(file, original)) return 1;
+
+        var edits = Invent(original);
+        if (edits.Count == 0)
+        {
+            Console.WriteLine($"{Path.GetFileName(file)}: nothing here to change, skipped");
+            return 0;
+        }
+
+        string edited = original;
+        foreach (var (was, now) in edits) edited = ReplaceFirst(edited, was, now);
+
+        var plan = NativeSave.Compare(original, edited);
+        if (!plan.Possible)
+        {
+            Console.WriteLine($"{Path.GetFileName(file)}: refused, {plan.Refusal}");
+            return 1;
+        }
+
+        byte[] saved = NativeSave.Apply(file, plan);
+        string savedPath = Path.Combine(work, "saved-" + Path.GetFileName(file));
+        File.WriteAllBytes(savedPath, saved);
+
+        byte[] before = File.ReadAllBytes(file);
+        int changedBytes = before.Length == saved.Length
+            ? Enumerable.Range(0, saved.Length).Count(i => before[i] != saved[i])
+            : -1;
+
+        Console.WriteLine($"{Path.GetFileName(file)}: {plan.Changes.Count} value(s) changed, " +
+                          (changedBytes < 0
+                              ? $"BUT THE FILE CHANGED SIZE, {before.Length} to {saved.Length}"
+                              : $"{changedBytes} bytes differ from the original"));
+        foreach (var change in plan.Changes.Take(4)) Console.WriteLine("    " + change);
+
+        if (changedBytes < 0) return 1;
+
+        // The saved file has to survive being read by the other implementation, and then agree with
+        // ours field for field. Reusing crosscheck means the number quoted here is the same measure
+        // as the one quoted for an unedited file.
+        int verdict = CrossCheck(new[] { "crosscheck", savedPath });
+
+        // And the change has to actually be in there, or a save that wrote nothing would pass every
+        // check above by doing nothing at all.
+        string savedXml = HkxTextEdit.ReadXml(
+            HkxTextEdit.Unpack(_java, _jar, savedPath, Path.Combine(work, "reread")));
+
+        int landed = edits.Count(e => savedXml.Contains(e.Now, StringComparison.Ordinal));
+        Console.WriteLine($"  {landed} of {edits.Count} edited value(s) present in the saved file");
+
+        return verdict == 0 && landed == edits.Count ? 0 : 1;
+    }
+
+    /// A few edits that exercise different widths: a float, a whole word, and a single byte flag.
+    /// Picked out of the file rather than fixed, so this runs on whatever it is pointed at.
+    /// Saving a file without changing anything has to give back the file that went in, byte for byte.
+    /// This is the check that matters most before saving is switched over: it is the one case where
+    /// the right answer is known exactly and in advance, so any drift at all is the writer's fault
+    /// and not a judgement call. Every other check compares one reading to another reading.
+    private static bool NullSaveIsByteIdentical(string file, string originalXml)
+    {
+        var plan = NativeSave.Compare(originalXml, originalXml);
+        if (!plan.Possible)
+        {
+            Console.WriteLine($"  null save: REFUSED, {plan.Refusal}");
+            return false;
+        }
+        if (!plan.Empty)
+        {
+            Console.WriteLine($"  null save: FAILED, an unchanged file planned {plan.Changes.Count} change(s)");
+            return false;
+        }
+
+        byte[] before = File.ReadAllBytes(file);
+        byte[] after = NativeSave.Apply(file, plan);
+
+        if (before.Length != after.Length)
+        {
+            Console.WriteLine($"  null save: FAILED, {before.Length} bytes in, {after.Length} out");
+            return false;
+        }
+
+        int firstDiff = -1, differing = 0;
+        for (int i = 0; i < before.Length; i++)
+        {
+            if (before[i] == after[i]) continue;
+            if (firstDiff < 0) firstDiff = i;
+            differing++;
+        }
+
+        if (differing > 0)
+        {
+            Console.WriteLine($"  null save: FAILED, {differing} byte(s) differ, first at 0x{firstDiff:x}");
+            return false;
+        }
+
+        Console.WriteLine($"  null save: identical, all {before.Length} bytes");
+        return true;
+    }
+
+    /// The one case the writer cannot handle is anything that changes a size, because every offset in
+    /// a packfile is derived from the sizes of what precedes it. That has to be a hard refusal rather
+    /// than a best effort, so this hands it a longer string and requires two things: that the plan
+    /// says no, and that applying that plan throws rather than writing something.
+    private static bool ResizeIsRefused(string file, string originalXml)
+    {
+        // animationName rather than the first name in the document. The first one belongs to an
+        // inline struct inside hkRootLevelContainer, so lengthening it is refused for being inside
+        // an array of struct, whatever the string rule says. The guard would then still pass with
+        // strings wrongly marked writable, which is the one regression it exists to catch.
+        var match = System.Text.RegularExpressions.Regex.Match(
+            originalXml, "<hkparam name=\"animationName\">([^<]{3,})</hkparam>");
+        if (!match.Success)
+        {
+            Console.WriteLine("  resize guard: no string field to lengthen here, skipped");
+            return true;
+        }
+
+        string longer = match.Value.Replace(match.Groups[1].Value,
+                                            match.Groups[1].Value + "_longer_than_it_was");
+        var plan = NativeSave.Compare(originalXml, ReplaceFirst(originalXml, match.Value, longer));
+
+        if (plan.Possible)
+        {
+            Console.WriteLine("  resize guard: FAILED, lengthening a string was accepted as writable");
+            return false;
+        }
+
+        try
+        {
+            NativeSave.Apply(file, plan);
+            Console.WriteLine("  resize guard: FAILED, applying a refused plan wrote bytes anyway");
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            // The reason matters as much as the refusal. A refusal that arrives for some other
+            // reason leaves the string rule itself untested.
+            if (plan.Refusal?.Contains("stringptr", StringComparison.Ordinal) != true)
+            {
+                Console.WriteLine($"  resize guard: FAILED, refused for the wrong reason, {plan.Refusal}");
+                return false;
+            }
+
+            Console.WriteLine($"  resize guard: refused as it should, {plan.Refusal}");
+            return true;
+        }
+    }
+
+    private static List<(string Was, string Now)> Invent(string xml)
+    {
+        var edits = new List<(string, string)>();
+
+        void Try(string pattern, string replacement)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(xml, pattern);
+            if (match.Success && !edits.Any(e => e.Item1 == match.Value))
+                edits.Add((match.Value, replacement));
+        }
+
+        Try("<hkparam name=\"playbackSpeed\">1\\.0</hkparam>",
+            "<hkparam name=\"playbackSpeed\">1.25</hkparam>");
+        Try("<hkparam name=\"startTime\">0\\.0</hkparam>",
+            "<hkparam name=\"startTime\">0.5</hkparam>");
+        Try("<hkparam name=\"userPartitionMask\">0</hkparam>",
+            "<hkparam name=\"userPartitionMask\">3</hkparam>");
+        Try("<hkparam name=\"ignoreStartTime\">false</hkparam>",
+            "<hkparam name=\"ignoreStartTime\">true</hkparam>");
+
+        // An animation carries none of the fields above, and it is the case worth proving: the old
+        // route refused to write one at all, because the XML cannot carry a lossless compressed
+        // animation without cutting it short. duration is a plain real on hkaAnimation, so changing
+        // it exercises a real save of the very format that used to be refused.
+        Try("<hkparam name=\"duration\">[0-9.]+</hkparam>",
+            "<hkparam name=\"duration\">3.5</hkparam>");
+        return edits;
+    }
+
+    private static string ReplaceFirst(string text, string was, string now)
+    {
+        int at = text.IndexOf(was, StringComparison.Ordinal);
+        return at < 0 ? text : text[..at] + now + text[(at + was.Length)..];
+    }
+
+    // Reads every field we can out of the raw bytes and compares it to what hkxpack says the same
+    // field holds. Two independent readings of the same file: ours by byte offset from layouts read
+    // out of the game, hkxpack's by its own schema. Agreement across a whole file is what turns
+    // "these offsets look plausible" into "these offsets are right", and it is the check that has to
+    // pass before anything writes bytes for real.
+    private static int CrossCheck(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        NeedHkxPack();
+        string file = Path.GetFullPath(argv[1]);
+        string work = Path.Combine(Path.GetTempPath(),
+                                   "symrm-crosscheck-" + Path.GetFileNameWithoutExtension(file));
+        if (Directory.Exists(work)) Directory.Delete(work, true);
+
+        string xmlFile = HkxTextEdit.Unpack(_java, _jar, file, work);
+
+        var byClass = new Dictionary<string, List<Dictionary<string, string>>>(StringComparer.Ordinal);
+        foreach (var element in System.Xml.Linq.XDocument.Load(xmlFile).Descendants("hkobject"))
+        {
+            string? cls = element.Attribute("class")?.Value;
+            if (cls == null) continue;
+
+            var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var p in element.Elements("hkparam"))
+            {
+                string? name = p.Attribute("name")?.Value;
+                if (name != null) fields[name] = (p.Value ?? "").Trim();
+            }
+            if (!byClass.TryGetValue(cls, out var list)) byClass[cls] = list = new();
+            list.Add(fields);
+        }
+
+        var objects = new PackfileObjects(PackfileImage.Read(file));
+        int compared = 0, agreed = 0;
+        var disagreements = new List<string>();
+
+        foreach (var group in objects.Instances.GroupBy(i => i.ClassName))
+        {
+            if (!byClass.TryGetValue(group.Key, out var theirs)) continue;
+            var ours = group.ToList();
+            if (ours.Count != theirs.Count)
+            {
+                disagreements.Add($"{group.Key}: we see {ours.Count}, hkxpack sees {theirs.Count}");
+                continue;
+            }
+
+            var members = HavokClasses.Shipped.Members(group.Key);
+            for (int i = 0; i < ours.Count; i++)
+            {
+                foreach (var member in members)
+                {
+                    if (!theirs[i].TryGetValue(member.Name, out string? expected)) continue;
+
+                    string? actual = Rendered(objects, ours[i], member);
+                    if (actual == null) continue;
+
+                    compared++;
+                    if (Same(actual, expected)) { agreed++; continue; }
+                    if (disagreements.Count < 12)
+                        disagreements.Add($"{group.Key}[{i}].{member.Name} (+{member.Offset}): " +
+                                          $"we read {actual}, hkxpack says {expected}");
+                }
+            }
+        }
+
+        Console.WriteLine($"{Path.GetFileName(file)}: {compared} field values compared against hkxpack, " +
+                          $"{agreed} agreed, {compared - agreed} did not");
+        foreach (string line in disagreements) Console.WriteLine("  " + line);
+
+        return compared > 0 && compared == agreed && disagreements.Count == 0 ? 0 : 1;
+    }
+
+    private static string? Rendered(PackfileObjects objects, PackfileObjects.Instance instance,
+                                    HavokClasses.Member member) => member.Type switch
+    {
+        "real" => objects.ReadFloat(instance, member.Name)?.ToString("R"),
+        "stringptr" or "cstring" => objects.ReadString(instance, member.Name) ?? "∅",
+        "bool" or "int8" or "uint8" or "int16" or "uint16" or "int32" or "uint32"
+            => Narrow(objects.ReadInt(instance, member.Name), member.Type),
+        _ => null,
+    };
+
+    /// hkxpack and a raw read spell the same value differently: 1 against 1.0, true against 1, and a
+    /// null pointer against an empty element. Comparing the text as typed would report every one of
+    /// those as a disagreement and drown the real ones.
+    private static bool Same(string ours, string theirs)
+    {
+        if (string.Equals(ours, theirs, StringComparison.Ordinal)) return true;
+        if (ours == "∅") return theirs.Length == 0 || theirs == "null";
+
+        if (float.TryParse(ours, out float a) && float.TryParse(theirs, out float b))
+            return Math.Abs(a - b) <= 1e-6f * Math.Max(1f, Math.Abs(b));
+
+        if (ours is "true" or "false")
+            return theirs.Equals(ours, StringComparison.OrdinalIgnoreCase) ||
+                   theirs == (ours == "true" ? "1" : "0");
+
+        return false;
+    }
+
+    // What the object layer sees in a file: every object, its class, and the fields of whichever
+    // class is asked about. The second half is the one that matters, because reading a field out of
+    // the bytes is checkable against the same field in hkxpack's XML, and the two agreeing is what
+    // says the offsets are right rather than merely plausible.
+    private static int Objects(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string file = Path.GetFullPath(argv[1]);
+        string? wanted = argv.Length > 2 ? argv[2] : null;
+
+        var image = PackfileImage.Read(file);
+        var objects = new PackfileObjects(image);
+        var (known, unknown) = objects.Coverage();
+
+        Console.WriteLine($"{Path.GetFileName(file)}: {objects.Instances.Count} objects, " +
+                          $"{known} of a class we have the layout for, {unknown} we do not");
+
+        if (unknown > 0)
+            Console.WriteLine("  no layout for: " + string.Join(", ", objects.UnknownClasses().Take(8)));
+
+        if (wanted == null)
+        {
+            Console.WriteLine($"\n{"class",-44} count");
+            foreach (var group in objects.Instances.GroupBy(i => i.ClassName)
+                                                   .OrderByDescending(g => g.Count()))
+                Console.WriteLine($"{group.Key,-44} {group.Count()}");
+            return 0;
+        }
+
+        var members = HavokClasses.Shipped.Members(wanted);
+        if (members.Count == 0)
+        {
+            Console.WriteLine($"\nno layout for {wanted}");
+            return 1;
+        }
+
+        var instances = objects.OfClass(wanted).ToList();
+        Console.WriteLine($"\n{wanted}: {members.Count} fields, {instances.Count} in this file");
+
+        foreach (var instance in instances.Take(4))
+        {
+            Console.WriteLine($"\n  at 0x{instance.Offset:x}");
+            foreach (var member in members)
+            {
+                string shown = member.Type switch
+                {
+                    "real" => objects.ReadFloat(instance, member.Name)?.ToString("0.####") ?? "?",
+                    "stringptr" or "cstring" => objects.ReadString(instance, member.Name) is { } s
+                        ? $"\"{s}\"" : "null",
+                    "int32" or "uint32" or "int16" or "uint16" or "int8" or "uint8" or "bool" or "enum"
+                        => Narrow(objects.ReadInt(instance, member.Name), member.Type),
+                    _ => "",
+                };
+                if (shown.Length > 0)
+                    Console.WriteLine($"    +{member.Offset,-5} {member.Name,-38} {shown}");
+            }
+        }
+
+        if (instances.Count > 4) Console.WriteLine($"\n  ... and {instances.Count - 4} more");
+        return 0;
+    }
+
+    /// A field narrower than four bytes still reads as four, so the extra has to be masked off or a
+    /// one byte flag reports whatever its neighbours happen to hold.
+    private static string Narrow(int? value, string type)
+    {
+        if (value is not int raw) return "?";
+        return type switch
+        {
+            "bool" => ((raw & 0xFF) != 0).ToString().ToLowerInvariant(),
+            "int8" or "uint8" or "enum" => (raw & 0xFF).ToString(),
+            "int16" or "uint16" => (raw & 0xFFFF).ToString(),
+            _ => raw.ToString(),
+        };
+    }
+
+    // The gate on writing .hkx bytes ourselves. Reading a file apart and putting it back has to
+    // produce the same file: every offset in a packfile is derived from the sizes of what came
+    // before it, so a byte for byte match means the derivation is right, and one wrong byte means it
+    // is not. Nothing here needs the game, which is the point of doing it this way first.
+    private static int Packfile(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToArray()
+            : new[] { target };
+
+        int same = 0, differed = 0, refused = 0;
+        var firstFailures = new List<string>();
+
+        foreach (string file in files)
+        {
+            byte[] original;
+            try { original = File.ReadAllBytes(file); }
+            catch (Exception e) { refused++; firstFailures.Add($"{Path.GetFileName(file)}: {e.Message}"); continue; }
+
+            PackfileImage image;
+            try { image = PackfileImage.Read(original); }
+            catch (Exception e)
+            {
+                refused++;
+                if (firstFailures.Count < 10) firstFailures.Add($"{Path.GetFileName(file)}: {e.Message}");
+                continue;
+            }
+
+            byte[] rebuilt = image.Rebuild();
+            int at = FirstDifference(original, rebuilt);
+            if (at < 0) { same++; continue; }
+
+            differed++;
+            if (firstFailures.Count < 10)
+            {
+                firstFailures.Add($"{Path.GetFileName(file)}: {original.Length} bytes in, {rebuilt.Length} out, " +
+                                  $"first difference at 0x{at:x}" + Around(original, rebuilt, at));
+            }
+        }
+
+        if (files.Length == 1 && same == 1) Describe(PackfileImage.Read(files[0]));
+
+        Console.WriteLine($"\n{files.Length} file(s): {same} rebuilt identically, {differed} differed, " +
+                          $"{refused} could not be read");
+        foreach (string failure in firstFailures) Console.WriteLine("  " + failure);
+
+        return differed == 0 && refused == 0 ? 0 : 1;
+    }
+
+    private static void Describe(PackfileImage image)
+    {
+        Console.WriteLine($"version {image.FileVersion}, layout {string.Join(".", image.LayoutRules)}, " +
+                          $"{image.Predicates.Length} bytes before the section headers");
+        Console.WriteLine($"{"section",-16} {"data",10} {"local",8} {"global",8} {"virtual",8}");
+        foreach (var section in image.Sections)
+        {
+            Console.WriteLine($"{section.Tag,-16} {section.Data.Length,10} " +
+                              $"{section.Locals().Count(),8} {section.Globals().Count(),8} " +
+                              $"{section.Virtuals().Count(),8}");
+        }
+    }
+
+    private static int FirstDifference(byte[] a, byte[] b)
+    {
+        int shared = Math.Min(a.Length, b.Length);
+        for (int i = 0; i < shared; i++) if (a[i] != b[i]) return i;
+        return a.Length == b.Length ? -1 : shared;
+    }
+
+    private static string Around(byte[] a, byte[] b, int at)
+    {
+        int from = Math.Max(0, at - 4);
+        return $"\n      was {Hex(a, from, at)}\n      now {Hex(b, from, at)}";
+    }
+
+    private static string Hex(byte[] bytes, int from, int at)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = from; i < Math.Min(bytes.Length, at + 8); i++)
+            sb.Append(i == at ? $"[{bytes[i]:x2}]" : $" {bytes[i]:x2} ");
+        return sb.ToString();
+    }
+
+    private static int Channels(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+
+        var skeleton = new HkxBinaryReader().ReadSkeleton(Path.GetFullPath(argv[1]));
+        string target = Path.GetFullPath(argv[2]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToArray()
+            : new[] { target };
+
+        Console.WriteLine($"{skeleton.Name}: {skeleton.BoneNames.Count} bones");
+        Console.WriteLine($"{"file",-40} {"tracks",7} {"noTrans",8} {"noRot",7} {"noScale",8} " +
+                          $"{"offsetT",8} {"maxT",8} {"offsetR",8} {"maxRdeg",8} {"offsetS",8}");
+
+        int filesRead = 0, disagreements = 0;
+        foreach (string file in files)
+        {
+            if (!new HkxBinaryReader().TryReadAnimation(file, out var animation)) continue;
+            if (animation.Tracks.Count == 0) continue;
+            if (AnimationPose.WhyNotPosable(skeleton, animation) != null) continue;
+            filesRead++;
+
+            var byBone = AnimationPose.TracksByBone(skeleton, animation);
+            int noTrans = 0, noRot = 0, noScale = 0;
+            int offsetT = 0, offsetR = 0, offsetS = 0;
+            float maxT = 0, maxR = 0;
+
+            for (int bone = 0; bone < byBone.Length; bone++)
+            {
+                int track = byBone[bone];
+                if (track < 0 || track >= animation.Tracks.Count) continue;
+
+                var data = animation.Tracks[track];
+                bool anyTrans = data.TranslationAnimated[0] || data.TranslationAnimated[1] ||
+                                data.TranslationAnimated[2];
+                bool anyScale = data.ScaleAnimated[0] || data.ScaleAnimated[1] || data.ScaleAnimated[2];
+
+                if (!anyTrans) noTrans++;
+                if (!data.RotationAnimated) noRot++;
+                if (!anyScale) noScale++;
+
+                // The disagreement: Havok puts an undriven channel at zero, one, or no rotation,
+                // while the reference pose puts it wherever the rig does. Anything away from
+                // Havok's constant means the two readings draw a different skeleton.
+                if (bone >= skeleton.ReferencePose.Count) continue;
+                var rest = skeleton.ReferencePose[bone];
+
+                if (!anyTrans && rest.Translation.Length() > 0.01f)
+                {
+                    offsetT++;
+                    maxT = Math.Max(maxT, rest.Translation.Length());
+                }
+
+                if (!data.RotationAnimated)
+                {
+                    float w = Math.Abs(System.Numerics.Quaternion.Normalize(rest.Rotation).W);
+                    float degrees = 2 * (float)(Math.Acos(Math.Min(1, w)) * 180 / Math.PI);
+                    if (degrees > 0.5f) { offsetR++; maxR = Math.Max(maxR, degrees); }
+                }
+
+                if (!anyScale && (rest.Scale - System.Numerics.Vector3.One).Length() > 0.01f) offsetS++;
+            }
+
+            if (offsetT > 0 || offsetR > 0 || offsetS > 0) disagreements++;
+            Console.WriteLine($"{Path.GetFileName(file),-40} {animation.Tracks.Count,7} {noTrans,8} " +
+                              $"{noRot,7} {noScale,8} {offsetT,8} {maxT,8:F2} {offsetR,8} {maxR,8:F1} " +
+                              $"{offsetS,8}");
+        }
+
+        Console.WriteLine($"\n{filesRead} animations read, {disagreements} where an undriven channel " +
+                          "covers a bone the rig does not place at Havok's constant");
+        return 0;
+    }
+
     private static int Pose(string[] argv)
     {
         if (argv.Length < 3) { Usage(); return 1; }

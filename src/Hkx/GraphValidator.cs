@@ -166,16 +166,28 @@ public static class GraphValidator
         "hkaLosslessCompressedAnimation",
     };
 
-    public static string? RefuseToSave(string xml)
+    /// What a rebuild through hkxpack's XML would lose, or null when it would lose nothing. Only
+    /// applies to that path: writing changed values into the file's own bytes leaves everything it
+    /// did not change alone, so there is no round trip for this to happen in.
+    public static string? RepackWouldLose(string xml)
+    {
+        foreach (string cls in LossyOnRepack)
+            if (xml.Contains($"class=\"{cls}\"", StringComparison.Ordinal))
+                return $"Not saved, and the original is untouched. This edit needs the file rebuilt, " +
+                       $"and this file holds a {cls}, which hkxpack cannot write back without " +
+                       "changing it: the packed words it stores are cut short on the way through, so " +
+                       "the animation that came out would not be the one that went in. Changing " +
+                       "values on their own is written straight into the file and does not hit this.";
+        return null;
+    }
+
+    public static string? RefuseToSave(string xml) => RefuseToSave(xml, includeRepackLosses: true);
+
+    public static string? RefuseToSave(string xml, bool includeRepackLosses)
     {
         if (xml.Length == 0) return null;
 
-        foreach (string cls in LossyOnRepack)
-            if (xml.Contains($"class=\"{cls}\"", StringComparison.Ordinal))
-                return $"Not saved, and the original is untouched. This file holds a {cls}, " +
-                       "which hkxpack cannot write back without changing it: the packed words it " +
-                       "stores are cut short on the way through, so the animation that came out " +
-                       "would not be the one that went in. Read it here, edit it elsewhere.";
+        if (includeRepackLosses && RepackWouldLose(xml) is { } lossy) return lossy;
 
         var empty = EmptyStates(BehaviourGraphModel.Parse(xml));
         if (empty.Count == 0) return null;

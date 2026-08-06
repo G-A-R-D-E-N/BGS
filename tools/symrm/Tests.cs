@@ -47,9 +47,13 @@ public static class Tests
         ("PapyrusSendersAreReportedNotJudged", PapyrusSendersAreReportedNotJudged),
         ("APoseComposesDownTheBoneChain", APoseComposesDownTheBoneChain),
         ("AClearChannelKeepsTheReferencePose", AClearChannelKeepsTheReferencePose),
+        ("SplineUndrivenChannelsReadAsIdentity", SplineUndrivenChannelsReadAsIdentity),
+        ("APackfileSurvivesBeingRebuilt", APackfileSurvivesBeingRebuilt),
         ("ScrubbingLandsOnDifferentPoses", ScrubbingLandsOnDifferentPoses),
         ("TracksDriveTheBonesTheyName", TracksDriveTheBonesTheyName),
         ("AnimationsForAnotherRigAreRefused", AnimationsForAnotherRigAreRefused),
+        ("AModelIsFoundOnlyWhenThereIsNoDoubt", AModelIsFoundOnlyWhenThereIsNoDoubt),
+        ("AValueThatIsNotANumberIsRefused", AValueThatIsNotANumberIsRefused),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1220,6 +1224,101 @@ public static class Tests
                   Near(collapsed.Bones[1].Position, Vector3.Zero));
     }
 
+    /// Spline compression is the one format that says outright what an undriven channel means, and it
+    /// is not the reference pose: no translation, no rotation, unit scale. On a whole body clip the
+    /// two answers coincide, because the bones such a clip leaves undriven are the ones already at
+    /// zero. On an additive clip they do not, and Havok's reading is the one that makes it a delta.
+    private static void SplineUndrivenChannelsReadAsIdentity()
+    {
+        Console.WriteLine("\nspline compression reads an undriven channel as identity, not the rest pose");
+
+        var rig = ThreeBoneChain();
+        var anim = new HkxAnimationData
+        {
+            NumFrames = 1,
+            NumTracks = 3,
+            FrameDuration = 1f / 30f,
+            AnimationClass = "hkaSplineCompressedAnimation",
+            TrackToBoneIndices = { 0, 1, 2 },
+        };
+
+        for (int i = 0; i < 3; i++) anim.Tracks.Add(new HkxTrackData { RotationAnimated = true });
+
+        var posed = AnimationPose.At(rig, anim, 0);
+        CheckTrue("every bone folds onto the root, because none of them is given an offset",
+                  Near(posed.Bones[1].Position, Vector3.Zero) && Near(posed.Bones[2].Position, Vector3.Zero));
+
+        // The same track shape in a format that has not been shown to mean that is left alone.
+        anim.AnimationClass = "hkaLosslessCompressedAnimation";
+        var kept = AnimationPose.At(rig, anim, 0);
+        CheckTrue("and a format without that guarantee still keeps the rest pose",
+                  Near(kept.Bones[1].Position, new Vector3(10, 0, 0)));
+    }
+
+    /// Written by hand rather than read from a file, so it runs anywhere: the real proof is
+    /// `symrm packfile`, which rebuilds every vanilla .hkx and compares the bytes. What this pins is
+    /// the part that has no second opinion in a byte comparison, namely that a section whose
+    /// contents are not a multiple of the padding still lands its later tables where its header says
+    /// they are.
+    private static void APackfileSurvivesBeingRebuilt()
+    {
+        Console.WriteLine("\na packfile taken apart and rebuilt says the same thing");
+
+        var image = new PackfileImage { Predicates = new byte[16] };
+        var section = new PackfileSection
+        {
+            // 20 bytes, name then the 0xFF the header is filled with, as a real one has.
+            TagBytes = MakeTag("__data__"),
+            Data = new byte[100],                    // deliberately not a multiple of 16
+            LocalFixups = Pair(8, 40),
+            GlobalFixups = Triple(16, 2, 64),
+            VirtualFixups = Triple(24, 0, 3),
+        };
+        image.Sections.Add(section);
+
+        var reread = PackfileImage.Read(image.Rebuild());
+        CheckTrue("one section survives", reread.Sections.Count == 1);
+        Check("named the same", "__data__", reread.Sections[0].Tag);
+        // Not 100: the data is padded up to the boundary before the first table, and the offset that
+        // says where the data ends is recorded after that padding, so the padding reads back as part
+        // of the data. That is the format's own doing and not a loss, since the padding is 0xFF and
+        // nothing points into it.
+        Check("the odd sized data comes back padded to the boundary", 112, reread.Sections[0].Data.Length);
+        Check("the bytes before the section headers survive", 16, reread.Predicates.Length);
+
+        var local = reread.Sections[0].Locals().ToList();
+        Check("one local fixup", 1, local.Count);
+        Check("pointing where it did", 40, local[0].Destination);
+
+        var virtuals = reread.Sections[0].Virtuals().ToList();
+        Check("one virtual fixup", 1, virtuals.Count);
+        Check("naming section 0, which is always __classnames__", 0, virtuals[0].Section);
+
+        // Rebuilding twice must not drift: the second pass reads its own output, so any offset that
+        // is computed from the wrong base shows up as a difference here rather than in the game.
+        byte[] once = image.Rebuild();
+        byte[] twice = PackfileImage.Read(once).Rebuild();
+        CheckTrue("rebuilding what was rebuilt gives the same bytes", once.SequenceEqual(twice));
+    }
+
+    private static byte[] MakeTag(string name)
+    {
+        var tag = new byte[20];
+        Array.Fill(tag, (byte)0xFF);
+        var ascii = System.Text.Encoding.ASCII.GetBytes(name);
+        Array.Copy(ascii, tag, ascii.Length);
+        tag[ascii.Length] = 0;
+        return tag;
+    }
+
+    private static byte[] Pair(int source, int destination) =>
+        BitConverter.GetBytes(source).Concat(BitConverter.GetBytes(destination)).ToArray();
+
+    private static byte[] Triple(int source, int section, int destination) =>
+        BitConverter.GetBytes(source)
+            .Concat(BitConverter.GetBytes(section))
+            .Concat(BitConverter.GetBytes(destination)).ToArray();
+
     private static void ScrubbingLandsOnDifferentPoses()
     {
         Console.WriteLine("\nscrubbing to different frames gives different poses");
@@ -1464,4 +1563,89 @@ public static class Tests
             </hksection>
         </hkpackfile>
         """;
+
+    // A behaviour never names its model, so the only safe answers are "exactly one candidate" and
+    // "ask". These check the third case especially: several candidates must NOT resolve to one of
+    // them, and must not fall through to a later folder either, since both are guesses wearing
+    // different hats.
+    private static void AModelIsFoundOnlyWhenThereIsNoDoubt()
+    {
+        var disk = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["/behaviours"] = Array.Empty<string>(),
+            ["/project"] = new[] { "/project/Dogmeat.nif" },
+            ["/crowded"] = new[] { "/crowded/b.nif", "/crowded/a.nif" },
+            ["/assets"] = new[] { "/assets/skeleton_mesh.nif" },
+        };
+        IReadOnlyList<string> In(string folder) =>
+            disk.TryGetValue(folder, out var files) ? files : Array.Empty<string>();
+
+        var one = MeshLookup.Find(new[] { "/behaviours", "/project" }, In);
+        CheckTrue("one model beside the file is used", one.Found);
+        Check("and it is that model", "/project/Dogmeat.nif", one.Path);
+
+        var none = MeshLookup.Find(new[] { "/behaviours", "/empty" }, In);
+        CheckTrue("no model anywhere finds nothing", !none.Found);
+        CheckTrue("and says to use the button", none.Reason.Contains("Mesh..."));
+
+        var many = MeshLookup.Find(new[] { "/crowded", "/project" }, In);
+        CheckTrue("several models resolve to none of them", !many.Found);
+        CheckTrue("saying how many there were", many.Reason.Contains("2 models"));
+        CheckTrue("and naming them", many.Reason.Contains("a.nif") && many.Reason.Contains("b.nif"));
+        CheckTrue("and it does not fall through to the next folder", many.Path == null);
+
+        // Nearest first, so a model beside the behaviour wins over one beside the skeleton.
+        var nearest = MeshLookup.Find(new[] { "/project", "/assets" }, In);
+        Check("the nearest folder decides", "/project/Dogmeat.nif", nearest.Path);
+
+        var places = MeshLookup.Places("/x/Behaviors/Root.hkx", "/x", "/x/CharacterAssets/skeleton.hkt")
+                               .ToList();
+        Check("three places are searched", 3, places.Count);
+        Check("the behaviour's own folder first", "/x/Behaviors", places[0]);
+        Check("then the project root", "/x", places[1]);
+        Check("then wherever the skeleton lives", "/x/CharacterAssets", places[2]);
+
+        var deduped = MeshLookup.Places("/x/Root.hkx", "/x", "/x/skeleton.hkt").ToList();
+        Check("one folder is searched once", 1, deduped.Count);
+    }
+
+    // A field's type says how wide the value is, not that what was typed is a value of that type.
+    // Left unchecked the writer took whatever it could parse and wrote zero for the rest, so a
+    // mistyped speed became a clip that does not play rather than an edit that was refused.
+    private static void AValueThatIsNotANumberIsRefused()
+    {
+        const string Before = """
+            <hkpackfile><hksection name="__data__">
+            <hkobject name="#0010" class="hkbClipGenerator" signature="0x333b85b9">
+                <hkparam name="playbackSpeed">1.0</hkparam>
+                <hkparam name="userPartitionMask">0</hkparam>
+                <hkparam name="ignoreStartTime">false</hkparam>
+            </hkobject></hksection></hkpackfile>
+            """;
+
+
+        foreach (string rubbish in new[] { "abc", "1.5x", "1,5", "" })
+        {
+            var plan = NativeSave.Compare(Before, Before.Replace(">1.0<", $">{rubbish}<"));
+            CheckTrue($"a playbackSpeed of '{rubbish}' is refused", !plan.Possible);
+            CheckTrue($"and the refusal names the field, not '{rubbish}'",
+                      plan.Refusal?.Contains("playbackSpeed", StringComparison.Ordinal) == true);
+        }
+
+        var good = NativeSave.Compare(Before, Before.Replace(">1.0<", ">0.25<"));
+        CheckTrue("a real number is still accepted", good.Possible);
+        Check("and is the only change", 1, good.Changes.Count);
+
+        // Not a number, and not something to be quietly folded to zero either.
+        foreach (string special in new[] { "NaN", "Infinity" })
+            CheckTrue($"'{special}' is refused rather than written",
+                      !NativeSave.Compare(Before, Before.Replace(">1.0<", $">{special}<")).Possible);
+
+        // The write masks down to the field's width, so a number too big lands as its low bytes.
+        var tooBig = NativeSave.Compare(Before, Before.Replace(">0<", ">99999999999<"));
+        CheckTrue("a number too big for the field is refused", !tooBig.Possible);
+
+        var fits = NativeSave.Compare(Before, Before.Replace(">0<", ">3<"));
+        CheckTrue("one that fits is accepted", fits.Possible);
+    }
 }
