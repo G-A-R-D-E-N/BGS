@@ -160,6 +160,12 @@ public sealed class HavokClassTypes
     public IReadOnlyList<string> SignatureProblems(IEnumerable<(uint Signature, string Name)> declared)
     {
         var problems = new List<string>();
+
+        // No table, no opinion. A build without the data reads files the way it did before this
+        // existed, and reporting every class in every file as unknown would turn a missing data
+        // file into a tool that refuses to open anything.
+        if (_byName.Count == 0) return problems;
+
         foreach (var (signature, name) in declared.Distinct())
         {
             if (!_byName.TryGetValue(name, out var layout))

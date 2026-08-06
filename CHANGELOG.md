@@ -3,6 +3,31 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, the signature check reaches the save path, and says why on every load
+
+The check landed with the class table and was wired into loading a file: a packfile whose classes are
+signed differently from the ones this build describes puts the byte reader aside, and the panel goes
+back to reading through hkxpack, which uses the file's own definitions rather than ours. Going back
+over it turned up two things that wiring did not cover.
+
+**Saving never asked.** Refusing to read a file whose classes we do not describe is the smaller half.
+`NativeSave` writes values straight into a file's bytes at offsets taken from this build's idea of
+the class — so on a file written against a different definition, a value lands in somebody else's
+field and the file still looks perfectly valid afterwards. It builds its own reader and never
+consulted the check. It does now, and refuses rather than attempting, naming the class; the caller
+falls back to the rebuild through hkxpack, which goes through the file's own class definitions.
+
+**The reason reached the status line on one path out of four.** It was set where the load reports
+"Editable", and `PrepareEditing` has four ways out: no Java, object counts disagreeing, an exception,
+or success. A file with classes we do not describe *and* no Java present reported the Java and
+swallowed the rest. It is said once now, on the summary line, which is set on every load and
+overwritten by nothing.
+
+One deliberate hole, written down rather than left to be found: with no class table present at all —
+a build where the data file did not make it in — the check reports nothing rather than reporting
+every class in every file as unknown. A missing data file should not turn the tool into one that
+refuses to open anything.
+
 ## 2026-08-05, a class table, so a field list can come from the file
 
 The properties panel gets its list of field *names* from hkxpack's XML, and that is the last thing

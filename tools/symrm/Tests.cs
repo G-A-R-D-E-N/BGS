@@ -64,6 +64,7 @@ public static class Tests
         ("TheClassTableKnowsWhatTheDumpCannot", TheClassTableKnowsWhatTheDumpCannot),
         ("AFieldListIsBuiltWithoutHkxPack", AFieldListIsBuiltWithoutHkxPack),
         ("AClassSignedDifferentlyIsRefused", AClassSignedDifferentlyIsRefused),
+        ("AMisSignedFileIsNotWrittenInto", AMisSignedFileIsNotWrittenInto),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1673,6 +1674,55 @@ public static class Tests
         var image = ClipInAPackfile("A.hkx", out _);
         Check("the names a real packfile carries pass", 0,
               types.SignatureProblems(new PackfileObjects(image).ClassNames()).Count);
+    }
+
+    /// Refusing to *read* a file whose classes we do not describe is the smaller half. Writing into
+    /// one is the half that does damage: every offset written comes from this build's idea of the
+    /// class, so a value would land in somebody else's field and the file would still look valid.
+    private static void AMisSignedFileIsNotWrittenInto()
+    {
+        Console.WriteLine("\na file signed for other classes is not written into");
+
+        string good = Path.Combine(Path.GetTempPath(), "symrm-signed-right.hkx");
+        string bad = Path.Combine(Path.GetTempPath(), "symrm-signed-wrong.hkx");
+
+        ClipInAPackfile("A.hkx", out _).Save(good);
+
+        // The same file with one bit of one signature turned over, which is what a class whose
+        // members moved would look like.
+        var wrong = ClipInAPackfile("A.hkx", out _);
+        var names = wrong.Section("__classnames__")!;
+        names.Data[0] ^= 0x01;
+        wrong.Save(bad);
+
+        var nothing = new NativeSave.Plan(new List<NativeSave.Change>(), null);
+        CheckTrue("a plan that changes nothing is possible either way", nothing.Possible);
+
+        try
+        {
+            NativeSave.Apply(good, nothing);
+            CheckTrue("a file signed the way we expect is written", true);
+        }
+        catch (Exception e)
+        {
+            CheckTrue("a file signed the way we expect is written: " + e.Message, false);
+        }
+
+        try
+        {
+            NativeSave.Apply(bad, nothing);
+            CheckTrue("a file signed for other classes is refused", false);
+        }
+        catch (InvalidOperationException e)
+        {
+            CheckTrue("a file signed for other classes is refused", true);
+            CheckTrue("and the refusal names the class", e.Message.Contains("hkbClipGenerator"));
+            CheckTrue("and says nothing was written",
+                      e.Message.Contains("nothing was written"));
+        }
+
+        File.Delete(good);
+        File.Delete(bad);
     }
 
     /// One hkbClipGenerator in a packfile of two sections, which is the least a reader needs: a name

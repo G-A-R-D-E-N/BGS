@@ -123,6 +123,19 @@ public static class NativeSave
 
         var image = PackfileImage.Read(hkxPath);
         var objects = new PackfileObjects(image, classes);
+
+        // The same question the window asks before it reads a value out of the bytes, asked again
+        // before one is written into them, and it matters more here. Every offset written below
+        // comes from this build's idea of the class; if the file was written against a different
+        // one, reading it back gives a wrong number and writing it puts a wrong number in somebody
+        // else's field. Refused rather than attempted: the caller falls back to the rebuild, which
+        // goes through the file's own class definitions rather than ours.
+        var mismatched = HavokClassTypes.Shipped.SignatureProblems(objects.ClassNames());
+        if (mismatched.Count > 0)
+            throw new InvalidOperationException(
+                "This file's classes are not the ones this build describes, so nothing was written " +
+                $"into its bytes: {mismatched[0]}" +
+                (mismatched.Count > 1 ? $", and {mismatched.Count - 1} more like it." : "."));
         var byClass = objects.Instances.GroupBy(i => i.ClassName)
                                        .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
 

@@ -1441,8 +1441,13 @@ public class MainWindow : Window
             if (!string.IsNullOrEmpty(o.AnimationName)) clips++;
         }
 
+        // The class warning goes here rather than on the status line because the status line has
+        // four ways out of PrepareEditing and only one of them was carrying it: a file with classes
+        // we do not describe *and* no Java present reported the Java and swallowed the rest.
         SetSummary($"{Path.GetFileName(path)}   root {root.ClassName}   {_objects.Count} objects   " +
-                   $"{classes.Count} classes   {clips} clip references", Ux.TitleBrush);
+                   $"{classes.Count} classes   {clips} clip references" +
+                   (_classWarning.Length > 0 ? "   —   " + _classWarning : ""),
+                   _classWarning.Length > 0 ? Ux.WarnBrush : Ux.TitleBrush);
 
         RebuildTree();
         Settings.Set("last_path", path);
@@ -1510,10 +1515,8 @@ public class MainWindow : Window
             BuildClipList(model);
             BuildChain(java, jar);
             FindMeshForFile();
-            SetStatus(_classWarning.Length > 0
-                          ? _classWarning
-                          : $"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn.",
-                      _classWarning.Length > 0 ? Ux.WarnBrush : Ux.MetaBrush);
+            SetStatus($"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn.",
+                      Ux.MetaBrush);
         }
         catch (Exception ex)
         {
