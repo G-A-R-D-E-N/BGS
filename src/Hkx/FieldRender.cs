@@ -96,12 +96,15 @@ public static class FieldRender
 
             case "array of uint8":
                 return Listed(objects.ReadValueArray(instance, member.Name, 1, (b, at) => b[at]));
+            // Unsigned, the same way a lone int8 or int16 is read: hkxpack prints the bytes as they
+            // sit, so a parent index of 0xFFFF is 65535 there rather than -1, and a reading that
+            // spells it differently in an array than on its own agrees with neither.
             case "array of int8":
-                return Listed(objects.ReadValueArray(instance, member.Name, 1, (b, at) => (sbyte)b[at]));
+                return Listed(objects.ReadValueArray(instance, member.Name, 1, (b, at) => b[at]));
             case "array of real":
                 return Listed(objects.ReadValueArray(instance, member.Name, 4, BitConverter.ToSingle));
             case "array of int16":
-                return Listed(objects.ReadValueArray(instance, member.Name, 2, BitConverter.ToInt16));
+                return Listed(objects.ReadValueArray(instance, member.Name, 2, BitConverter.ToUInt16));
             case "array of uint16":
                 return Listed(objects.ReadValueArray(instance, member.Name, 2, BitConverter.ToUInt16));
             case "array of int32":

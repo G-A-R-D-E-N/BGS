@@ -1280,10 +1280,17 @@ public static class Program
     /// the count is still a real check, since it comes from the array's own header.
     private static string Canonical(System.Xml.Linq.XElement p, Func<string, string> reference)
     {
-        string text = (p.Value ?? "").Trim();
+        string raw = p.Value ?? "";
+        string text = raw.Trim();
 
+        // A single value is taken exactly as it stands, spaces and all. Trimming it looked like
+        // tidying and was throwing data away: four state machines and a layer generator in vanilla
+        // are named with a leading space, and one event payload ends in one. Measured before
+        // changing it, across 374,120 single valued fields in the unpacked corpus: six carry a
+        // space that matters and not one runs over more than a line, so there is nothing here that
+        // trimming would have been normalising.
         if (p.Attribute("numelements") == null)
-            return text.StartsWith('#') ? reference(text) : text;
+            return raw.StartsWith('#') ? reference(raw) : raw;
 
         int count = int.Parse(p.Attribute("numelements")!.Value);
         if (p.Elements("hkobject").Any()) return List(count, "structs");
@@ -1296,8 +1303,25 @@ public static class Program
         // element boundary. Splitting on whitespace instead turns one vector into four elements and
         // reports a file that agrees as a file that does not.
         if (text.Contains('('))
-            return List(count, System.Text.RegularExpressions.Regex.Matches(text, @"\([^)]*\)")
-                                   .Select(m => m.Value));
+        {
+            var groups = System.Text.RegularExpressions.Regex.Matches(text, @"\([^)]*\)")
+                             .Select(m => m.Value).ToList();
+
+            // hkxpack writes one bracket per vector, so an element that is more than one vector
+            // arrives as several: a transform is a translation, a rotation and a scale, three
+            // brackets for one element. Put back together per element, or a skeleton's 9 element
+            // reference pose reads as 27 elements and disagrees with itself.
+            if (count > 0 && groups.Count > count && groups.Count % count == 0)
+            {
+                int per = groups.Count / count;
+                groups = Enumerable.Range(0, count)
+                    .Select(i => "(" + string.Join(" ", groups.Skip(i * per).Take(per)
+                                                              .Select(g => g.Trim('(', ')'))) + ")")
+                    .ToList();
+            }
+
+            return List(count, groups);
+        }
 
         var tokens = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
                          .Select(t => t.StartsWith('#') ? reference(t) : t);
@@ -1311,6 +1335,9 @@ public static class Program
     /// reads the same on both sides rather than as a count with a word after it.
     private static string List(int count, string what) => count == 0 ? "[0: ]" : $"[{count}: {what}]";
 
+    /// One renderer, not two. The window reads a field through `FieldRender`, so a check that used
+    /// its own copy of the same switch would be checking something nobody runs. This is the shim
+    /// that spells a reference the way the checker wants it and hands the rest over.
     private static string? Rendered(PackfileObjects objects, PackfileObjects.Instance instance,
                                     HavokClasses.Member member,
                                     Dictionary<PackfileObjects.Instance, int> indexOf,
@@ -1321,119 +1348,8 @@ public static class Program
             : target != null && indexOf.TryGetValue(target, out int at) ? "@" + at
             : "a pointer landing where no object begins";
 
-        // An enum is a number in the file and a name in hkxpack's XML, so reading it means having
-        // the names. A value the table has never seen reads as nothing rather than as a number:
-        // saying `3` where hkxpack says a name is a disagreement, and pretending otherwise would
-        // count a field we cannot read as one we can.
-        if (member.Type.StartsWith("enum of", StringComparison.Ordinal) ||
-            member.Type.StartsWith("flags of", StringComparison.Ordinal))
-        {
-            long? value = Value(objects, instance, member);
-            if (value == null) return null;
-
-            string? name = HavokEnums.Shipped.Name(HavokEnums.Key(member), value.Value);
-            // Both, because hkxpack prints whichever it feels like: a name when it has one for the
-            // exact value, and the bare number when the value is a combination of flags. Carrying
-            // the number as well as the name lets the comparison meet it either way instead of
-            // reporting a right answer as a wrong one.
-            //
-            // With no name of our own, the number is still the whole value when that is what the
-            // other side printed. It is only unreadable when hkxpack has a name and we do not.
-            if (name == null)
-                return long.TryParse(expected, out _) ? value.ToString() : null;
-
-            return $"{value}:{name}";
-        }
-
-        switch (member.Type)
-        {
-            case "real": return objects.ReadFloat(instance, member.Name)?.ToString("R");
-            case "stringptr":
-            case "cstring": return objects.ReadString(instance, member.Name) ?? "∅";
-            case "bool" or "int8" or "uint8" or "int16" or "uint16" or "int32" or "uint32":
-                return Narrow(objects.ReadInt(instance, member.Name), member.Type);
-            case "ulong":
-            case "uint64": return objects.ReadULong(instance, member.Name)?.ToString();
-            case "vector4":
-            case "quaternion": return Floats(objects.ReadFloats(instance, member.Name, 4));
-            case "qstransform": return Floats(objects.ReadFloats(instance, member.Name, 12));
-
-            case "pointer":
-            case "pointer of struct":
-            {
-                var target = objects.ReadRef(instance, member.Name, out bool wasNull);
-                return Reference(target, wasNull);
-            }
-
-            case "array of pointer":
-            {
-                var targets = objects.ReadRefArray(instance, member.Name);
-                return targets == null
-                    ? null
-                    : List(targets.Count, targets.Select(t => Reference(t, t == null)));
-            }
-
-            case "array of stringptr":
-            {
-                var values = objects.ReadStringArray(instance, member.Name);
-                return values == null ? null : List(values.Count, values.Select(v => v ?? "∅"));
-            }
-
-            case "array of struct":
-            {
-                var array = objects.ReadArray(instance, member.Name);
-                return array == null ? null : List(array.Count, "structs");
-            }
-
-            case "array of vector4":
-            case "array of quaternion":
-                return Grouped(objects, instance, member.Name, 16, 4);
-            case "array of matrix4":
-                return Grouped(objects, instance, member.Name, 64, 16);
-            case "array of qstransform":
-                return Grouped(objects, instance, member.Name, 48, 12);
-
-            case "array of uint8":
-                return Listed(objects.ReadValueArray(instance, member.Name, 1, (b, at) => b[at]));
-            case "array of int8":
-                return Listed(objects.ReadValueArray(instance, member.Name, 1, (b, at) => (sbyte)b[at]));
-            case "array of real":
-                return Listed(objects.ReadValueArray(instance, member.Name, 4, BitConverter.ToSingle));
-            case "array of int16":
-                return Listed(objects.ReadValueArray(instance, member.Name, 2, BitConverter.ToInt16));
-            case "array of uint16":
-                return Listed(objects.ReadValueArray(instance, member.Name, 2, BitConverter.ToUInt16));
-            case "array of int32":
-                return Listed(objects.ReadValueArray(instance, member.Name, 4, BitConverter.ToInt32));
-            case "array of uint32":
-                return Listed(objects.ReadValueArray(instance, member.Name, 4, BitConverter.ToUInt32));
-
-            default: return null;
-        }
+        return FieldRender.Render(objects, instance, member, Reference, expected);
     }
-
-    /// An array whose elements are several floats each: a vector, a transform, a matrix. Read as one
-    /// long run and cut into elements, because that is how they sit in the file.
-    private static string? Grouped(PackfileObjects objects, PackfileObjects.Instance instance,
-                                   string field, int stride, int floats)
-    {
-        var array = objects.ReadArray(instance, field);
-        if (array == null) return null;
-
-        var all = objects.ReadValueArray(instance, field, stride,
-                                         (b, at) => Enumerable.Range(0, floats)
-                                                              .Select(i => BitConverter.ToSingle(b, at + i * 4))
-                                                              .ToArray());
-        return all == null ? null : List(array.Count, all.Select(e => Floats(e)!));
-    }
-
-    private static string? Listed<T>(IReadOnlyList<T>? values) =>
-        values == null ? null : List(values.Count, values.Select(v => v?.ToString() ?? ""));
-
-    /// Printed the way hkxpack prints a vector, so the comparison is between two spellings of the
-    /// same thing rather than between a spelling and a shape.
-    private static string? Floats(float[]? values) =>
-        values == null ? null : "(" + string.Join(" ", values.Select(v => v.ToString("R"))) + ")";
 
     /// hkxpack and a raw read spell the same value differently: 1 against 1.0, true against 1, and a
     /// null pointer against an empty element. Comparing the text as typed would report every one of
@@ -1490,12 +1406,10 @@ public static class Program
             return theirs.Equals(ours, StringComparison.OrdinalIgnoreCase) ||
                    theirs == (ours == "true" ? "1" : "0");
 
-        // A string ending in a space cannot survive XML: the value sits on its own indented line, so
-        // every reader trims it, hkxpack's and ours alike. `GenericButton01`'s Behavior00 has one,
-        // `OBJSwitchToggleLightOff `, which read as the only disagreement in the whole corpus and is
-        // nothing of the sort. Compared without it, and only at the end, because a space in the
-        // middle of a name is a real difference.
-        return ours.TrimEnd() == theirs.TrimEnd() && ours.TrimEnd().Length > 0;
+        // No last chance rule that ignores whitespace. Both sides now carry a value's spaces as
+        // they are, so a difference in them is a difference in the data and has to be reported as
+        // one rather than trimmed until it agrees.
+        return false;
     }
 
     // What the object layer sees in a file: every object, its class, and the fields of whichever

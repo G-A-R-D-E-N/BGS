@@ -3,6 +3,43 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, the check stops tidying up what it is meant to be checking
+
+Every "all agreeing" number here so far came from a 76 file sample. Run over all **531**, the check
+reports **7 files disagreeing on 14 values** — and every one of the 14 was the check's fault rather
+than the reader's.
+
+**It was trimming whitespace off hkxpack's values.** Four state machines and a layer generator in
+vanilla are named with a leading space, `" StateMachine00"`, and one event payload ends in one. The
+bytes have the space, hkxpack's XML has the space, and the comparison quietly removed it from one
+side before looking. An earlier pass had trimmed only the trailing end, which is why this surfaced as
+four new disagreements rather than none. Measured before changing it: across **374,120** single
+valued fields in the unpacked corpus, **six** carry a space that means something and **not one** runs
+over more than a line, so there was nothing here that trimming was normalising.
+
+**It was reading a transform array as three times as many elements.** hkxpack writes one bracket per
+vector, so a transform arrives as three of them, and a skeleton's 9 element reference pose read as 27
+elements against our 9.
+
+**And an array of `int16` was read signed where the same type on its own is read unsigned.** A
+skeleton's root has parent index `0xFFFF`; hkxpack prints `65535` in both places, and we printed
+`65535` on its own and `-1` inside an array.
+
+**One renderer, finally.** The check had kept its own copy of the field renderer when the window
+moved to `FieldRender`, so it had been checking code the window does not run. It calls the same one
+now, which is how the `int16` fix reached it at all.
+
+Before and after, over all 531 vanilla behaviours:
+
+| | files clean | values compared | agreeing |
+|---|---|---|---|
+| before | 524 of 531 | 258,933 | 258,919 |
+| after | **531 of 531** | 258,933 | **258,933** |
+
+The compared count is identical on both sides, which is the number that matters: nothing was dropped
+from the comparison to make it pass. `symrm panel`, over the same 531, shows **485,793 values,
+231,693 of them read from the bytes and 254,100 fallen back, all agreeing**.
+
 ## 2026-08-05, the properties panel reads the file rather than the text form
 
 The panel used to take every value from hkxpack's XML. It reads them out of the file's own bytes

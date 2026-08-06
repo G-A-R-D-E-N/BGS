@@ -60,6 +60,7 @@ public static class Tests
         ("AnUnseenEnumValueIsNotNamed", AnUnseenEnumValueIsNotNamed),
         ("ThePanelFallsBackOneFieldAtATime", ThePanelFallsBackOneFieldAtATime),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
+        ("ASpaceInAValueIsKept", ASpaceInAValueIsKept),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1542,6 +1543,32 @@ public static class Tests
         // Left alone, this wrote a file no XML reader would take back, which is worse than showing
         // the escape.
         CheckTrue("and the file stays readable", written.Contains("&amp;&amp;") == false);
+    }
+
+    /// Four state machines and a layer generator in vanilla are named with a leading space, and one
+    /// event payload ends in one. A reader that tidies them up is not reading the file, and a check
+    /// that tidies them up on both sides cannot see the difference either way.
+    private static void ASpaceInAValueIsKept()
+    {
+        Console.WriteLine("\na space in a value is kept");
+
+        var image = ClipInAPackfile(" StateMachine00 ", out _);
+        var objects = new PackfileObjects(image);
+        var clip = objects.Instances.Single();
+
+        Check("both ends survive the read", " StateMachine00 ",
+              objects.ReadString(clip, "animationName"));
+
+        var xml = new List<(string, string, bool)> { ("animationName", "StateMachine00", true) };
+        var shown = PanelFields.For(objects, clip, xml, (_, _) => "");
+        Check("and the panel shows what the file holds rather than the tidied text",
+              " StateMachine00 ", shown[0].Value);
+
+        // A number in an array is spelled the way a number on its own is. hkxpack prints the bytes
+        // as they sit, so 0xFFFF is 65535 in both places; -1 in one and 65535 in the other agrees
+        // with neither.
+        var parents = HavokClasses.Shipped.Field("hkaSkeleton", "parentIndices");
+        CheckTrue("a skeleton's parent indices are an array of int16", parents?.Type == "array of int16");
     }
 
     /// One hkbClipGenerator in a packfile of two sections, which is the least a reader needs: a name
