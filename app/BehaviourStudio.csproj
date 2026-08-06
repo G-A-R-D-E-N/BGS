@@ -41,6 +41,6 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="../src/Hkx/HavokClassLayouts.json" />
-    <EmbeddedResource Include="../src/Hkx/HavokEnumNames.json" Condition="Exists('../src/Hkx/HavokEnumNames.json')" />
+    <EmbeddedResource Include="../src/Hkx/HavokClassTypes.json" Condition="Exists('../src/Hkx/HavokClassTypes.json')" />
   </ItemGroup>
 </Project>

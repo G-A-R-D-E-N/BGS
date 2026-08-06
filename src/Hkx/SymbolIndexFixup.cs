@@ -175,6 +175,175 @@ public static class SymbolIndexFixup
         return found;
     }
 
+    /// The same walk, over the file's own bytes instead of hkxpack's text.
+    ///
+    /// The graph model cannot answer this. It records one level of nesting and these indices sit
+    /// deeper: an event property inside a transition inside a transition array. So this walks the
+    /// class table rather than the model, into every inline struct and every element of every struct
+    /// array, as far down as the classes go.
+    ///
+    /// Two things the text form says out loud have to be worked out here instead. hkxpack writes a
+    /// class attribute on a struct written under a name and none on an array element, so the owning
+    /// class of a field in an array element is the class of the object the array belongs to, not the
+    /// element's own. And the value is rendered through the same renderer the rest of the reading
+    /// uses, so a number that is spelled a particular way in the text is spelled that way here, and a
+    /// field holding a name rather than a number is skipped by both.
+    ///
+    /// No offsets. Renumbering still edits the text, and there is nothing here to edit.
+    private static List<Site> Sites(PackfileObjects objects, HavokClassTypes types, bool events,
+                                    out List<string> unrecognised)
+    {
+        var found = new List<Site>();
+        var unknown = new HashSet<string>(StringComparer.Ordinal);
+
+        for (int i = 0; i < objects.Instances.Count; i++)
+        {
+            var instance = objects.Instances[i];
+            Walk(objects, types, instance.Offset, instance.ClassName, instance.ClassName,
+                 (NativeGraphModel.FirstId + i).ToString(), "", "", events, found, unknown);
+        }
+
+        unrecognised = new List<string>(unknown);
+        unrecognised.Sort(StringComparer.Ordinal);
+        return found;
+    }
+
+    /// `walking` is whose members are being read. `owner` is the class the text would name at this
+    /// point, and the two are not always the same: hkxpack writes a class attribute on a struct
+    /// written under a name and none on an element of an array, so inside an element the nearest
+    /// named class is still the one the array belongs to. Reporting the element's own class instead
+    /// was the only thing the two walks disagreed about, ten times on Dogmeat.
+    private static void Walk(PackfileObjects objects, HavokClassTypes types, int offset,
+                             string walking, string owner, string ownerId,
+                             string outerClass, string outerParam,
+                             bool events, List<Site> found, HashSet<string> unknown)
+    {
+        foreach (var member in types.Members(walking))
+        {
+            if (!member.Written) continue;
+            int at = offset + member.Offset;
+
+            // A struct written under a name carries that name's class in the text, so it becomes the
+            // owner of everything inside it.
+            if (member.VType == "TYPE_STRUCT")
+            {
+                if (member.CType != null && types.Knows(member.CType))
+                    Walk(objects, types, at, member.CType, member.CType, ownerId, owner, member.Name,
+                         events, found, unknown);
+                continue;
+            }
+
+            if (member.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")
+            {
+                // An element carries no class in the text, so the owner does not change. This is why
+                // hkbStateMachineEventPropertyArray is listed as a carrier: the nearest named class
+                // to an event inside its events array is the array itself.
+                if (member.VSub != "TYPE_STRUCT" || member.CType == null || !types.Knows(member.CType))
+                    continue;
+
+                var array = objects.ArrayAt(at);
+                int stride = types[member.CType]?.Size ?? 0;
+                if (array == null || stride <= 0) continue;
+
+                for (int e = 0; e < array.Count; e++)
+                    Walk(objects, types, array.At + e * stride, member.CType, owner, ownerId,
+                         outerClass, member.Name, events, found, unknown);
+                continue;
+            }
+
+            for (int e = 0; e < Math.Max(1, member.ArrSize); e++)
+            {
+                string name = member.ArrSize > 0 ? member.Name + (e + 1) : member.Name;
+
+                bool isEvent = EventIdParams.Contains(name)
+                               || (name == "id" && EventCarriers.Contains(owner));
+                bool isVariable = VariableIndexParams.Contains(name);
+
+                if (!isEvent && !isVariable)
+                {
+                    if (LooksLikeAnIndex(name) && !NotAnIndex.Contains(name)) unknown.Add(owner + "." + name);
+                    continue;
+                }
+                if (isEvent != events) continue;
+
+                string? text = FieldRender.Render(objects, at, walking, member, Nothing, null, e,
+                                                  types, FieldRender.LikeHkxPack);
+                if (text == null || !int.TryParse(FieldRender.Plain(text), out int value)) continue;
+
+                string holderClass = owner, holderParam = name;
+                if (EventCarriers.Contains(owner))
+                {
+                    holderClass = outerClass;
+                    holderParam = outerParam.Length > 0 ? outerParam : name;
+                    if (holderClass.Length == 0 || owner == "hkbStateMachineEventPropertyArray")
+                        holderClass = owner;
+                }
+
+                found.Add(new Site
+                {
+                    OwnerId = ownerId,
+                    Value = value,
+                    Param = name,
+                    OwnerClass = owner,
+                    HolderClass = holderClass,
+                    HolderParam = holderParam,
+                });
+            }
+        }
+    }
+
+    /// References are never followed here, so how one would be spelled does not matter.
+    private static readonly FieldRender.Reference Nothing = (_, _) => "";
+
+    public static List<string> UnknownIndexFields(PackfileObjects objects, HavokClassTypes? types = null)
+    {
+        Sites(objects, types ?? HavokClassTypes.Shipped, true, out var unknown);
+        return unknown;
+    }
+
+    public static List<EventReference> References(PackfileObjects objects, bool events,
+                                                  HavokClassTypes? types = null)
+    {
+        var found = new List<EventReference>();
+        foreach (var site in Sites(objects, types ?? HavokClassTypes.Shipped, events, out _))
+            if (site.Value >= 0)
+                found.Add(new EventReference(site.Value, site.HolderClass, site.HolderParam));
+        return found;
+    }
+
+    public static List<Usage> Usages(PackfileObjects objects, bool events, HavokClassTypes? types = null)
+    {
+        var found = new List<Usage>();
+        foreach (var site in Sites(objects, types ?? HavokClassTypes.Shipped, events, out _))
+            if (site.Value >= 0)
+                found.Add(new Usage(site.Value, site.HolderClass, site.HolderParam, site.OwnerId, site.OwnerClass));
+        return found;
+    }
+
+    public static List<Usage> UsagesOf(PackfileObjects objects, bool events, string objectId,
+                                       HavokClassTypes? types = null)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var found = new List<Usage>();
+        foreach (var use in Usages(objects, events, types))
+        {
+            if (use.ObjectId != objectId) continue;
+            if (seen.Add($"{use.Index} {use.Member}")) found.Add(use);
+        }
+        return found;
+    }
+
+    public static List<string> ReferencesAtOrAbove(PackfileObjects objects, bool events, int limit,
+                                                   HavokClassTypes? types = null)
+    {
+        var users = new List<string>();
+        foreach (var site in Sites(objects, types ?? HavokClassTypes.Shipped, events, out _))
+            if (site.Value >= limit)
+                users.Add((site.OwnerId.Length > 0 ? $"#{site.OwnerId} " : "")
+                          + $"{site.OwnerClass}.{site.Param} uses index {site.Value}");
+        return users;
+    }
+
     private static bool LooksLikeAnIndex(string name) =>
         name.EndsWith("EventId", StringComparison.Ordinal)
         || name.EndsWith("EventIndex", StringComparison.Ordinal)

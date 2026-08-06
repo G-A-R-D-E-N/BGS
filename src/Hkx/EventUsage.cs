@@ -83,10 +83,24 @@ public static class EventUsage
 
     /// Every declared event's sites, keyed by event index. Events with no site are absent rather than
     /// empty, so a caller has to decide what to say about them rather than being handed a verdict.
-    public static Dictionary<int, List<Line>> ByEvent(string xml)
+    public static Dictionary<int, List<Line>> ByEvent(string xml) =>
+        Group(SymbolIndexFixup.Usages(xml, events: true));
+
+    /// The same thing from the file's own bytes, so an event still says what it is for on a machine
+    /// with no Java on it.
+    ///
+    /// This used to be the text form or nothing. The scan needs every place an index is written,
+    /// including inside structs nested deeper than the graph model carries, which is why it was the
+    /// last thing here still holding on to hkxpack: the model genuinely does not have the answer. The
+    /// bytes do, and walking them reaches the same places without a text form in between.
+    public static Dictionary<int, List<Line>> ByEvent(PackfileObjects objects,
+                                                      HavokClassTypes? types = null) =>
+        Group(SymbolIndexFixup.Usages(objects, events: true, types));
+
+    private static Dictionary<int, List<Line>> Group(IEnumerable<SymbolIndexFixup.Usage> usages)
     {
         var byEvent = new Dictionary<int, List<Line>>();
-        foreach (var group in SymbolIndexFixup.Usages(xml, events: true).GroupBy(r => r.Index))
+        foreach (var group in usages.GroupBy(r => r.Index))
         {
             var lines = group.GroupBy(r => r.ToString())
                 .Select(g => new Line(RoleOf(g.Key), g.Key, NoteFor(g.Key), g.Count(),

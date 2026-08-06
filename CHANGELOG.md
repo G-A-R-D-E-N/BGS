@@ -3,6 +3,383 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, the pointer tables' order is worked out and reproduced
+
+The array work found that where an entry sits in a pointer table is not free, and left the rule as
+something inferred from one failure. It is measured now.
+
+The order is the order the writer walked the objects: objects as they sit in the file, and inside an
+object its members in offset order, stepping into an array or an inline struct at the point the
+member holding it is reached rather than after the object is finished. That is why the table runs
+backwards in places. An array's elements live elsewhere in the section, so reaching the array field
+emits entries with much larger offsets and the walk then carries on with the fields after it.
+
+| | |
+|---|---|
+| files whose tables are in that exact order | 533 of 533 |
+| entries accounted for | 151,853 |
+| out of order | 0 |
+
+Both tables, not just the pointer one. That second half matters more than it looks: it means the
+string appends have been getting away with it. Setting an entry that already exists leaves it where
+it is, and a renamed string always had one, so appending never came up. An array going from empty to
+holding something adds one, and that would have gone on the end and been wrong.
+
+So writing no longer places entries by hand. Every save puts both tables back into walk order at the
+end, which is why a save that changes nothing still has to come back byte for byte: that check is
+what proves the reorder reproduces the file's own order rather than imposing ours.
+
+One fault found doing it. The reorder was first given the object view the caller already had, which
+had resolved its pointers when it was built, so after an array was repointed it still answered with
+the run the array used to hold and the walk predicted sources the file no longer had. It reads the
+edited image again now.
+
+
+## 2026-08-06, an array of children saves without Java, and the pointer table turns out to be ordered
+
+Adding or removing a child node writes into the file's own bytes now. The new run of pointers goes
+on the end of the section and the array's own pointer is aimed at it, so nothing already in the file
+moves and no offset anybody holds goes stale. The capacity word beside the count carries flags in
+its top bits, and both zero and the high bit occur across the corpus, so what was there is kept and
+only the length part is rewritten.
+
+On the same 40 vanilla behaviours as before, each now given a longer array on top of the rewire, the
+cleared pointer, the longer animation name and three value changes: 40 saved, none refused, none
+failing a check, and every saved file read back by hkxpack agreeing with our own reading field for
+field.
+
+### The pointer table is in traversal order, and something downstream depends on it
+
+The first attempt dropped the array's element entries and appended the new ones. Our own reader,
+which looks entries up by source, read the result perfectly. hkxpack read every element of that
+array as null.
+
+The second attempt sorted the table by source, on the theory that something was binary searching it.
+That made hkxpack misread more than a hundred fields rather than one array.
+
+So the order is not incidental. The table is written in the order the writer walked the objects,
+which is not offset order: an array's element pointers are written while the array is being walked,
+before the fields that follow it in the owning object. On Dogmeat 22 of the 1,151 steps go
+backwards and every one of them is an array. The fix is to put the new entries back at the position
+the old ones held. The run of bytes still goes on the end; only the table entries stay put.
+
+This is worth stating plainly because it is the kind of thing that would have passed every check we
+own. Our reader is indifferent to the order. Only setting the file in front of a second
+implementation showed it.
+
+### Checks tightened rather than loosened, again
+
+The pointer table check now counts how many entries each planned change is allowed to move, worked
+out from the original file: one for a repointed field, and for a resized array every element it had
+plus every element it now has. An array that was longer than the plan expects therefore cannot hide
+extra movement inside the allowance. The local table check was changed the same way, comparing by
+source rather than by position, since an entry appearing or going shifts the rest without changing
+any pointer.
+
+
+## 2026-08-06, rewiring a node saves without Java
+
+The first structural edit to write into the file's own bytes.
+
+Rewiring reads as a structural change because the graph's shape changes, and in the file it is not
+one. No object moves, nothing is appended, the file does not change length: a pointer from one
+object to another is an entry in the global fixup table naming a source and a destination, and
+aiming it somewhere else rewrites that one entry. Adding and deleting nodes still go out through
+hkxpack.
+
+Clearing a pointer is the other half, and it is not the same operation. A null pointer is the
+absence of a fixup, not a fixup to nowhere, so the entry is dropped rather than aimed at offset
+zero, which would quietly point the field at whichever object happens to sit first.
+
+On a sample of 40 vanilla behaviours, each given a rewire, a cleared pointer, a longer animation
+name and three value changes: 40 files saved, none refused, none failing any check. Each saved file
+was read back by hkxpack and agreed with our own reading field for field, and every edit was
+confirmed present rather than assumed.
+
+### What the sample caught
+
+Four files came back reporting the file had changed size without appending anything. Dropping a
+fixup makes the table twelve bytes shorter, sixteen once it is padded, so the file legitimately
+shrinks. The guard had been written when growing was the only way a save could change the length.
+It now expects a shrink of at most sixteen bytes per cleared pointer and still fails anything else.
+
+The pointer table check was tightened at the same time rather than loosened. It used to require the
+table to be identical, which a rewire cannot satisfy. It now compares entries by source rather than
+by position, since dropping one shifts every entry after it without changing any pointer, and it
+requires that no more pointers move than the plan repoints. A pointer change also no longer buys any
+allowance in the data check, because it writes nothing into the data at all.
+
+
+## 2026-08-06, an event says what it is for without Java, and so does the checker
+
+The last two things the reading still needed hkxpack for. The symbols tab could list the events but
+not say which one is raised where, and the checker could not run its symbol index pass at all.
+
+Both are the same walk: every place in the file where an event or variable index is written. The
+graph model genuinely cannot answer it, because those indices sit deeper than the one level of
+nesting the model records, an event property inside a transition inside a transition array. So this
+walks the class table over the bytes rather than the model, into every inline struct and every
+element of every struct array, as far down as the classes go.
+
+Two things the text says out loud have to be worked out instead. hkxpack writes a class attribute on
+a struct written under a name and none on an array element, so inside an element the nearest named
+class is still the one the array belongs to. Reporting the element's own class was the only thing the
+two walks disagreed about, ten times on Dogmeat. And the value goes through the same renderer as the
+rest of the reading, so a number spelled a particular way in the text is spelled that way here.
+
+| | |
+|---|---|
+| files agreeing | 533 of 533 |
+| index usages compared | 28,701 |
+| differing | 0 |
+
+The same file opened with a Java runtime present and with Java hidden every way the tool looks for
+it:
+
+| | with Java | without |
+|---|---|---|
+| nodes drawn | 799 | 799 |
+| symbol rows | 883 | 883 |
+| events naming a role | 143 | 143 |
+| editing and saving | yes | no |
+
+Editing and saving still rewrite the text and hand it back to be repacked, which is the one thing
+left that needs Java, and it is gated on loading something this tool wrote in Fallout 4 first.
+
+### Hiding Java is harder than emptying PATH
+
+`tools/no-java.sh` exists because the first two attempts at testing this proved nothing. The lookup
+checks the saved setting, `JAVA_HOME`, `~/.local/jdk` and then PATH, and this machine has the third,
+so a run that only cleared PATH found Java anyway and exercised the with-Java path while reporting
+itself as the other one. Every check passed. They passed on the wrong build.
+
+## 2026-08-06, the window reads the graph from the file, and no longer needs Java to show it
+
+Opening a behaviour used to mean handing it to Java. Without a Java runtime and the jar, the window
+showed a tree and four empty tabs and said so. That was the honest message at the time, because
+everything except the tree came out of the text hkxpack produces.
+
+It comes out of the file's own bytes now. On Dogmeat, with Java on the machine and with no Java on
+it at all:
+
+| | with Java | without |
+|---|---|---|
+| nodes drawn on the canvas | 799 | **799** |
+| symbol rows | 883 | 380 |
+| properties, tree, filtering | yes | **yes** |
+| editing and saving | yes | no |
+
+The canvas is identical. The symbol rows are not, and the difference is one thing: what each event
+is used for. That is a scan of the text form for every place an index appears, including nesting the
+model does not carry, so the rows are built either way and the roles are only filled when there is
+text to scan. The checker's symbol index pass is the same case. Both are named rather than hidden.
+
+Editing still rewrites the text and hands it back to Java to repack, so saving still needs both. The
+window now says which of the two things it can do rather than calling itself read only.
+
+### The smoke test was passing on a build nobody ships
+
+Found while proving the above. The headless window test compiles the application's own source but
+had never embedded the class table data file the application embeds, so in that build the class
+table was empty, the window could not read a file from its bytes, and every check passed while
+testing the old path. It passed through the whole of this work for that reason.
+
+The data is embedded there now, and the test tells apart the two states it used to treat as one: no
+symbol rows at all is a fault, rows without roles is the no Java case. The canvas check was moved
+outside the guard that skipped it, because inside it a window that drew nothing would have skipped
+the check and passed.
+
+## 2026-08-06, the behaviour graph is read from the file, and the tool behaves the same on it
+
+The reading built from the bytes agrees with hkxpack field by field across the whole corpus. This is
+the other half of that: not whether the two readings hold the same values, but whether the tool does
+the same thing with them.
+
+Every reader the window draws a tab from is run against both readings and the output compared. The
+canvas wiring, the variables and their values and types, the events, the bindings, the checker's
+findings, the empty states, every state machine's states and transitions, and what points at what.
+
+| | |
+|---|---|
+| files behaving the same | 533 of 533 |
+| files without a reading | 0 |
+| outputs compared | 6,929 |
+| differing | 0 |
+
+The field comparison should make this redundant, which is exactly why it was worth running. It
+answers a question the field walk cannot: a field comparison that came back clean for the wrong
+reason, an excuse too wide or a bucket the walk quietly skipped, would still show up here as a
+canvas with different wires on it.
+
+The checker was split so its model-only checks can run without the file's text. One check cannot:
+the symbol index pass reads the text as well as the model, because the indices it looks for sit in
+places the model does not carry. That one still needs hkxpack, and is left out of the comparison
+rather than papered over.
+
+A single wrong value reaching two consumers is what this is for. Pointing a wire at an object that
+is not there changes the canvas and gives the checker a dangling reference, so the suite asserts both
+rather than one.
+
+## 2026-08-06, the measured enum names are gone
+
+`HavokEnumNames.json` was the enum value names read off vanilla files by setting our reading of the
+bytes beside hkxpack's reading of the same field. It stopped being consulted when the class table
+arrived, and the previous entry left it in place as an independent check on the table. It was never
+an automated one, so it was checked once and then removed rather than left sitting there looking
+load bearing.
+
+The check: 22 fields, 47 values, all 47 named the same thing in both. Nothing the measurement found
+is missing from the table and nothing disagrees. The table declares 1,007 values across 195 enums,
+so the measurement was a strict subset of it.
+
+Removed with it: `HavokEnums.cs`, the `symrm names` command that rebuilt the file, and the embedded
+resource entries in both project files. The suite still stands at 389 checks, because the seven that
+covered the measurement now cover `HavokClassTypes.NameOf` instead, including the two that matter
+most: a value the table does not declare comes back unnamed, and a combination of flags holding one
+bit with no name is refused whole rather than answered in part.
+
+## 2026-08-05, the panel's field list comes from the file now, not from hkxpack
+
+The values in the properties panel have come from the file's own bytes for a while. The list of
+*names* did not: it was hkxpack's list, read back out of the XML, and it was the reason nearly half
+the panel still fell back. A name on its own cannot be read — a struct written inside an object sits
+at no offset that object's class describes — so the fallback was not stubbornness, it was the only
+honest thing to do with a name and no address.
+
+The class table fixed that. The list is built by walking the class: into every struct written inline,
+through every array of them at the count the file itself states, expanding a fixed length `hkReal[8]`
+into the eight fields hkxpack writes. Every field comes back **with the offset it sits at**, which is
+what makes it readable rather than merely nameable.
+
+On Dogmeat's behaviour:
+
+| | before | after |
+|---|---|---|
+| values on the panel | 11,882 | 11,882 |
+| read from the file | 7,062 | **11,882** |
+| fallen back to hkxpack | 4,820 | **0** |
+| agreeing with hkxpack | 11,882 | 11,882 |
+
+The fallback did not get better at guessing. It stopped being needed.
+
+Underneath, the renderer now reads at an offset rather than by field name, which is the same change
+in a smaller place: asking for a field by name finds a different field that happens to share it, and
+`hkbStateMachine` and the `hkbEvent` written inside it both have an `id`. Two pieces of scaffolding
+came out with it. The XML nesting depth that told the panel which fields were the object's own is
+gone, because the walk knows structurally. And `HavokEnumNames.json`, the enum names measured off
+vanilla, is no longer consulted when reading: the table declares 1,007 values where the measurement
+found 47, and the two agree on all 47. The measurement stays as what it is, an independent check on
+the table rather than a source.
+
+**hkxpack has not left the read path, and it is worth being exact about what it still does.** It is
+still what produces the XML the window parses for the graph, the symbols tab, the validator, event
+usage and the compare tab, and it is still where a field falls back to when the bytes cannot answer.
+What it no longer does is decide what a field list is.
+
+### Two things reading the inner fields turned up
+
+Neither could have been seen before, because nothing had ever read them.
+
+**A byte of `0xFF` in an enum is `-1` to whoever declared the names and `255` to whoever prints the
+bytes.** `hkbVariableInfo` declares `VARIABLE_TYPE_INVALID = -1`, so the name is only found signed;
+hkxpack writes `255`. The name is looked up with one and printed with the other, because picking
+either alone loses the name or loses the comparison.
+
+**And in one place hkxpack is wrong rather than us.** A struct holding a vector or a transform is
+sixteen aligned, so the compiler pads it out, and the game's own class registration records the
+padded size — `BSLookAtModifierBoneData` is 528 bytes where its last member ends at 520. hkxpack has
+no size in its data and works one out by rounding up to eight, which is right until a class is
+sixteen aligned. From the second element of an array of one of those onwards, it reads from eight
+bytes short of where the element is.
+
+Which of us is right is not a matter of opinion here. At our stride the second bone reads
+`index 13`, `fwdAxisLS (0 1 0 0)`, `upAxisLS (1 0 0 0)` — a bone index and two unit axes. At
+hkxpack's it reads `index 0` and `(0 0 0 1)`, which is that entry seen eight bytes early.
+
+Telling those apart takes both halves of a test and not one: rounding to eight has to be wrong *and*
+rounding to sixteen has to be right. The first half alone catches `hkbVariableInfo`, which is six
+bytes and is neither, and hkxpack strides it perfectly well across 309 arrays of them. A check that
+excused a disagreement in one of those would be worse than no check at all. 14 of the 165 classes
+used as array elements answer to both halves.
+
+`symrm panel` counts them apart and names the class rather than calling them our disagreements or
+quietly dropping them.
+
+**Over all 531 vanilla behaviours**, with that test in place:
+
+| | panel | crosscheck |
+|---|---|---|
+| files with anything wrong | **0 of 531** | **0 of 531** |
+| values | 485,793 | 258,933 |
+| read from the file | **485,793** | |
+| fallen back to hkxpack | **0** | |
+| agreeing | 484,736 | **258,933** |
+| hkxpack striding a padded struct wrongly | 1,057 | |
+
+Every value is accounted for as one or the other, and nothing is left over. The 1,057 are three
+classes in 22 files: `BSLookAtModifierBoneData` (1,049 values across 20 files),
+`hkbHandIkControlData` (6) and `hkbHandIkControlsModifierHand` (2). The middle one is reached
+through the last: it is an inline struct inside a hand, and the hand is the array element hkxpack
+misplaces.
+
+## 2026-08-05, the signature check reaches the save path, and says why on every load
+
+The check landed with the class table and was wired into loading a file: a packfile whose classes are
+signed differently from the ones this build describes puts the byte reader aside, and the panel goes
+back to reading through hkxpack, which uses the file's own definitions rather than ours. Going back
+over it turned up two things that wiring did not cover.
+
+**Saving never asked.** Refusing to read a file whose classes we do not describe is the smaller half.
+`NativeSave` writes values straight into a file's bytes at offsets taken from this build's idea of
+the class — so on a file written against a different definition, a value lands in somebody else's
+field and the file still looks perfectly valid afterwards. It builds its own reader and never
+consulted the check. It does now, and refuses rather than attempting, naming the class; the caller
+falls back to the rebuild through hkxpack, which goes through the file's own class definitions.
+
+**The reason reached the status line on one path out of four.** It was set where the load reports
+"Editable", and `PrepareEditing` has four ways out: no Java, object counts disagreeing, an exception,
+or success. A file with classes we do not describe *and* no Java present reported the Java and
+swallowed the rest. It is said once now, on the summary line, which is set on every load and
+overwritten by nothing.
+
+One deliberate hole, written down rather than left to be found: with no class table present at all —
+a build where the data file did not make it in — the check reports nothing rather than reporting
+every class in every file as unknown. A missing data file should not turn the tool into one that
+refuses to open anything.
+
+## 2026-08-05, a class table, so a field list can come from the file
+
+The properties panel gets its list of field *names* from hkxpack's XML, and that is the last thing
+holding the Java requirement in place for reading. The values already come from the bytes. The names
+cannot, because the class dump read out of Fallout 4 keeps two things back: it does not say which of
+a class's members the engine ever writes to a file, and where a struct is written inline it records
+the word `struct` and not which class that struct is.
+
+Both are in the class database hkxpack carries inside its own jar, under `classxml/`. `symrm classes`
+reads it out — **as a zip, so nothing here runs Java** — and merges it with the instance sizes from
+the dump, which hkxpack's data does not carry and which is what an array of structs needs to step
+through its elements. The result is `src/Hkx/HavokClassTypes.json`: **908 classes, 3,915 members, of
+which 482 are never written out and 722 name the class of a struct, plus 1,007 enum values across 195
+enums.** One class per line, because a generated file that cannot be read in a diff hides its own
+mistakes.
+
+**Gated on the only question it exists to answer.** `symrm fields` builds each object's whole field
+list from the table and the file's own bytes — walking into every inline struct, stepping through
+every array of them at the count the file states, and expanding a fixed length `hkReal[8]` into the
+eight fields hkxpack writes — and compares it to what hkxpack writes for the same object. Across all
+**531** vanilla behaviours: **36,340 objects, every list exactly right, none wrong, none it could not
+work out.**
+
+**And a check the tool has never had.** A packfile stores four bytes in front of every class name,
+and those four bytes are what a class definition *is*: change a member and the signature changes. So
+a file can now be asked whether it was written against the same classes we read it with, rather than
+merely whether it parsed. **20,833 class names across the 531 vanilla behaviours and 1,331 files in a
+mod folder: every signature matches, none unknown.** On load, a file whose classes disagree puts the
+byte reader aside and goes back to reading through hkxpack, which reads the file's own definitions
+rather than ours, and the status line says why.
+
+Nothing about the panel changed yet. That is the next piece.
+
 ## 2026-08-05, the check stops tidying up what it is meant to be checking
 
 Every "all agreeing" number here so far came from a 76 file sample. Run over all **531**, the check

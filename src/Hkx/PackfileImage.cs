@@ -210,6 +210,36 @@ public sealed class PackfileSection
         return at;
     }
 
+    /// Puts a new object's bytes at the end of this section, aligned the way every object in every
+    /// vanilla file is.
+    ///
+    /// Measured rather than assumed: 24,788 objects across 120 behaviour files, every one of them on
+    /// a sixteen byte boundary. Appending an object at whatever offset the data happens to end on
+    /// would be the kind of thing that works until it does not.
+    public int AppendObject(byte[] bytes)
+    {
+        int over = Data.Length % 16;
+        if (over != 0) AppendData(new byte[16 - over]);
+        return AppendData(bytes);
+    }
+
+    /// Adds the entry that says an object at this offset is an instance of the class whose name sits
+    /// at that offset in `__classnames__`. Its position is put right by the reorder that follows.
+    public void AddVirtual(int source, int section, int destination)
+    {
+        var entries = Virtuals().ToList();
+        entries.Add((source, section, destination));
+
+        var table = new byte[entries.Count * 12];
+        for (int i = 0; i < entries.Count; i++)
+        {
+            BitConverter.GetBytes(entries[i].Source).CopyTo(table, i * 12);
+            BitConverter.GetBytes(entries[i].Section).CopyTo(table, i * 12 + 4);
+            BitConverter.GetBytes(entries[i].Destination).CopyTo(table, i * 12 + 8);
+        }
+        VirtualFixups = table;
+    }
+
     /// Points the local fixup for a source offset at a new destination, adding one when the field
     /// held no pointer at all.
     ///
@@ -221,7 +251,15 @@ public sealed class PackfileSection
     {
         var entries = Locals().ToList();
         int existing = entries.FindIndex(e => e.Source == source);
-        if (existing >= 0) entries[existing] = (source, destination);
+
+        if (destination < 0)
+        {
+            // An empty array has no pointer at all, the same way a null reference has no fixup. A
+            // fixup left aiming at offset zero would point the array at the start of the section.
+            if (existing < 0) return;
+            entries.RemoveAt(existing);
+        }
+        else if (existing >= 0) entries[existing] = (source, destination);
         else entries.Add((source, destination));
 
         // Rewritten from the entries rather than patched in place, because adding one lengthens the
@@ -239,9 +277,109 @@ public sealed class PackfileSection
     /// A pointer into another section.
     public IEnumerable<(int Source, int Section, int Destination)> Globals() => Triples(GlobalFixups);
 
+    /// Points the global fixup for a source offset at a new object, adds one where the field held
+    /// nothing, or drops it when the field is being set to null.
+    ///
+    /// This is what rewiring a node is, in bytes. A pointer from one object to another is a global
+    /// fixup naming a source and a destination, and nothing about the objects themselves changes
+    /// when it is aimed somewhere else. No byte moves, nothing is appended, and the file is the same
+    /// length afterwards. It is only structural in the editor's sense.
+    ///
+    /// Same rule as `SetLocal` about order: the table is left as found and a new entry goes on the
+    /// end, because Fallout 4's own tables are not sorted and nothing reads them by position.
+    /// Writes the whole table from a list, so a caller that has to control where entries sit can.
+    ///
+    /// Position in this table is not free. It is written in the order the writer walked the objects,
+    /// which is not offset order: an array's element pointers are written while the array is being
+    /// walked, before the fields that follow it in the owning object. Measured on Dogmeat, 22 of the
+    /// 1,151 steps go backwards, and every one of them is an array. Sorting the table by source
+    /// makes hkxpack misread more than a hundred fields, so something downstream depends on that
+    /// order and it is not ours to tidy.
+    public void SetGlobals(IEnumerable<(int Source, int Section, int Destination)> entries)
+    {
+        var all = entries.ToList();
+        var table = new byte[all.Count * 12];
+        for (int i = 0; i < all.Count; i++)
+        {
+            BitConverter.GetBytes(all[i].Source).CopyTo(table, i * 12);
+            BitConverter.GetBytes(all[i].Section).CopyTo(table, i * 12 + 4);
+            BitConverter.GetBytes(all[i].Destination).CopyTo(table, i * 12 + 8);
+        }
+        GlobalFixups = table;
+    }
+
+    /// The local table written from a list, for the same reason the global one can be.
+    public void SetLocals(IEnumerable<(int Source, int Destination)> entries)
+    {
+        var all = entries.ToList();
+        var table = new byte[all.Count * 8];
+        for (int i = 0; i < all.Count; i++)
+        {
+            BitConverter.GetBytes(all[i].Source).CopyTo(table, i * 8);
+            BitConverter.GetBytes(all[i].Destination).CopyTo(table, i * 8 + 4);
+        }
+        LocalFixups = table;
+    }
+
+    public void SetGlobal(int source, int section, int destination)
+    {
+        var entries = Globals().ToList();
+        int existing = entries.FindIndex(e => e.Source == source);
+
+        if (destination < 0)
+        {
+            // A null pointer is the absence of a fixup, not a fixup to nowhere. Leaving one pointing
+            // at offset zero would aim the field at whatever object happens to sit first.
+            if (existing < 0) return;
+            entries.RemoveAt(existing);
+        }
+        else if (existing >= 0) entries[existing] = (source, section, destination);
+        else entries.Add((source, section, destination));
+
+        var table = new byte[entries.Count * 12];
+        for (int i = 0; i < entries.Count; i++)
+        {
+            BitConverter.GetBytes(entries[i].Source).CopyTo(table, i * 12);
+            BitConverter.GetBytes(entries[i].Section).CopyTo(table, i * 12 + 4);
+            BitConverter.GetBytes(entries[i].Destination).CopyTo(table, i * 12 + 8);
+        }
+        GlobalFixups = table;
+    }
+
     /// The class name an object is an instance of. Always points into __classnames__, which is why
     /// the middle field is always zero.
     public IEnumerable<(int Source, int Section, int Destination)> Virtuals() => Triples(VirtualFixups);
+
+    /// The virtual table written from a list.
+    ///
+    /// This table is the object list. An object's position in it is the position everything outside
+    /// the file names it by, and hkxpack's `#90` upward numbering is that position plus ninety. So
+    /// where an entry goes here decides what a new object is called, and a new one goes on the end
+    /// because its bytes went on the end. Measured across the corpus first: in all 533 vanilla files
+    /// the sources in this table are strictly ascending, 38,152 of them, so table order and file
+    /// order are the same thing and appending to both keeps them that way.
+    public void SetVirtuals(IEnumerable<(int Source, int Section, int Destination)> entries)
+    {
+        var all = entries.ToList();
+        var table = new byte[all.Count * 12];
+        for (int i = 0; i < all.Count; i++)
+        {
+            BitConverter.GetBytes(all[i].Source).CopyTo(table, i * 12);
+            BitConverter.GetBytes(all[i].Section).CopyTo(table, i * 12 + 4);
+            BitConverter.GetBytes(all[i].Destination).CopyTo(table, i * 12 + 8);
+        }
+        VirtualFixups = table;
+    }
+
+    /// Pads the data out to a boundary so what is appended next starts on it, and answers where that
+    /// will be. A class holding a vector is sixteen aligned and the game reads it with instructions
+    /// that require the alignment, so an object landing on an odd offset is not a cosmetic problem.
+    public int AlignData(int boundary)
+    {
+        int over = Data.Length % boundary;
+        if (over != 0) Array.Resize(ref Data, Data.Length + boundary - over);
+        return Data.Length;
+    }
 
     private static IEnumerable<(int, int, int)> Triples(byte[] table)
     {

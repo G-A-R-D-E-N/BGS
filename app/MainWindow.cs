@@ -100,6 +100,10 @@ public class MainWindow : Window
     // and not in the bytes until it is saved, so for these the text form is the newer of the two and
     // reading the bytes would put the old value back on screen under the person typing.
     private readonly HashSet<string> _editedFields = new(StringComparer.Ordinal);
+
+    // Why the bytes are not being read, when they are not. Kept rather than printed on the spot,
+    // because the load says several things after this point and the last one wins the status line.
+    private string _classWarning = "";
     private List<HkxBehaviorParser.BehaviorNode> _objects = new();
     private HkxBehaviorParser.BehaviorNode? _root;
 
@@ -919,7 +923,7 @@ public class MainWindow : Window
         _clips.SelectionChanged += () =>
         {
             if (_clips.SelectedTag is not string id || id == _selectedId) return;
-            var model = BehaviourGraphModel.Parse(_xmlText);
+            var model = Model();
             ShowProps(id, model);
             LoadPoseFromSelection(announce: true);
         };
@@ -1271,7 +1275,7 @@ public class MainWindow : Window
         _papyrus = await Task.Run(() => PapyrusEvents.Scan(folder));
         SetStatus(_papyrus.ToString(), _papyrus.ScriptsRead == 0 ? Ux.MutedBrush : Ux.MetaBrush);
 
-        if (_xmlText.Length > 0) BuildSymbols(BehaviourGraphModel.Parse(_xmlText));
+        if (_xmlText.Length > 0) BuildSymbols(Model());
     }
 
     // Opens where the last file came from. Behaviours, characters, skeletons and animations all sit
@@ -1339,6 +1343,9 @@ public class MainWindow : Window
         _editedFields.Clear();
         _xmlText = "";
         _xmlPath = "";
+        // Cleared with the text. Left behind, the previous file's reading would answer for a file
+        // that failed to open.
+        _reading = new BehaviourGraphModel();
         _selectedId = "";
         _projectChain = null;
         _emptyStates = new HashSet<string>();
@@ -1406,7 +1413,27 @@ public class MainWindow : Window
 
         // Not fatal if it fails: the panel falls back to hkxpack field by field, so a file this
         // cannot take apart still shows its values, just none of them from the bytes.
-        try { _bytes = new PackfileObjects(PackfileImage.Read(path)); }
+        _classWarning = "";
+        try
+        {
+            var bytes = new PackfileObjects(PackfileImage.Read(path));
+
+            // A packfile stores the signature of every class it names, and a signature is what a
+            // class definition is. If the file's disagrees with ours then this build's idea of where
+            // a field sits was written for a different version of that class, and reading a value
+            // out of it would be quiet nonsense rather than an error. So the bytes are put aside
+            // and the panel goes back to reading through hkxpack, which reads the file's own
+            // definitions rather than ours.
+            var problems = HavokClassTypes.Shipped.SignatureProblems(bytes.ClassNames());
+            if (problems.Count > 0)
+            {
+                _classWarning = $"Read through hkxpack only: {problems[0]}" +
+                                (problems.Count > 1 ? $", and {problems.Count - 1} more like it" : "") +
+                                ". Values are not read from the bytes when the classes do not match.";
+                _bytes = null;
+            }
+            else _bytes = bytes;
+        }
         catch (Exception) { _bytes = null; }
 
         var classes = new HashSet<string>();
@@ -1417,8 +1444,13 @@ public class MainWindow : Window
             if (!string.IsNullOrEmpty(o.AnimationName)) clips++;
         }
 
+        // The class warning goes here rather than on the status line because the status line has
+        // four ways out of PrepareEditing and only one of them was carrying it: a file with classes
+        // we do not describe *and* no Java present reported the Java and swallowed the rest.
         SetSummary($"{Path.GetFileName(path)}   root {root.ClassName}   {_objects.Count} objects   " +
-                   $"{classes.Count} classes   {clips} clip references", Ux.TitleBrush);
+                   $"{classes.Count} classes   {clips} clip references" +
+                   (_classWarning.Length > 0 ? "   —   " + _classWarning : ""),
+                   _classWarning.Length > 0 ? Ux.WarnBrush : Ux.TitleBrush);
 
         RebuildTree();
         Settings.Set("last_path", path);
@@ -1431,69 +1463,106 @@ public class MainWindow : Window
         if (_animationData != null) LoadPose(path, Path.GetFileName(path));
     }
 
+    /// The reading everything else works from.
+    ///
+    /// The text is authoritative while there is any, because an edit is made by rewriting it and the
+    /// bytes on disk are then out of date until the file is saved. With no text there is nothing to
+    /// be out of date, so the reading taken from the file when it was opened is the answer. That is
+    /// what lets the graph, the symbols and the properties fill on a machine with no Java on it.
+    private BehaviourGraphModel Model() =>
+        _xmlText.Length > 0 ? BehaviourGraphModel.Parse(_xmlText) : _reading;
+
+    private BehaviourGraphModel _reading = new();
+
     private void PrepareEditing()
     {
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
+        bool text = java != null && jar != null;
 
-        // Naming which one is missing matters more than it looks. Everything except the Tree comes
-        // from the unpacked text form, so without these the other four tabs are simply empty, which
-        // reads as a broken tool rather than a missing dependency.
-        if (java == null || jar == null)
+        _findJava.IsVisible = java == null;
+
+        // The graph comes out of the file's own bytes now. It used to come out of hkxpack's text,
+        // which is why a machine without Java showed a tree and four empty tabs. The two readings
+        // were compared field by field and consumer by consumer across every vanilla behaviour and
+        // came out the same, so this is the same picture drawn without the dependency.
+        var reading = _bytes == null ? null : NativeGraphModel.From(_bytes);
+
+        if (text)
+        {
+            try
+            {
+                string work = Path.Combine(Path.GetTempPath(), "bgs_edit",
+                                           Path.GetFileNameWithoutExtension(_hkxPath));
+                HkxTextEdit.ResetDirectory(work);
+
+                _xmlPath = HkxTextEdit.Unpack(java!, jar!, _hkxPath, work);
+                _xmlText = HkxTextEdit.ReadXml(_xmlPath);
+                _objectIds = HkxTextEdit.ObjectIds(_xmlText);
+
+                // Editing works by rewriting the text, so a text form that does not line up with the
+                // file is not something to edit through. The picture below still draws.
+                if (_objectIds.Count != _objects.Count)
+                {
+                    _xmlText = "";
+                    _objectIds = new List<string>();
+                }
+            }
+            catch (Exception ex)
+            {
+                _xmlText = "";
+                _objectIds = new List<string>();
+                if (reading == null)
+                {
+                    ResetHistory();
+                    SetStatus("Read only: " + ex.Message.Split('\n')[0], Ux.MutedBrush);
+                    return;
+                }
+            }
+        }
+
+        ResetHistory();
+
+        var model = reading ?? (_xmlText.Length > 0 ? Model() : null);
+        if (model == null)
         {
             string missing = java == null && jar == null ? "Java and hkxpack are missing"
                            : java == null ? "Java is missing"
-                           : "hkxpack-cli.jar is missing";
-            _findJava.IsVisible = java == null;
-            SetStatus($"Read only, so the Graph, Symbols, Chain and Animation tabs stay empty: " +
-                      $"{missing}. The tree is read straight from the binary and does not need either. " +
+                           : jar == null ? "hkxpack-cli.jar is missing"
+                           : "the file's classes are not ones this build describes";
+
+            SetStatus("Read only, so the Graph, Symbols, Chain and Animation tabs stay empty: " +
+                      missing + ". The tree is read straight from the binary and does not need " +
+                      "either. " +
                       (java == null ? "Install a Java runtime, or press Find Java if one is already installed somewhere this did not look. " : "") +
                       (jar == null ? $"Put hkxpack-cli.jar in a tools folder beside the program, at {Path.Combine(AppContext.BaseDirectory, "tools")}. " : "") +
                       "Save stays off until then.", Ux.WarnBrush);
             return;
         }
 
-        _findJava.IsVisible = false;
+        // Both readings number the objects the same way, so either can say which id sits at which
+        // position. The text's list is preferred only because editing writes back through it.
+        if (_objectIds.Count == 0) _objectIds = model.Objects.Select(o => o.Id).ToList();
+        _reading = model;
 
-        try
-        {
-            string work = Path.Combine(Path.GetTempPath(), "bgs_edit", Path.GetFileNameWithoutExtension(_hkxPath));
-            HkxTextEdit.ResetDirectory(work);
+        // The tree drew before the model existed, so the states holding nothing were unknown when it
+        // was built. Now they are known, so it is built again.
+        _emptyStates = GraphValidator.StatesWithNoGenerator(model);
+        RebuildTree();
 
-            _xmlPath = HkxTextEdit.Unpack(java, jar, _hkxPath, work);
-            _xmlText = HkxTextEdit.ReadXml(_xmlPath);
-            _objectIds = HkxTextEdit.ObjectIds(_xmlText);
-            ResetHistory();
+        _graph.Show(model);
+        _graph.FrameAll();
+        BuildSymbols(model);
+        BuildClipList(model);
+        if (text) BuildChain(java!, jar!);
+        FindMeshForFile();
 
-            if (_objectIds.Count != _objects.Count)
-            {
-                _xmlText = "";
-                ResetHistory();
-                SetStatus($"Read only: object counts disagree ({_objects.Count} binary vs {_objectIds.Count} xml).",
-                          Ux.MutedBrush);
-                return;
-            }
-
-            var model = BehaviourGraphModel.Parse(_xmlText);
-            // The tree drew before the text form existed, so the states holding nothing were unknown
-            // when it was built. Now they are known, so it is built again.
-            _emptyStates = GraphValidator.StatesWithNoGenerator(model);
-            RebuildTree();
-
-            _graph.Show(model);
-            _graph.FrameAll();
-            BuildSymbols(model);
-            BuildClipList(model);
-            BuildChain(java, jar);
-            FindMeshForFile();
-            SetStatus($"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn.", Ux.MetaBrush);
-        }
-        catch (Exception ex)
-        {
-            _xmlText = "";
-            ResetHistory();
-            SetStatus("Read only: " + ex.Message.Split('\n')[0], Ux.MutedBrush);
-        }
+        string source = reading != null ? "read from the file itself" : "read through hkxpack";
+        SetStatus(_xmlText.Length > 0
+            ? $"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, {source}."
+            : $"{_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, {source}. " +
+              "Editing and saving still need Java and hkxpack-cli.jar.",
+            _xmlText.Length > 0 ? Ux.MetaBrush : Ux.WarnBrush);
     }
 
     private bool IsEmptyState(int offset) =>
@@ -1620,7 +1689,7 @@ public class MainWindow : Window
 
         // One parse for both. On a weapon behaviour a parse is a tenth of a second, and selecting a
         // node was paying for two of them.
-        var model = BehaviourGraphModel.Parse(_xmlText);
+        var model = Model();
         ShowProps(objectId, model);
         SetStatus(Describe(model, objectId), Ux.MetaBrush);
 
@@ -1629,7 +1698,7 @@ public class MainWindow : Window
         LoadPoseFromSelection(announce: false);
     }
 
-    private string Describe(string id) => Describe(BehaviourGraphModel.Parse(_xmlText), id);
+    private string Describe(string id) => Describe(Model(), id);
 
     private static string Describe(BehaviourGraphModel model, string id)
     {
@@ -1650,7 +1719,7 @@ public class MainWindow : Window
     // Both panels are filled, because which one is on screen depends on the tab and a node can be
     // reached from either. The model is parsed once and handed to both: on a shipped weapon graph
     // that parse is the expensive part of selecting a node.
-    private void ShowProps(string objectId) => ShowProps(objectId, BehaviourGraphModel.Parse(_xmlText));
+    private void ShowProps(string objectId) => ShowProps(objectId, Model());
 
     private void ShowProps(string objectId, BehaviourGraphModel model)
     {
@@ -1670,7 +1739,7 @@ public class MainWindow : Window
     private List<PanelFields.Field> PanelValues(string objectId,
                                                 IReadOnlyList<HkxTextEdit.Param> parameters)
     {
-        var plain = parameters.Select(p => (p.Name, p.Value, p.Own)).ToList();
+        var plain = parameters.Select(p => (p.Name, p.Value)).ToList();
 
         int index = _objectIds.IndexOf(objectId);
         if (_bytes == null || index < 0 || index >= _bytes.Instances.Count)
@@ -1710,12 +1779,22 @@ public class MainWindow : Window
 
         foreach (var p in parameters)
         {
-            var field = Ux.Field();
-            field.Text = p.Value;
-
             string name = p.Name;
             string original = p.Value;
             string owner = objectId;
+
+            // An enum whose values the class table declares becomes a list rather than a box. The
+            // names are the ones the game registers, not ours, and PanelFields only offers them when
+            // the value already in the file is one of them, so picking from the list can never be the
+            // only way to keep what is there.
+            if (p.Options.Count > 0)
+            {
+                panel.Add(EnumRow(p, owner));
+                continue;
+            }
+
+            var field = Ux.Field();
+            field.Text = p.Value;
             // Committing is driven by what the box holds, not by which box has focus. Focus is the
             // usual trigger, but a window closing has no focus change to hang off, and asking every
             // field whether it differs is both simpler and safe: one that has not been touched
@@ -1752,10 +1831,51 @@ public class MainWindow : Window
 
     // The other direction of the usages question: not who touches this symbol, but which symbols this
     // node touches. An index on its own says nothing, so each one is resolved to its declared name.
+    /// One property row whose value is chosen from a list rather than typed.
+    ///
+    /// Committing is driven by what the control holds, the same way a text box is, so a window
+    /// closing with a changed selection still writes it.
+    private Control EnumRow(PanelFields.Field p, string owner)
+    {
+        var choice = new ComboBox
+        {
+            ItemsSource = p.Options,
+            SelectedItem = p.Value,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            Foreground = Ux.CodeBrush,
+        };
+
+        string name = p.Name;
+        string original = p.Value;
+
+        void Commit()
+        {
+            string now = choice.SelectedItem as string ?? original;
+            if (now == original) return;
+
+            if (SetParam(owner, name, now)) original = now;
+            else choice.SelectedItem = original;
+        }
+
+        _fieldCommits.Add(Commit);
+        choice.SelectionChanged += (_, _) => Commit();
+
+        var label = Ux.Label(name);
+        label.Width = 128;
+        label.TextTrimming = TextTrimming.CharacterEllipsis;
+        ToolTip.SetTip(label, $"{name}: one of {string.Join(", ", p.Options)}");
+
+        var row = new DockPanel();
+        DockPanel.SetDock(label, Dock.Left);
+        row.Children.Add(label);
+        row.Children.Add(choice);
+        return row;
+    }
+
     private void AddSymbolSection(Inspector panel, string objectId, BehaviourGraphModel model)
     {
-        var events = SymbolIndexFixup.UsagesOf(_xmlText, events: true, objectId);
-        var variables = SymbolIndexFixup.UsagesOf(_xmlText, events: false, objectId);
+        var events = UsagesOf(true, objectId);
+        var variables = UsagesOf(false, objectId);
         if (events.Count == 0 && variables.Count == 0) return;
 
         var eventNames = SymbolEditor.EventNames(model);
@@ -1847,9 +1967,7 @@ public class MainWindow : Window
 
         var readers = UsersByIndex(events: false);
         var listeners = UsersByIndex(events: true);
-        var variableSites = _xmlText.Length == 0
-            ? new List<SymbolIndexFixup.Usage>()
-            : SymbolIndexFixup.Usages(_xmlText, events: false);
+        var variableSites = Usages(events: false);
 
         for (int i = 0; i < names.Count; i++)
         {
@@ -1870,9 +1988,12 @@ public class MainWindow : Window
                             site.Count(), "");
         }
 
-        var usage = _xmlText.Length == 0
-            ? new Dictionary<int, List<EventUsage.Line>>()
-            : EventUsage.ByEvent(_xmlText);
+        // The text form while there is one, because an edit rewrites it and the bytes on disk are
+        // out of date until the file is saved. The reading taken when the file was opened otherwise,
+        // which is what fills the roles with no Java on the machine.
+        var usage = _xmlText.Length > 0 ? EventUsage.ByEvent(_xmlText)
+                  : _bytes != null ? EventUsage.ByEvent(_bytes)
+                  : new Dictionary<int, List<EventUsage.Line>>();
 
         for (int i = 0; i < events.Count; i++)
         {
@@ -1948,12 +2069,30 @@ public class MainWindow : Window
     // One scan for every index rather than one scan per symbol. A weapon behaviour declares 873
     // symbols against seven megabytes of text, and asking one at a time took about two minutes of
     // the load.
+    /// Where every index is written, out of the text while there is any and out of the file's own
+    /// bytes when there is not.
+    ///
+    /// The text is preferred for the same reason the model is: an edit rewrites it, so it is the
+    /// current state of the graph and the bytes on disk are behind until the file is saved. The two
+    /// walks were compared across every vanilla behaviour, 21,624 usages, and agreed on all of them.
+    private List<SymbolIndexFixup.Usage> Usages(bool events) =>
+        _xmlText.Length > 0 ? SymbolIndexFixup.Usages(_xmlText, events)
+        : _bytes != null ? SymbolIndexFixup.Usages(_bytes, events)
+        : new List<SymbolIndexFixup.Usage>();
+
+    private List<SymbolIndexFixup.Usage> UsagesOf(bool events, string objectId) =>
+        _xmlText.Length > 0 ? SymbolIndexFixup.UsagesOf(_xmlText, events, objectId)
+        : _bytes != null ? SymbolIndexFixup.UsagesOf(_bytes, events, objectId)
+        : new List<SymbolIndexFixup.Usage>();
+
     private Dictionary<int, List<string>> UsersByIndex(bool events)
     {
         var map = new Dictionary<int, List<string>>();
-        if (_xmlText.Length == 0) return map;
+        var references = _xmlText.Length > 0 ? SymbolIndexFixup.References(_xmlText, events)
+                       : _bytes != null ? SymbolIndexFixup.References(_bytes, events)
+                       : new List<SymbolIndexFixup.EventReference>();
 
-        foreach (var reference in SymbolIndexFixup.References(_xmlText, events))
+        foreach (var reference in references)
         {
             if (!map.TryGetValue(reference.Index, out var list))
                 map[reference.Index] = list = new List<string>();
@@ -2017,7 +2156,7 @@ public class MainWindow : Window
 
         if (!SelectedSymbol(out bool variable, out int index)) return;
 
-        var model = BehaviourGraphModel.Parse(_xmlText);
+        var model = Model();
         var names = variable ? SymbolEditor.VariableNames(model) : SymbolEditor.EventNames(model);
         if (index < 0 || index >= names.Count) return;
 
@@ -2130,7 +2269,7 @@ public class MainWindow : Window
         try
         {
             Commit(edit(_xmlText));
-            var model = BehaviourGraphModel.Parse(_xmlText);
+            var model = Model();
             _graph.Show(model);
             BuildSymbols(model);
         }
@@ -2148,7 +2287,7 @@ public class MainWindow : Window
 
         string parent = fromId.Length > 0 ? fromId : _graph.SelectedId;
         var items = new List<Control>();
-        var model = BehaviourGraphModel.Parse(_xmlText);
+        var model = Model();
 
         if (_graph.SelectedId.Length > 0)
         {
@@ -2252,7 +2391,7 @@ public class MainWindow : Window
 
             SetStatus(note + "   (unsaved)", Ux.CodeBrush);
 
-            var model = BehaviourGraphModel.Parse(_xmlText);
+            var model = Model();
             _graph.Show(model);
             BuildSymbols(model);
         }
@@ -2272,7 +2411,7 @@ public class MainWindow : Window
             Commit(GraphAuthor.DeleteNode(_xmlText, objectId, out string note));
             SetStatus(note + "   (unsaved)", Ux.CodeBrush);
 
-            var model = BehaviourGraphModel.Parse(_xmlText);
+            var model = Model();
             _graph.Show(model);
             BuildSymbols(model);
             ClearProps();
@@ -2287,7 +2426,7 @@ public class MainWindow : Window
     {
         try
         {
-            var names = BindingEditor.VariableNames(BehaviourGraphModel.Parse(_xmlText));
+            var names = BindingEditor.VariableNames(Model());
             int index = names.FindIndex(n => n.Equals(variableName, StringComparison.OrdinalIgnoreCase));
 
             string xml = _xmlText;
@@ -2326,7 +2465,7 @@ public class MainWindow : Window
 
     private void RefreshAfterEdit(string objectId)
     {
-        var model = BehaviourGraphModel.Parse(_xmlText);
+        var model = Model();
         _graph.Show(model);
         BuildSymbols(model);
         ClearProps();
@@ -2346,23 +2485,33 @@ public class MainWindow : Window
     private void Apply(string objectId, string paramName, TextBox field, string original)
     {
         if (field.Text == original || _xmlText.Length == 0) return;
+        if (!SetParam(objectId, paramName, field.Text ?? "")) field.Text = original;
+    }
+
+    /// Writes one field and reports whether it took, so a control that has to put itself back on a
+    /// refusal can. Shared by the typed boxes and the enum lists rather than written twice.
+    private bool SetParam(string objectId, string paramName, string value)
+    {
+        if (_xmlText.Length == 0) return false;
 
         try
         {
-            Commit(HkxTextEdit.SetParam(_xmlText, objectId, paramName, field.Text ?? ""));
+            Commit(HkxTextEdit.SetParam(_xmlText, objectId, paramName, value));
             _editedFields.Add(objectId + "." + paramName);
-            SetStatus($"#{objectId}.{paramName} = {field.Text}   (unsaved)", Ux.CodeBrush);
+            SetStatus($"#{objectId}.{paramName} = {value}   (unsaved)", Ux.CodeBrush);
 
             // Retimes a preview that is already running, so an edited speed shows up without having
             // to stop and start playback to see it.
             if (paramName == "playbackSpeed" && objectId == _selectedId && _clock != null)
                 _clock.Interval = TimeSpan.FromSeconds(
                     Math.Clamp(_poseAnimation!.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4));
+
+            return true;
         }
         catch (Exception ex)
         {
-            field.Text = original;
             SetStatus(ex.Message.Split('\n')[0], Ux.MutedBrush);
+            return false;
         }
     }
 
@@ -2370,9 +2519,18 @@ public class MainWindow : Window
     // finding out in game.
     private void Validate()
     {
-        if (_xmlText.Length == 0) { SetStatus("Nothing loaded to check.", Ux.MutedBrush); return; }
+        if (_xmlText.Length == 0 && _reading.Objects.Count == 0)
+        {
+            SetStatus("Nothing loaded to check.", Ux.MutedBrush);
+            return;
+        }
 
-        var findings = GraphValidator.Check(_xmlText, _projectChain);
+        // Every check runs either way now. With no text the model and the index walk both come from
+        // the file's own bytes, so the checker sees the same graph it would have seen through
+        // hkxpack rather than a smaller one.
+        var findings = _xmlText.Length > 0
+            ? GraphValidator.Check(_xmlText, _projectChain)
+            : GraphValidator.Check(_reading, _projectChain, _bytes);
         var errors = findings.Where(f => f.Level == GraphValidator.Level.Error).ToList();
         var warnings = findings.Where(f => f.Level == GraphValidator.Level.Warning).ToList();
 
@@ -2642,7 +2800,7 @@ public class MainWindow : Window
     {
         RefreshDirty();
 
-        var model = BehaviourGraphModel.Parse(_xmlText);
+        var model = Model();
         _objectIds = HkxTextEdit.ObjectIds(_xmlText);
         _emptyStates = GraphValidator.StatesWithNoGenerator(model);
         RebuildTree();

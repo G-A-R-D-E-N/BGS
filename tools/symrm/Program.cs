@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.Tools;
@@ -40,7 +41,15 @@ public static class Program
             case "pose": return Pose(argv);
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
-            case "names": return Names(argv);
+            case "model": return Model(argv);
+            case "consumers": return Consumers(argv);
+            case "symbols": return Symbols(argv);
+            case "walk": return Walk(argv);
+            case "append": return Append(argv);
+            case "orphan": return Orphan(argv);
+            case "classes": return Classes(argv);
+            case "fields": return Fields(argv);
+            case "signatures": return Signatures(argv);
             case "panel": return Panel(argv);
             case "objects": return Objects(argv);
             case "crosscheck": return CrossCheck(argv);
@@ -174,6 +183,23 @@ public static class Program
         while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, "src", "Hkx")))
             dir = dir.Parent;
         return dir?.FullName ?? Directory.GetCurrentDirectory();
+    }
+
+    /// Somewhere to unpack a file to, which is never the directory the file itself is in.
+    ///
+    /// These directories get emptied before use, and the name is built from the file's own name, so
+    /// pointing one of these commands at a file that already sits in a directory of that name
+    /// deletes the file being read. Found by doing it: a run of crosscheck against a file left in an
+    /// earlier crosscheck's working directory took the file with it.
+    private static string WorkDirectory(string prefix, string file)
+    {
+        string work = Path.Combine(Path.GetTempPath(), prefix + Path.GetFileNameWithoutExtension(file));
+        string holding = Path.GetDirectoryName(Path.GetFullPath(file)) ?? "";
+
+        return Path.GetFullPath(work).TrimEnd(Path.DirectorySeparatorChar) ==
+               holding.TrimEnd(Path.DirectorySeparatorChar)
+            ? work + "-work"
+            : work;
     }
 
     private static void NeedHkxPack()
@@ -649,8 +675,7 @@ public static class Program
         // directory of its own, and a fixed name means one run wiping the directory another run is
         // still reading from. That showed up as hkxpack "produced no XML" on a file that passes on
         // its own, which reads as a bug in the save rather than in the harness around it.
-        string work = Path.Combine(Path.GetTempPath(),
-                                   "symrm-savecheck-" + Path.GetFileNameWithoutExtension(file));
+        string work = WorkDirectory("symrm-savecheck-", file);
         if (Directory.Exists(work)) Directory.Delete(work, true);
 
         string xmlFile = HkxTextEdit.Unpack(_java, _jar, file, work);
@@ -669,6 +694,32 @@ public static class Program
         string edited = original;
         foreach (var (was, now) in edits) edited = ReplaceFirst(edited, was, now);
 
+        // A brand new object, added the way the editor adds one, with something in the file pointed
+        // at it. This is the case a longer array does not cover: the array work only ever moved
+        // pointers at objects that were already there.
+        var host = System.Text.RegularExpressions.Regex.Match(
+            original, "<hkobject class=\"hkbClipGenerator\" name=\"#[0-9]+\" " +
+                      "signature=\"(?<sig>0x[0-9a-f]+)\">");
+
+        var lastGenerator = System.Text.RegularExpressions.Regex
+            .Matches(edited, "<hkparam name=\"generator\">#[0-9]+</hkparam>")
+            .LastOrDefault();
+
+        if (host.Success && lastGenerator != null)
+        {
+            edited = HkxTextEdit.AddObject(
+                edited, "hkbClipGenerator", host.Groups["sig"].Value,
+                "            <hkparam name=\"userPartitionMask\">7</hkparam>", out string added);
+
+            string pointer = $"<hkparam name=\"generator\">#{added}</hkparam>";
+            edited = edited.Remove(lastGenerator.Index, lastGenerator.Length)
+                           .Insert(lastGenerator.Index, pointer);
+
+            // Two things to find afterwards: the object itself and the pointer at it.
+            edits.Add(("", $"name=\"#{added}\""));
+            edits.Add(("", pointer));
+        }
+
         var plan = NativeSave.Compare(original, edited);
         if (!plan.Possible)
         {
@@ -685,20 +736,32 @@ public static class Program
         int changedBytes = Enumerable.Range(0, Math.Min(before.Length, saved.Length))
                                      .Count(i => before[i] != saved[i]);
 
-        // A plan holding text grows the file, because the new text goes on the end rather than over
-        // what was there. Anything else changing size is a fault: it means something moved.
+        // Two things legitimately change the length. Text grows it, because the new text goes on
+        // the end rather than over what was there. Clearing a pointer shrinks it, because a null
+        // pointer is the absence of a fixup rather than a fixup to nowhere, so the entry is dropped
+        // and the table is twelve bytes shorter, sixteen once it is padded back to the boundary.
+        // Anything else changing size means something moved, which is the fault this is watching
+        // for.
+        int cleared = plan.Changes.Count(c => c.Ref && c.Value == "null");
+        bool shrankAsExpected = cleared > 0 && before.Length > saved.Length
+                                            && before.Length - saved.Length <= 16 * cleared;
+
         string size = sameSize
             ? $"{changedBytes} bytes differ from the original"
-            : plan.Grows
+            : plan.Grows && saved.Length > before.Length
                 ? $"{before.Length} bytes to {saved.Length}, as appending text does, " +
                   $"{changedBytes} of the original bytes differ"
-                : $"BUT THE FILE CHANGED SIZE WITHOUT APPENDING ANYTHING, {before.Length} to {saved.Length}";
+                : shrankAsExpected
+                    ? $"{before.Length} bytes to {saved.Length}, as dropping {cleared} pointer " +
+                      $"entr{(cleared == 1 ? "y" : "ies")} does, {changedBytes} of the original " +
+                      "bytes differ"
+                    : $"BUT THE FILE CHANGED SIZE WITHOUT APPENDING ANYTHING, {before.Length} to {saved.Length}";
 
         Console.WriteLine($"{Path.GetFileName(file)}: {plan.Changes.Count} value(s) changed, {size}");
         foreach (var change in plan.Changes.Take(5)) Console.WriteLine("    " + change);
 
-        if (!sameSize && !plan.Grows) return 1;
-        if (!sameSize && !OnlyAppended(before, saved, plan)) return 1;
+        if (!sameSize && !(plan.Grows && saved.Length > before.Length) && !shrankAsExpected) return 1;
+        if (!OnlyAppended(before, saved, plan)) return 1;
 
         // The saved file has to survive being read by the other implementation, and then agree with
         // ours field for field. Reusing crosscheck means the number quoted here is the same measure
@@ -778,6 +841,29 @@ public static class Program
         var was = PackfileImage.Read(before);
         var now = PackfileImage.Read(after);
 
+        // How many pointer entries each planned change is allowed to move. A repointed field moves
+        // one. A resized array moves every element it had and every element it now has, because the
+        // run moved to the end of the section and each element's fixup names a position inside it.
+        // Counted from the original file rather than assumed, so an array that was longer than the
+        // plan expects cannot hide extra movement inside the allowance.
+        int allowedPointerMoves = plan.Changes.Count(c => c.Ref);
+        if (plan.Changes.Any(c => c.Array))
+        {
+            var original = new PackfileObjects(was);
+            var byClass = original.Instances.GroupBy(o => o.ClassName)
+                                            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+
+            foreach (var change in plan.Changes.Where(c => c.Array))
+            {
+                int had = byClass.TryGetValue(change.ClassName, out var all) && change.Index < all.Count
+                    ? original.ReadArray(all[change.Index], change.Field)?.Count ?? 0
+                    : 0;
+
+                int now_ = change.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+                allowedPointerMoves += had + now_;
+            }
+        }
+
         if (was.Sections.Count != now.Sections.Count)
         {
             Console.WriteLine("  append check: FAILED, the section count changed");
@@ -797,8 +883,10 @@ public static class Program
             // The data the text was added to also holds the values written over in place, so it is
             // not expected to be identical. What it must not do is differ anywhere else: a value
             // write touches at most the four bytes of the field it names.
+            // A pointer change writes nothing into the data at all. It moves an entry in the
+            // pointer table, so it buys no allowance here and the data has to be untouched by it.
             int touched = Enumerable.Range(0, a.Data.Length).Count(k => a.Data[k] != b.Data[k]);
-            int allowed = 4 * plan.Changes.Count(c => !c.Text);
+            int allowed = 4 * plan.Changes.Count(c => !c.Text && !c.Ref);
             if (touched > allowed)
             {
                 Console.WriteLine($"  append check: FAILED, {touched} byte(s) of {a.Tag} changed, " +
@@ -806,24 +894,61 @@ public static class Program
                 return false;
             }
 
-            if (!b.Globals().SequenceEqual(a.Globals()) || !b.Virtuals().SequenceEqual(a.Virtuals()))
+            // Every pointer the plan does not name has to be untouched, and no more of them may
+            // move than the plan repoints. Compared by source rather than by position: dropping an
+            // entry shifts every entry after it, which is not a change to any pointer.
+            var wasBySource = a.Globals().ToDictionary(g => g.Source, g => (g.Section, g.Destination));
+            var nowBySource = b.Globals().ToDictionary(g => g.Source, g => (g.Section, g.Destination));
+
+            var repointedSources = wasBySource.Keys.Union(nowBySource.Keys)
+                .Where(k => !wasBySource.TryGetValue(k, out var x) ||
+                            !nowBySource.TryGetValue(k, out var y) || x != y)
+                .ToList();
+
+            if (repointedSources.Count > allowedPointerMoves)
             {
-                Console.WriteLine($"  append check: FAILED, section {a.Tag} moved a pointer it should not have");
+                Console.WriteLine($"  append check: FAILED, {repointedSources.Count} pointer(s) in " +
+                                  $"{a.Tag} changed, more than the {allowedPointerMoves} the plan " +
+                                  "accounts for");
+                return false;
+            }
+
+            // One new entry per object added, and every entry that was there before untouched. The
+            // table says which class each object is, so an entry changing under an object that was
+            // already in the file would be that object turning into something else.
+            // Objects only live in the data section, so only that one gains entries. Counting the
+            // added ones against every section would demand a new object in the class name section
+            // too, which is not a thing.
+            int added = a.Tag == "__data__" ? plan.Changes.Count(c => c.Added) : 0;
+            var wasVirtual = a.Virtuals().ToList();
+            var nowVirtual = b.Virtuals().ToList();
+
+            if (nowVirtual.Count != wasVirtual.Count + added ||
+                !nowVirtual.Take(wasVirtual.Count).SequenceEqual(wasVirtual))
+            {
+                Console.WriteLine($"  append check: FAILED, section {a.Tag} has {nowVirtual.Count} " +
+                                  $"object(s) where it had {wasVirtual.Count} and {added} were added");
                 return false;
             }
 
             var (locals, wasLocals) = (b.Locals().ToList(), a.Locals().ToList());
-            if (locals.Count != wasLocals.Count)
-            {
-                Console.WriteLine($"  append check: FAILED, section {a.Tag} gained or lost a local fixup");
-                return false;
-            }
 
-            int moved = locals.Zip(wasLocals).Count(p => p.First != p.Second);
-            int expected = plan.Changes.Count(c => c.Text);
-            if (a.Tag == "__data__" && moved != expected)
+            // The local table gains an entry when an array goes from empty to holding something,
+            // and loses one when it goes the other way, so its length is only fixed while no array
+            // changes. Compared by source rather than by position for the same reason as the global
+            // table: an entry appearing or going shifts the rest without changing any pointer.
+            var wasLocalsBySource = wasLocals.ToDictionary(l => l.Source, l => l.Destination);
+            var nowLocalsBySource = locals.ToDictionary(l => l.Source, l => l.Destination);
+
+            int movedLocals = wasLocalsBySource.Keys.Union(nowLocalsBySource.Keys)
+                .Count(k => !wasLocalsBySource.TryGetValue(k, out int x) ||
+                            !nowLocalsBySource.TryGetValue(k, out int y) || x != y);
+
+            int expected = plan.Changes.Count(c => c.Text || c.Array);
+            if (a.Tag == "__data__" && movedLocals > expected)
             {
-                Console.WriteLine($"  append check: FAILED, {moved} pointer(s) moved for {expected} text change(s)");
+                Console.WriteLine($"  append check: FAILED, {movedLocals} pointer(s) moved for " +
+                                  $"{expected} change(s) that move one");
                 return false;
             }
         }
@@ -909,6 +1034,48 @@ public static class Program
         // over the old bytes and would prove nothing.
         Try("<hkparam name=\"animationName\">[^<]{3,}</hkparam>",
             "<hkparam name=\"animationName\">Animations\\Renamed_By_Symrm_Longer.hkx</hkparam>");
+
+        // Rewiring a node, which is a structural edit to the graph and not one to the file: no
+        // object moves, nothing is appended, and one entry in the pointer table names a different
+        // destination. The target is taken from a second generator field in the same file rather
+        // than invented, so it is an id the file actually has.
+        var generators = System.Text.RegularExpressions.Regex
+            .Matches(xml, "<hkparam name=\"generator\">#(?<id>[0-9]+)</hkparam>")
+            .Select(m => m.Groups["id"].Value).Distinct().ToList();
+
+        if (generators.Count >= 2 && generators[0] != generators[1])
+            Try($"<hkparam name=\"generator\">#{generators[0]}</hkparam>",
+                $"<hkparam name=\"generator\">#{generators[1]}</hkparam>");
+
+        // And the other direction: a pointer set to nothing, which drops the fixup rather than
+        // aiming it at offset zero. Aiming it at zero would quietly point the field at whichever
+        // object sits first.
+        Try("<hkparam name=\"variableBindingSet\">#[0-9]+</hkparam>",
+            "<hkparam name=\"variableBindingSet\">null</hkparam>");
+
+        // An array of object pointers made one element longer, by repeating an element it already
+        // holds. Longer on purpose: a shorter one could be written over the run that is already
+        // there and would prove nothing about appending. The element is one the array already names
+        // rather than an invented id, so the target is an object the file has.
+        var array = System.Text.RegularExpressions.Regex.Match(
+            xml, "<hkparam name=\"(?<field>states|children|generators|modifiers|layers)\" " +
+                 "numelements=\"(?<n>[1-9][0-9]*)\">(?<body>[^<]*)</hkparam>");
+
+        if (array.Success)
+        {
+            var ids = array.Groups["body"].Value
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+            if (ids.Length > 0 && ids.All(t => t.StartsWith('#')))
+            {
+                string field = array.Groups["field"].Value;
+                string body = array.Groups["body"].Value.TrimEnd();
+                edits.Add((array.Value,
+                           $"<hkparam name=\"{field}\" numelements=\"{ids.Length + 1}\">" +
+                           $"{body}\n{ids[0]}\n</hkparam>"));
+            }
+        }
+
         return edits;
     }
 
@@ -923,6 +1090,234 @@ public static class Program
     // out of the game, hkxpack's by its own schema. Agreement across a whole file is what turns
     // "these offsets look plausible" into "these offsets are right", and it is the check that has to
     // pass before anything writes bytes for real.
+    /// Builds `HavokClassTypes.json` out of the class database hkxpack carries inside its own jar,
+    /// merged with the instance sizes read out of the game.
+    ///
+    /// The jar is opened as what it is, a zip, so this runs Java no more than unzipping does. What
+    /// comes out is the half of a class description the game's own startup code does not keep: which
+    /// members are ever written to a file, what class an inline struct is, and every enum's values.
+    ///
+    /// One class per line on purpose. It is a generated file either way, and a generated file that
+    /// cannot be read in a diff hides its own mistakes.
+    private static int Classes(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string output = Path.GetFullPath(argv[^1]);
+        string? jar = argv.Length > 2 ? Path.GetFullPath(argv[1]) : HkxTextEdit.FindHkxPack("", _root);
+
+        if (jar == null || !File.Exists(jar))
+        {
+            Console.WriteLine("No hkxpack-cli.jar to read the class database out of. " +
+                              "Pass its path: symrm classes <jar> <out.json>");
+            return 1;
+        }
+
+        var sizes = HavokClasses.Shipped;
+        var classes = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        int members = 0, ignored = 0, structs = 0, enums = 0, values = 0, sized = 0, fixedArrays = 0;
+
+        using (var zip = System.IO.Compression.ZipFile.OpenRead(jar))
+        {
+            foreach (var item in zip.Entries.Where(e => e.FullName.StartsWith("classxml/", StringComparison.Ordinal)
+                                                        && e.FullName.EndsWith(".xml", StringComparison.Ordinal)))
+            {
+                using var stream = item.Open();
+                var root = System.Xml.Linq.XDocument.Load(stream).Root!;
+                string name = root.Attribute("name")!.Value;
+
+                var declared = new List<object>();
+                foreach (var m in root.Element("members")?.Elements("member")
+                                  ?? Enumerable.Empty<System.Xml.Linq.XElement>())
+                {
+                    // Trimmed: a handful of entries in the database carry a stray space beside the
+                    // flag, and a flag compared as text is a flag that goes unnoticed when it does.
+                    string flags = (m.Attribute("flags")?.Value ?? "").Trim();
+                    bool written = !flags.Split('|').Any(f => f.Trim() == "SERIALIZE_IGNORED");
+                    int size = int.Parse(m.Attribute("arrsize")?.Value ?? "0");
+
+                    members++;
+                    if (!written) ignored++;
+                    if (m.Attribute("ctype") != null) structs++;
+                    if (size > 0) fixedArrays++;
+
+                    declared.Add(new Dictionary<string, object?>
+                    {
+                        ["name"] = m.Attribute("name")?.Value,
+                        ["offset"] = int.Parse(m.Attribute("offset")!.Value),
+                        ["vtype"] = m.Attribute("vtype")?.Value,
+                        ["vsub"] = m.Attribute("vsubtype")?.Value,
+                        ["ctype"] = m.Attribute("ctype")?.Value,
+                        ["etype"] = m.Attribute("etype")?.Value,
+                        ["arrsize"] = size,
+                        ["written"] = written,
+                        ["default"] = m.Attribute("default")?.Value,
+                    });
+                }
+
+                var declaredEnums = new SortedDictionary<string, object>(StringComparer.Ordinal);
+                foreach (var e in root.Element("enums")?.Elements("enum")
+                                  ?? Enumerable.Empty<System.Xml.Linq.XElement>())
+                {
+                    var items = new SortedDictionary<string, long>(StringComparer.Ordinal);
+                    foreach (var i in e.Elements("enumitem"))
+                        items[i.Attribute("name")!.Value] = long.Parse(i.Attribute("value")!.Value);
+
+                    declaredEnums[e.Attribute("name")!.Value] = items;
+                    enums++;
+                    values += items.Count;
+                }
+
+                int? size2 = sizes[name]?.Size;
+                if (size2 != null) sized++;
+
+                classes[name] = JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    ["parent"] = root.Attribute("parent")?.Value,
+                    ["signature"] = root.Attribute("signature")?.Value,
+                    ["size"] = size2,
+                    ["members"] = declared,
+                    ["enums"] = declaredEnums,
+                });
+            }
+        }
+
+        if (classes.Count == 0)
+        {
+            Console.WriteLine($"{Path.GetFileName(jar)} holds no classxml/ entries.");
+            return 1;
+        }
+
+        var text = new System.Text.StringBuilder();
+        text.Append("{\n\"note\":");
+        text.Append(JsonSerializer.Serialize(
+            "What a Havok class is made of. The member types, which members are ever written to a " +
+            "file, the class of every inline struct and every enum's values come from the class " +
+            "database inside hkxpack's jar (MIT, see THIRD_PARTY_NOTICES.md), read out as a zip. " +
+            "The instance sizes come from HavokClassLayouts.json, which was read out of Fallout 4 " +
+            "itself. Rebuild with `symrm classes`."));
+        text.Append(",\n\"havokVersion\":\"hk_2014.1.0-r1\",\n\"classes\":{\n");
+        text.Append(string.Join(",\n", classes.Select(c => JsonSerializer.Serialize(c.Key) + ":" + c.Value)));
+        text.Append("\n}\n}\n");
+
+        File.WriteAllText(output, text.ToString());
+
+        Console.WriteLine($"{classes.Count} classes, {members} members, {sized} with an instance size");
+        Console.WriteLine($"  {ignored} members the engine never writes out");
+        Console.WriteLine($"  {structs} members naming the class of a struct");
+        Console.WriteLine($"  {fixedArrays} members that are a fixed length array");
+        Console.WriteLine($"  {values} values across {enums} enums");
+        Console.WriteLine($"written to {output}, {new FileInfo(output).Length / 1024} KB");
+
+        var reread = HavokClassTypes.Parse(File.OpenRead(output));
+        Console.WriteLine($"reads back as {reread.Count} classes");
+        return reread.Count == classes.Count ? 0 : 1;
+    }
+
+    /// Every class every file names, against the definition this build holds for it.
+    ///
+    /// A packfile stores four bytes in front of each class name, and those four bytes are what a
+    /// class definition is: change a member's type or add one and the signature changes with it. So
+    /// this is the one check that can say a file was written against the same classes we read it
+    /// with, rather than merely that it parsed.
+    private static int Signatures(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        int read = 0, refused = 0, checkedNames = 0;
+        var problems = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (string file in files)
+        {
+            PackfileObjects objects;
+            try { objects = new PackfileObjects(PackfileImage.Read(file)); }
+            catch (Exception) { refused++; continue; }
+
+            read++;
+            var names = objects.ClassNames().ToList();
+            checkedNames += names.Count;
+            foreach (string problem in HavokClassTypes.Shipped.SignatureProblems(names))
+                problems[problem] = problems.GetValueOrDefault(problem) + 1;
+        }
+
+        Console.WriteLine($"{read} packfile(s) read, {refused} refused, " +
+                          $"{checkedNames} class name(s) checked, {problems.Count} kind(s) of problem");
+        foreach (var (problem, count) in problems.OrderByDescending(p => p.Value).Take(20))
+            Console.WriteLine($"   {problem} ({count} file(s))");
+
+        return problems.Count == 0 && read > 0 ? 0 : 1;
+    }
+
+    /// The gate on the class table: build the list of fields a file holds from the table alone, and
+    /// compare it to the list hkxpack writes for the same file.
+    ///
+    /// This is the whole question the table exists to answer. The panel's field list comes from
+    /// hkxpack's XML today, and it can only stop doing that if the table produces the same list —
+    /// the same names, in the same order, including the fields of every struct written inline, which
+    /// is where the count of elements has to be read out of the file itself.
+    private static int Fields(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx").OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        int exact = 0, wrong = 0, unresolved = 0, skipped = 0;
+        var examples = new List<string>();
+
+        foreach (string file in files)
+        {
+            string work = Path.Combine(Path.GetTempPath(), "symrm-fields");
+            string xml;
+            try
+            {
+                HkxTextEdit.ResetDirectory(work);
+                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+            }
+            catch (Exception e)
+            {
+                skipped++;
+                if (examples.Count < 8) examples.Add($"{Path.GetFileName(file)}: {e.Message.Split('\n')[0]}");
+                continue;
+            }
+
+            var objects = new PackfileObjects(PackfileImage.Read(file));
+            var ids = HkxTextEdit.ObjectIds(xml);
+            if (ids.Count != objects.Instances.Count) { skipped++; continue; }
+
+            for (int i = 0; i < ids.Count; i++)
+            {
+                var predicted = ClassFields.NamesOf(objects, objects.Instances[i]);
+                if (predicted == null) { unresolved++; continue; }
+
+                var seen = HkxTextEdit.ReadParams(xml, ids[i]).Select(p => p.Name).ToList();
+                if (predicted.SequenceEqual(seen, StringComparer.Ordinal)) { exact++; continue; }
+
+                wrong++;
+                if (examples.Count < 8)
+                    examples.Add($"{Path.GetFileName(file)} #{ids[i]} {objects.Instances[i].ClassName}\n" +
+                                 $"      from the table: {string.Join(" ", predicted.Take(20))}\n" +
+                                 $"      from hkxpack  : {string.Join(" ", seen.Take(20))}");
+            }
+        }
+
+        Console.WriteLine($"{files.Length} file(s): {exact} object(s) whose field list the table " +
+                          $"predicts exactly, {wrong} wrong, {unresolved} it could not work out, " +
+                          $"{skipped} file(s) skipped");
+        foreach (string line in examples) Console.WriteLine("   " + line);
+
+        return wrong == 0 && unresolved == 0 && exact > 0 ? 0 : 1;
+    }
+
     /// What the properties panel would show for every object in a file, against what hkxpack says
     /// about the same fields.
     ///
@@ -940,9 +1335,26 @@ public static class Program
         if (argv.Length < 2) { Usage(); return 1; }
         NeedHkxPack();
 
-        string file = Path.GetFullPath(argv[1]);
-        string work = Path.Combine(Path.GetTempPath(),
-                                   "symrm-panel-" + Path.GetFileNameWithoutExtension(file));
+        // A directory sweeps every file under it, the same way model, consumers and walk do. It did
+        // not before, and pointing it at one made it try to unpack the directory itself and fall over
+        // with a permission error, which reads as a broken tool rather than a wrong argument.
+        string target = Path.GetFullPath(argv[1]);
+        if (Directory.Exists(target))
+        {
+            int clean = 0, bad = 0;
+            foreach (string each in Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                                             .OrderBy(f => f, StringComparer.Ordinal))
+            {
+                var carried = new[] { argv[0], each }.Concat(argv.Skip(2)).ToArray();
+                if (Panel(carried) == 0) clean++; else bad++;
+            }
+
+            Console.WriteLine($"\n{clean} file(s) with nothing wrong on the panel, {bad} not");
+            return bad == 0 ? 0 : 1;
+        }
+
+        string file = target;
+        string work = WorkDirectory("symrm-panel-", file);
         if (Directory.Exists(work)) Directory.Delete(work, true);
 
         string xmlText = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
@@ -964,19 +1376,21 @@ public static class Program
             return at >= 0 && at < ids.Count ? "#" + ids[at] : "";
         }
 
-        int shown = 0, fromBytes = 0, fell = 0, agreed = 0;
+        int shown = 0, fromBytes = 0, fell = 0, agreed = 0, strided = 0, offered = 0;
         var byClassFallback = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var stridedClasses = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var disagreements = new List<string>();
 
         for (int i = 0; i < ids.Count; i++)
         {
             var xml = HkxTextEdit.ReadParams(xmlText, ids[i])
-                                 .Select(p => (p.Name, p.Value, p.Own)).ToList();
+                                 .Select(p => (p.Name, p.Value)).ToList();
             var fields = PanelFields.For(objects, objects.Instances[i], xml, Reference);
 
             for (int f = 0; f < fields.Count; f++)
             {
                 shown++;
+                if (fields[f].Options.Count > 0) offered++;
                 if (fields[f].From == PanelFields.Source.Fallback)
                 {
                     fell++;
@@ -1001,6 +1415,20 @@ public static class Program
                     continue;
                 }
 
+                // Not every disagreement is ours. A struct holding a vector is sixteen aligned, so
+                // the compiler pads it and the game records the padded size; hkxpack has no size in
+                // its data and rounds the end of the last member up to eight, so from the second
+                // element of an array of one of those onwards it reads from the wrong place. Those
+                // are counted apart and named, because calling them our disagreements would be
+                // wrong and dropping them would be worse.
+                if (fields[f].Owner.Length > 0 &&
+                    HavokClassTypes.Shipped.PaddedBeyondHkxPack(fields[f].Owner))
+                {
+                    strided++;
+                    stridedClasses[fields[f].Owner] = stridedClasses.GetValueOrDefault(fields[f].Owner) + 1;
+                    continue;
+                }
+
                 if (disagreements.Count < 20)
                     disagreements.Add($"#{ids[i]} {objects.Instances[i].ClassName}.{fields[f].Name} " +
                                       $"({fields[f].From}): panel shows '{fields[f].Value}', " +
@@ -1010,144 +1438,593 @@ public static class Program
 
         Console.WriteLine($"{Path.GetFileName(file)}: {shown} values on the panel, " +
                           $"{fromBytes} from the bytes, {fell} fallen back to hkxpack, " +
-                          $"{agreed} agreeing, {shown - agreed} not");
+                          $"{agreed} agreeing, {shown - agreed - strided} not" +
+                          (strided > 0 ? $", {strided} where hkxpack strides a padded struct wrongly" : "") +
+                          $", {offered} offered as a list of declared values");
+
+        foreach (var (cls, count) in stridedClasses.OrderByDescending(c => c.Value))
+            Console.WriteLine($"  hkxpack mis-strides {cls} x{count}");
 
         foreach (var (what, count) in byClassFallback.OrderByDescending(f => f.Value).Take(8))
             Console.WriteLine($"  fell back: {what} x{count}");
         foreach (string line in disagreements) Console.WriteLine("  " + line);
 
-        return shown == agreed ? 0 : 1;
+        return shown == agreed + strided ? 0 : 1;
     }
 
-    /// Builds the table of what an enum's numbers are called, by reading every enum and flags field
-    /// out of the bytes and setting it beside what hkxpack calls the same field. The names are not
-    /// in the class dump, so this is where they come from.
+    /// Two readings of one file, set beside each other field by field.
     ///
-    /// Deliberately pointed at a set of files rather than all of them, so the table can be built
-    /// from one set and checked against another. A table derived from the same files it is then
-    /// tested on proves nothing.
-    private static int Names(string[] argv)
+    /// Both readings come from the same producer at the moment, which sounds like a command that
+    /// cannot say anything and is the point: it is how the comparison gets to report zero before
+    /// anything is asked of it. The second reading becomes the byte reader when there is one, and
+    /// this is what will say whether it agrees. The faults the comparison has to catch are in the
+    /// suite rather than here, because deliberately breaking a file to prove a checker works is a
+    /// test, not a thing to run over a corpus.
+    private static int Model(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToList()
+            : new List<string> { target };
+
+        int clean = 0, bad = 0, unreadable = 0, objects = 0, compared = 0, disagreements = 0, strided = 0;
+        var stridedBy = new Dictionary<string, int>(StringComparer.Ordinal);
+        bool one = files.Count == 1;
+
+        foreach (string file in files)
+        {
+            string work = WorkDirectory("symrm-model-", file);
+            string xml;
+            try
+            {
+                HkxTextEdit.ResetDirectory(work);
+                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message.Split('\n')[0]}");
+                continue;
+            }
+
+            var first = BehaviourGraphModel.Parse(xml);
+            var second = SecondReading(xml, file);
+
+            // Not a disagreement. The reading refuses whole rather than coming back with holes in it
+            // when the class table cannot describe everything in the file, and saying so is the
+            // point: a file counted as agreeing because neither side read it would be the worst
+            // possible way to pass.
+            if (second == null)
+            {
+                unreadable++;
+                Console.WriteLine($"{Path.GetFileName(file)}: no reading, the class table does not " +
+                                  "describe every class in it");
+                continue;
+            }
+
+            var result = ModelDiff.Compare(first, second, 40, MisStrided);
+
+            objects += result.Objects;
+            compared += result.Compared;
+            disagreements += result.Total;
+            strided += result.Strided;
+            foreach (var (field, count) in result.StridedBy)
+                stridedBy[field] = stridedBy.GetValueOrDefault(field) + count;
+            if (result.Clean) clean++; else bad++;
+
+            if (one || !result.Clean)
+            {
+                Console.WriteLine($"{Path.GetFileName(file)}: {result}");
+                foreach (var difference in result.Shown) Console.WriteLine("  " + difference);
+                if (result.Total > result.Shown.Count)
+                    Console.WriteLine($"  and {result.Total - result.Shown.Count} more");
+            }
+        }
+
+        Console.WriteLine($"\n{clean} file(s) agreeing, {bad} not, {unreadable} without a reading, " +
+                          $"{objects} object(s), {compared} field(s) compared, " +
+                          $"{disagreements} disagreement(s), {strided} where hkxpack strides a " +
+                          "padded struct wrongly");
+
+        foreach (var (field, count) in stridedBy.OrderByDescending(f => f.Value))
+            Console.WriteLine($"  strided: {field} x{count}");
+
+        return bad == 0 ? 0 : 1;
+    }
+
+    /// What the tool does with each of the two readings, set beside each other.
+    ///
+    /// The model command says the readings hold the same values. This says the tool behaves the same
+    /// way on them: the same wires on the canvas, the same variables and events, the same findings
+    /// from the checker, the same rows in every state machine. If the fields agree these agree too,
+    /// which is exactly why it is worth running: it is what catches a field comparison that passed
+    /// for the wrong reason.
+    private static int Consumers(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToList()
+            : new List<string> { target };
+
+        int clean = 0, bad = 0, unreadable = 0, compared = 0, differing = 0;
+        int roleLines = 0, roleAgreeing = 0, roleDiffering = 0;
+        bool one = files.Count == 1;
+
+        foreach (string file in files)
+        {
+            string work = WorkDirectory("symrm-consumers-", file);
+            string xml;
+            try
+            {
+                HkxTextEdit.ResetDirectory(work);
+                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message.Split('\n')[0]}");
+                continue;
+            }
+
+            var objects = new PackfileObjects(PackfileImage.Read(file));
+            var second = NativeGraphModel.From(objects);
+            if (second == null)
+            {
+                unreadable++;
+                Console.WriteLine($"{Path.GetFileName(file)}: no reading from the bytes");
+                continue;
+            }
+
+            // What each event is used for, from the text and from the bytes. Not part of the model
+            // comparison because it is not read from the model: it is a walk of every place an index
+            // is written, including nesting the model does not carry, which is why it was the last
+            // thing here still needing Java. Compared here because this is where both readings of a
+            // file are already open.
+            var told = Roles(EventUsage.ByEvent(xml));
+            var read = Roles(EventUsage.ByEvent(objects));
+            roleLines += Math.Max(told.Count, read.Count);
+
+            for (int i = 0; i < Math.Max(told.Count, read.Count); i++)
+            {
+                string fromText = i < told.Count ? told[i] : "(nothing)";
+                string fromBytes = i < read.Count ? read[i] : "(nothing)";
+
+                if (string.Equals(fromText, fromBytes, StringComparison.Ordinal)) roleAgreeing++;
+                else
+                {
+                    roleDiffering++;
+                    if (roleDiffering <= 10)
+                        Console.WriteLine($"{Path.GetFileName(file)} roles: {fromText}\n" +
+                                          $"  against {fromBytes}");
+                }
+            }
+
+            var result = ConsumerDiff.Compare(BehaviourGraphModel.Parse(xml), second);
+            compared += result.Compared;
+            differing += result.Differences.Count;
+            if (result.Clean) clean++; else bad++;
+
+            if (one || !result.Clean)
+            {
+                Console.WriteLine($"{Path.GetFileName(file)}: {result}");
+                foreach (var difference in result.Differences) Console.WriteLine("  " + difference);
+            }
+        }
+
+        Console.WriteLine($"\n{clean} file(s) behaving the same, {bad} not, {unreadable} without a " +
+                          $"reading, {compared} output(s) compared, {differing} differing");
+        Console.WriteLine($"event roles: {roleLines} line(s) compared, {roleAgreeing} agreeing, " +
+                          $"{roleDiffering} not");
+
+        return bad == 0 && roleDiffering == 0 ? 0 : 1;
+    }
+
+    /// What order the two pointer tables are in, worked out from the classes and checked against
+    /// the file.
+    ///
+    /// The rule itself lives in FixupOrder, because writing has to reproduce it. This is what says
+    /// the rule is the file's own and not our idea of it.
+    /// Adds one object to a real file and checks what hkxpack makes of the result.
+    ///
+    /// The count is not the check. A count matches even when every object after an insertion point
+    /// shifted by one, which is exactly the failure worth catching, so this compares the class of
+    /// every number before and after and then asserts the new object is the last number rather than
+    /// somewhere in the middle.
+    private static int Append(string[] argv)
     {
         if (argv.Length < 3) { Usage(); return 1; }
         NeedHkxPack();
 
-        string directory = Path.GetFullPath(argv[1]);
-        string output = Path.GetFullPath(argv[^1]);
-        int every = argv.Length > 3 && int.TryParse(argv[2], out int n) ? n : 1;
+        string file = Path.GetFullPath(argv[1]);
+        string className = argv[2];
 
-        var files = Directory.GetFiles(directory, "*.hkx").OrderBy(f => f, StringComparer.Ordinal)
-                             .Where((_, i) => i % every == 0).ToList();
+        // A save that changes nothing has to give back the same bytes, or nothing measured after an
+        // append can be attributed to the append.
+        var original = File.ReadAllBytes(file);
+        if (!PackfileImage.Read(original).Rebuild().SequenceEqual(original))
+        {
+            Console.WriteLine("the file does not survive a save that changes nothing, so nothing " +
+                              "below would mean anything");
+            return 1;
+        }
+        Console.WriteLine($"{Path.GetFileName(file)}: a save with no changes is byte identical");
 
-        var seen = new Dictionary<string, Dictionary<long, string>>(StringComparer.Ordinal);
-        var combining = new HashSet<string>(StringComparer.Ordinal);
-        var conflicts = new List<string>();
-        int read = 0;
+        string work = WorkDirectory("symrm-append-", file);
+        HkxTextEdit.ResetDirectory(work);
+        var told = Numbered(HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work)));
 
-        string work = Path.Combine(Path.GetTempPath(), "symrm-names");
+        var image = PackfileImage.Read(original);
+        var added = NativeAppend.Object(image, className);
+        Console.WriteLine($"appended {className} as {added}");
+
+        // Attaching is the half that makes it an edit rather than an orphan. Given a source object
+        // and one of its pointer fields, the new object is wired into the graph and the round trip
+        // below has to show hkxpack reading that field as the new number.
+        string attachTo = argv.Length > 4 ? argv[4] : "";
+        int attachFrom = argv.Length > 3 && int.TryParse(argv[3], out int f) ? f : -1;
+
+        if (attachFrom >= 0 && attachTo.Length > 0)
+        {
+            NativeAppend.Attach(image, attachFrom, attachTo, added.Id);
+            Console.WriteLine($"attached: #{attachFrom}.{attachTo} now points at #{added.Id}");
+        }
+
+        string written = Path.Combine(work, "appended.hkx");
+        image.Save(written);
+
+        // Read back from disk rather than from the image in memory, so anything the rebuild gets
+        // wrong shows up here rather than being carried over.
+        var reloaded = new PackfileObjects(PackfileImage.Read(written));
+        Console.WriteLine($"reloaded from disk: {reloaded.Instances.Count} object(s), " +
+                          $"last is {reloaded.Instances[^1].ClassName}");
+
+        string second = WorkDirectory("symrm-append-out-", written);
+        HkxTextEdit.ResetDirectory(second);
+        var read = Numbered(HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, written, second)));
+
+        int moved = 0;
+        foreach (var (id, was) in told)
+            if (!read.TryGetValue(id, out string? now) || now != was)
+            {
+                if (moved < 8)
+                    Console.WriteLine($"  #{id} was {was} and is now {(now ?? "absent")}");
+                moved++;
+            }
+
+        bool numbered = read.TryGetValue(added.Id, out string? newClass) && newClass == className;
+
+        // Read out of hkxpack's own text rather than out of our reading of the file, because the
+        // question is whether hkxpack sees the wire, not whether we do.
+        bool wired = attachFrom < 0 || attachTo.Length == 0;
+        if (!wired)
+        {
+            string after2 = HkxTextEdit.ReadXml(Path.Combine(second,
+                                Path.GetFileNameWithoutExtension(written) + ".xml"));
+            var block = HkxTextEdit.ReadParams(after2, attachFrom.ToString());
+            string held = block.FirstOrDefault(p => p.Name == attachTo)?.Value ?? "(absent)";
+            wired = held == "#" + added.Id;
+            Console.WriteLine($"hkxpack reads #{attachFrom}.{attachTo} as {held}, " +
+                              $"expected #{added.Id}");
+        }
+
+        Console.WriteLine($"\nhkxpack read {told.Count} object(s) before and {read.Count} after, " +
+                          $"{moved} of the original numbers holding something else, " +
+                          $"the new one is {(numbered ? $"#{added.Id} {className} as predicted" : "not where it was predicted")}");
+
+        return moved == 0 && numbered && wired && read.Count == told.Count + 1 ? 0 : 1;
+    }
+
+    /// Takes an object out of the graph without taking it out of the file, and checks what hkxpack
+    /// makes of the result.
+    ///
+    /// The check is not that the object is gone, because it is not meant to be. It is that nothing
+    /// reaches it any more, that it still holds the class it held, that every other number is
+    /// untouched, and that an array which held it got shorter rather than gaining a null. That last
+    /// one matters more than it looks: the engine reads a child's vtable without a null check, so a
+    /// null left in a children array is a crash on load.
+    private static int Orphan(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string file = Path.GetFullPath(argv[1]);
+        int id = int.Parse(argv[2]);
+
+        var original = File.ReadAllBytes(file);
+        if (!PackfileImage.Read(original).Rebuild().SequenceEqual(original))
+        {
+            Console.WriteLine("the file does not survive a save that changes nothing");
+            return 1;
+        }
+
+        string work = WorkDirectory("symrm-orphan-", file);
+        HkxTextEdit.ResetDirectory(work);
+        string beforeXml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+        var told = Numbered(beforeXml);
+
+        int pointedAt = References(beforeXml, id);
+        Console.WriteLine($"{Path.GetFileName(file)}: #{id} is a {told.GetValueOrDefault(id, "?")}, " +
+                          $"reached from {pointedAt} place(s)");
+
+        var image = PackfileImage.Read(original);
+        var result = NativeRemove.Orphan(image, id);
+        Console.WriteLine($"orphaned {result}");
+
+        string written = Path.Combine(work, "orphaned.hkx");
+        image.Save(written);
+
+        string second = WorkDirectory("symrm-orphan-out-", written);
+        HkxTextEdit.ResetDirectory(second);
+        string afterXml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, written, second));
+        var read = Numbered(afterXml);
+
+        int moved = told.Count(p => !read.TryGetValue(p.Key, out string? now) || now != p.Value);
+        int left = References(afterXml, id);
+        bool present = read.ContainsKey(id) && read[id] == told.GetValueOrDefault(id);
+
+        // A null child is the thing that must not appear. Counted across the whole file rather than
+        // in the arrays that changed, because an orphan that pushes one anywhere is still a crash.
+        int nullsBefore = Nulls(beforeXml), nullsAfter = Nulls(afterXml);
+
+        Console.WriteLine($"\nhkxpack read {told.Count} object(s) before and {read.Count} after, " +
+                          $"{moved} of the original numbers holding something else, " +
+                          $"#{id} is {(present ? "still there" : "gone")} and now reached from " +
+                          $"{left} place(s), null children {nullsBefore} before and {nullsAfter} after");
+
+        return moved == 0 && present && left == 0 && read.Count == told.Count
+               && nullsAfter == nullsBefore ? 0 : 1;
+    }
+
+    /// How many places in the text point at an object, not counting the line that declares it.
+    /// hkxpack writes the object's own id as its name attribute, and counting that as a reference
+    /// makes an orphan look like it is still reached from one place.
+    private static int References(string xml, int id) =>
+        System.Text.RegularExpressions.Regex.Matches(xml, $@"#{id}\b").Count
+        - System.Text.RegularExpressions.Regex.Matches(xml, $@"name=""#{id}""").Count;
+
+    /// Null elements inside an array of object pointers, which is the shape the engine crashes on.
+    private static int Nulls(string xml) =>
+        System.Xml.Linq.XDocument.Parse(xml).Descendants("hkparam")
+            .Where(p => p.Attribute("numelements") != null && !p.Elements().Any())
+            .Sum(p => (p.Value ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                                     .Count(t => t == "null"));
+
+    /// Every object hkxpack numbers, by number, with the class it holds.
+    private static Dictionary<int, string> Numbered(string xml)
+    {
+        var found = new Dictionary<int, string>();
+        foreach (var element in System.Xml.Linq.XDocument.Parse(xml).Descendants("hkobject"))
+        {
+            string? name = element.Attribute("name")?.Value;
+            string? cls = element.Attribute("class")?.Value;
+            if (name == null || cls == null || !name.StartsWith('#')) continue;
+            if (int.TryParse(name[1..], out int id)) found[id] = cls;
+        }
+        return found;
+    }
+
+    private static int Walk(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToList()
+            : new List<string> { target };
+
+        int clean = 0, bad = 0, entries = 0, virtuals = 0;
+
         foreach (string file in files)
         {
-            string xml;
-            try
-            {
-                if (Directory.Exists(work)) Directory.Delete(work, true);
-                xml = HkxTextEdit.Unpack(_java, _jar, file, work);
-            }
+            PackfileImage image;
+            try { image = PackfileImage.Read(file); }
             catch (Exception e)
             {
-                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message}");
+                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message.Split('\n')[0]}");
                 continue;
             }
 
-            read++;
-            var document = System.Xml.Linq.XDocument.Load(xml);
-            var byClass = new Dictionary<string, List<Dictionary<string, string>>>(StringComparer.Ordinal);
-            foreach (var element in document.Descendants("hkobject"))
-            {
-                string? cls = element.Attribute("class")?.Value;
-                if (cls == null) continue;
+            var data = image.Section("__data__");
+            if (data == null) continue;
 
-                var fields = new Dictionary<string, string>(StringComparer.Ordinal);
-                foreach (var p in element.Elements("hkparam"))
+            var objects = new PackfileObjects(image);
+            var types = HavokClassTypes.Shipped;
+            if (objects.Instances.Any(i => !types.Knows(i.ClassName))) continue;
+
+            bool ok = true;
+
+            // The object list is the virtual fixup table read in order, and an object's `#id` is its
+            // position in that list. Appending a new object puts its bytes at the end of the section
+            // and its entry at the end of this table, and that only gives the new object the last
+            // number if table order and file order are already the same thing. Measured rather than
+            // assumed, because everything downstream of an append rests on it: the per class index a
+            // change names, and the `#id` hkxpack will print.
+            var offsets = data.Virtuals().Select(v => v.Source).ToList();
+            virtuals += offsets.Count;
+            for (int at = 1; at < offsets.Count; at++)
+                if (offsets[at] <= offsets[at - 1])
                 {
-                    string? name = p.Attribute("name")?.Value;
-                    if (name != null) fields[name] = (p.Value ?? "").Trim();
+                    ok = false;
+                    Console.WriteLine($"{Path.GetFileName(file)}: the virtual table is not in file " +
+                                      $"order, entry {at} at 0x{offsets[at]:x} follows " +
+                                      $"0x{offsets[at - 1]:x}");
+                    break;
                 }
-                if (!byClass.TryGetValue(cls, out var list)) byClass[cls] = list = new();
-                list.Add(fields);
+
+            foreach (bool global in new[] { true, false })
+            {
+                var actual = global ? data.Globals().Select(g => g.Source).ToList()
+                                    : data.Locals().Select(l => l.Source).ToList();
+                var predicted = FixupOrder.Sources(objects, types, data, global);
+                entries += actual.Count;
+
+                if (predicted.SequenceEqual(actual)) continue;
+
+                ok = false;
+                int at = predicted.Zip(actual).TakeWhile(p => p.First == p.Second).Count();
+                Console.WriteLine($"{Path.GetFileName(file)}: the {(global ? "global" : "local")} " +
+                                  $"table is not in that order, {predicted.Count} predicted against " +
+                                  $"{actual.Count}, first differing at {at}");
+            }
+
+            if (ok) clean++; else bad++;
+        }
+
+        Console.WriteLine($"\n{clean} file(s) with both tables in the predicted order, {bad} not, " +
+                          $"{entries} entr(ies) checked, {virtuals} object(s) whose virtual entries " +
+                          "run in file order");
+        return bad == 0 ? 0 : 1;
+    }
+
+    /// Where every event and variable index is written, read out of the text and out of the bytes,
+    /// set beside each other.
+    ///
+    /// This is the last thing the symbols tab needed hkxpack for. The graph model cannot answer it,
+    /// because these indices sit deeper than the one level of nesting the model records, so the byte
+    /// side walks the class table rather than the model. Two different walks over two different
+    /// forms of the same file, which is what makes agreement worth anything.
+    private static int Symbols(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToList()
+            : new List<string> { target };
+
+        int clean = 0, bad = 0, compared = 0, differing = 0;
+        bool one = files.Count == 1;
+
+        foreach (string file in files)
+        {
+            string work = WorkDirectory("symrm-symbols-", file);
+            string xml;
+            try
+            {
+                HkxTextEdit.ResetDirectory(work);
+                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message.Split('\n')[0]}");
+                continue;
             }
 
             var objects = new PackfileObjects(PackfileImage.Read(file));
-            foreach (var group in objects.Instances.GroupBy(i => i.ClassName))
+            var problems = new List<string>();
+
+            foreach (bool events in new[] { true, false })
             {
-                if (!byClass.TryGetValue(group.Key, out var theirs)) continue;
-                var ours = group.ToList();
-                if (ours.Count != theirs.Count) continue;
+                var text = SymbolIndexFixup.Usages(xml, events);
+                var bytes = SymbolIndexFixup.Usages(objects, events);
+                compared += text.Count;
 
-                foreach (var member in HavokClasses.Shipped.Members(group.Key))
+                string what = events ? "events" : "variables";
+                if (text.Count != bytes.Count)
                 {
-                    if (!member.Type.StartsWith("enum of", StringComparison.Ordinal) &&
-                        !member.Type.StartsWith("flags of", StringComparison.Ordinal)) continue;
-
-                    string key = HavokEnums.Key(member);
-                    if (member.Type.StartsWith("flags of", StringComparison.Ordinal)) combining.Add(key);
-
-                    for (int i = 0; i < ours.Count; i++)
-                    {
-                        if (!theirs[i].TryGetValue(member.Name, out string? name)) continue;
-                        if (name.Length == 0 || long.TryParse(name, out _)) continue;
-
-                        // A combination is left out: which bit is which cannot be told from
-                        // `A|B` alone, and it falls out of the single names anyway.
-                        if (name.Contains('|')) continue;
-
-                        long? value = Value(objects, ours[i], member);
-                        if (value == null) continue;
-
-                        if (!seen.TryGetValue(key, out var names)) seen[key] = names = new();
-                        if (names.TryGetValue(value.Value, out string? already))
-                        {
-                            if (already != name && conflicts.Count < 12)
-                                conflicts.Add($"{key} = {value}: {already} here, {name} in " +
-                                              Path.GetFileName(file));
-                        }
-                        else names[value.Value] = name;
-                    }
+                    problems.Add($"{what}: {text.Count} usage(s) in the text against {bytes.Count}");
+                    continue;
                 }
+
+                for (int i = 0; i < text.Count; i++)
+                    if (!Same(text[i], bytes[i]))
+                    {
+                        problems.Add($"{what} {i}: {Spell(text[i])} against {Spell(bytes[i])}");
+                        if (problems.Count > 8) break;
+                    }
+            }
+
+            // What the symbols tab actually draws under each event, not only the sites it is built
+            // from. The rows are the thing a person sees, so agreeing on the sites and disagreeing
+            // on the rows would still be a different tab.
+            var rowsText = EventUsage.ByEvent(xml);
+            var rowsBytes = EventUsage.ByEvent(objects);
+            compared += rowsText.Sum(e => e.Value.Count);
+
+            if (rowsText.Count != rowsBytes.Count)
+                problems.Add($"events with usage: {rowsText.Count} in the text against {rowsBytes.Count}");
+            else
+                foreach (var (index, lines) in rowsText.OrderBy(e => e.Key))
+                {
+                    if (!rowsBytes.TryGetValue(index, out var mine))
+                    {
+                        problems.Add($"event {index}: {lines.Count} line(s) in the text against none");
+                        continue;
+                    }
+                    if (EventUsage.Summarise(lines) != EventUsage.Summarise(mine))
+                        problems.Add($"event {index}: \"{EventUsage.Summarise(lines)}\" against " +
+                                     $"\"{EventUsage.Summarise(mine)}\"");
+                }
+
+            var unknownText = SymbolIndexFixup.UnknownIndexFields(xml);
+            var unknownBytes = SymbolIndexFixup.UnknownIndexFields(objects);
+            compared++;
+            if (!unknownText.SequenceEqual(unknownBytes, StringComparer.Ordinal))
+                problems.Add($"unrecognised index fields: {unknownText.Count} in the text " +
+                             $"against {unknownBytes.Count}");
+
+            differing += problems.Count;
+            if (problems.Count == 0) clean++; else bad++;
+
+            if (one || problems.Count > 0)
+            {
+                Console.WriteLine($"{Path.GetFileName(file)}: {compared} usage(s) compared, " +
+                                  $"{problems.Count} differing");
+                foreach (string problem in problems) Console.WriteLine("  " + problem);
             }
         }
 
-        var table = seen.Select(f => (f.Key, combining.Contains(f.Key),
-                                      f.Value.Select(v => (v.Key, v.Value))));
-        File.WriteAllText(output, HavokEnums.Write(table));
+        Console.WriteLine($"\n{clean} file(s) agreeing, {bad} not, {compared} usage(s) compared, " +
+                          $"{differing} differing");
 
-        Console.WriteLine($"{read} file(s) read, {seen.Count} field(s) named, " +
-                          $"{seen.Sum(f => f.Value.Count)} value(s) in total, " +
-                          $"{conflicts.Count} conflict(s)");
-        foreach (string line in conflicts) Console.WriteLine("  " + line);
-        Console.WriteLine($"written to {output}");
-
-        return conflicts.Count == 0 ? 0 : 1;
+        return bad == 0 ? 0 : 1;
     }
 
-    /// An enum's number, at whatever width the field is. Signed on purpose where the type is:
-    /// `enum of int8` holding 0xFF is -1, and naming it 255 would miss the entry.
-    private static long? Value(PackfileObjects objects, PackfileObjects.Instance instance,
-                               HavokClasses.Member member)
+    private static bool Same(SymbolIndexFixup.Usage a, SymbolIndexFixup.Usage b) =>
+        a.Index == b.Index && a.Owner == b.Owner && a.Member == b.Member &&
+        a.ObjectId == b.ObjectId && a.OwnerClass == b.OwnerClass;
+
+    private static string Spell(SymbolIndexFixup.Usage u) =>
+        $"#{u.ObjectId} {u.OwnerClass} {u.Owner}.{u.Member}={u.Index}";
+
+    /// Every event's roles as lines, so two readings of them can be set beside each other.
+    private static List<string> Roles(Dictionary<int, List<EventUsage.Line>> byEvent)
     {
-        int? whole = objects.ReadInt(instance, member.Name);
-        if (whole == null) return null;
-
-        return member.Type switch
-        {
-            "enum of int8" => (sbyte)whole.Value,
-            "enum of uint8" => (byte)whole.Value,
-            "enum of int16" or "flags of int16" => (short)whole.Value,
-            "enum of uint16" or "flags of uint16" => (ushort)whole.Value,
-            "enum of int32" or "flags of int32" => whole.Value,
-            "enum of uint32" or "flags of uint32" => (uint)whole.Value,
-            _ => whole.Value,
-        };
+        var lines = new List<string>();
+        foreach (var (index, sites) in byEvent.OrderBy(e => e.Key))
+            foreach (var site in sites)
+                lines.Add($"event {index} {site.Role} {site.Site} x{site.Count} " +
+                          string.Join(",", site.ObjectIds));
+        return lines;
     }
+
+    /// The fields hkxpack reads at the wrong stride: an array whose elements are a struct aligned to
+    /// sixteen, which it sizes by rounding the last member up to eight. Three classes in the vanilla
+    /// corpus qualify, and the size we use comes from the game's own class registration rather than
+    /// from a rule about where members end.
+    private static bool MisStrided(string owningClass, string field)
+    {
+        var types = HavokClassTypes.Shipped;
+        foreach (var member in types.Members(owningClass))
+            if (member.Name == field)
+                return member.CType != null && types.PaddedBeyondHkxPack(member.CType);
+
+        return false;
+    }
+
+    /// The reading being checked. One line, and it is the whole of what changes when the byte reader
+    /// takes over, which is why it is a method rather than sitting inline in the loop above.
+    private static BehaviourGraphModel? SecondReading(string xml, string hkxPath) =>
+        NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(hkxPath)));
 
     private static int CrossCheck(string[] argv)
     {
@@ -1155,8 +2032,7 @@ public static class Program
 
         NeedHkxPack();
         string file = Path.GetFullPath(argv[1]);
-        string work = Path.Combine(Path.GetTempPath(),
-                                   "symrm-crosscheck-" + Path.GetFileNameWithoutExtension(file));
+        string work = WorkDirectory("symrm-crosscheck-", file);
         if (Directory.Exists(work)) Directory.Delete(work, true);
 
         string xmlFile = HkxTextEdit.Unpack(_java, _jar, file, work);
@@ -1348,7 +2224,16 @@ public static class Program
             : target != null && indexOf.TryGetValue(target, out int at) ? "@" + at
             : "a pointer landing where no object begins";
 
-        return FieldRender.Render(objects, instance, member, Reference, expected);
+        // The checker walks a class's members from the dump; the renderer works from the table.
+        // Where a member is in both, the offsets agree, which is a thing 3,894 comparisons say and
+        // not an assumption. Where it is only in the dump there is nothing to render it with, and
+        // it is counted as unread rather than guessed at.
+        var described = HavokClassTypes.Shipped.Members(instance.ClassName)
+                                       .FirstOrDefault(m => m.Name == member.Name);
+        if (described == null) return null;
+
+        return FieldRender.Render(objects, instance.Offset + described.Offset, instance.ClassName,
+                                  described, Reference, expected);
     }
 
     /// hkxpack and a raw read spell the same value differently: 1 against 1.0, true against 1, and a
