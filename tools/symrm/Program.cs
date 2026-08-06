@@ -760,8 +760,12 @@ public static class Program
     /// says no, and that applying that plan throws rather than writing something.
     private static bool ResizeIsRefused(string file, string originalXml)
     {
+        // animationName rather than the first name in the document. The first one belongs to an
+        // inline struct inside hkRootLevelContainer, so lengthening it is refused for being inside
+        // an array of struct, whatever the string rule says. The guard would then still pass with
+        // strings wrongly marked writable, which is the one regression it exists to catch.
         var match = System.Text.RegularExpressions.Regex.Match(
-            originalXml, "<hkparam name=\"name\">([^<]{3,})</hkparam>");
+            originalXml, "<hkparam name=\"animationName\">([^<]{3,})</hkparam>");
         if (!match.Success)
         {
             Console.WriteLine("  resize guard: no string field to lengthen here, skipped");
@@ -786,6 +790,14 @@ public static class Program
         }
         catch (InvalidOperationException)
         {
+            // The reason matters as much as the refusal. A refusal that arrives for some other
+            // reason leaves the string rule itself untested.
+            if (plan.Refusal?.Contains("stringptr", StringComparison.Ordinal) != true)
+            {
+                Console.WriteLine($"  resize guard: FAILED, refused for the wrong reason, {plan.Refusal}");
+                return false;
+            }
+
             Console.WriteLine($"  resize guard: refused as it should, {plan.Refusal}");
             return true;
         }

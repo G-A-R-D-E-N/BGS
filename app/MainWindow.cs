@@ -777,14 +777,16 @@ public class MainWindow : Window
         if (path != null) LoadMesh(path);
     }
 
-    private void LoadMesh(string path)
+    /// Returns false when the mesh could not be drawn, having already said why. The caller must not
+    /// then overwrite that with a message about the mesh it thinks it loaded.
+    private bool LoadMesh(string path)
     {
         var skeleton = PoseSkeleton();
         if (skeleton == null)
         {
             SetPlaybackSummary("No skeleton is resolved for this file, so a mesh has nothing to hang on.",
                                Ux.BadBrush);
-            return;
+            return false;
         }
 
         ClearMesh();
@@ -802,13 +804,13 @@ public class MainWindow : Window
             ClearMesh();
             SetPlaybackSummary($"Could not read {Path.GetFileName(path)}: {ex.Message.Split('\n')[0]}",
                                Ux.BadBrush);
-            return;
+            return false;
         }
 
         if (_meshShapes.Count == 0)
         {
             SetPlaybackSummary($"{Path.GetFileName(path)} holds no drawable shape.", Ux.MutedBrush);
-            return;
+            return false;
         }
 
         _meshPath = path;
@@ -833,6 +835,25 @@ public class MainWindow : Window
         SetPlaybackSummary(report, missing.Count > 0 ? Ux.WarnBrush : Ux.MetaBrush);
         ShowFrame(_poseFrame, stop: false);
         _skeleton.Frame();
+        return true;
+    }
+
+    /// Writes beside the target and moves the finished file into place. WriteAllBytes truncates
+    /// before it writes, so a disk filling up or a mod manager taking the file mid write would leave
+    /// the game's own file empty, with nothing but the backup to show it ever had contents.
+    private static void ReplaceFile(string path, byte[] bytes)
+    {
+        string staging = path + ".writing";
+        try
+        {
+            File.WriteAllBytes(staging, bytes);
+            File.Move(staging, path, overwrite: true);
+        }
+        catch
+        {
+            try { if (File.Exists(staging)) File.Delete(staging); } catch (IOException) { }
+            throw;
+        }
     }
 
     private void ClearMesh()
@@ -932,7 +953,8 @@ public class MainWindow : Window
             return;
         }
 
-        LoadMesh(found.Path!);
+        if (!LoadMesh(found.Path!)) return;
+
         SetPlaybackSummary($"Select a clip to see what it plays, on {Path.GetFileName(found.Path!)}.",
                            Ux.MutedBrush);
     }
@@ -2416,7 +2438,7 @@ public class MainWindow : Window
 
             string backup = _hkxPath + ".bak";
             if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
-            File.WriteAllBytes(_hkxPath, bytes);
+            ReplaceFile(_hkxPath, bytes);
 
             ResetHistory();
             SetStatus($"Saved {plan.Changes.Count} " +

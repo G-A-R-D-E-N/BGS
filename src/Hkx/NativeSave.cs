@@ -36,7 +36,7 @@ public static class NativeSave
     /// pointers most of all, changes the size of something and is therefore not ours to write.
     private static readonly HashSet<string> Writable = new(StringComparer.Ordinal)
     {
-        "real", "int32", "uint32", "int16", "uint16", "int8", "uint8", "bool", "enum", "half",
+        "real", "int32", "uint32", "int16", "uint16", "int8", "uint8", "bool", "enum",
     };
 
     /// Works out what changed between the file as loaded and the file as edited, and whether all of
@@ -82,6 +82,10 @@ public static class NativeSave
                             $"{className}.{field} changed, and a {type} cannot be written in place " +
                             "without moving what follows it");
 
+                    if (!Parses(now, type))
+                        return new Plan(changes,
+                            $"{className}.{field} was set to '{now}', which is not a {type}");
+
                     changes.Add(new Change(className, i, field, now));
                 }
 
@@ -104,6 +108,21 @@ public static class NativeSave
         var objects = new PackfileObjects(image, classes);
         var byClass = objects.Instances.GroupBy(i => i.ClassName)
                                        .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+
+        // The plan counts objects as the XML lists them and this writes them as the file stores
+        // them, which only line up while both agree how many of a class there are. They often do
+        // not: hkxpack gives an inline struct its own object and the file does not. Today the
+        // enclosing struct is always refused first so a mismatched class never reaches here, but
+        // that is a consequence of other code rather than anything this checks, and writing a right
+        // value into the wrong object is exactly the silent kind of wrong.
+        foreach (var group in plan.Changes.GroupBy(c => c.ClassName))
+        {
+            int inFile = byClass.TryGetValue(group.Key, out var all) ? all.Count : 0;
+            if (group.Max(c => c.Index) >= inFile)
+                throw new InvalidOperationException(
+                    $"The file holds {inFile} {group.Key} objects, fewer than the edit expects, so " +
+                    "nothing was written rather than guessing which one was meant.");
+        }
 
         foreach (var change in plan.Changes)
         {
@@ -149,8 +168,45 @@ public static class NativeSave
         return true;
     }
 
+    /// Whether a typed value is really of the type the field holds. Checked when the edit is judged
+    /// rather than when it is written, so a value that is not a number is refused with the field
+    /// named instead of quietly landing as zero. Locale is fixed on purpose: the document spells
+    /// numbers one way, and reading '1,5' as fifteen tenths because of a machine setting would put a
+    /// number in the file that nobody typed.
+    private static bool Parses(string value, string type)
+    {
+        string text = value.Trim();
+        if (type == "bool")
+            return text is "true" or "false" or "1" or "0";
+
+        if (type == "real")
+            return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float f)
+                   && !float.IsNaN(f) && !float.IsInfinity(f);
+
+        if (!long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long n) &&
+            !(text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+              long.TryParse(text[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out n)))
+            return false;
+
+        // 8: the write masks the value down to the field's width, so a number too big for the field
+        // would land as its low bytes and read as a different number entirely.
+        return type switch
+        {
+            "int8" => n is >= -128 and <= 127,
+            "uint8" or "enum" => n is >= 0 and <= 255,
+            "int16" => n is >= short.MinValue and <= short.MaxValue,
+            "uint16" => n is >= 0 and <= ushort.MaxValue,
+            "int32" => n is >= int.MinValue and <= int.MaxValue,
+            "uint32" => n is >= 0 and <= uint.MaxValue,
+            _ => true,
+        };
+    }
+
     private static float AsFloat(string value) =>
-        float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float f) ? f : 0f;
+        float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float f)
+            ? f
+            : throw new InvalidOperationException(
+                $"'{value}' is not a number, so it cannot be written into a real field.");
 
     /// hkxpack writes a bool as true or false and an enum by name, neither of which parses as a
     /// number. A name we cannot resolve is refused earlier rather than guessed at here.

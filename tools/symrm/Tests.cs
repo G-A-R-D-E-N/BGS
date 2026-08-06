@@ -53,6 +53,7 @@ public static class Tests
         ("TracksDriveTheBonesTheyName", TracksDriveTheBonesTheyName),
         ("AnimationsForAnotherRigAreRefused", AnimationsForAnotherRigAreRefused),
         ("AModelIsFoundOnlyWhenThereIsNoDoubt", AModelIsFoundOnlyWhenThereIsNoDoubt),
+        ("AValueThatIsNotANumberIsRefused", AValueThatIsNotANumberIsRefused),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1606,5 +1607,45 @@ public static class Tests
 
         var deduped = MeshLookup.Places("/x/Root.hkx", "/x", "/x/skeleton.hkt").ToList();
         Check("one folder is searched once", 1, deduped.Count);
+    }
+
+    // A field's type says how wide the value is, not that what was typed is a value of that type.
+    // Left unchecked the writer took whatever it could parse and wrote zero for the rest, so a
+    // mistyped speed became a clip that does not play rather than an edit that was refused.
+    private static void AValueThatIsNotANumberIsRefused()
+    {
+        const string Before = """
+            <hkpackfile><hksection name="__data__">
+            <hkobject name="#0010" class="hkbClipGenerator" signature="0x333b85b9">
+                <hkparam name="playbackSpeed">1.0</hkparam>
+                <hkparam name="userPartitionMask">0</hkparam>
+                <hkparam name="ignoreStartTime">false</hkparam>
+            </hkobject></hksection></hkpackfile>
+            """;
+
+
+        foreach (string rubbish in new[] { "abc", "1.5x", "1,5", "" })
+        {
+            var plan = NativeSave.Compare(Before, Before.Replace(">1.0<", $">{rubbish}<"));
+            CheckTrue($"a playbackSpeed of '{rubbish}' is refused", !plan.Possible);
+            CheckTrue($"and the refusal names the field, not '{rubbish}'",
+                      plan.Refusal?.Contains("playbackSpeed", StringComparison.Ordinal) == true);
+        }
+
+        var good = NativeSave.Compare(Before, Before.Replace(">1.0<", ">0.25<"));
+        CheckTrue("a real number is still accepted", good.Possible);
+        Check("and is the only change", 1, good.Changes.Count);
+
+        // Not a number, and not something to be quietly folded to zero either.
+        foreach (string special in new[] { "NaN", "Infinity" })
+            CheckTrue($"'{special}' is refused rather than written",
+                      !NativeSave.Compare(Before, Before.Replace(">1.0<", $">{special}<")).Possible);
+
+        // The write masks down to the field's width, so a number too big lands as its low bytes.
+        var tooBig = NativeSave.Compare(Before, Before.Replace(">0<", ">99999999999<"));
+        CheckTrue("a number too big for the field is refused", !tooBig.Possible);
+
+        var fits = NativeSave.Compare(Before, Before.Replace(">0<", ">3<"));
+        CheckTrue("one that fits is accepted", fits.Possible);
     }
 }

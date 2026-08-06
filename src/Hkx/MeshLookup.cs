@@ -68,7 +68,7 @@ public static class MeshLookup
                 ? Directory.GetFiles(folder, "*.nif", SearchOption.TopDirectoryOnly)
                 : Array.Empty<string>();
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return Array.Empty<string>();
         }
