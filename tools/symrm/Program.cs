@@ -42,6 +42,7 @@ public static class Program
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
             case "model": return Model(argv);
+            case "consumers": return Consumers(argv);
             case "classes": return Classes(argv);
             case "fields": return Fields(argv);
             case "signatures": return Signatures(argv);
@@ -1364,6 +1365,68 @@ public static class Program
 
         foreach (var (field, count) in stridedBy.OrderByDescending(f => f.Value))
             Console.WriteLine($"  strided: {field} x{count}");
+
+        return bad == 0 ? 0 : 1;
+    }
+
+    /// What the tool does with each of the two readings, set beside each other.
+    ///
+    /// The model command says the readings hold the same values. This says the tool behaves the same
+    /// way on them: the same wires on the canvas, the same variables and events, the same findings
+    /// from the checker, the same rows in every state machine. If the fields agree these agree too,
+    /// which is exactly why it is worth running: it is what catches a field comparison that passed
+    /// for the wrong reason.
+    private static int Consumers(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToList()
+            : new List<string> { target };
+
+        int clean = 0, bad = 0, unreadable = 0, compared = 0, differing = 0;
+        bool one = files.Count == 1;
+
+        foreach (string file in files)
+        {
+            string work = WorkDirectory("symrm-consumers-", file);
+            string xml;
+            try
+            {
+                HkxTextEdit.ResetDirectory(work);
+                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message.Split('\n')[0]}");
+                continue;
+            }
+
+            var second = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(file)));
+            if (second == null)
+            {
+                unreadable++;
+                Console.WriteLine($"{Path.GetFileName(file)}: no reading from the bytes");
+                continue;
+            }
+
+            var result = ConsumerDiff.Compare(BehaviourGraphModel.Parse(xml), second);
+            compared += result.Compared;
+            differing += result.Differences.Count;
+            if (result.Clean) clean++; else bad++;
+
+            if (one || !result.Clean)
+            {
+                Console.WriteLine($"{Path.GetFileName(file)}: {result}");
+                foreach (var difference in result.Differences) Console.WriteLine("  " + difference);
+            }
+        }
+
+        Console.WriteLine($"\n{clean} file(s) behaving the same, {bad} not, {unreadable} without a " +
+                          $"reading, {compared} output(s) compared, {differing} differing");
 
         return bad == 0 ? 0 : 1;
     }

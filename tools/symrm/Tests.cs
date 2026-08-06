@@ -61,6 +61,7 @@ public static class Tests
         ("TheModelComparisonCatchesFaultsPutThereOnPurpose", TheModelComparisonCatchesFaultsPutThereOnPurpose),
         ("AFloatIsSpelledTheWayHkxPackSpellsIt", AFloatIsSpelledTheWayHkxPackSpellsIt),
         ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
+        ("TheConsumerComparisonCatchesADifferentAnswer", TheConsumerComparisonCatchesADifferentAnswer),
         ("TheReadingFromTheBytesRefusesWhatItCannotDescribe", TheReadingFromTheBytesRefusesWhatItCannotDescribe),
         ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
@@ -2220,6 +2221,48 @@ public static class Tests
         Check("and the infinities", "-Infinity", HkxNumber.Text(float.NegativeInfinity));
     }
 
+    /// The other half of the comparison: not whether the two readings hold the same values, but
+    /// whether the tool does the same thing with them.
+    ///
+    /// Same rule as the field comparison. A run that reports no difference proves nothing unless the
+    /// thing can report one, and this one has more room to quietly agree than the field walk does,
+    /// because every consumer here is capable of returning an empty list and two empty lists match.
+    private static void TheConsumerComparisonCatchesADifferentAnswer()
+    {
+        Console.WriteLine("\nthe consumer comparison catches a different answer");
+
+        var clean = ConsumerDiff.Compare(Reading(), Reading());
+        CheckTrue("two readings of one file behave the same", clean.Clean);
+        Check("across every consumer", 13, clean.Compared);
+
+        ConsumerDiff.Result After(Action<BehaviourGraphModel> change) =>
+            ConsumerDiff.Compare(Reading(), Broken(change));
+
+        // Two, not one, and the second is the more interesting. Pointing a wire at an object that is
+        // not there changes the canvas, and it also gives the checker a dangling reference to
+        // report, so a single wrong value surfaces in two places. That is what a consumer comparison
+        // is for: the same fault reaching everything downstream of it.
+        var rewired = After(m => m.Objects[0].Scalars["triggers"] = "#404");
+        Check("a wire pointing at nothing shows up twice", 2, rewired.Differences.Count);
+        Check("once in the checker", "checker findings", rewired.Differences[0].Consumer);
+        Check("and once in the wiring", "the wiring", rewired.Differences[1].Consumer);
+        CheckTrue("naming the line it is on",
+                  rewired.Differences[1].What.StartsWith("line 1 of", StringComparison.Ordinal));
+
+        // A class change moves the object out of the shapes table, so it stops having wires at all.
+        var reclassed = After(m => m.Objects[0].Class = "hkbNothing");
+        CheckTrue("a class the wiring does not know about is a difference too", !reclassed.Clean);
+
+        // Nothing to compare is not the same as agreeing. Two readings of nothing agree, and that
+        // has to stay true or every empty file would report a fault.
+        var nothing = ConsumerDiff.Compare(new BehaviourGraphModel(), new BehaviourGraphModel());
+        CheckTrue("two readings of an empty file still agree", nothing.Clean);
+
+        // But a reading of nothing set against a real one does not.
+        CheckTrue("a reading of nothing does not agree with a real one",
+                  !ConsumerDiff.Compare(Reading(), new BehaviourGraphModel()).Clean);
+    }
+
     /// Anything wider than four floats is written as a run of bracketed fours, not as one bracket
     /// holding the lot. Read off a vanilla skeleton's reference pose, where a qstransform is three
     /// of them run together with nothing between.
@@ -2316,6 +2359,14 @@ public static class Tests
 
     private static BehaviourGraphModel Reading() => BehaviourGraphModel.Parse(TwoObjects);
 
+    /// A second reading of the same file with something wrong put into it on purpose.
+    private static BehaviourGraphModel Broken(Action<BehaviourGraphModel> change)
+    {
+        var reading = Reading();
+        change(reading);
+        return reading;
+    }
+
     /// The comparison that will decide whether a graph model built from the bytes is the same as the
     /// one built from hkxpack's text, checked before it is trusted to say so.
     ///
@@ -2342,13 +2393,6 @@ public static class Tests
                                            + o.Structs.Sum(s => s.Value.Count)
                                            + o.StructLists.Sum(s => 1 + s.Value.Sum(e => e.Count)));
         Check("having compared every field the file holds", inTheFile, clean.Compared);
-
-        BehaviourGraphModel Broken(Action<BehaviourGraphModel> break_)
-        {
-            var second = Reading();
-            break_(second);
-            return second;
-        }
 
         int Faults(Action<BehaviourGraphModel> break_) =>
             ModelDiff.Compare(Reading(), Broken(break_)).Total;

@@ -33,11 +33,27 @@ public static class GraphValidator
     public static List<Finding> Check(string xml, ProjectChain? chain = null)
     {
         var model = BehaviourGraphModel.Parse(xml);
+        var found = Check(model, chain);
+
+        // The one check that needs the text as well as the model, because it walks the file looking
+        // for indices into the symbol arrays and those sit in places the model does not carry.
+        CheckSymbolIndices(xml, model, found);
+
+        return found;
+    }
+
+    /// Everything that can be decided from the model alone.
+    ///
+    /// Split out so the same checks can be run against a model built from the file's own bytes and
+    /// set beside the ones from hkxpack's text. Comparing the two readings field by field says they
+    /// hold the same values; running the checks on both says the tool behaves the same way on them,
+    /// which is the thing anybody actually cares about.
+    public static List<Finding> Check(BehaviourGraphModel model, ProjectChain? chain = null)
+    {
         var found = new List<Finding>();
 
         CheckSymbolArrays(model, found);
         CheckDanglingReferences(model, found);
-        CheckSymbolIndices(xml, model, found);
         CheckStateMachines(model, found);
         CheckReachableStates(model, found);
         CheckBlenders(model, found);

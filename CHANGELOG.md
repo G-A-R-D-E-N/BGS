@@ -3,6 +3,37 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, the behaviour graph is read from the file, and the tool behaves the same on it
+
+The reading built from the bytes agrees with hkxpack field by field across the whole corpus. This is
+the other half of that: not whether the two readings hold the same values, but whether the tool does
+the same thing with them.
+
+Every reader the window draws a tab from is run against both readings and the output compared. The
+canvas wiring, the variables and their values and types, the events, the bindings, the checker's
+findings, the empty states, every state machine's states and transitions, and what points at what.
+
+| | |
+|---|---|
+| files behaving the same | 533 of 533 |
+| files without a reading | 0 |
+| outputs compared | 6,929 |
+| differing | 0 |
+
+The field comparison should make this redundant, which is exactly why it was worth running. It
+answers a question the field walk cannot: a field comparison that came back clean for the wrong
+reason, an excuse too wide or a bucket the walk quietly skipped, would still show up here as a
+canvas with different wires on it.
+
+The checker was split so its model-only checks can run without the file's text. One check cannot:
+the symbol index pass reads the text as well as the model, because the indices it looks for sit in
+places the model does not carry. That one still needs hkxpack, and is left out of the comparison
+rather than papered over.
+
+A single wrong value reaching two consumers is what this is for. Pointing a wire at an object that
+is not there changes the canvas and gives the checker a dangling reference, so the suite asserts both
+rather than one.
+
 ## 2026-08-06, the measured enum names are gone
 
 `HavokEnumNames.json` was the enum value names read off vanilla files by setting our reading of the
