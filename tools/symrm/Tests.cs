@@ -55,6 +55,7 @@ public static class Tests
         ("AModelIsFoundOnlyWhenThereIsNoDoubt", AModelIsFoundOnlyWhenThereIsNoDoubt),
         ("AValueThatIsNotANumberIsRefused", AValueThatIsNotANumberIsRefused),
         ("AStringIsWrittenAtWhateverLength", AStringIsWrittenAtWhateverLength),
+        ("WideAndVectorFieldsReadFromTheBytes", WideAndVectorFieldsReadFromTheBytes),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1349,6 +1350,42 @@ public static class Tests
                   sources.Count(s => s == nameField) == 1);
         Check("and the field that had none gained one, rather than the table being rebuilt", 2,
               sources.Count);
+    }
+
+    /// A field wider than four bytes, and one that is several floats in a row. Both were being read
+    /// as an int or not at all, which is right only while the bytes above the first four happen to
+    /// be zero. `hkbNode.userData` is the common one: 430 of Dogmeat's 906 objects carry it.
+    private static void WideAndVectorFieldsReadFromTheBytes()
+    {
+        Console.WriteLine("\neight byte and vector fields read from the bytes");
+
+        var classes = HavokClasses.Shipped;
+        int userData = classes.Field("hkbClipGenerator", "userData")!.Offset;
+        int motion = classes.Field("hkbClipGenerator", "extractedMotion")!.Offset;
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        var data = image.Section("__data__")!.Data;
+
+        // A value with both halves set, which is the case an int read gets wrong.
+        BitConverter.GetBytes(0x0123_4567_89AB_CDEFUL).CopyTo(data, userData);
+        for (int i = 0; i < 12; i++) BitConverter.GetBytes(i + 0.5f).CopyTo(data, motion + i * 4);
+
+        var objects = new PackfileObjects(image);
+        var clip = objects.Instances.Single();
+
+        Check("the whole eight bytes are read", 0x0123_4567_89AB_CDEFUL,
+              objects.ReadULong(clip, "userData"));
+        Check("reading it as an int would have lost the top half", 0x89ABCDEF,
+              unchecked((uint)objects.ReadInt(clip, "userData")!.Value));
+
+        var transform = objects.ReadFloats(clip, "extractedMotion", 12);
+        Check("a transform is twelve floats", 12, transform?.Length);
+        Check("in the order they sit in", 0.5f, transform?[0]);
+        Check("to the end", 11.5f, transform?[11]);
+
+        // Past the end of the object rather than into the next one: a short read has to say so.
+        Check("a run that does not fit is refused rather than cut short", null,
+              objects.ReadFloats(clip, "extractedMotion", 4096));
     }
 
     /// One hkbClipGenerator in a packfile of two sections, which is the least a reader needs: a name
