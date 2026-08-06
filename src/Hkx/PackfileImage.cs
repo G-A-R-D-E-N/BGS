@@ -210,6 +210,36 @@ public sealed class PackfileSection
         return at;
     }
 
+    /// Puts a new object's bytes at the end of this section, aligned the way every object in every
+    /// vanilla file is.
+    ///
+    /// Measured rather than assumed: 24,788 objects across 120 behaviour files, every one of them on
+    /// a sixteen byte boundary. Appending an object at whatever offset the data happens to end on
+    /// would be the kind of thing that works until it does not.
+    public int AppendObject(byte[] bytes)
+    {
+        int over = Data.Length % 16;
+        if (over != 0) AppendData(new byte[16 - over]);
+        return AppendData(bytes);
+    }
+
+    /// Adds the entry that says an object at this offset is an instance of the class whose name sits
+    /// at that offset in `__classnames__`. Its position is put right by the reorder that follows.
+    public void AddVirtual(int source, int section, int destination)
+    {
+        var entries = Virtuals().ToList();
+        entries.Add((source, section, destination));
+
+        var table = new byte[entries.Count * 12];
+        for (int i = 0; i < entries.Count; i++)
+        {
+            BitConverter.GetBytes(entries[i].Source).CopyTo(table, i * 12);
+            BitConverter.GetBytes(entries[i].Section).CopyTo(table, i * 12 + 4);
+            BitConverter.GetBytes(entries[i].Destination).CopyTo(table, i * 12 + 8);
+        }
+        VirtualFixups = table;
+    }
+
     /// Points the local fixup for a source offset at a new destination, adding one when the field
     /// held no pointer at all.
     ///
@@ -319,6 +349,37 @@ public sealed class PackfileSection
     /// The class name an object is an instance of. Always points into __classnames__, which is why
     /// the middle field is always zero.
     public IEnumerable<(int Source, int Section, int Destination)> Virtuals() => Triples(VirtualFixups);
+
+    /// The virtual table written from a list.
+    ///
+    /// This table is the object list. An object's position in it is the position everything outside
+    /// the file names it by, and hkxpack's `#90` upward numbering is that position plus ninety. So
+    /// where an entry goes here decides what a new object is called, and a new one goes on the end
+    /// because its bytes went on the end. Measured across the corpus first: in all 533 vanilla files
+    /// the sources in this table are strictly ascending, 38,152 of them, so table order and file
+    /// order are the same thing and appending to both keeps them that way.
+    public void SetVirtuals(IEnumerable<(int Source, int Section, int Destination)> entries)
+    {
+        var all = entries.ToList();
+        var table = new byte[all.Count * 12];
+        for (int i = 0; i < all.Count; i++)
+        {
+            BitConverter.GetBytes(all[i].Source).CopyTo(table, i * 12);
+            BitConverter.GetBytes(all[i].Section).CopyTo(table, i * 12 + 4);
+            BitConverter.GetBytes(all[i].Destination).CopyTo(table, i * 12 + 8);
+        }
+        VirtualFixups = table;
+    }
+
+    /// Pads the data out to a boundary so what is appended next starts on it, and answers where that
+    /// will be. A class holding a vector is sixteen aligned and the game reads it with instructions
+    /// that require the alignment, so an object landing on an odd offset is not a cosmetic problem.
+    public int AlignData(int boundary)
+    {
+        int over = Data.Length % boundary;
+        if (over != 0) Array.Resize(ref Data, Data.Length + boundary - over);
+        return Data.Length;
+    }
 
     private static IEnumerable<(int, int, int)> Triples(byte[] table)
     {

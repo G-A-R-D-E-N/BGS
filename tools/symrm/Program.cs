@@ -45,6 +45,7 @@ public static class Program
             case "consumers": return Consumers(argv);
             case "symbols": return Symbols(argv);
             case "walk": return Walk(argv);
+            case "append": return Append(argv);
             case "classes": return Classes(argv);
             case "fields": return Fields(argv);
             case "signatures": return Signatures(argv);
@@ -692,6 +693,32 @@ public static class Program
         string edited = original;
         foreach (var (was, now) in edits) edited = ReplaceFirst(edited, was, now);
 
+        // A brand new object, added the way the editor adds one, with something in the file pointed
+        // at it. This is the case a longer array does not cover: the array work only ever moved
+        // pointers at objects that were already there.
+        var host = System.Text.RegularExpressions.Regex.Match(
+            original, "<hkobject class=\"hkbClipGenerator\" name=\"#[0-9]+\" " +
+                      "signature=\"(?<sig>0x[0-9a-f]+)\">");
+
+        var lastGenerator = System.Text.RegularExpressions.Regex
+            .Matches(edited, "<hkparam name=\"generator\">#[0-9]+</hkparam>")
+            .LastOrDefault();
+
+        if (host.Success && lastGenerator != null)
+        {
+            edited = HkxTextEdit.AddObject(
+                edited, "hkbClipGenerator", host.Groups["sig"].Value,
+                "            <hkparam name=\"userPartitionMask\">7</hkparam>", out string added);
+
+            string pointer = $"<hkparam name=\"generator\">#{added}</hkparam>";
+            edited = edited.Remove(lastGenerator.Index, lastGenerator.Length)
+                           .Insert(lastGenerator.Index, pointer);
+
+            // Two things to find afterwards: the object itself and the pointer at it.
+            edits.Add(("", $"name=\"#{added}\""));
+            edits.Add(("", pointer));
+        }
+
         var plan = NativeSave.Compare(original, edited);
         if (!plan.Possible)
         {
@@ -885,9 +912,21 @@ public static class Program
                 return false;
             }
 
-            if (!b.Virtuals().SequenceEqual(a.Virtuals()))
+            // One new entry per object added, and every entry that was there before untouched. The
+            // table says which class each object is, so an entry changing under an object that was
+            // already in the file would be that object turning into something else.
+            // Objects only live in the data section, so only that one gains entries. Counting the
+            // added ones against every section would demand a new object in the class name section
+            // too, which is not a thing.
+            int added = a.Tag == "__data__" ? plan.Changes.Count(c => c.Added) : 0;
+            var wasVirtual = a.Virtuals().ToList();
+            var nowVirtual = b.Virtuals().ToList();
+
+            if (nowVirtual.Count != wasVirtual.Count + added ||
+                !nowVirtual.Take(wasVirtual.Count).SequenceEqual(wasVirtual))
             {
-                Console.WriteLine($"  append check: FAILED, section {a.Tag} moved a pointer it should not have");
+                Console.WriteLine($"  append check: FAILED, section {a.Tag} has {nowVirtual.Count} " +
+                                  $"object(s) where it had {wasVirtual.Count} and {added} were added");
                 return false;
             }
 
@@ -1570,6 +1609,110 @@ public static class Program
     ///
     /// The rule itself lives in FixupOrder, because writing has to reproduce it. This is what says
     /// the rule is the file's own and not our idea of it.
+    /// Adds one object to a real file and checks what hkxpack makes of the result.
+    ///
+    /// The count is not the check. A count matches even when every object after an insertion point
+    /// shifted by one, which is exactly the failure worth catching, so this compares the class of
+    /// every number before and after and then asserts the new object is the last number rather than
+    /// somewhere in the middle.
+    private static int Append(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string file = Path.GetFullPath(argv[1]);
+        string className = argv[2];
+
+        // A save that changes nothing has to give back the same bytes, or nothing measured after an
+        // append can be attributed to the append.
+        var original = File.ReadAllBytes(file);
+        if (!PackfileImage.Read(original).Rebuild().SequenceEqual(original))
+        {
+            Console.WriteLine("the file does not survive a save that changes nothing, so nothing " +
+                              "below would mean anything");
+            return 1;
+        }
+        Console.WriteLine($"{Path.GetFileName(file)}: a save with no changes is byte identical");
+
+        string work = WorkDirectory("symrm-append-", file);
+        HkxTextEdit.ResetDirectory(work);
+        var told = Numbered(HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work)));
+
+        var image = PackfileImage.Read(original);
+        var added = NativeAppend.Object(image, className);
+        Console.WriteLine($"appended {className} as {added}");
+
+        // Attaching is the half that makes it an edit rather than an orphan. Given a source object
+        // and one of its pointer fields, the new object is wired into the graph and the round trip
+        // below has to show hkxpack reading that field as the new number.
+        string attachTo = argv.Length > 4 ? argv[4] : "";
+        int attachFrom = argv.Length > 3 && int.TryParse(argv[3], out int f) ? f : -1;
+
+        if (attachFrom >= 0 && attachTo.Length > 0)
+        {
+            NativeAppend.Attach(image, attachFrom, attachTo, added.Id);
+            Console.WriteLine($"attached: #{attachFrom}.{attachTo} now points at #{added.Id}");
+        }
+
+        string written = Path.Combine(work, "appended.hkx");
+        image.Save(written);
+
+        // Read back from disk rather than from the image in memory, so anything the rebuild gets
+        // wrong shows up here rather than being carried over.
+        var reloaded = new PackfileObjects(PackfileImage.Read(written));
+        Console.WriteLine($"reloaded from disk: {reloaded.Instances.Count} object(s), " +
+                          $"last is {reloaded.Instances[^1].ClassName}");
+
+        string second = WorkDirectory("symrm-append-out-", written);
+        HkxTextEdit.ResetDirectory(second);
+        var read = Numbered(HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, written, second)));
+
+        int moved = 0;
+        foreach (var (id, was) in told)
+            if (!read.TryGetValue(id, out string? now) || now != was)
+            {
+                if (moved < 8)
+                    Console.WriteLine($"  #{id} was {was} and is now {(now ?? "absent")}");
+                moved++;
+            }
+
+        bool numbered = read.TryGetValue(added.Id, out string? newClass) && newClass == className;
+
+        // Read out of hkxpack's own text rather than out of our reading of the file, because the
+        // question is whether hkxpack sees the wire, not whether we do.
+        bool wired = attachFrom < 0 || attachTo.Length == 0;
+        if (!wired)
+        {
+            string after2 = HkxTextEdit.ReadXml(Path.Combine(second,
+                                Path.GetFileNameWithoutExtension(written) + ".xml"));
+            var block = HkxTextEdit.ReadParams(after2, attachFrom.ToString());
+            string held = block.FirstOrDefault(p => p.Name == attachTo)?.Value ?? "(absent)";
+            wired = held == "#" + added.Id;
+            Console.WriteLine($"hkxpack reads #{attachFrom}.{attachTo} as {held}, " +
+                              $"expected #{added.Id}");
+        }
+
+        Console.WriteLine($"\nhkxpack read {told.Count} object(s) before and {read.Count} after, " +
+                          $"{moved} of the original numbers holding something else, " +
+                          $"the new one is {(numbered ? $"#{added.Id} {className} as predicted" : "not where it was predicted")}");
+
+        return moved == 0 && numbered && wired && read.Count == told.Count + 1 ? 0 : 1;
+    }
+
+    /// Every object hkxpack numbers, by number, with the class it holds.
+    private static Dictionary<int, string> Numbered(string xml)
+    {
+        var found = new Dictionary<int, string>();
+        foreach (var element in System.Xml.Linq.XDocument.Parse(xml).Descendants("hkobject"))
+        {
+            string? name = element.Attribute("name")?.Value;
+            string? cls = element.Attribute("class")?.Value;
+            if (name == null || cls == null || !name.StartsWith('#')) continue;
+            if (int.TryParse(name[1..], out int id)) found[id] = cls;
+        }
+        return found;
+    }
+
     private static int Walk(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -1580,7 +1723,7 @@ public static class Program
                        .OrderBy(f => f, StringComparer.Ordinal).ToList()
             : new List<string> { target };
 
-        int clean = 0, bad = 0, entries = 0;
+        int clean = 0, bad = 0, entries = 0, virtuals = 0;
 
         foreach (string file in files)
         {
@@ -1600,6 +1743,25 @@ public static class Program
             if (objects.Instances.Any(i => !types.Knows(i.ClassName))) continue;
 
             bool ok = true;
+
+            // The object list is the virtual fixup table read in order, and an object's `#id` is its
+            // position in that list. Appending a new object puts its bytes at the end of the section
+            // and its entry at the end of this table, and that only gives the new object the last
+            // number if table order and file order are already the same thing. Measured rather than
+            // assumed, because everything downstream of an append rests on it: the per class index a
+            // change names, and the `#id` hkxpack will print.
+            var offsets = data.Virtuals().Select(v => v.Source).ToList();
+            virtuals += offsets.Count;
+            for (int at = 1; at < offsets.Count; at++)
+                if (offsets[at] <= offsets[at - 1])
+                {
+                    ok = false;
+                    Console.WriteLine($"{Path.GetFileName(file)}: the virtual table is not in file " +
+                                      $"order, entry {at} at 0x{offsets[at]:x} follows " +
+                                      $"0x{offsets[at - 1]:x}");
+                    break;
+                }
+
             foreach (bool global in new[] { true, false })
             {
                 var actual = global ? data.Globals().Select(g => g.Source).ToList()
@@ -1620,7 +1782,8 @@ public static class Program
         }
 
         Console.WriteLine($"\n{clean} file(s) with both tables in the predicted order, {bad} not, " +
-                          $"{entries} entr(ies) checked");
+                          $"{entries} entr(ies) checked, {virtuals} object(s) whose virtual entries " +
+                          "run in file order");
         return bad == 0 ? 0 : 1;
     }
 

@@ -36,7 +36,8 @@ public static class NativeSave
     }
 
     public sealed record Change(string ClassName, int Index, string Field, string Value,
-                                bool Text = false, bool Ref = false, bool Array = false)
+                                bool Text = false, bool Ref = false, bool Array = false,
+                                bool Added = false)
     {
         public override string ToString() => $"{ClassName}[{Index}].{Field} = {Value}";
     }
@@ -79,6 +80,9 @@ public static class NativeSave
     /// read every element of that array as null.
     private static bool IsPointerArray(string type) => type == "array of pointer";
 
+    /// Where the object's own id is kept in a field bag. Not a field name any file can have.
+    private const string IdKey = "#id";
+
     /// What hkxpack writes in a pointer field: an object id, or the word null.
     private static bool IsReferenceValue(string value) =>
         value == "null" ||
@@ -102,65 +106,98 @@ public static class NativeSave
         foreach (var (className, originals) in before)
         {
             var edited = after[className];
-            if (originals.Count != edited.Count)
+
+            if (edited.Count < originals.Count)
                 return new Plan(changes,
-                    $"the number of {className} objects changed from {originals.Count} to {edited.Count}");
+                    $"{originals.Count - edited.Count} {className} object(s) were removed, which is " +
+                    "not written in place yet");
+
+            if (edited.Count > originals.Count)
+            {
+                // Only added at the end, and only with the ids that follow on. The editor appends a
+                // new object to the document and numbers it one past the highest, so this holds; it
+                // is checked because everything downstream resolves an id to a position and would
+                // otherwise aim a pointer at the wrong object without saying so.
+                for (int k = 0; k < originals.Count; k++)
+                    if (originals[k][IdKey] != edited[k][IdKey])
+                        return new Plan(changes,
+                            $"the {className} objects were renumbered, so nothing can be matched up");
+
+                for (int k = originals.Count; k < edited.Count; k++)
+                    changes.Add(new Change(className, k, "", edited[k][IdKey], Added: true));
+            }
 
             var layout = classes.Members(className).ToDictionary(m => m.Name, m => m.Type,
                                                                  StringComparer.Ordinal);
+
+            // One field, considered on its own. Written once and used twice: for a field whose value
+            // changed, and for every field of an object that has just been added, where there is no
+            // old value to compare against and everything the editor wrote is new.
+            string? Consider(int i, string field, string now)
+            {
+                if (!layout.TryGetValue(field, out string? type))
+                    return $"{className}.{field} changed, and we have no byte layout for it";
+
+                if (IsPointerArray(type))
+                {
+                    var elements = now.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                    if (!elements.All(IsReferenceValue))
+                        return $"{className}.{field} holds something that is neither an object id nor null";
+
+                    changes.Add(new Change(className, i, field, string.Join(" ", elements), Array: true));
+                    return null;
+                }
+
+                if (IsReference(type))
+                {
+                    if (!IsReferenceValue(now))
+                        return $"{className}.{field} was set to '{now}', which is neither an object " +
+                               "id nor null";
+
+                    changes.Add(new Change(className, i, field, now, Ref: true));
+                    return null;
+                }
+
+                if (!Writable.Contains(type) && !WritableText.Contains(type))
+                    return $"{className}.{field} changed, and a {type} cannot be written in place " +
+                           "without moving what follows it";
+
+                if (!WritableText.Contains(type) && !Parses(now, type))
+                    return $"{className}.{field} was set to '{now}', which is not a {type}";
+
+                changes.Add(new Change(className, i, field, now, WritableText.Contains(type)));
+                return null;
+            }
 
             for (int i = 0; i < originals.Count; i++)
             {
                 foreach (var (field, was) in originals[i])
                 {
+                    if (field == IdKey) continue;
+
                     if (!edited[i].TryGetValue(field, out string? now))
                         return new Plan(changes, $"{className}.{field} is no longer in the file");
 
                     if (string.Equals(was, now, StringComparison.Ordinal)) continue;
 
-                    if (!layout.TryGetValue(field, out string? type))
-                        return new Plan(changes,
-                            $"{className}.{field} changed, and we have no byte layout for it");
-
-                    if (IsPointerArray(type))
-                    {
-                        var elements = now.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-                        if (!elements.All(IsReferenceValue))
-                            return new Plan(changes,
-                                $"{className}.{field} holds something that is neither an object id " +
-                                "nor null");
-
-                        changes.Add(new Change(className, i, field, string.Join(" ", elements),
-                                               Array: true));
-                        continue;
-                    }
-
-                    if (IsReference(type))
-                    {
-                        if (!IsReferenceValue(now))
-                            return new Plan(changes,
-                                $"{className}.{field} was set to '{now}', which is neither an object " +
-                                "id nor null");
-
-                        changes.Add(new Change(className, i, field, now, Ref: true));
-                        continue;
-                    }
-
-                    if (!Writable.Contains(type) && !WritableText.Contains(type))
-                        return new Plan(changes,
-                            $"{className}.{field} changed, and a {type} cannot be written in place " +
-                            "without moving what follows it");
-
-                    if (!WritableText.Contains(type) && !Parses(now, type))
-                        return new Plan(changes,
-                            $"{className}.{field} was set to '{now}', which is not a {type}");
-
-                    changes.Add(new Change(className, i, field, now, WritableText.Contains(type)));
+                    string? refusal = Consider(i, field, now);
+                    if (refusal != null) return new Plan(changes, refusal);
                 }
 
                 if (edited[i].Count != originals[i].Count)
                     return new Plan(changes, $"a {className} gained or lost a field");
             }
+
+            // The added ones. A new object starts as zeroes, so a field the editor left out is
+            // whatever zero means for it, and a field it wrote is a change like any other.
+            for (int i = originals.Count; i < edited.Count; i++)
+                foreach (var (field, value) in edited[i])
+                {
+                    if (field == IdKey) continue;
+
+                    string? refusal = Consider(i, field, value);
+                    if (refusal != null) return new Plan(changes, refusal);
+                }
         }
 
         return new Plan(changes, null);
@@ -188,6 +225,42 @@ public static class NativeSave
                 "This file's classes are not the ones this build describes, so nothing was written " +
                 $"into its bytes: {mismatched[0]}" +
                 (mismatched.Count > 1 ? $", and {mismatched.Count - 1} more like it." : "."));
+        // Added objects first, because everything after this resolves a class and a position, and a
+        // field of an object that does not exist yet cannot be written.
+        int adding = 0;
+        foreach (var add in plan.Changes.Where(c => c.Added))
+        {
+            var data = image.Section("__data__")
+                ?? throw new InvalidOperationException("this file has no data section");
+
+            if (HavokClassTypes.Shipped[add.ClassName]?.Size is not int size || size <= 0)
+                throw new InvalidOperationException(
+                    $"No size for {add.ClassName}, so no object of it was added.");
+
+            // The class has to be one the file already names. Growing the class name section is a
+            // different problem with its own offsets, and nothing has needed it.
+            if (objects.ClassNameOffset(add.ClassName) is not int nameAt)
+                throw new InvalidOperationException(
+                    $"{add.ClassName} is not named in this file, so an object of it cannot be added.");
+
+            // Where it will land, and therefore what id it must have. The editor numbers a new
+            // object one past the highest and this appends it past the last, so the two agree. They
+            // are checked rather than trusted, because everything downstream turns an id into a
+            // position and would otherwise aim a pointer at the wrong object in silence.
+            string expected = "#" + (NativeGraphModel.FirstId + objects.Instances.Count + adding);
+            if (add.Value != expected)
+                throw new InvalidOperationException(
+                    $"The new {add.ClassName} is {add.Value} in the document and would be {expected} " +
+                    "in the file, so nothing was written.");
+
+            data.AddVirtual(data.AppendObject(new byte[size]), 0, nameAt);
+            adding++;
+        }
+
+        // Read again, so the added objects are in the list the field writes below look themselves up
+        // in. The view resolved its objects when it was built and does not know about them.
+        if (adding > 0) objects = new PackfileObjects(image, classes);
+
         var byClass = objects.Instances.GroupBy(i => i.ClassName)
                                        .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
 
@@ -197,7 +270,7 @@ public static class NativeSave
         // enclosing struct is always refused first so a mismatched class never reaches here, but
         // that is a consequence of other code rather than anything this checks, and writing a right
         // value into the wrong object is exactly the silent kind of wrong.
-        foreach (var group in plan.Changes.GroupBy(c => c.ClassName))
+        foreach (var group in plan.Changes.Where(c => !c.Added).GroupBy(c => c.ClassName))
         {
             int inFile = byClass.TryGetValue(group.Key, out var all) ? all.Count : 0;
             if (group.Max(c => c.Index) >= inFile)
@@ -208,6 +281,8 @@ public static class NativeSave
 
         foreach (var change in plan.Changes)
         {
+            if (change.Added) continue;
+
             if (!byClass.TryGetValue(change.ClassName, out var instances) ||
                 change.Index >= instances.Count)
                 throw new InvalidOperationException(
@@ -429,6 +504,12 @@ public static class NativeSave
             if (className == null) continue;
 
             var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            // Under a key no hkparam can have, because a param name never starts with a hash. The id
+            // is what says where an added object will sit once it is written, and it is checked
+            // rather than trusted.
+            fields[IdKey] = element.Attribute("name")?.Value ?? "";
+
             foreach (var p in element.Elements("hkparam"))
             {
                 string? name = p.Attribute("name")?.Value;

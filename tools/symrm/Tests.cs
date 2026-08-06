@@ -60,11 +60,13 @@ public static class Tests
         ("AnUndeclaredEnumValueIsNotNamed", AnUndeclaredEnumValueIsNotNamed),
         ("TheModelComparisonCatchesFaultsPutThereOnPurpose", TheModelComparisonCatchesFaultsPutThereOnPurpose),
         ("AFloatIsSpelledTheWayHkxPackSpellsIt", AFloatIsSpelledTheWayHkxPackSpellsIt),
+        ("AnAppendedObjectLandsWhereItsNumberSaysItWill", AnAppendedObjectLandsWhereItsNumberSaysItWill),
         ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
         ("TheConsumerComparisonCatchesADifferentAnswer", TheConsumerComparisonCatchesADifferentAnswer),
         ("APointerIsRewiredByMovingItsFixup", APointerIsRewiredByMovingItsFixup),
         ("APointerChangeIsPlannedAsOne", APointerChangeIsPlannedAsOne),
         ("ThePointerTableKeepsTheOrderItWasWrittenIn", ThePointerTableKeepsTheOrderItWasWrittenIn),
+        ("AnAddedObjectHasToLandWhereItsIdSays", AnAddedObjectHasToLandWhereItsIdSays),
         ("TheReadingFromTheBytesRefusesWhatItCannotDescribe", TheReadingFromTheBytesRefusesWhatItCannotDescribe),
         ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
@@ -2383,6 +2385,83 @@ public static class Tests
         Check("and the data never changed length", size + size, data.Data.Length - "A.hkx".Length - 1);
     }
 
+    /// Adding an object, and the two things that have to hold for it to be safe.
+    ///
+    /// Everything downstream turns an object id into a position: the id is hkxpack's numbering, which
+    /// counts from #90 in the order the objects sit in the file. A new object is appended, so it is
+    /// last in the file and must therefore carry the last id. The editor numbers a new object one
+    /// past the highest, so that holds, and it is checked rather than trusted because getting it
+    /// wrong aims a pointer at the wrong object without saying anything.
+    private static void AnAddedObjectHasToLandWhereItsIdSays()
+    {
+        Console.WriteLine("\nan added object has to land where its id says");
+
+        const string One = """
+            <hkpackfile><hksection name="__data__">
+            <hkobject name="#0090" class="hkbClipGenerator" signature="0x333b85b9">
+                <hkparam name="userPartitionMask">0</hkparam>
+            </hkobject></hksection></hkpackfile>
+            """;
+
+        string Extra(string id) => One.Replace("</hksection>",
+            $"""
+            <hkobject name="#{id}" class="hkbClipGenerator" signature="0x333b85b9">
+                <hkparam name="userPartitionMask">7</hkparam>
+            </hkobject></hksection>
+            """);
+
+        var added = NativeSave.Compare(One, Extra("0091"));
+        CheckTrue("adding one is writable", added.Possible);
+        CheckTrue("planned as an addition", added.Changes[0].Added);
+        Check("naming the id it will have", "#0091", added.Changes[0].Value);
+        Check("and its fields come with it", "userPartitionMask", added.Changes[1].Field);
+        Check("as a value on the new object rather than the old one", 1, added.Changes[1].Index);
+
+        // Removing is a different operation and is not written in place yet. Saying so beats
+        // pretending, because the fallback through hkxpack still does it correctly.
+        var removed = NativeSave.Compare(Extra("0091"), One);
+        CheckTrue("removing one is refused", !removed.Possible);
+        CheckTrue("and the refusal says what it was",
+                  removed.Refusal?.Contains("removed", StringComparison.Ordinal) == true);
+
+        // Renumbering breaks the id to position mapping for every object, not just the new one.
+        string renumbered = Extra("0091").Replace("#0090", "#0500");
+        CheckTrue("renumbering the existing objects is refused",
+                  !NativeSave.Compare(One, renumbered).Possible);
+
+        // The assertion that matters, made where it can be acted on. An id that does not match the
+        // position the object would land at is refused at the point of writing.
+        var image = ClipInAPackfile("A.hkx", out _);
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "symrm-add-probe.hkx");
+        image.Save(path);
+
+        var wrong = new NativeSave.Plan(
+            new List<NativeSave.Change> { new("hkbClipGenerator", 1, "", "#0500", Added: true) }, null);
+
+        string said = "";
+        try { NativeSave.Apply(path, wrong); }
+        catch (InvalidOperationException e) { said = e.Message; }
+
+        CheckTrue("an added object whose id does not match where it lands is refused",
+                  said.Contains("#0500", StringComparison.Ordinal));
+        CheckTrue("and the refusal says which id it would have had",
+                  said.Contains("#91", StringComparison.Ordinal));
+
+        // A class the file does not name cannot have an object added, because the entry that says
+        // what class an object is has to point at a name that is already there.
+        var unnamed = new NativeSave.Plan(
+            new List<NativeSave.Change> { new("hkbBlenderGenerator", 0, "", "#91", Added: true) }, null);
+
+        said = "";
+        try { NativeSave.Apply(path, unnamed); }
+        catch (InvalidOperationException e) { said = e.Message; }
+
+        CheckTrue("a class the file does not name is refused",
+                  said.Contains("not named in this file", StringComparison.Ordinal));
+
+        System.IO.File.Delete(path);
+    }
+
     /// Where an entry sits in the pointer table is not free.
     ///
     /// The table is written in the order the writer walked the objects, which is not offset order:
@@ -2476,6 +2555,61 @@ public static class Tests
 
         var rubbishElement = NativeSave.Compare(Machine, Machine.Replace("#0092<", "elsewhere<"));
         CheckTrue("an element that is not an object id is refused", !rubbishElement.Possible);
+    }
+
+    /// Putting a new object into a file without moving anything already in it.
+    ///
+    /// The corpus proof is the one that matters, since it is hkxpack that has to agree about what
+    /// the new object is called. These are the parts a corpus run cannot show: that the numbering is
+    /// worked out before the write rather than read back afterwards, that a class the file has never
+    /// named gets added to the name table, and that a class nobody can lay out is refused instead of
+    /// written as a guess.
+    private static void AnAppendedObjectLandsWhereItsNumberSaysItWill()
+    {
+        Console.WriteLine("\nan appended object lands where its number says it will");
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        int before = new PackfileObjects(image).Instances.Count;
+
+        var added = NativeAppend.Object(image, "hkbClipGenerator");
+
+        Check("the file had one object", 1, before);
+        Check("and the new one is the next number", NativeGraphModel.FirstId + 1, added.Id);
+        Check("second of its class", 1, added.Index);
+        CheckTrue("landing on a sixteen byte boundary", added.Offset % NativeAppend.Alignment == 0);
+
+        var after = new PackfileObjects(image);
+        Check("the file now holds two", 2, after.Instances.Count);
+        Check("the first one did not move", 0, after.Instances[0].Offset);
+        Check("and the new one is where it said", added.Offset, after.Instances[1].Offset);
+        Check("holding the class asked for", "hkbClipGenerator", after.Instances[1].ClassName);
+
+        // A class the file already names is not named twice.
+        var names = image.Section("__classnames__")!;
+        int length = names.Data.Length;
+        NativeAppend.Object(image, "hkbClipGenerator");
+        Check("a class already in the name table is not added again", length, names.Data.Length);
+
+        // One it has never named is, and the reader has to be able to find it afterwards. This is
+        // the path that failed against hkxpack until the section's 0xFF padding was taken off
+        // before appending, while every check on our own side passed.
+        var fresh = NativeAppend.Object(image, "hkbStateMachine");
+        CheckTrue("a class it has never named makes the table longer", names.Data.Length > length);
+        Check("and reads back as itself", "hkbStateMachine",
+              new PackfileObjects(image).Instances[^1].ClassName);
+        Check("with the number it was promised", fresh.Id,
+              NativeGraphModel.FirstId + new PackfileObjects(image).Instances.Count - 1);
+
+        CheckTrue("no 0xFF filler is left inside the name table",
+                  !names.Data.SkipLast(1).Any(b => b == 0xFF));
+
+        // A class with no size cannot be laid out, and guessing one writes an object the game will
+        // read the wrong number of bytes from.
+        string refused = "";
+        try { NativeAppend.Object(image, "hkbNotAClass"); }
+        catch (InvalidOperationException e) { refused = e.Message; }
+        CheckTrue("a class the table does not describe is refused",
+                  refused.Contains("hkbNotAClass", StringComparison.Ordinal));
     }
 
     /// A file holding one of each shape the graph model has a bucket for: plain fields, an array of
