@@ -29,6 +29,14 @@ public sealed class PackfileObjects
     private readonly HavokClasses _classes;
     private readonly List<Instance> _instances = new();
 
+    /// Where each pointer in the section aims, by the offset of the pointer itself. Built once
+    /// rather than scanned per field: reading one string by walking the table is nothing, and
+    /// reading every field of every object that way is 1,587 entries times 5,000 fields.
+    private readonly Dictionary<int, int> _pointsAt = new();
+
+    /// Which object starts at an offset, so a pointer can be resolved to the thing it names.
+    private readonly Dictionary<int, Instance> _startsAt = new();
+
     public IReadOnlyList<Instance> Instances => _instances;
 
     public PackfileObjects(PackfileImage image, HavokClasses? classes = null)
@@ -44,6 +52,17 @@ public sealed class PackfileObjects
             string? name = NameAt(nameAt);
             if (name != null) _instances.Add(new Instance(source, name));
         }
+
+        foreach (var instance in _instances) _startsAt[instance.Offset] = instance;
+        foreach (var (source, destination) in _data.Locals()) _pointsAt[source] = destination;
+
+        // A pointer from one object to another is a *global* fixup, not a local one, because the
+        // format allows it to cross into another section even when nothing in these files does.
+        // Reading only the local table finds every string and every array and no object reference
+        // at all, which reads as a file where nothing points at anything.
+        int self = image.Sections.IndexOf(_data);
+        foreach (var (source, section, destination) in _data.Globals())
+            if (section == self) _pointsAt[source] = destination;
     }
 
     /// A class name lives in __classnames__ preceded by five bytes of bookkeeping, and the fixup
@@ -119,16 +138,100 @@ public sealed class PackfileObjects
     public string? ReadString(Instance instance, string field)
     {
         int? at = FieldAt(instance, field);
+        return at == null ? null : TextAt(Aim(at.Value));
+    }
+
+    private string? TextAt(int? destination)
+    {
+        if (destination == null || destination < 0 || destination >= _data.Data.Length) return null;
+
+        int end = Array.IndexOf(_data.Data, (byte)0, destination.Value);
+        return end < 0 ? null : Encoding.UTF8.GetString(_data.Data, destination.Value, end - destination.Value);
+    }
+
+    /// Where the pointer stored at an offset aims, or null when nothing points from there, which is
+    /// how the format spells a null pointer: the eight bytes hold zero and no fixup names them.
+    private int? Aim(int at) => _pointsAt.TryGetValue(at, out int destination) ? destination : null;
+
+    /// The object a reference field names, or null when the field is null. A pointer that lands
+    /// somewhere no object begins is reported as unresolved rather than as the nearest object,
+    /// because the nearest object is a guess and this is meant to be a reading.
+    public Instance? ReadRef(Instance instance, string field, out bool wasNull)
+    {
+        wasNull = false;
+        int? at = FieldAt(instance, field);
         if (at == null) return null;
 
-        foreach (var (source, destination) in _data.Locals())
+        int? destination = Aim(at.Value);
+        if (destination == null) { wasNull = true; return null; }
+
+        return _startsAt.TryGetValue(destination.Value, out var target) ? target : null;
+    }
+
+    /// An hkArray is a pointer, a count, and a capacity with flags packed into its top bits. The
+    /// pointer is a fixup like any other, and an empty array has none, which is why a missing fixup
+    /// here means no elements rather than a fault.
+    public sealed record Elements(int At, int Count);
+
+    public Elements? ReadArray(Instance instance, string field)
+    {
+        int? at = FieldAt(instance, field);
+        if (at == null || at + 12 > _data.Data.Length) return null;
+
+        int count = BitConverter.ToInt32(_data.Data, at.Value + 8);
+        if (count < 0) return null;
+
+        int? destination = Aim(at.Value);
+        if (destination == null) return count == 0 ? new Elements(0, 0) : null;
+
+        return new Elements(destination.Value, count);
+    }
+
+    public IReadOnlyList<string?>? ReadStringArray(Instance instance, string field)
+    {
+        var array = ReadArray(instance, field);
+        if (array == null) return null;
+
+        var values = new List<string?>(array.Count);
+        for (int i = 0; i < array.Count; i++)
         {
-            if (source != at.Value) continue;
-            int end = Array.IndexOf(_data.Data, (byte)0, destination);
-            if (end < 0) return null;
-            return Encoding.UTF8.GetString(_data.Data, destination, end - destination);
+            int slot = array.At + i * 8;
+            if (slot + 8 > _data.Data.Length) return null;
+            values.Add(TextAt(Aim(slot)));
         }
-        return null;
+        return values;
+    }
+
+    public IReadOnlyList<Instance?>? ReadRefArray(Instance instance, string field)
+    {
+        var array = ReadArray(instance, field);
+        if (array == null) return null;
+
+        var values = new List<Instance?>(array.Count);
+        for (int i = 0; i < array.Count; i++)
+        {
+            int slot = array.At + i * 8;
+            if (slot + 8 > _data.Data.Length) return null;
+
+            int? destination = Aim(slot);
+            values.Add(destination != null && _startsAt.TryGetValue(destination.Value, out var target)
+                           ? target
+                           : null);
+        }
+        return values;
+    }
+
+    /// Elements that are numbers rather than pointers, laid out one after another. `width` is how
+    /// many bytes each takes and `read` turns those bytes into the value.
+    public IReadOnlyList<T>? ReadValueArray<T>(Instance instance, string field, int width,
+                                               Func<byte[], int, T> read)
+    {
+        var array = ReadArray(instance, field);
+        if (array == null || array.At + array.Count * width > _data.Data.Length) return null;
+
+        var values = new List<T>(array.Count);
+        for (int i = 0; i < array.Count; i++) values.Add(read(_data.Data, array.At + i * width));
+        return values;
     }
 
     /// Overwrites a field in place. Same width in, same width out, so nothing moves and every offset
@@ -169,7 +272,11 @@ public sealed class PackfileObjects
         var withTerminator = new byte[bytes.Length + 1];
         bytes.CopyTo(withTerminator, 0);
 
-        _data.SetLocal(at.Value, _data.AppendData(withTerminator));
+        int landed = _data.AppendData(withTerminator);
+        _data.SetLocal(at.Value, landed);
+        // The lookup is a copy of the table, so it has to be told as well, or a read after a write
+        // in the same session still finds the old text.
+        _pointsAt[at.Value] = landed;
         return true;
     }
 

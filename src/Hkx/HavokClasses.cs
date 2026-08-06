@@ -25,6 +25,11 @@ public sealed class HavokClasses
         public int Offset { get; init; }
         public string Type { get; init; } = "";
 
+        /// The class that declares the field, which is not always the class of the object holding
+        /// it. Two classes can both declare a `flags` and mean different things by it, so anything
+        /// naming the values of a field has to key on where the field comes from.
+        public string Owner { get; init; } = "";
+
         public override string ToString() => $"+{Offset} {Name} {Type}";
     }
 
@@ -113,6 +118,7 @@ public sealed class HavokClasses
                     Name = m[0].GetString() ?? "",
                     Offset = m[1].GetInt32(),
                     Type = m[2].GetString() ?? "",
+                    Owner = entry.Name,
                 });
             }
 

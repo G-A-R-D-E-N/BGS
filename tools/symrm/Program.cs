@@ -40,6 +40,7 @@ public static class Program
             case "pose": return Pose(argv);
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
+            case "names": return Names(argv);
             case "objects": return Objects(argv);
             case "crosscheck": return CrossCheck(argv);
             case "savecheck": return SaveCheck(argv);
@@ -921,6 +922,136 @@ public static class Program
     // out of the game, hkxpack's by its own schema. Agreement across a whole file is what turns
     // "these offsets look plausible" into "these offsets are right", and it is the check that has to
     // pass before anything writes bytes for real.
+    /// Builds the table of what an enum's numbers are called, by reading every enum and flags field
+    /// out of the bytes and setting it beside what hkxpack calls the same field. The names are not
+    /// in the class dump, so this is where they come from.
+    ///
+    /// Deliberately pointed at a set of files rather than all of them, so the table can be built
+    /// from one set and checked against another. A table derived from the same files it is then
+    /// tested on proves nothing.
+    private static int Names(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string directory = Path.GetFullPath(argv[1]);
+        string output = Path.GetFullPath(argv[^1]);
+        int every = argv.Length > 3 && int.TryParse(argv[2], out int n) ? n : 1;
+
+        var files = Directory.GetFiles(directory, "*.hkx").OrderBy(f => f, StringComparer.Ordinal)
+                             .Where((_, i) => i % every == 0).ToList();
+
+        var seen = new Dictionary<string, Dictionary<long, string>>(StringComparer.Ordinal);
+        var combining = new HashSet<string>(StringComparer.Ordinal);
+        var conflicts = new List<string>();
+        int read = 0;
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm-names");
+        foreach (string file in files)
+        {
+            string xml;
+            try
+            {
+                if (Directory.Exists(work)) Directory.Delete(work, true);
+                xml = HkxTextEdit.Unpack(_java, _jar, file, work);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message}");
+                continue;
+            }
+
+            read++;
+            var document = System.Xml.Linq.XDocument.Load(xml);
+            var byClass = new Dictionary<string, List<Dictionary<string, string>>>(StringComparer.Ordinal);
+            foreach (var element in document.Descendants("hkobject"))
+            {
+                string? cls = element.Attribute("class")?.Value;
+                if (cls == null) continue;
+
+                var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var p in element.Elements("hkparam"))
+                {
+                    string? name = p.Attribute("name")?.Value;
+                    if (name != null) fields[name] = (p.Value ?? "").Trim();
+                }
+                if (!byClass.TryGetValue(cls, out var list)) byClass[cls] = list = new();
+                list.Add(fields);
+            }
+
+            var objects = new PackfileObjects(PackfileImage.Read(file));
+            foreach (var group in objects.Instances.GroupBy(i => i.ClassName))
+            {
+                if (!byClass.TryGetValue(group.Key, out var theirs)) continue;
+                var ours = group.ToList();
+                if (ours.Count != theirs.Count) continue;
+
+                foreach (var member in HavokClasses.Shipped.Members(group.Key))
+                {
+                    if (!member.Type.StartsWith("enum of", StringComparison.Ordinal) &&
+                        !member.Type.StartsWith("flags of", StringComparison.Ordinal)) continue;
+
+                    string key = HavokEnums.Key(member);
+                    if (member.Type.StartsWith("flags of", StringComparison.Ordinal)) combining.Add(key);
+
+                    for (int i = 0; i < ours.Count; i++)
+                    {
+                        if (!theirs[i].TryGetValue(member.Name, out string? name)) continue;
+                        if (name.Length == 0 || long.TryParse(name, out _)) continue;
+
+                        // A combination is left out: which bit is which cannot be told from
+                        // `A|B` alone, and it falls out of the single names anyway.
+                        if (name.Contains('|')) continue;
+
+                        long? value = Value(objects, ours[i], member);
+                        if (value == null) continue;
+
+                        if (!seen.TryGetValue(key, out var names)) seen[key] = names = new();
+                        if (names.TryGetValue(value.Value, out string? already))
+                        {
+                            if (already != name && conflicts.Count < 12)
+                                conflicts.Add($"{key} = {value}: {already} here, {name} in " +
+                                              Path.GetFileName(file));
+                        }
+                        else names[value.Value] = name;
+                    }
+                }
+            }
+        }
+
+        var table = seen.Select(f => (f.Key, combining.Contains(f.Key),
+                                      f.Value.Select(v => (v.Key, v.Value))));
+        File.WriteAllText(output, HavokEnums.Write(table));
+
+        Console.WriteLine($"{read} file(s) read, {seen.Count} field(s) named, " +
+                          $"{seen.Sum(f => f.Value.Count)} value(s) in total, " +
+                          $"{conflicts.Count} conflict(s)");
+        foreach (string line in conflicts) Console.WriteLine("  " + line);
+        Console.WriteLine($"written to {output}");
+
+        return conflicts.Count == 0 ? 0 : 1;
+    }
+
+    /// An enum's number, at whatever width the field is. Signed on purpose where the type is:
+    /// `enum of int8` holding 0xFF is -1, and naming it 255 would miss the entry.
+    private static long? Value(PackfileObjects objects, PackfileObjects.Instance instance,
+                               HavokClasses.Member member)
+    {
+        int? whole = objects.ReadInt(instance, member.Name);
+        if (whole == null) return null;
+
+        return member.Type switch
+        {
+            "enum of int8" => (sbyte)whole.Value,
+            "enum of uint8" => (byte)whole.Value,
+            "enum of int16" or "flags of int16" => (short)whole.Value,
+            "enum of uint16" or "flags of uint16" => (ushort)whole.Value,
+            "enum of int32" or "flags of int32" => whole.Value,
+            "enum of uint32" or "flags of uint32" => (uint)whole.Value,
+            _ => whole.Value,
+        };
+    }
+
     private static int CrossCheck(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -933,8 +1064,45 @@ public static class Program
 
         string xmlFile = HkxTextEdit.Unpack(_java, _jar, file, work);
 
+        var document = System.Xml.Linq.XDocument.Load(xmlFile);
+        var objects = new PackfileObjects(PackfileImage.Read(file));
+
+        // hkxpack names its objects `#90`, `#91` and so on in the order they sit in the file, which
+        // is the order the virtual fixups give us, so the two lists line up position for position.
+        // That is checked rather than assumed: if it does not hold, references are compared by the
+        // class they point at instead of by which object exactly, and the file says so.
+        // An id, not any name: an inline struct carries a name attribute too, and it holds the
+        // field it sits in rather than an id, so counting those makes 1,519 objects out of 906.
+        var named = document.Descendants("hkobject")
+                            .Where(e => e.Attribute("name")?.Value.StartsWith('#') == true).ToList();
+        bool idsLineUp = named.Count == objects.Instances.Count &&
+                         named.Select((e, i) => e.Attribute("class")?.Value == objects.Instances[i].ClassName)
+                              .All(matched => matched);
+
+        if (!idsLineUp)
+        {
+            int at = named.Zip(objects.Instances)
+                          .TakeWhile(p => p.First.Attribute("class")?.Value == p.Second.ClassName)
+                          .Count();
+            Console.WriteLine($"  the two orderings differ: hkxpack has {named.Count} named objects, " +
+                              $"we have {objects.Instances.Count}, first differing at {at}" +
+                              (at < named.Count && at < objects.Instances.Count
+                                   ? $" where hkxpack says {named[at].Attribute("class")?.Value} " +
+                                     $"and we say {objects.Instances[at].ClassName}"
+                                   : ""));
+        }
+
+        var indexOfId = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int i = 0; i < named.Count; i++) indexOfId[named[i].Attribute("name")!.Value] = i;
+
+        var indexOf = new Dictionary<PackfileObjects.Instance, int>();
+        for (int i = 0; i < objects.Instances.Count; i++) indexOf[objects.Instances[i]] = i;
+
+        string Reference(string id) =>
+            idsLineUp && indexOfId.TryGetValue(id, out int at) ? "@" + at : id;
+
         var byClass = new Dictionary<string, List<Dictionary<string, string>>>(StringComparer.Ordinal);
-        foreach (var element in System.Xml.Linq.XDocument.Load(xmlFile).Descendants("hkobject"))
+        foreach (var element in document.Descendants("hkobject"))
         {
             string? cls = element.Attribute("class")?.Value;
             if (cls == null) continue;
@@ -943,15 +1111,16 @@ public static class Program
             foreach (var p in element.Elements("hkparam"))
             {
                 string? name = p.Attribute("name")?.Value;
-                if (name != null) fields[name] = (p.Value ?? "").Trim();
+                if (name != null) fields[name] = Canonical(p, Reference);
             }
             if (!byClass.TryGetValue(cls, out var list)) byClass[cls] = list = new();
             list.Add(fields);
         }
 
-        var objects = new PackfileObjects(PackfileImage.Read(file));
         int compared = 0, agreed = 0;
         var disagreements = new List<string>();
+        var unread = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        int countedOnly = 0;
 
         foreach (var group in objects.Instances.GroupBy(i => i.ClassName))
         {
@@ -970,10 +1139,21 @@ public static class Program
                 {
                     if (!theirs[i].TryGetValue(member.Name, out string? expected)) continue;
 
-                    string? actual = Rendered(objects, ours[i], member);
-                    if (actual == null) continue;
+                    string? actual = Rendered(objects, ours[i], member, indexOf, expected);
+                    if (actual == null)
+                    {
+                        // Counted rather than passed over. A field type nobody reads is the reason
+                        // hkxpack is still needed to open a file, so it has to show up somewhere.
+                        unread[member.Type] = unread.GetValueOrDefault(member.Type) + 1;
+                        continue;
+                    }
 
                     compared++;
+                    // An array of inline structs is compared by how many elements it has and no
+                    // further: the layout dump does not name the struct's own class, so there is
+                    // nothing to read the elements with. Counted separately rather than presented
+                    // as a field we can read.
+                    if (member.Type == "array of struct") countedOnly++;
                     if (Same(actual, expected)) { agreed++; continue; }
                     if (disagreements.Count < 12)
                         disagreements.Add($"{group.Key}[{i}].{member.Name} (+{member.Offset}): " +
@@ -986,21 +1166,172 @@ public static class Program
                           $"{agreed} agreed, {compared - agreed} did not");
         foreach (string line in disagreements) Console.WriteLine("  " + line);
 
+        if (countedOnly > 0)
+            Console.WriteLine($"  of those, {countedOnly} are arrays of inline structs, where only " +
+                              "the element count is read and not the elements");
+
+        if (unread.Count > 0)
+            Console.WriteLine("  still needing hkxpack to read: " +
+                              string.Join(", ", unread.OrderByDescending(u => u.Value)
+                                                      .Select(u => $"{u.Key} x{u.Value}")));
+
         return compared > 0 && compared == agreed && disagreements.Count == 0 ? 0 : 1;
     }
 
-    private static string? Rendered(PackfileObjects objects, PackfileObjects.Instance instance,
-                                    HavokClasses.Member member) => member.Type switch
+    /// How hkxpack writes a value, so the two sides can be compared as text. An element it renders
+    /// as a nest of objects is reduced to how many there are, which is the part of it we can read;
+    /// the count is still a real check, since it comes from the array's own header.
+    private static string Canonical(System.Xml.Linq.XElement p, Func<string, string> reference)
     {
-        "real" => objects.ReadFloat(instance, member.Name)?.ToString("R"),
-        "stringptr" or "cstring" => objects.ReadString(instance, member.Name) ?? "∅",
-        "bool" or "int8" or "uint8" or "int16" or "uint16" or "int32" or "uint32"
-            => Narrow(objects.ReadInt(instance, member.Name), member.Type),
-        "ulong" or "uint64" => objects.ReadULong(instance, member.Name)?.ToString(),
-        "vector4" or "quaternion" => Floats(objects.ReadFloats(instance, member.Name, 4)),
-        "qstransform" => Floats(objects.ReadFloats(instance, member.Name, 12)),
-        _ => null,
-    };
+        string text = (p.Value ?? "").Trim();
+
+        if (p.Attribute("numelements") == null)
+            return text.StartsWith('#') ? reference(text) : text;
+
+        int count = int.Parse(p.Attribute("numelements")!.Value);
+        if (p.Elements("hkobject").Any()) return List(count, "structs");
+
+        var strings = p.Elements("hkcstring").ToList();
+        if (strings.Count > 0)
+            return List(count, strings.Select(s => (s.Value ?? "").Trim()));
+
+        // An element that is itself several numbers is written in brackets, so the brackets are the
+        // element boundary. Splitting on whitespace instead turns one vector into four elements and
+        // reports a file that agrees as a file that does not.
+        if (text.Contains('('))
+            return List(count, System.Text.RegularExpressions.Regex.Matches(text, @"\([^)]*\)")
+                                   .Select(m => m.Value));
+
+        var tokens = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                         .Select(t => t.StartsWith('#') ? reference(t) : t);
+        return List(count, tokens);
+    }
+
+    private static string List(int count, IEnumerable<string> tokens) =>
+        $"[{count}: {string.Join("|", tokens)}]";
+
+    /// An empty array has nothing in it to describe, however unreadable its elements would be, so it
+    /// reads the same on both sides rather than as a count with a word after it.
+    private static string List(int count, string what) => count == 0 ? "[0: ]" : $"[{count}: {what}]";
+
+    private static string? Rendered(PackfileObjects objects, PackfileObjects.Instance instance,
+                                    HavokClasses.Member member,
+                                    Dictionary<PackfileObjects.Instance, int> indexOf,
+                                    string expected)
+    {
+        string Reference(PackfileObjects.Instance? target, bool wasNull) =>
+            wasNull ? "null"
+            : target != null && indexOf.TryGetValue(target, out int at) ? "@" + at
+            : "a pointer landing where no object begins";
+
+        // An enum is a number in the file and a name in hkxpack's XML, so reading it means having
+        // the names. A value the table has never seen reads as nothing rather than as a number:
+        // saying `3` where hkxpack says a name is a disagreement, and pretending otherwise would
+        // count a field we cannot read as one we can.
+        if (member.Type.StartsWith("enum of", StringComparison.Ordinal) ||
+            member.Type.StartsWith("flags of", StringComparison.Ordinal))
+        {
+            long? value = Value(objects, instance, member);
+            if (value == null) return null;
+
+            string? name = HavokEnums.Shipped.Name(HavokEnums.Key(member), value.Value);
+            // Both, because hkxpack prints whichever it feels like: a name when it has one for the
+            // exact value, and the bare number when the value is a combination of flags. Carrying
+            // the number as well as the name lets the comparison meet it either way instead of
+            // reporting a right answer as a wrong one.
+            //
+            // With no name of our own, the number is still the whole value when that is what the
+            // other side printed. It is only unreadable when hkxpack has a name and we do not.
+            if (name == null)
+                return long.TryParse(expected, out _) ? value.ToString() : null;
+
+            return $"{value}:{name}";
+        }
+
+        switch (member.Type)
+        {
+            case "real": return objects.ReadFloat(instance, member.Name)?.ToString("R");
+            case "stringptr":
+            case "cstring": return objects.ReadString(instance, member.Name) ?? "∅";
+            case "bool" or "int8" or "uint8" or "int16" or "uint16" or "int32" or "uint32":
+                return Narrow(objects.ReadInt(instance, member.Name), member.Type);
+            case "ulong":
+            case "uint64": return objects.ReadULong(instance, member.Name)?.ToString();
+            case "vector4":
+            case "quaternion": return Floats(objects.ReadFloats(instance, member.Name, 4));
+            case "qstransform": return Floats(objects.ReadFloats(instance, member.Name, 12));
+
+            case "pointer":
+            case "pointer of struct":
+            {
+                var target = objects.ReadRef(instance, member.Name, out bool wasNull);
+                return Reference(target, wasNull);
+            }
+
+            case "array of pointer":
+            {
+                var targets = objects.ReadRefArray(instance, member.Name);
+                return targets == null
+                    ? null
+                    : List(targets.Count, targets.Select(t => Reference(t, t == null)));
+            }
+
+            case "array of stringptr":
+            {
+                var values = objects.ReadStringArray(instance, member.Name);
+                return values == null ? null : List(values.Count, values.Select(v => v ?? "∅"));
+            }
+
+            case "array of struct":
+            {
+                var array = objects.ReadArray(instance, member.Name);
+                return array == null ? null : List(array.Count, "structs");
+            }
+
+            case "array of vector4":
+            case "array of quaternion":
+                return Grouped(objects, instance, member.Name, 16, 4);
+            case "array of matrix4":
+                return Grouped(objects, instance, member.Name, 64, 16);
+            case "array of qstransform":
+                return Grouped(objects, instance, member.Name, 48, 12);
+
+            case "array of uint8":
+                return Listed(objects.ReadValueArray(instance, member.Name, 1, (b, at) => b[at]));
+            case "array of int8":
+                return Listed(objects.ReadValueArray(instance, member.Name, 1, (b, at) => (sbyte)b[at]));
+            case "array of real":
+                return Listed(objects.ReadValueArray(instance, member.Name, 4, BitConverter.ToSingle));
+            case "array of int16":
+                return Listed(objects.ReadValueArray(instance, member.Name, 2, BitConverter.ToInt16));
+            case "array of uint16":
+                return Listed(objects.ReadValueArray(instance, member.Name, 2, BitConverter.ToUInt16));
+            case "array of int32":
+                return Listed(objects.ReadValueArray(instance, member.Name, 4, BitConverter.ToInt32));
+            case "array of uint32":
+                return Listed(objects.ReadValueArray(instance, member.Name, 4, BitConverter.ToUInt32));
+
+            default: return null;
+        }
+    }
+
+    /// An array whose elements are several floats each: a vector, a transform, a matrix. Read as one
+    /// long run and cut into elements, because that is how they sit in the file.
+    private static string? Grouped(PackfileObjects objects, PackfileObjects.Instance instance,
+                                   string field, int stride, int floats)
+    {
+        var array = objects.ReadArray(instance, field);
+        if (array == null) return null;
+
+        var all = objects.ReadValueArray(instance, field, stride,
+                                         (b, at) => Enumerable.Range(0, floats)
+                                                              .Select(i => BitConverter.ToSingle(b, at + i * 4))
+                                                              .ToArray());
+        return all == null ? null : List(array.Count, all.Select(e => Floats(e)!));
+    }
+
+    private static string? Listed<T>(IReadOnlyList<T>? values) =>
+        values == null ? null : List(values.Count, values.Select(v => v?.ToString() ?? ""));
 
     /// Printed the way hkxpack prints a vector, so the comparison is between two spellings of the
     /// same thing rather than between a spelling and a shape.
@@ -1022,6 +1353,29 @@ public static class Program
 
         if (float.TryParse(ours, out float a) && float.TryParse(theirs, out float b))
             return Math.Abs(a - b) <= 1e-6f * Math.Max(1f, Math.Abs(b));
+
+        // An enum, carried as its number and its name. hkxpack prints one or the other, so whichever
+        // it printed is what gets compared.
+        int colon = ours.IndexOf(':');
+        if (colon > 0 && long.TryParse(ours[..colon], out long number))
+            return long.TryParse(theirs, out long theirNumber)
+                ? number == theirNumber
+                : ours[(colon + 1)..] == theirs;
+
+        // A list: same length, then the same values, compared as numbers when both sides are
+        // numbers. The two spell a float differently, so comparing the text would report every
+        // array of reals as a disagreement.
+        if (ours.StartsWith('[') && theirs.StartsWith('['))
+        {
+            // Trimmed: the space after the count belongs to the list, not to its first element, and
+            // left on it the first element of every list of vectors stops looking like a vector.
+            var mine = ours[(ours.IndexOf(':') + 1)..^1]
+                .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var yours = theirs[(theirs.IndexOf(':') + 1)..^1]
+                .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (ours[..ours.IndexOf(':')] != theirs[..theirs.IndexOf(':')]) return false;
+            return mine.Length == yours.Length && mine.Zip(yours).All(p => Same(p.First, p.Second));
+        }
 
         // A vector is a list of numbers and the two sides spell them differently: 0 against 0.0,
         // and hkxpack breaks a transform over several lines. Compared number by number, which is

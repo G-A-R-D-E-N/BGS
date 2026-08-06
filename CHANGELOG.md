@@ -3,6 +3,56 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, reading a whole file out of its own bytes
+
+The rest of the reading side, towards taking hkxpack off it. Values still reach the properties panel
+through hkxpack's XML; what this settles is that the byte reader can account for nearly all of a
+file on its own, which has to be true before anything is switched over.
+
+Four kinds of field it could not read:
+
+**References between objects.** The one that mattered, and the one that was being read wrongly rather
+than not at all. A pointer from one object to another is a **global** fixup, not a local one, even
+when both objects sit in the same section, because the format allows it to cross into another section
+even though nothing in these files does. Reading only the local table finds every string and every
+array and no reference at all, which reads as a file where nothing points at anything.
+
+**Arrays.** An `hkArray` is a pointer, a count, and a capacity with flags in its top bits. Arrays of
+references, of strings, of numbers, and of vectors and transforms all read now. An array of inline
+structs reads only as its count, because the class dump does not name the struct's own class, so
+there is nothing to read the elements with. That is counted separately rather than presented as a
+field we can read.
+
+**Enums and flags.** Not a byte problem: the bytes hold `0` where hkxpack writes `MODE_SINGLE_PLAY`,
+so reading one means having the value names, and the class dump kept the fields and their types but
+not the names. So they were **measured rather than looked up**: every enum field of every object in a
+set of vanilla files was read out of the bytes and set beside what hkxpack calls the same field, and
+the pairs that come out are the table. `symrm names` rebuilds it. A value no vanilla file uses has no
+name and is reported as unnamed rather than guessed at.
+
+Flags combine, and a combination is only as good as its parts: a value with a bit nothing has named
+is refused whole rather than half translated. Which turned up something worth knowing — **hkxpack
+gives up on those.** Where a flags field holds two flags at once it prints the bare number, `6`,
+rather than the two names. We print both, and the comparison meets it either way.
+
+Where neither side has a name, the number is still the whole value, and it is compared as one. A
+field is only unreadable when hkxpack has a name for it and we do not.
+
+**Proved against a second opinion, and on a set the table had never seen.** Every field the reader
+can render was compared to hkxpack's reading of the same field, across the same 76 vanilla
+behaviours the rename work was proved on: **53,956 values compared, all 53,956 agreeing, no file
+disagreeing about anything.** Up from 29,689 at the start of the day. 2,759 of those are arrays of
+inline structs, where only the count is checked.
+
+The names in the shipped table come from all 531 behaviours, which includes those 76, so that run
+alone would not show whether the method generalises. It was therefore run again with a table built
+from a **disjoint 228** and nothing else: **76 files, 53,955 values, all agreeing**, with a single
+flags value left unnamed. Reading a file the table was not built from works.
+
+What still needs hkxpack, counted rather than passed over in silence: **519 inline structs**, and
+nothing else. The class dump does not name the class of a struct written inline, so there is nothing
+to read its fields with. Every other field type in these files now reads from the bytes.
+
 ## 2026-08-05, reading the wider fields out of the bytes
 
 Groundwork for taking hkxpack off the reading side as well as the writing side. Values still reach

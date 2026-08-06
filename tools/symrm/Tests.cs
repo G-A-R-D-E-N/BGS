@@ -56,6 +56,8 @@ public static class Tests
         ("AValueThatIsNotANumberIsRefused", AValueThatIsNotANumberIsRefused),
         ("AStringIsWrittenAtWhateverLength", AStringIsWrittenAtWhateverLength),
         ("WideAndVectorFieldsReadFromTheBytes", WideAndVectorFieldsReadFromTheBytes),
+        ("ReferencesAndArraysReadFromTheBytes", ReferencesAndArraysReadFromTheBytes),
+        ("AnUnseenEnumValueIsNotNamed", AnUnseenEnumValueIsNotNamed),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1386,6 +1388,84 @@ public static class Tests
         // Past the end of the object rather than into the next one: a short read has to say so.
         Check("a run that does not fit is refused rather than cut short", null,
               objects.ReadFloats(clip, "extractedMotion", 4096));
+    }
+
+    /// A reference from one object to another is a global fixup, not a local one, even when both
+    /// objects sit in the same section. Reading only the local table finds every string and no
+    /// reference at all, which reads as a file where nothing points at anything.
+    private static void ReferencesAndArraysReadFromTheBytes()
+    {
+        Console.WriteLine("\nreferences and arrays read from the bytes");
+
+        var classes = HavokClasses.Shipped;
+        int size = classes["hkbClipGenerator"]!.Size;
+        int binding = classes.Field("hkbClipGenerator", "variableBindingSet")!.Offset;
+        int triggers = classes.Field("hkbClipGenerator", "triggers")!.Offset;
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        var data = image.Section("__data__")!;
+
+        // A second object of the same class, so a reference has somewhere real to land.
+        int second = data.AppendData(new byte[size]);
+        data.VirtualFixups = data.VirtualFixups
+            .Concat(Triple(second, 0, 5)).ToArray();
+
+        // The reference itself, and a two element array of them.
+        data.GlobalFixups = Triple(binding, 1, second);
+        int list = data.AppendData(new byte[16]);
+        var arrayHeader = new byte[16];
+        BitConverter.GetBytes(2).CopyTo(arrayHeader, 8);
+        int header = data.AppendData(arrayHeader);
+        // Only the second element gets a pointer. The first is left without one, which is how the
+        // format spells a null element, rather than pointed at offset zero, which is a real object.
+        data.GlobalFixups = data.GlobalFixups.Concat(Triple(list + 8, 1, second)).ToArray();
+        data.SetLocal(triggers, list);
+        BitConverter.GetBytes(2).CopyTo(data.Data, triggers + 8);
+        _ = header;
+
+        var objects = new PackfileObjects(image);
+        Check("both objects are found", 2, objects.Instances.Count);
+
+        var clip = objects.Instances[0];
+        var target = objects.ReadRef(clip, "variableBindingSet", out bool wasNull);
+        CheckTrue("a reference is not read as null", !wasNull);
+        Check("and it names the object it points at", objects.Instances[1]?.Offset, target?.Offset);
+
+        var absent = objects.ReadRef(clip, "mapperData", out bool nothingThere);
+        CheckTrue("a field with no pointer reads as null rather than as unresolved", nothingThere);
+        Check("with nothing named", null, absent);
+
+        var elements = objects.ReadRefArray(clip, "triggers");
+        Check("an array reports its own count", 2, elements?.Count);
+        Check("an element pointing nowhere is null", null, elements?[0]);
+        Check("an element pointing at an object names it", objects.Instances[1]?.Offset,
+              elements?[1]?.Offset);
+    }
+
+    /// The names of an enum's values were read off vanilla files rather than taken from a
+    /// specification, so a value no vanilla file uses has no name. That has to read as "no name"
+    /// rather than as a number or an invented one: a wrong name is the kind of wrong nobody checks.
+    private static void AnUnseenEnumValueIsNotNamed()
+    {
+        Console.WriteLine("\nan enum value nobody has seen is left unnamed");
+
+        var mode = HavokClasses.Shipped.Field("hkbClipGenerator", "mode")!;
+        string key = HavokEnums.Key(mode);
+
+        Check("the key names the class that declares the field", "hkbClipGenerator.mode", key);
+        Check("a value vanilla uses is named", "MODE_SINGLE_PLAY", HavokEnums.Shipped.Name(key, 0));
+        Check("a value nothing uses is not", null, HavokEnums.Shipped.Name(key, 99));
+        Check("neither is a field with no table at all", null,
+              HavokEnums.Shipped.Name("hkbNothing.nowhere", 0));
+
+        // Flags combine, and a combination is only as good as its parts.
+        var flags = HavokClasses.Shipped.Field("hkbBlendingTransitionEffect", "flags")!;
+        string bits = HavokEnums.Key(flags);
+        Check("a single flag is named", "FLAG_SYNC", HavokEnums.Shipped.Name(bits, 2));
+        Check("so is a combination of named flags", "FLAG_SYNC|FLAG_IGNORE_TO_WORLD_FROM_MODEL",
+              HavokEnums.Shipped.Name(bits, 6));
+        Check("a combination holding a bit with no name is refused whole", null,
+              HavokEnums.Shipped.Name(bits, 6 | 1 << 20));
     }
 
     /// One hkbClipGenerator in a packfile of two sections, which is the least a reader needs: a name

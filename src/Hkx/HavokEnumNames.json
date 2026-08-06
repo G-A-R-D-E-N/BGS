@@ -1,0 +1,162 @@
+{
+  "note": "Value names for enum and flags fields, read off vanilla files by setting our reading of the bytes beside hkxpack\u0027s reading of the same field. Rebuild with \u0060symrm names\u0060. A value no vanilla file uses is absent, not invented.",
+  "fields": {
+    "BGSGamebryoSequenceGenerator.eBlendModeFunction": {
+      "combining": false,
+      "values": {
+        "0": "BMF_NONE",
+        "1": "BMF_PERCENT",
+        "2": "BMF_ONE_MINUS_PERCENT"
+      }
+    },
+    "BGSGamebryoSequenceGenerator.eUseTimePercentage": {
+      "combining": false,
+      "values": {
+        "0": "NOT_USING_TIME_PERCENTAGE",
+        "1": "USING_TIME_PERCENTAGE"
+      }
+    },
+    "BSDirectAtModifier.context": {
+      "combining": false,
+      "values": {
+        "0": "None",
+        "3": "GunAttack"
+      }
+    },
+    "BSDirectAtModifier.target": {
+      "combining": false,
+      "values": {
+        "0": "AppSupplied"
+      }
+    },
+    "BSLookAtModifier.characterType": {
+      "combining": false,
+      "values": {
+        "0": "Generic",
+        "1": "Biped"
+      }
+    },
+    "BSLookAtModifier.target": {
+      "combining": false,
+      "values": {
+        "1": "AppSupplied"
+      }
+    },
+    "BSRootTwistModifier.twistType": {
+      "combining": false,
+      "values": {
+        "0": "ANGLE_DEGREES",
+        "1": "DIRECTION"
+      }
+    },
+    "hkaAnimation.type": {
+      "combining": false,
+      "values": {
+        "3": "HK_SPLINE_COMPRESSED_ANIMATION"
+      }
+    },
+    "hkaAnimationBinding.blendHint": {
+      "combining": false,
+      "values": {
+        "0": "NORMAL"
+      }
+    },
+    "hkbBehaviorGraph.variableMode": {
+      "combining": false,
+      "values": {
+        "0": "VARIABLE_MODE_DISCARD_WHEN_INACTIVE"
+      }
+    },
+    "hkbBlendingTransitionEffect.endMode": {
+      "combining": false,
+      "values": {
+        "0": "END_MODE_NONE",
+        "1": "END_MODE_TRANSITION_UNTIL_END_OF_FROM_GENERATOR"
+      }
+    },
+    "hkbBlendingTransitionEffect.flags": {
+      "combining": true,
+      "values": {
+        "0": "FLAG_NONE",
+        "1": "FLAG_IGNORE_FROM_WORLD_FROM_MODEL",
+        "2": "FLAG_SYNC",
+        "4": "FLAG_IGNORE_TO_WORLD_FROM_MODEL"
+      }
+    },
+    "hkbClipGenerator.mode": {
+      "combining": false,
+      "values": {
+        "0": "MODE_SINGLE_PLAY",
+        "1": "MODE_LOOPING",
+        "2": "MODE_USER_CONTROLLED"
+      }
+    },
+    "hkbJigglerModifier.jiggleCoordinates": {
+      "combining": false,
+      "values": {
+        "0": "JIGGLE_IN_WORLD_COORDINATES",
+        "1": "JIGGLE_IN_MODEL_COORDINATES"
+      }
+    },
+    "hkbLayerGenerator.flags": {
+      "combining": true,
+      "values": {
+        "1": "FLAG_SYNC"
+      }
+    },
+    "hkbPoseMatchingGenerator.mode": {
+      "combining": false,
+      "values": {
+        "0": "MODE_MATCH"
+      }
+    },
+    "hkbStateMachine.selfTransitionMode": {
+      "combining": false,
+      "values": {
+        "0": "SELF_TRANSITION_MODE_NO_TRANSITION",
+        "1": "SELF_TRANSITION_MODE_TRANSITION_TO_START_STATE",
+        "2": "SELF_TRANSITION_MODE_FORCE_TRANSITION_TO_START_STATE"
+      }
+    },
+    "hkbStateMachine.startStateMode": {
+      "combining": false,
+      "values": {
+        "0": "START_STATE_MODE_DEFAULT",
+        "1": "START_STATE_MODE_SYNC",
+        "2": "START_STATE_MODE_RANDOM"
+      }
+    },
+    "hkbTransitionEffect.eventMode": {
+      "combining": false,
+      "values": {
+        "0": "EVENT_MODE_DEFAULT",
+        "1": "EVENT_MODE_PROCESS_ALL",
+        "2": "EVENT_MODE_IGNORE_FROM_GENERATOR"
+      }
+    },
+    "hkbTransitionEffect.selfTransitionMode": {
+      "combining": false,
+      "values": {
+        "0": "SELF_TRANSITION_MODE_CONTINUE_IF_CYCLIC_BLEND_IF_ACYCLIC",
+        "1": "SELF_TRANSITION_MODE_CONTINUE",
+        "2": "SELF_TRANSITION_MODE_RESET",
+        "3": "SELF_TRANSITION_MODE_BLEND"
+      }
+    },
+    "hkbTwistModifier.rotationAxisCoordinates": {
+      "combining": false,
+      "values": {
+        "0": "ROTATION_AXIS_IN_MODEL_COORDINATES",
+        "1": "ROTATION_AXIS_IN_PARENT_COORDINATES",
+        "2": "ROTATION_AXIS_IN_LOCAL_COORDINATES"
+      }
+    },
+    "hkbTwistModifier.setAngleMethod": {
+      "combining": false,
+      "values": {
+        "0": "LINEAR",
+        "1": "RAMPED"
+      }
+    }
+  }
+}
