@@ -3,6 +3,34 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, the human mesh was never drifting
+
+The male body mesh read as 120.864 units of drift on the vertices whose bones all matched the
+skeleton, which had been left as an open question about the bind pose. It is not a bind fault. Every
+one of its matched bones composes to the same transform on the reference pose, and that transform is
+a lift of 120.84 units, because the mesh is authored with its origin at the neck: its vertices run
+from -120.2 to -5.7 and the bind puts them on the ground. Posed, the body now measures from 0.6 at
+the feet to 115.2 at the neck, which is where a body of that height belongs.
+
+The measure was wrong, not the transforms. It compared the posed mesh against the vertices as written
+in the file, which assumes the mesh was authored in the skeleton's own space. Dogmeat is, so it read
+0.245 there and nobody noticed the assumption.
+
+What it measures now is whether the bones agree with each other, which is the thing that cannot be
+innocent: a mesh is rigid in whatever space it was authored in, so on the reference pose every bone
+has to compose to one and the same transform, whatever that transform is. Dogmeat's 21 bones agree to
+within a thousandth of a unit. The male body's 13 agree to within a fifth, except `LLeg_Toe1`, which
+is 5.140 out while its right hand twin is 0.172, so the mesh and the skeleton disagree about that one
+toe. Reading the stored rotation the wrong way round still fails, and fails harder than before: 97
+percent of bones disagreeing by up to 166 units.
+
+**A drawing bug fell out of it.** Vertices whose bones the skeleton does not have were being left at
+their authored position while the rest of the mesh was lifted, so the male body drew a second copy of
+itself 120 units underground. They are placed with the mesh now.
+
+`symrm mesh` prints the per bone breakdown whenever anything disagrees, which is what turned this
+from a hunt into a measurement.
+
 ## 2026-08-06, one answer to where a class name lives
 
 Two pieces of code put an object into a file, and they disagreed about a file that has never named

@@ -73,6 +73,31 @@ public static class SkinnedMesh
         return m;
     }
 
+    /// What one bone does to the vertices weighted to it: into that bone's space, then out to where
+    /// the pose has put it. Null when the bone matched nothing in the skeleton.
+    ///
+    /// Worth having on its own rather than only inside the loop below, because on the reference pose
+    /// this has to come back as the identity for every bone. A whole mesh drifting says only that
+    /// something is wrong; this says which bone, which is the difference between a measurement and a
+    /// hunt.
+    public static Matrix4x4? BoneMatrix(NifShape shape, Binding binding, AnimationPose.Pose pose,
+                                        int bone)
+    {
+        if (bone < 0 || bone >= binding.ToSkeleton.Length || bone >= shape.SkinToBone.Count)
+            return null;
+
+        int at = binding.ToSkeleton[bone];
+        if (at < 0 || at >= pose.Bones.Count) return null;
+
+        var posed = pose.Bones[at];
+        var world = Matrix4x4.CreateFromQuaternion(posed.Rotation);
+        world.M41 = posed.Position.X;
+        world.M42 = posed.Position.Y;
+        world.M43 = posed.Position.Z;
+
+        return Bind(shape.SkinToBone[bone]) * world;
+    }
+
     /// Every vertex moved to where the pose puts it. A vertex sits in skin space, so for each bone it
     /// is weighted to it goes through that bone's skin-to-bone transform and then through where the
     /// pose has that bone, and the results are blended by weight. This is linear blend skinning,
@@ -106,6 +131,17 @@ public static class SkinnedMesh
             usable[b] = true;
         }
 
+        // Where the mesh as a whole sits once it is on the skeleton, for the vertices no bone below
+        // can move. Leaving those at the raw authored position is what drew a second body a hundred
+        // and twenty units under the first one: a human body mesh is authored with its origin at the
+        // neck, so its vertices run from -120 to -6 and the bind lifts them onto the ground. A vertex
+        // held back from that lift is not merely unanimated, it is somewhere else entirely.
+        // Taken on the reference pose rather than on this one, because these vertices are meant to
+        // hold still. Reading it off the animated pose would swing them with whichever bone happened
+        // to be first in the list.
+        var placement = Placement(shape, binding, AnimationPose.ReferencePose(skeleton))
+                        ?? Matrix4x4.Identity;
+
         for (int v = 0; v < moved.Length; v++)
         {
             var rest = shape.Vertices[v];
@@ -124,42 +160,82 @@ public static class SkinnedMesh
                 total += weight;
             }
 
-            // Nothing usable claimed this vertex, so it stays where the mesh put it rather than
-            // collapsing to the origin and dragging a spike across the drawing.
-            moved[v] = total > 0.0001f ? sum / total : rest;
+            moved[v] = total > 0.0001f ? sum / total : Vector3.Transform(rest, placement);
         }
 
         return moved;
     }
 
-    /// How far the mesh moves when posed on the skeleton's own reference pose, averaged over every
-    /// vertex. The mesh is authored on that pose, so the answer is zero when the bind transforms are
-    /// being composed correctly and large when they are not. This is the check that catches a
-    /// rotation read in the wrong order, which otherwise produces a mesh that is plausibly shaped,
-    /// wrongly placed, and easy to blame on the camera.
-    /// Measured only over the vertices every one of whose bones matched. A vertex weighted partly to a
-    /// bone the skeleton does not have keeps that share at its rest position by design, which moves
-    /// it, and counting those would report the binding gap as though it were a transform fault. The
-    /// two are different problems and mixing them hid a real one: a human body mesh weights 45 of its
-    /// 58 bones to skin helper bones that the Havok skeleton has none of, and reads as 39 units of
-    /// drift while the transforms are composing perfectly.
+    /// Where the mesh sits once it is on the skeleton, taken from the first bone that matched.
+    ///
+    /// A mesh is rigid in the space it was authored in, so on the skeleton's own reference pose every
+    /// bone has to compose to the same transform. That shared transform is where the authored space
+    /// sits relative to the skeleton, which is data rather than a fault: Dogmeat is authored at the
+    /// origin and this comes back as the identity, and a human body is authored at the neck and it
+    /// comes back as a lift of about 120 units. Null when no bone matched.
+    public static Matrix4x4? Placement(NifShape shape, Binding binding, AnimationPose.Pose pose)
+    {
+        for (int b = 0; b < shape.BoneNames.Count; b++)
+            if (BoneMatrix(shape, binding, pose, b) is { } m) return m;
+
+        return null;
+    }
+
+    /// How far the bones disagree with each other on the skeleton's own reference pose.
+    ///
+    /// A mesh is rigid in the space it was authored in, so on that pose every bone has to compose to
+    /// one and the same transform. It does not have to be the identity. This is what the check used
+    /// to assume, and it is what made a human body mesh read as 120 units of fault while the
+    /// transforms were composing perfectly: the body is authored with its origin at the neck, its
+    /// vertices run from -120 to -6, and the bind lifts the whole thing onto the ground. Every bone
+    /// agreed on that lift to within a hundredth of a unit. Measuring the distance from the authored
+    /// position instead of the disagreement between bones reported the mesh's own placement as though
+    /// it were a defect.
+    ///
+    /// Disagreement is the thing that cannot be innocent, and it still catches what the old measure
+    /// was there to catch. A rotation read in the wrong order gives every bone a different wrong
+    /// answer, since each one is turned differently, so the spread goes to tens of units: measured on
+    /// Dogmeat at 50 to 107 for reading the stored rotation straight across, inverting it, or both,
+    /// against 0.245 for the transpose the game uses.
+    ///
+    /// Counted over the bones that matched the skeleton. A bone the skeleton does not have is a
+    /// different problem, reported by name, and mixing the two hid this one for a session.
     public static float BindError(NifShape shape, Binding binding, HkxSkeleton skeleton) =>
         BindError(shape, binding, skeleton, out _);
 
     public static float BindError(NifShape shape, Binding binding, HkxSkeleton skeleton, out int measured)
     {
-        measured = 0;
-        var posed = Pose(shape, binding, AnimationPose.ReferencePose(skeleton), skeleton);
-        if (posed.Length == 0) return 0;
+        var rest = AnimationPose.ReferencePose(skeleton);
+        var composed = new List<Matrix4x4>();
 
-        float total = 0;
-        for (int v = 0; v < posed.Length; v++)
+        for (int b = 0; b < shape.BoneNames.Count; b++)
+            if (BoneMatrix(shape, binding, rest, b) is { } m) composed.Add(m);
+
+        measured = composed.Count;
+        if (measured < 2) return 0;
+
+        float worst = 0;
+        foreach (var m in composed)
+            worst = Math.Max(worst, Disagreement(composed[0], m));
+
+        return worst;
+    }
+
+    /// How far apart two transforms put the same points, as the largest distance between them over
+    /// the corners of a hundred unit cube. A cube rather than the origin alone, so a difference that
+    /// is purely a turn is not read as agreement.
+    public static float Disagreement(Matrix4x4 a, Matrix4x4 b)
+    {
+        float worst = 0;
+        for (int i = 0; i < 8; i++)
         {
-            if (!FullyBound(shape, binding, v)) continue;
-            total += Vector3.Distance(posed[v], shape.Vertices[v]);
-            measured++;
+            var corner = new Vector3((i & 1) == 0 ? -50 : 50,
+                                     (i & 2) == 0 ? -50 : 50,
+                                     (i & 4) == 0 ? -50 : 50);
+            worst = Math.Max(worst, Vector3.Distance(Vector3.Transform(corner, a),
+                                                     Vector3.Transform(corner, b)));
         }
-        return measured == 0 ? 0 : total / measured;
+        return worst;
     }
 
     /// Whether every bone carrying any of this vertex's weight matched the skeleton.
