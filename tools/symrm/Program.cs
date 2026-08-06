@@ -812,6 +812,29 @@ public static class Program
         var was = PackfileImage.Read(before);
         var now = PackfileImage.Read(after);
 
+        // How many pointer entries each planned change is allowed to move. A repointed field moves
+        // one. A resized array moves every element it had and every element it now has, because the
+        // run moved to the end of the section and each element's fixup names a position inside it.
+        // Counted from the original file rather than assumed, so an array that was longer than the
+        // plan expects cannot hide extra movement inside the allowance.
+        int allowedPointerMoves = plan.Changes.Count(c => c.Ref);
+        if (plan.Changes.Any(c => c.Array))
+        {
+            var original = new PackfileObjects(was);
+            var byClass = original.Instances.GroupBy(o => o.ClassName)
+                                            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+
+            foreach (var change in plan.Changes.Where(c => c.Array))
+            {
+                int had = byClass.TryGetValue(change.ClassName, out var all) && change.Index < all.Count
+                    ? original.ReadArray(all[change.Index], change.Field)?.Count ?? 0
+                    : 0;
+
+                int now_ = change.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+                allowedPointerMoves += had + now_;
+            }
+        }
+
         if (was.Sections.Count != now.Sections.Count)
         {
             Console.WriteLine("  append check: FAILED, the section count changed");
@@ -853,11 +876,11 @@ public static class Program
                             !nowBySource.TryGetValue(k, out var y) || x != y)
                 .ToList();
 
-            int repointed = plan.Changes.Count(c => c.Ref);
-            if (repointedSources.Count > repointed)
+            if (repointedSources.Count > allowedPointerMoves)
             {
                 Console.WriteLine($"  append check: FAILED, {repointedSources.Count} pointer(s) in " +
-                                  $"{a.Tag} changed, more than the {repointed} the plan repoints");
+                                  $"{a.Tag} changed, more than the {allowedPointerMoves} the plan " +
+                                  "accounts for");
                 return false;
             }
 
@@ -868,17 +891,23 @@ public static class Program
             }
 
             var (locals, wasLocals) = (b.Locals().ToList(), a.Locals().ToList());
-            if (locals.Count != wasLocals.Count)
-            {
-                Console.WriteLine($"  append check: FAILED, section {a.Tag} gained or lost a local fixup");
-                return false;
-            }
 
-            int moved = locals.Zip(wasLocals).Count(p => p.First != p.Second);
-            int expected = plan.Changes.Count(c => c.Text);
-            if (a.Tag == "__data__" && moved != expected)
+            // The local table gains an entry when an array goes from empty to holding something,
+            // and loses one when it goes the other way, so its length is only fixed while no array
+            // changes. Compared by source rather than by position for the same reason as the global
+            // table: an entry appearing or going shifts the rest without changing any pointer.
+            var wasLocalsBySource = wasLocals.ToDictionary(l => l.Source, l => l.Destination);
+            var nowLocalsBySource = locals.ToDictionary(l => l.Source, l => l.Destination);
+
+            int movedLocals = wasLocalsBySource.Keys.Union(nowLocalsBySource.Keys)
+                .Count(k => !wasLocalsBySource.TryGetValue(k, out int x) ||
+                            !nowLocalsBySource.TryGetValue(k, out int y) || x != y);
+
+            int expected = plan.Changes.Count(c => c.Text || c.Array);
+            if (a.Tag == "__data__" && movedLocals > expected)
             {
-                Console.WriteLine($"  append check: FAILED, {moved} pointer(s) moved for {expected} text change(s)");
+                Console.WriteLine($"  append check: FAILED, {movedLocals} pointer(s) moved for " +
+                                  $"{expected} change(s) that move one");
                 return false;
             }
         }
@@ -982,6 +1011,29 @@ public static class Program
         // object sits first.
         Try("<hkparam name=\"variableBindingSet\">#[0-9]+</hkparam>",
             "<hkparam name=\"variableBindingSet\">null</hkparam>");
+
+        // An array of object pointers made one element longer, by repeating an element it already
+        // holds. Longer on purpose: a shorter one could be written over the run that is already
+        // there and would prove nothing about appending. The element is one the array already names
+        // rather than an invented id, so the target is an object the file has.
+        var array = System.Text.RegularExpressions.Regex.Match(
+            xml, "<hkparam name=\"(?<field>states|children|generators|modifiers|layers)\" " +
+                 "numelements=\"(?<n>[1-9][0-9]*)\">(?<body>[^<]*)</hkparam>");
+
+        if (array.Success)
+        {
+            var ids = array.Groups["body"].Value
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+            if (ids.Length > 0 && ids.All(t => t.StartsWith('#')))
+            {
+                string field = array.Groups["field"].Value;
+                string body = array.Groups["body"].Value.TrimEnd();
+                edits.Add((array.Value,
+                           $"<hkparam name=\"{field}\" numelements=\"{ids.Length + 1}\">" +
+                           $"{body}\n{ids[0]}\n</hkparam>"));
+            }
+        }
 
         return edits;
     }

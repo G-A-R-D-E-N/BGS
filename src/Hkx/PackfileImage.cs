@@ -221,7 +221,15 @@ public sealed class PackfileSection
     {
         var entries = Locals().ToList();
         int existing = entries.FindIndex(e => e.Source == source);
-        if (existing >= 0) entries[existing] = (source, destination);
+
+        if (destination < 0)
+        {
+            // An empty array has no pointer at all, the same way a null reference has no fixup. A
+            // fixup left aiming at offset zero would point the array at the start of the section.
+            if (existing < 0) return;
+            entries.RemoveAt(existing);
+        }
+        else if (existing >= 0) entries[existing] = (source, destination);
         else entries.Add((source, destination));
 
         // Rewritten from the entries rather than patched in place, because adding one lengthens the
@@ -249,6 +257,27 @@ public sealed class PackfileSection
     ///
     /// Same rule as `SetLocal` about order: the table is left as found and a new entry goes on the
     /// end, because Fallout 4's own tables are not sorted and nothing reads them by position.
+    /// Writes the whole table from a list, so a caller that has to control where entries sit can.
+    ///
+    /// Position in this table is not free. It is written in the order the writer walked the objects,
+    /// which is not offset order: an array's element pointers are written while the array is being
+    /// walked, before the fields that follow it in the owning object. Measured on Dogmeat, 22 of the
+    /// 1,151 steps go backwards, and every one of them is an array. Sorting the table by source
+    /// makes hkxpack misread more than a hundred fields, so something downstream depends on that
+    /// order and it is not ours to tidy.
+    public void SetGlobals(IEnumerable<(int Source, int Section, int Destination)> entries)
+    {
+        var all = entries.ToList();
+        var table = new byte[all.Count * 12];
+        for (int i = 0; i < all.Count; i++)
+        {
+            BitConverter.GetBytes(all[i].Source).CopyTo(table, i * 12);
+            BitConverter.GetBytes(all[i].Section).CopyTo(table, i * 12 + 4);
+            BitConverter.GetBytes(all[i].Destination).CopyTo(table, i * 12 + 8);
+        }
+        GlobalFixups = table;
+    }
+
     public void SetGlobal(int source, int section, int destination)
     {
         var entries = Globals().ToList();

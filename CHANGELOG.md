@@ -3,6 +3,48 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, an array of children saves without Java, and the pointer table turns out to be ordered
+
+Adding or removing a child node writes into the file's own bytes now. The new run of pointers goes
+on the end of the section and the array's own pointer is aimed at it, so nothing already in the file
+moves and no offset anybody holds goes stale. The capacity word beside the count carries flags in
+its top bits, and both zero and the high bit occur across the corpus, so what was there is kept and
+only the length part is rewritten.
+
+On the same 40 vanilla behaviours as before, each now given a longer array on top of the rewire, the
+cleared pointer, the longer animation name and three value changes: 40 saved, none refused, none
+failing a check, and every saved file read back by hkxpack agreeing with our own reading field for
+field.
+
+### The pointer table is in traversal order, and something downstream depends on it
+
+The first attempt dropped the array's element entries and appended the new ones. Our own reader,
+which looks entries up by source, read the result perfectly. hkxpack read every element of that
+array as null.
+
+The second attempt sorted the table by source, on the theory that something was binary searching it.
+That made hkxpack misread more than a hundred fields rather than one array.
+
+So the order is not incidental. The table is written in the order the writer walked the objects,
+which is not offset order: an array's element pointers are written while the array is being walked,
+before the fields that follow it in the owning object. On Dogmeat 22 of the 1,151 steps go
+backwards and every one of them is an array. The fix is to put the new entries back at the position
+the old ones held. The run of bytes still goes on the end; only the table entries stay put.
+
+This is worth stating plainly because it is the kind of thing that would have passed every check we
+own. Our reader is indifferent to the order. Only setting the file in front of a second
+implementation showed it.
+
+### Checks tightened rather than loosened, again
+
+The pointer table check now counts how many entries each planned change is allowed to move, worked
+out from the original file: one for a repointed field, and for a resized array every element it had
+plus every element it now has. An array that was longer than the plan expects therefore cannot hide
+extra movement inside the allowance. The local table check was changed the same way, comparing by
+source rather than by position, since an entry appearing or going shifts the rest without changing
+any pointer.
+
+
 ## 2026-08-06, rewiring a node saves without Java
 
 The first structural edit to write into the file's own bytes.

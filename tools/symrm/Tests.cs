@@ -64,6 +64,7 @@ public static class Tests
         ("TheConsumerComparisonCatchesADifferentAnswer", TheConsumerComparisonCatchesADifferentAnswer),
         ("APointerIsRewiredByMovingItsFixup", APointerIsRewiredByMovingItsFixup),
         ("APointerChangeIsPlannedAsOne", APointerChangeIsPlannedAsOne),
+        ("ThePointerTableKeepsTheOrderItWasWrittenIn", ThePointerTableKeepsTheOrderItWasWrittenIn),
         ("TheReadingFromTheBytesRefusesWhatItCannotDescribe", TheReadingFromTheBytesRefusesWhatItCannotDescribe),
         ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
@@ -2382,6 +2383,50 @@ public static class Tests
         Check("and the data never changed length", size + size, data.Data.Length - "A.hkx".Length - 1);
     }
 
+    /// Where an entry sits in the pointer table is not free.
+    ///
+    /// The table is written in the order the writer walked the objects, which is not offset order:
+    /// an array's element pointers are written while the array is being walked, before the fields
+    /// that follow it in the owning object. On Dogmeat 22 of the 1,151 steps go backwards and every
+    /// one is an array.
+    ///
+    /// This was found the hard way. Resizing an array by dropping its element entries and appending
+    /// the new ones made hkxpack read every element of that array as null, while our own reader,
+    /// which looks entries up by source, read it perfectly. Sorting the table by source, tried next
+    /// on the theory that something binary searched it, made hkxpack misread more than a hundred
+    /// fields instead. So order is load bearing, and the fix was to put the new entries back where
+    /// the old ones were.
+    private static void ThePointerTableKeepsTheOrderItWasWrittenIn()
+    {
+        Console.WriteLine("\nthe pointer table keeps the order it was written in");
+
+        var section = new PackfileSection();
+        var written = new[] { (96, 2, 500), (32, 2, 100), (64, 2, 300) };
+        section.SetGlobals(written);
+
+        Check("the entries come back in the order they went in", "96,32,64",
+              string.Join(",", section.Globals().Select(g => g.Source)));
+        CheckTrue("with their sections and destinations intact",
+                  section.Globals().SequenceEqual(written));
+
+        // Setting one that is already there leaves it where it is rather than moving it to the end.
+        section.SetGlobal(32, 2, 999);
+        Check("changing one does not move it", "96,32,64",
+              string.Join(",", section.Globals().Select(g => g.Source)));
+        Check("and it holds the new destination", 999,
+              section.Globals().First(g => g.Source == 32).Destination);
+
+        // A new one has nowhere else to go, so it goes on the end.
+        section.SetGlobal(128, 2, 700);
+        Check("a new entry goes on the end", "96,32,64,128",
+              string.Join(",", section.Globals().Select(g => g.Source)));
+
+        // Clearing drops it rather than leaving it aimed at zero, which would be a real object.
+        section.SetGlobal(64, 0, -1);
+        Check("clearing one removes it", "96,32,128",
+              string.Join(",", section.Globals().Select(g => g.Source)));
+    }
+
     /// The planner has to tell a pointer change from a value change, and has to refuse a pointer set
     /// to something that is not an object.
     private static void APointerChangeIsPlannedAsOne()
@@ -2411,6 +2456,26 @@ public static class Tests
             var plan = NativeSave.Compare(Before, Before.Replace(">#0091<", $">{rubbish}<"));
             CheckTrue($"a generator of '{rubbish}' is refused", !plan.Possible);
         }
+
+        // An array of pointers made longer. Planned as an array rather than as a value, and it grows
+        // the file, because the new run of pointers goes on the end.
+        const string Machine = """
+            <hkpackfile><hksection name="__data__">
+            <hkobject name="#0090" class="hkbStateMachine" signature="0x816c1dcb">
+                <hkparam name="states" numelements="2">#0091
+            #0092</hkparam>
+            </hkobject></hksection></hkpackfile>
+            """;
+
+        var longer = NativeSave.Compare(Machine, Machine.Replace("numelements=\"2\"", "numelements=\"3\"")
+                                                        .Replace("#0092<", "#0092 #0091<"));
+        CheckTrue("a longer array of pointers is writable", longer.Possible);
+        CheckTrue("planned as an array", longer.Changes[0].Array);
+        CheckTrue("and it grows the file", longer.Grows);
+        Check("with the elements it was given", "#0091 #0092 #0091", longer.Changes[0].Value);
+
+        var rubbishElement = NativeSave.Compare(Machine, Machine.Replace("#0092<", "elsewhere<"));
+        CheckTrue("an element that is not an object id is refused", !rubbishElement.Possible);
     }
 
     /// A file holding one of each shape the graph model has a bucket for: plain fields, an array of

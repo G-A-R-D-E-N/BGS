@@ -32,11 +32,11 @@ public static class NativeSave
 
         /// Whether carrying this out makes the file longer. Text is appended rather than overwritten,
         /// so a caller comparing the result to the original byte for byte has to expect it.
-        public bool Grows => Changes.Exists(c => c.Text);
+        public bool Grows => Changes.Exists(c => c.Text || c.Array);
     }
 
     public sealed record Change(string ClassName, int Index, string Field, string Value,
-                                bool Text = false, bool Ref = false)
+                                bool Text = false, bool Ref = false, bool Array = false)
     {
         public override string ToString() => $"{ClassName}[{Index}].{Field} = {Value}";
     }
@@ -66,6 +66,18 @@ public static class NativeSave
     /// destination.
     private static bool IsReference(string type) =>
         type.StartsWith("pointer of", StringComparison.Ordinal) || type == "pointer";
+
+    /// An array of pointers at other objects, which is what a node's children are.
+    ///
+    /// Resized by appending, the same way a longer string is. The new run of pointers goes on the
+    /// end of the section and the array's own pointer is aimed at it, so nothing that was already in
+    /// the file moves and no offset anybody holds goes stale.
+    ///
+    /// The element fixups are rewritten to name the new run, and they are put back at the same
+    /// position in the table rather than on the end. That is not tidiness. The table is in the order
+    /// the writer walked the objects, and moving a run of entries to the end of it makes hkxpack
+    /// read every element of that array as null.
+    private static bool IsPointerArray(string type) => type == "array of pointer";
 
     /// What hkxpack writes in a pointer field: an object id, or the word null.
     private static bool IsReferenceValue(string value) =>
@@ -109,6 +121,19 @@ public static class NativeSave
                     if (!layout.TryGetValue(field, out string? type))
                         return new Plan(changes,
                             $"{className}.{field} changed, and we have no byte layout for it");
+
+                    if (IsPointerArray(type))
+                    {
+                        var elements = now.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                        if (!elements.All(IsReferenceValue))
+                            return new Plan(changes,
+                                $"{className}.{field} holds something that is neither an object id " +
+                                "nor null");
+
+                        changes.Add(new Change(className, i, field, string.Join(" ", elements),
+                                               Array: true));
+                        continue;
+                    }
 
                     if (IsReference(type))
                     {
@@ -192,7 +217,9 @@ public static class NativeSave
             var member = (classes ?? HavokClasses.Shipped).Field(change.ClassName, change.Field)
                 ?? throw new InvalidOperationException($"No layout for {change.ClassName}.{change.Field}.");
 
-            bool written = change.Ref ? Repoint(image, objects, instance, change) : member.Type switch
+            bool written = change.Ref ? Repoint(image, objects, instance, change)
+                         : change.Array ? Resize(image, objects, instance, change)
+                         : member.Type switch
             {
                 "real" => objects.WriteFloat(instance, change.Field, AsFloat(change.Value)),
                 _ when WritableText.Contains(member.Type) =>
@@ -237,6 +264,71 @@ public static class NativeSave
                 $"{change} names an object this file does not have, so nothing was written.");
 
         data.SetGlobal(at, image.Sections.IndexOf(data), objects.Instances[index].Offset);
+        return true;
+    }
+
+    /// Writes an array of object pointers at a new length.
+    ///
+    /// The run goes on the end rather than over the old one, so nothing already in the file moves.
+    /// Three things then have to agree: the array's own pointer aims at the new run, the count beside
+    /// it says how long it is, and there is one fixup per element that points somewhere.
+    ///
+    /// The capacity word is not invented. It carries flags in its top bits, and both zero and the
+    /// high bit occur across the vanilla corpus, so what was there is kept and only the length part
+    /// is rewritten.
+    private static bool Resize(PackfileImage image, PackfileObjects objects,
+                               PackfileObjects.Instance instance, Change change)
+    {
+        var data = image.Section("__data__")
+            ?? throw new InvalidOperationException("this file has no data section");
+
+        if (objects.FieldAt(instance, change.Field) is not int at)
+            throw new InvalidOperationException(
+                $"No offset for {change.ClassName}.{change.Field}, so nothing was written.");
+
+        var elements = change.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        int section = image.Sections.IndexOf(data);
+
+        int run = elements.Length == 0 ? -1 : data.AppendData(new byte[elements.Length * 8]);
+        data.SetLocal(at, run);
+
+        // The element fixups are replaced where the old ones sat rather than dropped and appended.
+        // Their position in the table is not free: the table is in the order the writer walked the
+        // objects, and moving a run of entries to the end makes hkxpack read every element of that
+        // array as null. The run of bytes still goes on the end, which is what keeps the rest of the
+        // file where it was; only the table entries stay put.
+        var old = objects.ArrayAt(at);
+        var entries = data.Globals().ToList();
+        int first = entries.Count;
+
+        if (old != null && old.Count > 0)
+        {
+            int from = old.At, to = old.At + old.Count * 8;
+            int found = entries.FindIndex(e => e.Source >= from && e.Source < to);
+            if (found >= 0) first = found;
+            entries.RemoveAll(e => e.Source >= from && e.Source < to);
+        }
+
+        var replacements = new List<(int, int, int)>();
+        for (int i = 0; i < elements.Length; i++)
+        {
+            if (elements[i] == "null") continue;
+
+            int index = int.Parse(elements[i][1..]) - NativeGraphModel.FirstId;
+            if (index < 0 || index >= objects.Instances.Count)
+                throw new InvalidOperationException(
+                    $"{change} names an object this file does not have, so nothing was written.");
+
+            replacements.Add((run + i * 8, section, objects.Instances[index].Offset));
+        }
+
+        entries.InsertRange(Math.Min(first, entries.Count), replacements);
+        data.SetGlobals(entries);
+
+        BitConverter.GetBytes(elements.Length).CopyTo(data.Data, at + 8);
+        uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
+        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)elements.Length).CopyTo(data.Data, at + 12);
+
         return true;
     }
 
