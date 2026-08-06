@@ -58,6 +58,10 @@ public static class Tests
         ("WideAndVectorFieldsReadFromTheBytes", WideAndVectorFieldsReadFromTheBytes),
         ("ReferencesAndArraysReadFromTheBytes", ReferencesAndArraysReadFromTheBytes),
         ("AnUndeclaredEnumValueIsNotNamed", AnUndeclaredEnumValueIsNotNamed),
+        ("TheModelComparisonCatchesFaultsPutThereOnPurpose", TheModelComparisonCatchesFaultsPutThereOnPurpose),
+        ("AFloatIsSpelledTheWayHkxPackSpellsIt", AFloatIsSpelledTheWayHkxPackSpellsIt),
+        ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
+        ("TheReadingFromTheBytesRefusesWhatItCannotDescribe", TheReadingFromTheBytesRefusesWhatItCannotDescribe),
         ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
         ("ASpaceInAValueIsKept", ASpaceInAValueIsKept),
@@ -2174,5 +2178,276 @@ public static class Tests
 
         var fits = NativeSave.Compare(Before, Before.Replace(">0<", ">3<"));
         CheckTrue("one that fits is accepted", fits.Possible);
+    }
+
+    /// hkxpack is Java, and Java writes a float by widening it to a double. Every one of these was
+    /// read out of a vanilla file rather than worked out from the rule, because the rule is a
+    /// reading of Java's documentation and the file is the thing being matched.
+    private static void AFloatIsSpelledTheWayHkxPackSpellsIt()
+    {
+        Console.WriteLine("\na float is spelled the way hkxpack spells it");
+
+        // Plain, and always with a digit after the point. This is the whole of the first pass'
+        // 2,397 disagreements on Dogmeat: shortest round trip says "1", the file says "1.0".
+        Check("one", "1.0", HkxNumber.Text(1.0f));
+        Check("zero", "0.0", HkxNumber.Text(0.0f));
+        Check("a half", "0.5", HkxNumber.Text(0.5f));
+
+        // Negative zero is in these files, in a vector on hkbFootIkModifier, and is not the same
+        // text as zero.
+        Check("negative zero", "-0.0", HkxNumber.Text(-0.0f));
+
+        // The digits are the double's, not the float's, which is why there are seventeen of them.
+        Check("a tenth", "0.10000000149011612", HkxNumber.Text(0.1f));
+        Check("nine tenths", "0.8999999761581421", HkxNumber.Text(0.9f));
+        Check("seven tenths", "0.699999988079071", HkxNumber.Text(0.7f));
+        Check("two tenths", "0.20000000298023224", HkxNumber.Text(0.2f));
+        Check("a negative", "-0.23399999737739563", HkxNumber.Text(-0.234f));
+
+        // Below a thousandth Java switches to scientific notation, and these two are read straight
+        // off hkbFootIkControlData.enabled1 and enabled2 in a vanilla alien behaviour.
+        Check("a very small number", "3.8432640863340837E-34", HkxNumber.Text(3.8432640863340837E-34));
+        Check("one small enough to be subnormal", "8.127531093083939E-44",
+              HkxNumber.Text(8.127531093083939E-44));
+
+        // The two edges of where Java stops writing plainly.
+        Check("just inside the small edge", "0.001", HkxNumber.Text(0.001));
+        Check("just outside it", "9.99E-4", HkxNumber.Text(0.000999));
+        Check("just inside the large edge", "9999999.0", HkxNumber.Text(9999999.0));
+        Check("just outside it", "1.0E7", HkxNumber.Text(1.0E7));
+
+        Check("not a number", "NaN", HkxNumber.Text(float.NaN));
+        Check("and the infinities", "-Infinity", HkxNumber.Text(float.NegativeInfinity));
+    }
+
+    /// Anything wider than four floats is written as a run of bracketed fours, not as one bracket
+    /// holding the lot. Read off a vanilla skeleton's reference pose, where a qstransform is three
+    /// of them run together with nothing between.
+    ///
+    /// It reads as a formatting detail and is not. The parser splits an array's text on whitespace,
+    /// so `1.0)(0.0` is one token, and a reading that wrote one long bracket gave twelve tokens
+    /// where the file gives ten. That is what the corpus sweep caught it as: a reference pose with
+    /// the wrong number of elements in it.
+    private static void WideFloatFieldsAreWrittenInBracketedFours()
+    {
+        Console.WriteLine("\nwide float fields are written in bracketed fours");
+
+        Check("one vector is one bracket", "(1 2 3 4)",
+              FieldRender.Floats(new[] { 1f, 2f, 3f, 4f }));
+        Check("a qstransform is three, run together",
+              "(0 0 0 1)(0 0 0 1)(1 1 1 1)",
+              FieldRender.Floats(new[] { 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f, 1f, 1f, 1f, 1f }));
+        Check("and a transform is four", 4,
+              FieldRender.Floats(new float[16])!.Count(c => c == '('));
+
+        // The token count is the thing the parser sees, and the only reason the grouping matters.
+        Check("which splits into ten tokens, not twelve", 10,
+              FieldRender.Floats(new float[12])!
+                         .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length);
+    }
+
+    /// The reading built from the bytes, on a file small enough to say what should be in it.
+    ///
+    /// The corpus sweep is what proves this against real data. These are the three things a sweep
+    /// cannot show: that the numbering starts where hkxpack starts it, that a file the class table
+    /// cannot describe gets refused whole rather than read with holes in it, and that a build with
+    /// no table at all refuses rather than throwing.
+    private static void TheReadingFromTheBytesRefusesWhatItCannotDescribe()
+    {
+        Console.WriteLine("\nthe reading from the bytes refuses what it cannot describe");
+
+        var objects = new PackfileObjects(ClipInAPackfile("A.hkx", out _));
+
+        var model = NativeGraphModel.From(objects);
+        CheckTrue("a file the table describes is read", model != null);
+        Check("with the object in it", 1, model!.Objects.Count);
+        Check("numbered where hkxpack starts numbering", "90", model.Objects[0].Id);
+        Check("and named by its class", "hkbClipGenerator", model.Objects[0].Class);
+        Check("its string read from the bytes", "A.hkx", model.Objects[0].Str("animationName"));
+        Check("and its number spelled like the file", "2.5", model.Objects[0].Str("playbackSpeed"));
+
+        // No table, no reading. A build shipped without the data file has to fall back to hkxpack
+        // rather than produce a model of nothing, which would compare as every field missing.
+        Check("a build with no class table reads nothing", null,
+              NativeGraphModel.From(objects, HavokClassTypes.Parse(Stream("""
+                  { "classes": {} }
+                  """))));
+
+        // A table that knows other classes but not this one is the case that matters: it is what a
+        // mod file built against a different Havok would look like, and half a reading of one of
+        // those is worse than none.
+        var elsewhere = HavokClassTypes.Parse(Stream("""
+            { "classes": { "hkbNothing": { "signature": "0x00000001", "members": [] } } }
+            """));
+        Check("nor does one that does not describe this class", null,
+              NativeGraphModel.From(objects, elsewhere));
+    }
+
+    private static System.IO.Stream Stream(string json) =>
+        new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+
+    /// A file holding one of each shape the graph model has a bucket for: plain fields, an array of
+    /// references, a struct written inline under a name, and an array of structs written without
+    /// one.
+    private const string TwoObjects = """
+        <hkobject class="hkbClipGenerator" name="#90">
+            <hkparam name="name">walk</hkparam>
+            <hkparam name="mode">MODE_SINGLE_PLAY</hkparam>
+            <hkparam name="triggers" numelements="2">#91 #92</hkparam>
+            <hkparam name="range">
+                <hkobject name="range">
+                    <hkparam name="min">0.0</hkparam>
+                    <hkparam name="max">1.0</hkparam>
+                </hkobject>
+            </hkparam>
+            <hkparam name="states" numelements="2">
+                <hkobject>
+                    <hkparam name="id">3</hkparam>
+                </hkobject>
+                <hkobject>
+                    <hkparam name="id">4</hkparam>
+                </hkobject>
+            </hkparam>
+        </hkobject>
+        <hkobject class="hkbStateMachine" name="#91">
+            <hkparam name="name">root</hkparam>
+        </hkobject>
+        """;
+
+    private static BehaviourGraphModel Reading() => BehaviourGraphModel.Parse(TwoObjects);
+
+    /// The comparison that will decide whether a graph model built from the bytes is the same as the
+    /// one built from hkxpack's text, checked before it is trusted to say so.
+    ///
+    /// A clean run means nothing on its own. Anything that returns "no disagreements" without
+    /// looking at a single field passes that way, and it would pass every file in the corpus too, so
+    /// this breaks a reading on purpose in each of the ways a wrong producer could break one and
+    /// asks for the count back. The count is asserted exactly rather than as "more than none",
+    /// because a comparison that reports one fault as forty is not one that can be read.
+    private static void TheModelComparisonCatchesFaultsPutThereOnPurpose()
+    {
+        Console.WriteLine("\nthe model comparison catches faults put there on purpose");
+
+        var clean = ModelDiff.Compare(Reading(), Reading());
+        CheckTrue("two readings of one file agree", clean.Clean);
+        Check("over both objects", 2, clean.Objects);
+
+        // The check on the check. A comparison that walks nothing agrees with everything, so the
+        // count of what it walked is asserted against the count of what is in the file. Worked out
+        // from the reading rather than written down as a number, so it stays true if the fixture
+        // grows a field.
+        var one = Reading();
+        int inTheFile = one.Objects.Sum(o => 2 + o.Scalars.Count
+                                           + o.Lists.Sum(l => 1 + l.Value.Count)
+                                           + o.Structs.Sum(s => s.Value.Count)
+                                           + o.StructLists.Sum(s => 1 + s.Value.Sum(e => e.Count)));
+        Check("having compared every field the file holds", inTheFile, clean.Compared);
+
+        BehaviourGraphModel Broken(Action<BehaviourGraphModel> break_)
+        {
+            var second = Reading();
+            break_(second);
+            return second;
+        }
+
+        int Faults(Action<BehaviourGraphModel> break_) =>
+            ModelDiff.Compare(Reading(), Broken(break_)).Total;
+
+        string Where(Action<BehaviourGraphModel> break_)
+        {
+            var second = Reading();
+            break_(second);
+            return ModelDiff.Compare(Reading(), second).Shown.FirstOrDefault()?.Where ?? "nothing";
+        }
+
+        Check("an object missing altogether", 1, Faults(m => m.Objects.RemoveAt(1)));
+        Check("an id that does not match", 1, Faults(m => m.Objects[0].Id = "999"));
+        Check("a class that does not match", 1, Faults(m => m.Objects[0].Class = "hkbNothing"));
+
+        Check("a field the second reading does not have", 1,
+              Faults(m => m.Objects[0].Scalars.Remove("name")));
+        Check("a field only the second reading has", 1,
+              Faults(m => m.Objects[0].Scalars["extra"] = "1"));
+        Check("a field holding something else", 1,
+              Faults(m => m.Objects[0].Scalars["mode"] = "MODE_LOOPING"));
+
+        Check("an array of a different length", 1,
+              Faults(m => m.Objects[0].Lists["triggers"].RemoveAt(0)));
+        Check("an array element holding something else", 1,
+              Faults(m => m.Objects[0].Lists["triggers"][1] = "#99"));
+
+        Check("a field inside an inline struct", 1,
+              Faults(m => m.Objects[0].Structs["range"]["max"] = "2.0"));
+        Check("a struct array of a different length", 1,
+              Faults(m => m.Objects[0].StructLists["states"].RemoveAt(1)));
+        Check("a field inside one of its elements", 1,
+              Faults(m => m.Objects[0].StructLists["states"][1]["id"] = "5"));
+
+        // The lesson from the field crosscheck, where six vanilla values carry meaningful spaces: a
+        // comparison that tidies up is agreeing with itself rather than with the file.
+        Check("a value differing only by a space", 1,
+              Faults(m => m.Objects[0].Scalars["name"] = "walk "));
+
+        // Naming where it went wrong is half of what the comparison is for. A count with no address
+        // sends somebody looking through nine hundred objects by hand.
+        Check("and the disagreement names the object and the field",
+              "#90 hkbClipGenerator.mode", Where(m => m.Objects[0].Scalars["mode"] = "MODE_LOOPING"));
+        Check("naming the element too, inside a struct array",
+              "#90 hkbClipGenerator.states[1].id",
+              Where(m => m.Objects[0].StructLists["states"][1]["id"] = "5"));
+
+        // Everything wrong at once still has to come back readable rather than as a wall. An empty
+        // reading is not the case to use for that: the object counts differ, so there is nothing to
+        // walk into and it reports one disagreement rather than many. A reading of the right shape
+        // holding the wrong values everywhere is the case that produces a wall.
+        var wrong = Reading();
+        foreach (var o in wrong.Objects)
+        {
+            foreach (string key in o.Scalars.Keys.ToList()) o.Scalars[key] += "x";
+            foreach (var s in o.Structs.Values)
+                foreach (string key in s.Keys.ToList()) s[key] += "x";
+            foreach (var list in o.StructLists.Values)
+                foreach (var element in list)
+                    foreach (string key in element.Keys.ToList()) element[key] += "x";
+        }
+
+        // The one excuse the comparison accepts, and the checks that it stays one. hkxpack sizes a
+        // sixteen aligned struct by rounding up to eight, so every element after the first in an
+        // array of one is read eight bytes early. That is hkxpack being wrong, so it is counted
+        // apart rather than failing the file, and the earlier lesson from the padded class predicate
+        // applies: an excuse that is too wide is worse than no excuse, because it hides real faults.
+        ModelDiff.Result Excusing(ModelDiff.Strided excuse) =>
+            ModelDiff.Compare(Reading(), Broken(m => m.Objects[0].StructLists["states"][1]["id"] = "5"),
+                              40, excuse);
+
+        var named = Excusing((cls, field) => cls == "hkbClipGenerator" && field == "states");
+        Check("a mis-strided struct array is not a disagreement", 0, named.Total);
+        Check("but is counted and reported", 1, named.Strided);
+
+        var elsewhere = Excusing((cls, field) => cls == "hkbClipGenerator" && field == "triggers");
+        Check("an excuse for another field excuses nothing", 1, elsewhere.Total);
+        Check("and claims nothing", 0, elsewhere.Strided);
+
+        var wrongClass = Excusing((cls, field) => cls == "hkbStateMachine" && field == "states");
+        Check("nor does one for another class", 1, wrongClass.Total);
+
+        Check("a plain field is never excused, whatever the predicate says", 1,
+              ModelDiff.Compare(Reading(), Broken(m => m.Objects[0].Scalars["mode"] = "MODE_LOOPING"),
+                                40, (_, _) => true).Total);
+
+        // The excuse is decided as the difference is found, not by picking it back out of the shown
+        // examples, so it holds when there are no examples left to pick from. The first attempt did
+        // filter the examples, and a file with more differences than the cap came back reporting a
+        // count with nothing to show for it.
+        var capped = ModelDiff.Compare(Reading(),
+                                       Broken(m => m.Objects[0].StructLists["states"][1]["id"] = "5"),
+                                       0, (cls, field) => field == "states");
+        Check("the excuse holds with no examples kept", 0, capped.Total);
+        Check("and is still counted", 1, capped.Strided);
+
+        var everything = ModelDiff.Compare(Reading(), wrong, cap: 3);
+        CheckTrue("a reading wrong about every value disagrees", !everything.Clean);
+        Check("about all seven of them", 7, everything.Total);
+        Check("with the examples capped", 3, everything.Shown.Count);
     }
 }

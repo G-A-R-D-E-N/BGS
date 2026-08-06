@@ -24,6 +24,19 @@ public static class FieldRender
     /// differently: the window uses the id the rest of it is keyed on, the checker uses a position.
     public delegate string Reference(PackfileObjects.Instance? target, bool wasNull);
 
+    /// How a float is spelled, for the same reason references have one: the two callers want
+    /// different text for the same bits. A panel wants "0.1" because that is what somebody typed; a
+    /// reading being set against hkxpack's own text wants "0.10000000149011612" because that is what
+    /// is written in the file. One renderer, two spellings, chosen by whoever is asking.
+    public delegate string Real(float value);
+
+    /// The shortest text that reads back as the same float. What a person should see.
+    public static readonly Real Shortest = value => value.ToString("R");
+
+    /// The float widened to a double and written out the way Java does, which is what hkxpack puts
+    /// in its XML.
+    public static readonly Real LikeHkxPack = HkxNumber.Text;
+
     /// The value at an offset, or null when this is not a field we can read.
     ///
     /// `owner` is the class that declares the member, which an enum needs: the names of its values
@@ -38,9 +51,10 @@ public static class FieldRender
     public static string? Render(PackfileObjects objects, int at, string owner,
                                  HavokClassTypes.Member member, Reference reference,
                                  string? expected = null, int element = 0,
-                                 HavokClassTypes? types = null)
+                                 HavokClassTypes? types = null, Real? real = null)
     {
         types ??= HavokClassTypes.Shipped;
+        real ??= Shortest;
 
         if (member.VType is "TYPE_ENUM" or "TYPE_FLAGS")
         {
@@ -69,7 +83,7 @@ public static class FieldRender
 
         switch (member.VType)
         {
-            case "TYPE_REAL": return objects.ReadFloatAt(at)?.ToString("R");
+            case "TYPE_REAL": return objects.ReadFloatAt(at) is float one ? real(one) : null;
             case "TYPE_STRINGPTR":
             case "TYPE_CSTRING": return objects.ReadStringAt(at) ?? "∅";
 
@@ -84,12 +98,15 @@ public static class FieldRender
             case "TYPE_UINT64": return objects.ReadULongAt(at)?.ToString();
 
             case "TYPE_VECTOR4":
-            case "TYPE_QUATERNION": return Floats(objects.ReadFloatsAt(at, 4));
+            case "TYPE_QUATERNION": return Floats(objects.ReadFloatsAt(at, 4), real);
+            // Anything wider than four floats is written as a run of bracketed fours rather than as
+            // one long bracket, which is how hkxpack writes it and how the file reads back. A
+            // qstransform is three of them: `(0 0 0 1)(0 0 0 1)(1 1 1 1)`.
             case "TYPE_ROTATION":
-            case "TYPE_MATRIX3": return Floats(objects.ReadFloatsAt(at, 12));
-            case "TYPE_QSTRANSFORM": return Floats(objects.ReadFloatsAt(at, 12));
+            case "TYPE_MATRIX3": return Floats(objects.ReadFloatsAt(at, 12), real);
+            case "TYPE_QSTRANSFORM": return Floats(objects.ReadFloatsAt(at, 12), real);
             case "TYPE_TRANSFORM":
-            case "TYPE_MATRIX4": return Floats(objects.ReadFloatsAt(at, 16));
+            case "TYPE_MATRIX4": return Floats(objects.ReadFloatsAt(at, 16), real);
 
             case "TYPE_POINTER":
             {
@@ -97,7 +114,7 @@ public static class FieldRender
                 return reference(target, wasNull);
             }
 
-            case "TYPE_ARRAY": return Array(objects, at, member, reference);
+            case "TYPE_ARRAY": return Array(objects, at, member, reference, real);
 
             // A half is two bytes of float and nothing here has ever had to read one; saying so is
             // better than printing the two bytes as though they were a number.
@@ -106,7 +123,7 @@ public static class FieldRender
     }
 
     private static string? Array(PackfileObjects objects, int at, HavokClassTypes.Member member,
-                                 Reference reference)
+                                 Reference reference, Real real)
     {
         switch (member.VSub)
         {
@@ -134,10 +151,10 @@ public static class FieldRender
             }
 
             case "TYPE_VECTOR4":
-            case "TYPE_QUATERNION": return Grouped(objects, at, 16, 4);
-            case "TYPE_QSTRANSFORM": return Grouped(objects, at, 48, 12);
+            case "TYPE_QUATERNION": return Grouped(objects, at, 16, 4, real);
+            case "TYPE_QSTRANSFORM": return Grouped(objects, at, 48, 12, real);
             case "TYPE_TRANSFORM":
-            case "TYPE_MATRIX4": return Grouped(objects, at, 64, 16);
+            case "TYPE_MATRIX4": return Grouped(objects, at, 64, 16, real);
 
             // Unsigned for the signed widths too, the same way a lone int8 or int16 is read:
             // hkxpack prints the bytes as they sit, so a parent index of 0xFFFF is 65535 there
@@ -152,7 +169,10 @@ public static class FieldRender
             case "TYPE_UINT16":
                 return Listed(objects.ReadValueArrayAt(at, 2, BitConverter.ToUInt16));
             case "TYPE_REAL":
-                return Listed(objects.ReadValueArrayAt(at, 4, BitConverter.ToSingle));
+            {
+                var reals = objects.ReadValueArrayAt(at, 4, BitConverter.ToSingle);
+                return reals == null ? null : List(reals.Count, reals.Select(v => real(v)));
+            }
             case "TYPE_INT32":
                 return Listed(objects.ReadValueArrayAt(at, 4, BitConverter.ToInt32));
             case "TYPE_UINT32":
@@ -184,7 +204,7 @@ public static class FieldRender
     }
 
     /// The same bits read without a sign, which is how hkxpack writes them out.
-    private static long Unsigned(long value, string width) => width switch
+    public static long Unsigned(long value, string width) => width switch
     {
         "TYPE_INT8" or "TYPE_UINT8" or "TYPE_CHAR" => value & 0xFF,
         "TYPE_INT16" or "TYPE_UINT16" => value & 0xFFFF,
@@ -214,7 +234,7 @@ public static class FieldRender
 
     /// An array whose elements are several floats each: a vector, a transform, a matrix. Read as one
     /// long run and cut into elements, because that is how they sit in the file.
-    private static string? Grouped(PackfileObjects objects, int at, int stride, int floats)
+    private static string? Grouped(PackfileObjects objects, int at, int stride, int floats, Real real)
     {
         var array = objects.ArrayAt(at);
         if (array == null) return null;
@@ -223,7 +243,7 @@ public static class FieldRender
                                            (b, o) => Enumerable.Range(0, floats)
                                                                .Select(i => BitConverter.ToSingle(b, o + i * 4))
                                                                .ToArray());
-        return all == null ? null : List(array.Count, all.Select(e => Floats(e)!));
+        return all == null ? null : List(array.Count, all.Select(e => Floats(e, real)!));
     }
 
     /// A field narrower than four bytes still reads as four, so the extra has to be masked off or a
@@ -242,8 +262,22 @@ public static class FieldRender
         };
     }
 
-    public static string? Floats(float[]? values) =>
-        values == null ? null : "(" + string.Join(" ", values.Select(v => v.ToString("R"))) + ")";
+    /// Four floats to a bracket. One vector is one bracket; a transform is four of them run
+    /// together with nothing between, which is what puts the closing and opening bracket of two
+    /// neighbours in the same whitespace separated token.
+    public static string? Floats(float[]? values, Real? real = null)
+    {
+        real ??= Shortest;
+        if (values == null) return null;
+
+        var text = new System.Text.StringBuilder();
+        for (int at = 0; at < values.Length; at += 4)
+            text.Append('(')
+                .Append(string.Join(" ", values.Skip(at).Take(4).Select(v => real(v))))
+                .Append(')');
+
+        return text.Length == 0 ? "()" : text.ToString();
+    }
 
     private static string? Listed<T>(IReadOnlyList<T>? values) =>
         values == null ? null : List(values.Count, values.Select(v => v?.ToString() ?? ""));

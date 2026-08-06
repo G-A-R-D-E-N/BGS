@@ -41,6 +41,7 @@ public static class Program
             case "pose": return Pose(argv);
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
+            case "model": return Model(argv);
             case "classes": return Classes(argv);
             case "fields": return Fields(argv);
             case "signatures": return Signatures(argv);
@@ -177,6 +178,23 @@ public static class Program
         while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, "src", "Hkx")))
             dir = dir.Parent;
         return dir?.FullName ?? Directory.GetCurrentDirectory();
+    }
+
+    /// Somewhere to unpack a file to, which is never the directory the file itself is in.
+    ///
+    /// These directories get emptied before use, and the name is built from the file's own name, so
+    /// pointing one of these commands at a file that already sits in a directory of that name
+    /// deletes the file being read. Found by doing it: a run of crosscheck against a file left in an
+    /// earlier crosscheck's working directory took the file with it.
+    private static string WorkDirectory(string prefix, string file)
+    {
+        string work = Path.Combine(Path.GetTempPath(), prefix + Path.GetFileNameWithoutExtension(file));
+        string holding = Path.GetDirectoryName(Path.GetFullPath(file)) ?? "";
+
+        return Path.GetFullPath(work).TrimEnd(Path.DirectorySeparatorChar) ==
+               holding.TrimEnd(Path.DirectorySeparatorChar)
+            ? work + "-work"
+            : work;
     }
 
     private static void NeedHkxPack()
@@ -652,8 +670,7 @@ public static class Program
         // directory of its own, and a fixed name means one run wiping the directory another run is
         // still reading from. That showed up as hkxpack "produced no XML" on a file that passes on
         // its own, which reads as a bug in the save rather than in the harness around it.
-        string work = Path.Combine(Path.GetTempPath(),
-                                   "symrm-savecheck-" + Path.GetFileNameWithoutExtension(file));
+        string work = WorkDirectory("symrm-savecheck-", file);
         if (Directory.Exists(work)) Directory.Delete(work, true);
 
         string xmlFile = HkxTextEdit.Unpack(_java, _jar, file, work);
@@ -1172,8 +1189,7 @@ public static class Program
         NeedHkxPack();
 
         string file = Path.GetFullPath(argv[1]);
-        string work = Path.Combine(Path.GetTempPath(),
-                                   "symrm-panel-" + Path.GetFileNameWithoutExtension(file));
+        string work = WorkDirectory("symrm-panel-", file);
         if (Directory.Exists(work)) Directory.Delete(work, true);
 
         string xmlText = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
@@ -1269,14 +1285,115 @@ public static class Program
         return shown == agreed + strided ? 0 : 1;
     }
 
+    /// Two readings of one file, set beside each other field by field.
+    ///
+    /// Both readings come from the same producer at the moment, which sounds like a command that
+    /// cannot say anything and is the point: it is how the comparison gets to report zero before
+    /// anything is asked of it. The second reading becomes the byte reader when there is one, and
+    /// this is what will say whether it agrees. The faults the comparison has to catch are in the
+    /// suite rather than here, because deliberately breaking a file to prove a checker works is a
+    /// test, not a thing to run over a corpus.
+    private static int Model(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToList()
+            : new List<string> { target };
+
+        int clean = 0, bad = 0, unreadable = 0, objects = 0, compared = 0, disagreements = 0, strided = 0;
+        var stridedBy = new Dictionary<string, int>(StringComparer.Ordinal);
+        bool one = files.Count == 1;
+
+        foreach (string file in files)
+        {
+            string work = WorkDirectory("symrm-model-", file);
+            string xml;
+            try
+            {
+                HkxTextEdit.ResetDirectory(work);
+                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message.Split('\n')[0]}");
+                continue;
+            }
+
+            var first = BehaviourGraphModel.Parse(xml);
+            var second = SecondReading(xml, file);
+
+            // Not a disagreement. The reading refuses whole rather than coming back with holes in it
+            // when the class table cannot describe everything in the file, and saying so is the
+            // point: a file counted as agreeing because neither side read it would be the worst
+            // possible way to pass.
+            if (second == null)
+            {
+                unreadable++;
+                Console.WriteLine($"{Path.GetFileName(file)}: no reading, the class table does not " +
+                                  "describe every class in it");
+                continue;
+            }
+
+            var result = ModelDiff.Compare(first, second, 40, MisStrided);
+
+            objects += result.Objects;
+            compared += result.Compared;
+            disagreements += result.Total;
+            strided += result.Strided;
+            foreach (var (field, count) in result.StridedBy)
+                stridedBy[field] = stridedBy.GetValueOrDefault(field) + count;
+            if (result.Clean) clean++; else bad++;
+
+            if (one || !result.Clean)
+            {
+                Console.WriteLine($"{Path.GetFileName(file)}: {result}");
+                foreach (var difference in result.Shown) Console.WriteLine("  " + difference);
+                if (result.Total > result.Shown.Count)
+                    Console.WriteLine($"  and {result.Total - result.Shown.Count} more");
+            }
+        }
+
+        Console.WriteLine($"\n{clean} file(s) agreeing, {bad} not, {unreadable} without a reading, " +
+                          $"{objects} object(s), {compared} field(s) compared, " +
+                          $"{disagreements} disagreement(s), {strided} where hkxpack strides a " +
+                          "padded struct wrongly");
+
+        foreach (var (field, count) in stridedBy.OrderByDescending(f => f.Value))
+            Console.WriteLine($"  strided: {field} x{count}");
+
+        return bad == 0 ? 0 : 1;
+    }
+
+    /// The fields hkxpack reads at the wrong stride: an array whose elements are a struct aligned to
+    /// sixteen, which it sizes by rounding the last member up to eight. Three classes in the vanilla
+    /// corpus qualify, and the size we use comes from the game's own class registration rather than
+    /// from a rule about where members end.
+    private static bool MisStrided(string owningClass, string field)
+    {
+        var types = HavokClassTypes.Shipped;
+        foreach (var member in types.Members(owningClass))
+            if (member.Name == field)
+                return member.CType != null && types.PaddedBeyondHkxPack(member.CType);
+
+        return false;
+    }
+
+    /// The reading being checked. One line, and it is the whole of what changes when the byte reader
+    /// takes over, which is why it is a method rather than sitting inline in the loop above.
+    private static BehaviourGraphModel? SecondReading(string xml, string hkxPath) =>
+        NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(hkxPath)));
+
     private static int CrossCheck(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
 
         NeedHkxPack();
         string file = Path.GetFullPath(argv[1]);
-        string work = Path.Combine(Path.GetTempPath(),
-                                   "symrm-crosscheck-" + Path.GetFileNameWithoutExtension(file));
+        string work = WorkDirectory("symrm-crosscheck-", file);
         if (Directory.Exists(work)) Directory.Delete(work, true);
 
         string xmlFile = HkxTextEdit.Unpack(_java, _jar, file, work);
