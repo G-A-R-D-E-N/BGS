@@ -3,6 +3,39 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, rewiring a node saves without Java
+
+The first structural edit to write into the file's own bytes.
+
+Rewiring reads as a structural change because the graph's shape changes, and in the file it is not
+one. No object moves, nothing is appended, the file does not change length: a pointer from one
+object to another is an entry in the global fixup table naming a source and a destination, and
+aiming it somewhere else rewrites that one entry. Adding and deleting nodes still go out through
+hkxpack.
+
+Clearing a pointer is the other half, and it is not the same operation. A null pointer is the
+absence of a fixup, not a fixup to nowhere, so the entry is dropped rather than aimed at offset
+zero, which would quietly point the field at whichever object happens to sit first.
+
+On a sample of 40 vanilla behaviours, each given a rewire, a cleared pointer, a longer animation
+name and three value changes: 40 files saved, none refused, none failing any check. Each saved file
+was read back by hkxpack and agreed with our own reading field for field, and every edit was
+confirmed present rather than assumed.
+
+### What the sample caught
+
+Four files came back reporting the file had changed size without appending anything. Dropping a
+fixup makes the table twelve bytes shorter, sixteen once it is padded, so the file legitimately
+shrinks. The guard had been written when growing was the only way a save could change the length.
+It now expects a shrink of at most sixteen bytes per cleared pointer and still fails anything else.
+
+The pointer table check was tightened at the same time rather than loosened. It used to require the
+table to be identical, which a rewire cannot satisfy. It now compares entries by source rather than
+by position, since dropping one shifts every entry after it without changing any pointer, and it
+requires that no more pointers move than the plan repoints. A pointer change also no longer buys any
+allowance in the data check, because it writes nothing into the data at all.
+
+
 ## 2026-08-06, an event says what it is for without Java, and so does the checker
 
 The last two things the reading still needed hkxpack for. The symbols tab could list the events but

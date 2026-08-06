@@ -707,20 +707,32 @@ public static class Program
         int changedBytes = Enumerable.Range(0, Math.Min(before.Length, saved.Length))
                                      .Count(i => before[i] != saved[i]);
 
-        // A plan holding text grows the file, because the new text goes on the end rather than over
-        // what was there. Anything else changing size is a fault: it means something moved.
+        // Two things legitimately change the length. Text grows it, because the new text goes on
+        // the end rather than over what was there. Clearing a pointer shrinks it, because a null
+        // pointer is the absence of a fixup rather than a fixup to nowhere, so the entry is dropped
+        // and the table is twelve bytes shorter, sixteen once it is padded back to the boundary.
+        // Anything else changing size means something moved, which is the fault this is watching
+        // for.
+        int cleared = plan.Changes.Count(c => c.Ref && c.Value == "null");
+        bool shrankAsExpected = cleared > 0 && before.Length > saved.Length
+                                            && before.Length - saved.Length <= 16 * cleared;
+
         string size = sameSize
             ? $"{changedBytes} bytes differ from the original"
-            : plan.Grows
+            : plan.Grows && saved.Length > before.Length
                 ? $"{before.Length} bytes to {saved.Length}, as appending text does, " +
                   $"{changedBytes} of the original bytes differ"
-                : $"BUT THE FILE CHANGED SIZE WITHOUT APPENDING ANYTHING, {before.Length} to {saved.Length}";
+                : shrankAsExpected
+                    ? $"{before.Length} bytes to {saved.Length}, as dropping {cleared} pointer " +
+                      $"entr{(cleared == 1 ? "y" : "ies")} does, {changedBytes} of the original " +
+                      "bytes differ"
+                    : $"BUT THE FILE CHANGED SIZE WITHOUT APPENDING ANYTHING, {before.Length} to {saved.Length}";
 
         Console.WriteLine($"{Path.GetFileName(file)}: {plan.Changes.Count} value(s) changed, {size}");
         foreach (var change in plan.Changes.Take(5)) Console.WriteLine("    " + change);
 
-        if (!sameSize && !plan.Grows) return 1;
-        if (!sameSize && !OnlyAppended(before, saved, plan)) return 1;
+        if (!sameSize && !(plan.Grows && saved.Length > before.Length) && !shrankAsExpected) return 1;
+        if (!OnlyAppended(before, saved, plan)) return 1;
 
         // The saved file has to survive being read by the other implementation, and then agree with
         // ours field for field. Reusing crosscheck means the number quoted here is the same measure
@@ -819,8 +831,10 @@ public static class Program
             // The data the text was added to also holds the values written over in place, so it is
             // not expected to be identical. What it must not do is differ anywhere else: a value
             // write touches at most the four bytes of the field it names.
+            // A pointer change writes nothing into the data at all. It moves an entry in the
+            // pointer table, so it buys no allowance here and the data has to be untouched by it.
             int touched = Enumerable.Range(0, a.Data.Length).Count(k => a.Data[k] != b.Data[k]);
-            int allowed = 4 * plan.Changes.Count(c => !c.Text);
+            int allowed = 4 * plan.Changes.Count(c => !c.Text && !c.Ref);
             if (touched > allowed)
             {
                 Console.WriteLine($"  append check: FAILED, {touched} byte(s) of {a.Tag} changed, " +
@@ -828,7 +842,26 @@ public static class Program
                 return false;
             }
 
-            if (!b.Globals().SequenceEqual(a.Globals()) || !b.Virtuals().SequenceEqual(a.Virtuals()))
+            // Every pointer the plan does not name has to be untouched, and no more of them may
+            // move than the plan repoints. Compared by source rather than by position: dropping an
+            // entry shifts every entry after it, which is not a change to any pointer.
+            var wasBySource = a.Globals().ToDictionary(g => g.Source, g => (g.Section, g.Destination));
+            var nowBySource = b.Globals().ToDictionary(g => g.Source, g => (g.Section, g.Destination));
+
+            var repointedSources = wasBySource.Keys.Union(nowBySource.Keys)
+                .Where(k => !wasBySource.TryGetValue(k, out var x) ||
+                            !nowBySource.TryGetValue(k, out var y) || x != y)
+                .ToList();
+
+            int repointed = plan.Changes.Count(c => c.Ref);
+            if (repointedSources.Count > repointed)
+            {
+                Console.WriteLine($"  append check: FAILED, {repointedSources.Count} pointer(s) in " +
+                                  $"{a.Tag} changed, more than the {repointed} the plan repoints");
+                return false;
+            }
+
+            if (!b.Virtuals().SequenceEqual(a.Virtuals()))
             {
                 Console.WriteLine($"  append check: FAILED, section {a.Tag} moved a pointer it should not have");
                 return false;
@@ -931,6 +964,25 @@ public static class Program
         // over the old bytes and would prove nothing.
         Try("<hkparam name=\"animationName\">[^<]{3,}</hkparam>",
             "<hkparam name=\"animationName\">Animations\\Renamed_By_Symrm_Longer.hkx</hkparam>");
+
+        // Rewiring a node, which is a structural edit to the graph and not one to the file: no
+        // object moves, nothing is appended, and one entry in the pointer table names a different
+        // destination. The target is taken from a second generator field in the same file rather
+        // than invented, so it is an id the file actually has.
+        var generators = System.Text.RegularExpressions.Regex
+            .Matches(xml, "<hkparam name=\"generator\">#(?<id>[0-9]+)</hkparam>")
+            .Select(m => m.Groups["id"].Value).Distinct().ToList();
+
+        if (generators.Count >= 2 && generators[0] != generators[1])
+            Try($"<hkparam name=\"generator\">#{generators[0]}</hkparam>",
+                $"<hkparam name=\"generator\">#{generators[1]}</hkparam>");
+
+        // And the other direction: a pointer set to nothing, which drops the fixup rather than
+        // aiming it at offset zero. Aiming it at zero would quietly point the field at whichever
+        // object sits first.
+        Try("<hkparam name=\"variableBindingSet\">#[0-9]+</hkparam>",
+            "<hkparam name=\"variableBindingSet\">null</hkparam>");
+
         return edits;
     }
 

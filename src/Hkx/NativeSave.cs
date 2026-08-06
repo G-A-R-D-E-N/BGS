@@ -35,7 +35,8 @@ public static class NativeSave
         public bool Grows => Changes.Exists(c => c.Text);
     }
 
-    public sealed record Change(string ClassName, int Index, string Field, string Value, bool Text = false)
+    public sealed record Change(string ClassName, int Index, string Field, string Value,
+                                bool Text = false, bool Ref = false)
     {
         public override string ToString() => $"{ClassName}[{Index}].{Field} = {Value}";
     }
@@ -55,6 +56,21 @@ public static class NativeSave
     {
         "stringptr", "cstring",
     };
+
+    /// A pointer at another object. Written by moving the fixup that names it rather than by writing
+    /// anything into the object at all, so the file does not change length and no byte moves.
+    ///
+    /// This is what rewiring a node on the canvas is. It reads as a structural edit because the
+    /// graph's shape changes, and it is not one in the file: the objects are all still there, the
+    /// same size, in the same places, and one entry in the pointer table names a different
+    /// destination.
+    private static bool IsReference(string type) =>
+        type.StartsWith("pointer of", StringComparison.Ordinal) || type == "pointer";
+
+    /// What hkxpack writes in a pointer field: an object id, or the word null.
+    private static bool IsReferenceValue(string value) =>
+        value == "null" ||
+        (value.Length > 1 && value[0] == '#' && value[1..].All(char.IsAsciiDigit));
 
     /// Works out what changed between the file as loaded and the file as edited, and whether all of
     /// it can be written in place. Compares the two XML texts rather than the bytes, because the XML
@@ -93,6 +109,17 @@ public static class NativeSave
                     if (!layout.TryGetValue(field, out string? type))
                         return new Plan(changes,
                             $"{className}.{field} changed, and we have no byte layout for it");
+
+                    if (IsReference(type))
+                    {
+                        if (!IsReferenceValue(now))
+                            return new Plan(changes,
+                                $"{className}.{field} was set to '{now}', which is neither an object " +
+                                "id nor null");
+
+                        changes.Add(new Change(className, i, field, now, Ref: true));
+                        continue;
+                    }
 
                     if (!Writable.Contains(type) && !WritableText.Contains(type))
                         return new Plan(changes,
@@ -165,7 +192,7 @@ public static class NativeSave
             var member = (classes ?? HavokClasses.Shipped).Field(change.ClassName, change.Field)
                 ?? throw new InvalidOperationException($"No layout for {change.ClassName}.{change.Field}.");
 
-            bool written = member.Type switch
+            bool written = change.Ref ? Repoint(image, objects, instance, change) : member.Type switch
             {
                 "real" => objects.WriteFloat(instance, change.Field, AsFloat(change.Value)),
                 _ when WritableText.Contains(member.Type) =>
@@ -183,6 +210,36 @@ public static class NativeSave
 
     /// A field narrower than four bytes has to be written at its own width, or writing a one byte
     /// flag would flatten the three bytes beside it, which belong to other fields.
+    /// Aims a pointer field at another object, or at nothing.
+    ///
+    /// The object ids are hkxpack's numbering, which counts from #90 in the order the objects sit in
+    /// the file, and that ordering is the one the reader already uses. So an id resolves to a
+    /// position in the object list and from there to the offset the fixup has to name.
+    private static bool Repoint(PackfileImage image, PackfileObjects objects,
+                                PackfileObjects.Instance instance, Change change)
+    {
+        var data = image.Section("__data__")
+            ?? throw new InvalidOperationException("this file has no data section");
+
+        if (objects.FieldAt(instance, change.Field) is not int at)
+            throw new InvalidOperationException(
+                $"No offset for {change.ClassName}.{change.Field}, so nothing was written.");
+
+        if (change.Value == "null")
+        {
+            data.SetGlobal(at, 0, -1);
+            return true;
+        }
+
+        int index = int.Parse(change.Value[1..]) - NativeGraphModel.FirstId;
+        if (index < 0 || index >= objects.Instances.Count)
+            throw new InvalidOperationException(
+                $"{change} names an object this file does not have, so nothing was written.");
+
+        data.SetGlobal(at, image.Sections.IndexOf(data), objects.Instances[index].Offset);
+        return true;
+    }
+
     private static bool WriteNarrow(PackfileObjects objects, PackfileObjects.Instance instance,
                                     string field, string type, string value, PackfileSection data)
     {

@@ -239,6 +239,41 @@ public sealed class PackfileSection
     /// A pointer into another section.
     public IEnumerable<(int Source, int Section, int Destination)> Globals() => Triples(GlobalFixups);
 
+    /// Points the global fixup for a source offset at a new object, adds one where the field held
+    /// nothing, or drops it when the field is being set to null.
+    ///
+    /// This is what rewiring a node is, in bytes. A pointer from one object to another is a global
+    /// fixup naming a source and a destination, and nothing about the objects themselves changes
+    /// when it is aimed somewhere else. No byte moves, nothing is appended, and the file is the same
+    /// length afterwards. It is only structural in the editor's sense.
+    ///
+    /// Same rule as `SetLocal` about order: the table is left as found and a new entry goes on the
+    /// end, because Fallout 4's own tables are not sorted and nothing reads them by position.
+    public void SetGlobal(int source, int section, int destination)
+    {
+        var entries = Globals().ToList();
+        int existing = entries.FindIndex(e => e.Source == source);
+
+        if (destination < 0)
+        {
+            // A null pointer is the absence of a fixup, not a fixup to nowhere. Leaving one pointing
+            // at offset zero would aim the field at whatever object happens to sit first.
+            if (existing < 0) return;
+            entries.RemoveAt(existing);
+        }
+        else if (existing >= 0) entries[existing] = (source, section, destination);
+        else entries.Add((source, section, destination));
+
+        var table = new byte[entries.Count * 12];
+        for (int i = 0; i < entries.Count; i++)
+        {
+            BitConverter.GetBytes(entries[i].Source).CopyTo(table, i * 12);
+            BitConverter.GetBytes(entries[i].Section).CopyTo(table, i * 12 + 4);
+            BitConverter.GetBytes(entries[i].Destination).CopyTo(table, i * 12 + 8);
+        }
+        GlobalFixups = table;
+    }
+
     /// The class name an object is an instance of. Always points into __classnames__, which is why
     /// the middle field is always zero.
     public IEnumerable<(int Source, int Section, int Destination)> Virtuals() => Triples(VirtualFixups);

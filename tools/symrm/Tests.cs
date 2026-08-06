@@ -62,6 +62,8 @@ public static class Tests
         ("AFloatIsSpelledTheWayHkxPackSpellsIt", AFloatIsSpelledTheWayHkxPackSpellsIt),
         ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
         ("TheConsumerComparisonCatchesADifferentAnswer", TheConsumerComparisonCatchesADifferentAnswer),
+        ("APointerIsRewiredByMovingItsFixup", APointerIsRewiredByMovingItsFixup),
+        ("APointerChangeIsPlannedAsOne", APointerChangeIsPlannedAsOne),
         ("TheReadingFromTheBytesRefusesWhatItCannotDescribe", TheReadingFromTheBytesRefusesWhatItCannotDescribe),
         ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
@@ -2328,6 +2330,88 @@ public static class Tests
 
     private static System.IO.Stream Stream(string json) =>
         new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+
+    /// Rewiring a node, in bytes.
+    ///
+    /// It reads as a structural edit because the graph's shape changes, and it is not one in the
+    /// file. No object moves, nothing is appended, the file does not change length: one entry in the
+    /// pointer table names a different destination. That is why it can be written in place when
+    /// adding a node still cannot.
+    private static void APointerIsRewiredByMovingItsFixup()
+    {
+        Console.WriteLine("\na pointer is rewired by moving its fixup");
+
+        var classes = HavokClasses.Shipped;
+        int size = classes["hkbClipGenerator"]!.Size;
+        int binding = classes.Field("hkbClipGenerator", "variableBindingSet")!.Offset;
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        var data = image.Section("__data__")!;
+        int second = data.AppendData(new byte[size]);
+        data.VirtualFixups = data.VirtualFixups.Concat(Triple(second, 0, 5)).ToArray();
+
+        var objects = new PackfileObjects(image);
+        var clip = objects.Instances[0];
+
+        // Nothing points anywhere yet, and a field with no fixup is null rather than a pointer to
+        // offset zero, which would be a real object.
+        objects.ReadRef(clip, "variableBindingSet", out bool emptyToStart);
+        CheckTrue("a field with no fixup starts null", emptyToStart);
+
+        // Aimed at something, from nothing.
+        data.SetGlobal(binding, image.Sections.IndexOf(data), second);
+        var pointed = new PackfileObjects(image).ReadRef(clip, "variableBindingSet", out bool none);
+        CheckTrue("after pointing it, it is not null", !none);
+        Check("and it names the object it was aimed at", second, pointed?.Offset);
+        Check("with one entry in the table", 1, data.Globals().Count());
+
+        // Aimed somewhere else. This is the rewire, and it must move the entry rather than add one.
+        data.SetGlobal(binding, image.Sections.IndexOf(data), clip.Offset);
+        var moved = new PackfileObjects(image).ReadRef(clip, "variableBindingSet", out _);
+        Check("repointing it names the new object", clip.Offset, moved?.Offset);
+        Check("and does not add a second entry for the same field", 1, data.Globals().Count());
+
+        // Set to nothing. The entry goes, rather than being left aiming at offset zero.
+        data.SetGlobal(binding, 0, -1);
+        objects = new PackfileObjects(image);
+        objects.ReadRef(clip, "variableBindingSet", out bool cleared);
+        CheckTrue("clearing it reads as null", cleared);
+        Check("because the entry is gone, not aimed at zero", 0, data.Globals().Count());
+
+        // The file is the same size throughout. Nothing here appends or moves a byte.
+        Check("and the data never changed length", size + size, data.Data.Length - "A.hkx".Length - 1);
+    }
+
+    /// The planner has to tell a pointer change from a value change, and has to refuse a pointer set
+    /// to something that is not an object.
+    private static void APointerChangeIsPlannedAsOne()
+    {
+        Console.WriteLine("\na pointer change is planned as one");
+
+        const string Before = """
+            <hkpackfile><hksection name="__data__">
+            <hkobject name="#0090" class="hkbStateMachineStateInfo" signature="0xed7f9d0">
+                <hkparam name="generator">#0091</hkparam>
+                <hkparam name="stateId">0</hkparam>
+            </hkobject></hksection></hkpackfile>
+            """;
+
+        var rewired = NativeSave.Compare(Before, Before.Replace(">#0091<", ">#0092<"));
+        CheckTrue("aiming a pointer at another object is writable", rewired.Possible);
+        Check("as one change", 1, rewired.Changes.Count);
+        CheckTrue("marked as a pointer rather than a value", rewired.Changes[0].Ref);
+        CheckTrue("and not as text, which is what would grow the file", !rewired.Grows);
+
+        var cleared = NativeSave.Compare(Before, Before.Replace(">#0091<", ">null<"));
+        CheckTrue("clearing a pointer is writable too", cleared.Possible);
+        CheckTrue("and is still a pointer change", cleared.Changes[0].Ref);
+
+        foreach (string rubbish in new[] { "#", "12", "#12a", "elsewhere", "" })
+        {
+            var plan = NativeSave.Compare(Before, Before.Replace(">#0091<", $">{rubbish}<"));
+            CheckTrue($"a generator of '{rubbish}' is refused", !plan.Possible);
+        }
+    }
 
     /// A file holding one of each shape the graph model has a bucket for: plain fields, an array of
     /// references, a struct written inline under a name, and an array of structs written without
