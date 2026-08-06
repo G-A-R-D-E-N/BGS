@@ -3,6 +3,49 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, a name can be any length it likes
+
+Renaming an animation is the commonest edit anyone makes here, and it was the one thing the new save
+path could not do. It wrote a value over a value of the same width, and a new name is almost never
+the length of the old one, so every rename fell back to a full rebuild through hkxpack.
+
+It does not have to. Nothing in the format says a string has to sit anywhere in particular: what
+makes a run of bytes mean something is a fixup pointing at it. So the new text goes **on the end of
+the section**, where no offset anybody already holds can reach, and the one fixup that names it is
+aimed at the new place. Every other byte, and every other pointer, is left exactly as it was. The old
+text stays where it is and stops being referenced, which is what an unreferenced run of bytes in this
+format already looks like. A field the file left empty gains a pointer the same way, so a name that
+was never set can be given one.
+
+Two things came out of measuring rather than reasoning, both the same shape as last time:
+
+**The fixup table is not in order and must not be put in order.** Sorting it by source offset looked
+like tidying up. Fallout 4's own tables are not sorted: 383 of Dogmeat's 1,587 entries move if you
+sort them, so a sort rewrites a quarter of the table to no purpose and buries the one entry that
+really did change. Entries are left where they were found and a new one goes on the end.
+
+**A growing file cannot be checked by counting changed bytes.** Appending 39 bytes to Dogmeat's
+behaviour makes 13,561 of the original bytes differ, because the fixup tables sit after the data
+inside the section and all of them slide along. None of that is a change to anything the file says.
+So `symrm savecheck` now compares the pieces instead of the bytes: every section's data must be
+unchanged except for the few bytes of the values written over in place, the cross-section pointers
+must be identical, and exactly one local pointer may move per name changed.
+
+**Proved on vanilla.** `symrm savecheck` renames an animation to something longer, saves, and then
+asks three things of the file that came out: hkxpack can still read it, every value in it still
+agrees with our reading, and nothing moved that was not meant to. Across a sample of **76 vanilla
+behaviours, all 76 pass**, and 28 of them exercised the rename. Dogmeat's own is 238,096 bytes in and
+238,144 out, one pointer repointed, 4,678 field values still agreeing with hkxpack.
+
+One thing fixed on the way past. The single disagreement with hkxpack anywhere in the corpus,
+`OBJSwitchToggleLightOff ` in `GenericButton01`'s `Behavior00`, was neither implementation being
+wrong: the name ends in a space, the value sits on its own indented line in the XML, and every reader
+trims it. Compared without the trailing space, the corpus now agrees everywhere.
+
+Java is still needed to edit at all, because the field values still come out of hkxpack's XML on the
+way in. Reading them from the bytes instead is the next piece, and it is what actually removes the
+requirement. See #34.
+
 ## 2026-08-05, writing packfile bytes without hkxpack in the way
 
 Every save currently goes out through hkxpack: the file becomes XML, is edited, and becomes a file

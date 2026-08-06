@@ -14,29 +14,46 @@ namespace OpenCommonwealth.Services.Hkx;
 // animation had to be refused outright. Writing values in place leaves every byte we did not
 // deliberately change exactly as Bethesda shipped it, so there is nothing for a round trip to lose.
 //
-// The limit is honest and checked rather than assumed: this can only change a value into another
-// value of the same width. Every offset in a packfile is derived from the sizes of what precedes
-// it, so anything that resizes an object, adds or removes one, or changes the length of a string
-// would invalidate pointers all through the file. When an edit is not expressible this way it says
-// so and the caller falls back to the old path, which is still correct, just lossier.
+// Two kinds of edit go this way. A fixed width value is written over the value that was there, so
+// nothing moves at all. A string is written on the end of the section and its pointer repointed,
+// which also moves nothing: every offset in the file is derived from the sizes of what precedes it,
+// and appending has nothing after it. The text that was there is left where it is, unreferenced.
+//
+// The limit is honest and checked rather than assumed: anything that changes the number of objects
+// or the length of an array is still refused, because those move what follows them. When an edit is
+// not expressible this way it says so and the caller falls back to the old path, which is still
+// correct, just lossier.
 public static class NativeSave
 {
     public sealed record Plan(List<Change> Changes, string? Refusal)
     {
         public bool Possible => Refusal == null;
         public bool Empty => Changes.Count == 0;
+
+        /// Whether carrying this out makes the file longer. Text is appended rather than overwritten,
+        /// so a caller comparing the result to the original byte for byte has to expect it.
+        public bool Grows => Changes.Exists(c => c.Text);
     }
 
-    public sealed record Change(string ClassName, int Index, string Field, string Value)
+    public sealed record Change(string ClassName, int Index, string Field, string Value, bool Text = false)
     {
         public override string ToString() => $"{ClassName}[{Index}].{Field} = {Value}";
     }
 
-    /// Which fixed width scalars a value can be written into. Everything else, strings and arrays and
-    /// pointers most of all, changes the size of something and is therefore not ours to write.
+    /// Which fixed width scalars a value can be written into. Arrays and pointers are absent because
+    /// changing one changes how much of the file follows it.
     private static readonly HashSet<string> Writable = new(StringComparer.Ordinal)
     {
         "real", "int32", "uint32", "int16", "uint16", "int8", "uint8", "bool", "enum",
+    };
+
+    /// Text fields. Not a fixed width, and written anyway: the field holds a pointer, and a pointer
+    /// can be aimed at text appended to the end of the section instead of at the text it aimed at
+    /// before. `cstring` and `stringptr` differ in how Havok owns the memory at runtime, which is
+    /// nothing to a file on disk; both are a pointer to a run of bytes ending in zero.
+    private static readonly HashSet<string> WritableText = new(StringComparer.Ordinal)
+    {
+        "stringptr", "cstring",
     };
 
     /// Works out what changed between the file as loaded and the file as edited, and whether all of
@@ -77,16 +94,16 @@ public static class NativeSave
                         return new Plan(changes,
                             $"{className}.{field} changed, and we have no byte layout for it");
 
-                    if (!Writable.Contains(type))
+                    if (!Writable.Contains(type) && !WritableText.Contains(type))
                         return new Plan(changes,
                             $"{className}.{field} changed, and a {type} cannot be written in place " +
                             "without moving what follows it");
 
-                    if (!Parses(now, type))
+                    if (!WritableText.Contains(type) && !Parses(now, type))
                         return new Plan(changes,
                             $"{className}.{field} was set to '{now}', which is not a {type}");
 
-                    changes.Add(new Change(className, i, field, now));
+                    changes.Add(new Change(className, i, field, now, WritableText.Contains(type)));
                 }
 
                 if (edited[i].Count != originals[i].Count)
@@ -135,10 +152,14 @@ public static class NativeSave
             var member = (classes ?? HavokClasses.Shipped).Field(change.ClassName, change.Field)
                 ?? throw new InvalidOperationException($"No layout for {change.ClassName}.{change.Field}.");
 
-            bool written = member.Type == "real"
-                ? objects.WriteFloat(instance, change.Field, AsFloat(change.Value))
-                : WriteNarrow(objects, instance, change.Field, member.Type, change.Value,
-                              image.Section("__data__")!);
+            bool written = member.Type switch
+            {
+                "real" => objects.WriteFloat(instance, change.Field, AsFloat(change.Value)),
+                _ when WritableText.Contains(member.Type) =>
+                    objects.WriteString(instance, change.Field, change.Value),
+                _ => WriteNarrow(objects, instance, change.Field, member.Type, change.Value,
+                                 image.Section("__data__")!),
+            };
 
             if (!written)
                 throw new InvalidOperationException($"{change} could not be written, so nothing was.");

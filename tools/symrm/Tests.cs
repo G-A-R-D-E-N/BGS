@@ -54,6 +54,7 @@ public static class Tests
         ("AnimationsForAnotherRigAreRefused", AnimationsForAnotherRigAreRefused),
         ("AModelIsFoundOnlyWhenThereIsNoDoubt", AModelIsFoundOnlyWhenThereIsNoDoubt),
         ("AValueThatIsNotANumberIsRefused", AValueThatIsNotANumberIsRefused),
+        ("AStringIsWrittenAtWhateverLength", AStringIsWrittenAtWhateverLength),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1299,6 +1300,85 @@ public static class Tests
         byte[] once = image.Rebuild();
         byte[] twice = PackfileImage.Read(once).Rebuild();
         CheckTrue("rebuilding what was rebuilt gives the same bytes", once.SequenceEqual(twice));
+    }
+
+    /// Renaming an animation is the commonest edit there is and was the one thing a value save could
+    /// not do, because the new name is rarely the length of the old one. Built by hand so it runs
+    /// without a game: the corpus proof is `symrm savecheck`, which does this to real files and asks
+    /// hkxpack whether the result still reads.
+    private static void AStringIsWrittenAtWhateverLength()
+    {
+        Console.WriteLine("\na string is written at whatever length it wants to be");
+
+        var image = ClipInAPackfile("A.hkx", out int nameField);
+        var objects = new PackfileObjects(image);
+        var clip = objects.Instances.Single();
+
+        Check("the clip is found by its class", "hkbClipGenerator", clip.ClassName);
+        Check("its animation reads back", "A.hkx", objects.ReadString(clip, "animationName"));
+
+        const string longer = @"Animations\Dogmeat\WalkForward_Rebuilt.hkx";
+        CheckTrue("a longer name is accepted", objects.WriteString(clip, "animationName", longer));
+        // The pointer had nothing in it at all, which is how the file leaves a name it never set.
+        CheckTrue("a name the file left empty is accepted",
+                  objects.WriteString(clip, "animationBundleName", "bundle"));
+
+        var reread = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        var again = reread.Instances.Single();
+
+        Check("the longer name survives the rebuild", longer, reread.ReadString(again, "animationName"));
+        Check("so does the name that was empty", "bundle", reread.ReadString(again, "animationBundleName"));
+        Check("the object did not move", 0, again.Offset);
+
+        // The value beside the string is the check that the append did not land on top of anything:
+        // a write that grew into the object rather than past it would take this with it.
+        Check("the value next to it is untouched", 2.5f, reread.ReadFloat(again, "playbackSpeed"));
+
+        // A shorter name has the opposite failure: read back over the old bytes it would come back
+        // with the tail of what was there before still attached.
+        var second = ClipInAPackfile("LongAnimationName.hkx", out _);
+        var writing = new PackfileObjects(second);
+        writing.WriteString(writing.Instances.Single(), "animationName", "B.hkx");
+
+        var shorter = new PackfileObjects(PackfileImage.Read(second.Rebuild()));
+        Check("a shorter name reads back as itself", "B.hkx",
+              shorter.ReadString(shorter.Instances.Single(), "animationName"));
+
+        var sources = image.Section("__data__")!.Locals().Select(l => l.Source).ToList();
+        CheckTrue("the name field still has exactly one fixup",
+                  sources.Count(s => s == nameField) == 1);
+        Check("and the field that had none gained one, rather than the table being rebuilt", 2,
+              sources.Count);
+    }
+
+    /// One hkbClipGenerator in a packfile of two sections, which is the least a reader needs: a name
+    /// in __classnames__ for the virtual fixup to point at, and the object itself in __data__.
+    private static PackfileImage ClipInAPackfile(string animation, out int nameField)
+    {
+        var classes = HavokClasses.Shipped;
+        int size = classes["hkbClipGenerator"]!.Size;
+        nameField = classes.Field("hkbClipGenerator", "animationName")!.Offset;
+        int speed = classes.Field("hkbClipGenerator", "playbackSpeed")!.Offset;
+
+        // Five bytes of bookkeeping precede a class name, and the fixup points past them at the text.
+        var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
+
+        var text = System.Text.Encoding.UTF8.GetBytes(animation);
+        var data = new byte[size + text.Length + 1];
+        text.CopyTo(data, size);
+        BitConverter.GetBytes(2.5f).CopyTo(data, speed);
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            LocalFixups = Pair(nameField, size),
+            VirtualFixups = Triple(0, 0, 5),
+        });
+        return image;
     }
 
     private static byte[] MakeTag(string name)
