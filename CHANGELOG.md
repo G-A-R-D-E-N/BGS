@@ -3,6 +3,38 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, the pointer tables' order is worked out and reproduced
+
+The array work found that where an entry sits in a pointer table is not free, and left the rule as
+something inferred from one failure. It is measured now.
+
+The order is the order the writer walked the objects: objects as they sit in the file, and inside an
+object its members in offset order, stepping into an array or an inline struct at the point the
+member holding it is reached rather than after the object is finished. That is why the table runs
+backwards in places. An array's elements live elsewhere in the section, so reaching the array field
+emits entries with much larger offsets and the walk then carries on with the fields after it.
+
+| | |
+|---|---|
+| files whose tables are in that exact order | 533 of 533 |
+| entries accounted for | 151,853 |
+| out of order | 0 |
+
+Both tables, not just the pointer one. That second half matters more than it looks: it means the
+string appends have been getting away with it. Setting an entry that already exists leaves it where
+it is, and a renamed string always had one, so appending never came up. An array going from empty to
+holding something adds one, and that would have gone on the end and been wrong.
+
+So writing no longer places entries by hand. Every save puts both tables back into walk order at the
+end, which is why a save that changes nothing still has to come back byte for byte: that check is
+what proves the reorder reproduces the file's own order rather than imposing ours.
+
+One fault found doing it. The reorder was first given the object view the caller already had, which
+had resolved its pointers when it was built, so after an array was repointed it still answered with
+the run the array used to hold and the walk predicted sources the file no longer had. It reads the
+edited image again now.
+
+
 ## 2026-08-06, an array of children saves without Java, and the pointer table turns out to be ordered
 
 Adding or removing a child node writes into the file's own bytes now. The new run of pointers goes

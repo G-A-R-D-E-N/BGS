@@ -44,6 +44,7 @@ public static class Program
             case "model": return Model(argv);
             case "consumers": return Consumers(argv);
             case "symbols": return Symbols(argv);
+            case "walk": return Walk(argv);
             case "classes": return Classes(argv);
             case "fields": return Fields(argv);
             case "signatures": return Signatures(argv);
@@ -1562,6 +1563,65 @@ public static class Program
                           $"{roleDiffering} not");
 
         return bad == 0 && roleDiffering == 0 ? 0 : 1;
+    }
+
+    /// What order the two pointer tables are in, worked out from the classes and checked against
+    /// the file.
+    ///
+    /// The rule itself lives in FixupOrder, because writing has to reproduce it. This is what says
+    /// the rule is the file's own and not our idea of it.
+    private static int Walk(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToList()
+            : new List<string> { target };
+
+        int clean = 0, bad = 0, entries = 0;
+
+        foreach (string file in files)
+        {
+            PackfileImage image;
+            try { image = PackfileImage.Read(file); }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message.Split('\n')[0]}");
+                continue;
+            }
+
+            var data = image.Section("__data__");
+            if (data == null) continue;
+
+            var objects = new PackfileObjects(image);
+            var types = HavokClassTypes.Shipped;
+            if (objects.Instances.Any(i => !types.Knows(i.ClassName))) continue;
+
+            bool ok = true;
+            foreach (bool global in new[] { true, false })
+            {
+                var actual = global ? data.Globals().Select(g => g.Source).ToList()
+                                    : data.Locals().Select(l => l.Source).ToList();
+                var predicted = FixupOrder.Sources(objects, types, data, global);
+                entries += actual.Count;
+
+                if (predicted.SequenceEqual(actual)) continue;
+
+                ok = false;
+                int at = predicted.Zip(actual).TakeWhile(p => p.First == p.Second).Count();
+                Console.WriteLine($"{Path.GetFileName(file)}: the {(global ? "global" : "local")} " +
+                                  $"table is not in that order, {predicted.Count} predicted against " +
+                                  $"{actual.Count}, first differing at {at}");
+            }
+
+            if (ok) clean++; else bad++;
+        }
+
+        Console.WriteLine($"\n{clean} file(s) with both tables in the predicted order, {bad} not, " +
+                          $"{entries} entr(ies) checked");
+        return bad == 0 ? 0 : 1;
     }
 
     /// Where every event and variable index is written, read out of the text and out of the bytes,

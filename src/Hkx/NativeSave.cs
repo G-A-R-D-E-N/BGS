@@ -232,6 +232,13 @@ public static class NativeSave
                 throw new InvalidOperationException($"{change} could not be written, so nothing was.");
         }
 
+        // Both pointer tables put back into the order the writer would have written them in. Setting
+        // an entry that already exists leaves it where it is, so this only matters once something is
+        // added, and an array going from empty to holding something adds one. Done for every plan
+        // rather than only the ones that add, because a null save has to come back byte for byte and
+        // that is the check that proves this reorder is the file's own order and not our idea of it.
+        FixupOrder.Reorder(image);
+
         return image.Rebuild();
     }
 

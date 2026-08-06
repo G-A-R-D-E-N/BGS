@@ -278,6 +278,19 @@ public sealed class PackfileSection
         GlobalFixups = table;
     }
 
+    /// The local table written from a list, for the same reason the global one can be.
+    public void SetLocals(IEnumerable<(int Source, int Destination)> entries)
+    {
+        var all = entries.ToList();
+        var table = new byte[all.Count * 8];
+        for (int i = 0; i < all.Count; i++)
+        {
+            BitConverter.GetBytes(all[i].Source).CopyTo(table, i * 8);
+            BitConverter.GetBytes(all[i].Destination).CopyTo(table, i * 8 + 4);
+        }
+        LocalFixups = table;
+    }
+
     public void SetGlobal(int source, int section, int destination)
     {
         var entries = Globals().ToList();
