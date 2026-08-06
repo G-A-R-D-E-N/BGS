@@ -17,6 +17,13 @@ Reading a behaviour file needs none of this; the reader is C# and native to the 
 what turns edited XML back into a binary `.hkx`, so it is only reached when saving. Without a Java
 runtime present the tool stays read only and says so, rather than failing at the point of save.
 
+**`src/Hkx/HavokClassTypes.json` is derived from this jar and carries the same licence.** The jar
+holds a database of Havok class descriptions under `classxml/`, and `symrm classes` reads it out —
+as a zip, not by running Java — and writes it into one file alongside the instance sizes read out of
+Fallout 4 itself. What is taken from hkxpack is the shape of each class: its members and their
+types, which of them are ever written to a file, what class an inline struct is an instance of, and
+every enum's values. Rebuild it with `symrm classes <jar> src/Hkx/HavokClassTypes.json`.
+
 ## Google Guava
 
 - Upstream: https://github.com/google/guava, tag `v19.0`. The `code.google.com/p/guava-libraries`

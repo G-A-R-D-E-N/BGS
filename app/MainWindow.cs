@@ -100,6 +100,10 @@ public class MainWindow : Window
     // and not in the bytes until it is saved, so for these the text form is the newer of the two and
     // reading the bytes would put the old value back on screen under the person typing.
     private readonly HashSet<string> _editedFields = new(StringComparer.Ordinal);
+
+    // Why the bytes are not being read, when they are not. Kept rather than printed on the spot,
+    // because the load says several things after this point and the last one wins the status line.
+    private string _classWarning = "";
     private List<HkxBehaviorParser.BehaviorNode> _objects = new();
     private HkxBehaviorParser.BehaviorNode? _root;
 
@@ -1406,7 +1410,27 @@ public class MainWindow : Window
 
         // Not fatal if it fails: the panel falls back to hkxpack field by field, so a file this
         // cannot take apart still shows its values, just none of them from the bytes.
-        try { _bytes = new PackfileObjects(PackfileImage.Read(path)); }
+        _classWarning = "";
+        try
+        {
+            var bytes = new PackfileObjects(PackfileImage.Read(path));
+
+            // A packfile stores the signature of every class it names, and a signature is what a
+            // class definition is. If the file's disagrees with ours then this build's idea of where
+            // a field sits was written for a different version of that class, and reading a value
+            // out of it would be quiet nonsense rather than an error. So the bytes are put aside
+            // and the panel goes back to reading through hkxpack, which reads the file's own
+            // definitions rather than ours.
+            var problems = HavokClassTypes.Shipped.SignatureProblems(bytes.ClassNames());
+            if (problems.Count > 0)
+            {
+                _classWarning = $"Read through hkxpack only: {problems[0]}" +
+                                (problems.Count > 1 ? $", and {problems.Count - 1} more like it" : "") +
+                                ". Values are not read from the bytes when the classes do not match.";
+                _bytes = null;
+            }
+            else _bytes = bytes;
+        }
         catch (Exception) { _bytes = null; }
 
         var classes = new HashSet<string>();
@@ -1486,7 +1510,10 @@ public class MainWindow : Window
             BuildClipList(model);
             BuildChain(java, jar);
             FindMeshForFile();
-            SetStatus($"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn.", Ux.MetaBrush);
+            SetStatus(_classWarning.Length > 0
+                          ? _classWarning
+                          : $"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn.",
+                      _classWarning.Length > 0 ? Ux.WarnBrush : Ux.MetaBrush);
         }
         catch (Exception ex)
         {

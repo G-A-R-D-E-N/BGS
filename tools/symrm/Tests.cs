@@ -61,6 +61,9 @@ public static class Tests
         ("ThePanelFallsBackOneFieldAtATime", ThePanelFallsBackOneFieldAtATime),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
         ("ASpaceInAValueIsKept", ASpaceInAValueIsKept),
+        ("TheClassTableKnowsWhatTheDumpCannot", TheClassTableKnowsWhatTheDumpCannot),
+        ("AFieldListIsBuiltWithoutHkxPack", AFieldListIsBuiltWithoutHkxPack),
+        ("AClassSignedDifferentlyIsRefused", AClassSignedDifferentlyIsRefused),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1571,6 +1574,107 @@ public static class Tests
         CheckTrue("a skeleton's parent indices are an array of int16", parents?.Type == "array of int16");
     }
 
+    /// The two halves of a class description, and what each one is for. The dump read out of the
+    /// game knows where a field sits and how big an instance is; hkxpack's database knows which
+    /// fields are ever written, what an inline struct is an instance of, and what an enum's numbers
+    /// are called. Neither is enough on its own.
+    private static void TheClassTableKnowsWhatTheDumpCannot()
+    {
+        Console.WriteLine("\nthe class table knows what the dump cannot");
+
+        var types = HavokClassTypes.Shipped;
+        CheckTrue("the table is there at all", types.Count > 900);
+
+        var clip = types["hkbClipGenerator"]!;
+        Check("a signature, which the dump has none of", 0xd4cc9f6u, clip.Signature);
+        Check("and a size, which hkxpack has none of", 352, clip.Size);
+        Check("the same size the dump gives", HavokClasses.Shipped["hkbClipGenerator"]!.Size, clip.Size);
+
+        var members = types.Members("hkbClipGenerator");
+        Check("inherited members come first, in the order they are declared", "memSizeAndRefCount",
+              members[0].Name);
+        CheckTrue("and the class's own come after its parent's",
+                  members.ToList().FindIndex(m => m.Name == "animationName") >
+                  members.ToList().FindIndex(m => m.Name == "name"));
+
+        var mode = members.Single(m => m.Name == "mode");
+        Check("an enum member names its enum", "PlaybackMode", mode.EType);
+        Check("and the values have names", "MODE_USER_CONTROLLED", types.NameOf("hkbClipGenerator", mode, 2));
+        Check("a value nothing declares stays unnamed", null, types.NameOf("hkbClipGenerator", mode, 99));
+
+        // The fact the whole table exists for: what an inline struct is an instance of.
+        var transitions = types.Members("hkbStateMachineTransitionInfoArray")
+                               .Single(m => m.Name == "transitions");
+        Check("an array of structs names the class of its elements", "hkbStateMachineTransitionInfo",
+              transitions.CType);
+        Check("which has a size, so the elements can be stepped through", 72,
+              types["hkbStateMachineTransitionInfo"]!.Size);
+
+        var ignored = types.Members("hkbStateMachineTransitionInfoArray")
+                           .Where(m => !m.Written).Select(m => m.Name).ToList();
+        CheckTrue("and the members the engine never writes are marked",
+                  ignored.Contains("hasEventlessTransitions"));
+
+        // Flags combine, and a combination is only as good as its parts.
+        var flags = types.Members("hkbBlendingTransitionEffect").Single(m => m.Name == "flags");
+        Check("flags read as their names", "FLAG_SYNC|FLAG_IGNORE_TO_WORLD_FROM_MODEL",
+              types.NameOf("hkbBlendingTransitionEffect", flags, 6));
+        Check("a combination holding a bit with no name is refused whole", null,
+              types.NameOf("hkbBlendingTransitionEffect", flags, 6 | 1 << 20));
+    }
+
+    /// The list of fields an object holds, built from the table and the file rather than from
+    /// hkxpack's text. The corpus proof is `symrm fields`; this pins the shape of the walk.
+    private static void AFieldListIsBuiltWithoutHkxPack()
+    {
+        Console.WriteLine("\na field list is built without hkxpack");
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        var objects = new PackfileObjects(image);
+        var names = ClassFields.Of(objects, objects.Instances.Single());
+
+        CheckTrue("a list comes back at all", names != null);
+        CheckTrue("it holds the fields hkxpack writes", names!.Contains("animationName") &&
+                                                        names.Contains("playbackSpeed"));
+        CheckTrue("and not the ones it never writes", !names.Contains("localTime") &&
+                                                      !names.Contains("atEnd"));
+        // triggers is a pointer, written as a reference on one line; animDatas is an array, written
+        // as its own block and never offered as a value.
+        CheckTrue("a pointer is a field", names.Contains("triggers"));
+        CheckTrue("an array is not", !names.Contains("animDatas"));
+
+        var order = HavokClassTypes.Shipped.Members("hkbClipGenerator")
+                                   .Where(m => m.Written && m.VType != "TYPE_ARRAY" &&
+                                               m.VType != "TYPE_STRUCT")
+                                   .Select(m => m.Name).ToList();
+        Check("in the order the file writes them", string.Join(",", order), string.Join(",", names));
+    }
+
+    /// A file whose classes are signed differently was written against a different definition than
+    /// the one this build holds, and reading a value out of it by offset would be quiet nonsense.
+    private static void AClassSignedDifferentlyIsRefused()
+    {
+        Console.WriteLine("\na class signed differently is refused");
+
+        var types = HavokClassTypes.Shipped;
+        uint right = types["hkbClipGenerator"]!.Signature;
+
+        Check("a file signed the way we expect raises nothing", 0,
+              types.SignatureProblems(new[] { (right, "hkbClipGenerator") }).Count);
+
+        var wrong = types.SignatureProblems(new[] { (right ^ 1u, "hkbClipGenerator") });
+        Check("one signed differently raises exactly one", 1, wrong.Count);
+        CheckTrue("and the message names the class", wrong[0].Contains("hkbClipGenerator"));
+
+        var unknown = types.SignatureProblems(new[] { (1u, "hkbSomethingWeHaveNeverSeen") });
+        Check("so does a class we have no definition for", 1, unknown.Count);
+
+        // The file the test packfile is built from carries its own names, and they have to pass.
+        var image = ClipInAPackfile("A.hkx", out _);
+        Check("the names a real packfile carries pass", 0,
+              types.SignatureProblems(new PackfileObjects(image).ClassNames()).Count);
+    }
+
     /// One hkbClipGenerator in a packfile of two sections, which is the least a reader needs: a name
     /// in __classnames__ for the virtual fixup to point at, and the object itself in __data__.
     private static PackfileImage ClipInAPackfile(string animation, out int nameField)
@@ -1580,8 +1684,12 @@ public static class Tests
         nameField = classes.Field("hkbClipGenerator", "animationName")!.Offset;
         int speed = classes.Field("hkbClipGenerator", "playbackSpeed")!.Offset;
 
-        // Five bytes of bookkeeping precede a class name, and the fixup points past them at the text.
+        // Five bytes of bookkeeping precede a class name: the class signature, then a separator.
+        // The real signature rather than zeroes, because a file carrying the wrong one is refused,
+        // and a fixture that could not survive its own checks is not a fixture.
         var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
         System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
 
         var text = System.Text.Encoding.UTF8.GetBytes(animation);

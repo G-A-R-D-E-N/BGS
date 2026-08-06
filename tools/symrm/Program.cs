@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.Tools;
@@ -41,6 +42,9 @@ public static class Program
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
             case "names": return Names(argv);
+            case "classes": return Classes(argv);
+            case "fields": return Fields(argv);
+            case "signatures": return Signatures(argv);
             case "panel": return Panel(argv);
             case "objects": return Objects(argv);
             case "crosscheck": return CrossCheck(argv);
@@ -923,6 +927,234 @@ public static class Program
     // out of the game, hkxpack's by its own schema. Agreement across a whole file is what turns
     // "these offsets look plausible" into "these offsets are right", and it is the check that has to
     // pass before anything writes bytes for real.
+    /// Builds `HavokClassTypes.json` out of the class database hkxpack carries inside its own jar,
+    /// merged with the instance sizes read out of the game.
+    ///
+    /// The jar is opened as what it is, a zip, so this runs Java no more than unzipping does. What
+    /// comes out is the half of a class description the game's own startup code does not keep: which
+    /// members are ever written to a file, what class an inline struct is, and every enum's values.
+    ///
+    /// One class per line on purpose. It is a generated file either way, and a generated file that
+    /// cannot be read in a diff hides its own mistakes.
+    private static int Classes(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string output = Path.GetFullPath(argv[^1]);
+        string? jar = argv.Length > 2 ? Path.GetFullPath(argv[1]) : HkxTextEdit.FindHkxPack("", _root);
+
+        if (jar == null || !File.Exists(jar))
+        {
+            Console.WriteLine("No hkxpack-cli.jar to read the class database out of. " +
+                              "Pass its path: symrm classes <jar> <out.json>");
+            return 1;
+        }
+
+        var sizes = HavokClasses.Shipped;
+        var classes = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        int members = 0, ignored = 0, structs = 0, enums = 0, values = 0, sized = 0, fixedArrays = 0;
+
+        using (var zip = System.IO.Compression.ZipFile.OpenRead(jar))
+        {
+            foreach (var item in zip.Entries.Where(e => e.FullName.StartsWith("classxml/", StringComparison.Ordinal)
+                                                        && e.FullName.EndsWith(".xml", StringComparison.Ordinal)))
+            {
+                using var stream = item.Open();
+                var root = System.Xml.Linq.XDocument.Load(stream).Root!;
+                string name = root.Attribute("name")!.Value;
+
+                var declared = new List<object>();
+                foreach (var m in root.Element("members")?.Elements("member")
+                                  ?? Enumerable.Empty<System.Xml.Linq.XElement>())
+                {
+                    // Trimmed: a handful of entries in the database carry a stray space beside the
+                    // flag, and a flag compared as text is a flag that goes unnoticed when it does.
+                    string flags = (m.Attribute("flags")?.Value ?? "").Trim();
+                    bool written = !flags.Split('|').Any(f => f.Trim() == "SERIALIZE_IGNORED");
+                    int size = int.Parse(m.Attribute("arrsize")?.Value ?? "0");
+
+                    members++;
+                    if (!written) ignored++;
+                    if (m.Attribute("ctype") != null) structs++;
+                    if (size > 0) fixedArrays++;
+
+                    declared.Add(new Dictionary<string, object?>
+                    {
+                        ["name"] = m.Attribute("name")?.Value,
+                        ["offset"] = int.Parse(m.Attribute("offset")!.Value),
+                        ["vtype"] = m.Attribute("vtype")?.Value,
+                        ["vsub"] = m.Attribute("vsubtype")?.Value,
+                        ["ctype"] = m.Attribute("ctype")?.Value,
+                        ["etype"] = m.Attribute("etype")?.Value,
+                        ["arrsize"] = size,
+                        ["written"] = written,
+                        ["default"] = m.Attribute("default")?.Value,
+                    });
+                }
+
+                var declaredEnums = new SortedDictionary<string, object>(StringComparer.Ordinal);
+                foreach (var e in root.Element("enums")?.Elements("enum")
+                                  ?? Enumerable.Empty<System.Xml.Linq.XElement>())
+                {
+                    var items = new SortedDictionary<string, long>(StringComparer.Ordinal);
+                    foreach (var i in e.Elements("enumitem"))
+                        items[i.Attribute("name")!.Value] = long.Parse(i.Attribute("value")!.Value);
+
+                    declaredEnums[e.Attribute("name")!.Value] = items;
+                    enums++;
+                    values += items.Count;
+                }
+
+                int? size2 = sizes[name]?.Size;
+                if (size2 != null) sized++;
+
+                classes[name] = JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    ["parent"] = root.Attribute("parent")?.Value,
+                    ["signature"] = root.Attribute("signature")?.Value,
+                    ["size"] = size2,
+                    ["members"] = declared,
+                    ["enums"] = declaredEnums,
+                });
+            }
+        }
+
+        if (classes.Count == 0)
+        {
+            Console.WriteLine($"{Path.GetFileName(jar)} holds no classxml/ entries.");
+            return 1;
+        }
+
+        var text = new System.Text.StringBuilder();
+        text.Append("{\n\"note\":");
+        text.Append(JsonSerializer.Serialize(
+            "What a Havok class is made of. The member types, which members are ever written to a " +
+            "file, the class of every inline struct and every enum's values come from the class " +
+            "database inside hkxpack's jar (MIT, see THIRD_PARTY_NOTICES.md), read out as a zip. " +
+            "The instance sizes come from HavokClassLayouts.json, which was read out of Fallout 4 " +
+            "itself. Rebuild with `symrm classes`."));
+        text.Append(",\n\"havokVersion\":\"hk_2014.1.0-r1\",\n\"classes\":{\n");
+        text.Append(string.Join(",\n", classes.Select(c => JsonSerializer.Serialize(c.Key) + ":" + c.Value)));
+        text.Append("\n}\n}\n");
+
+        File.WriteAllText(output, text.ToString());
+
+        Console.WriteLine($"{classes.Count} classes, {members} members, {sized} with an instance size");
+        Console.WriteLine($"  {ignored} members the engine never writes out");
+        Console.WriteLine($"  {structs} members naming the class of a struct");
+        Console.WriteLine($"  {fixedArrays} members that are a fixed length array");
+        Console.WriteLine($"  {values} values across {enums} enums");
+        Console.WriteLine($"written to {output}, {new FileInfo(output).Length / 1024} KB");
+
+        var reread = HavokClassTypes.Parse(File.OpenRead(output));
+        Console.WriteLine($"reads back as {reread.Count} classes");
+        return reread.Count == classes.Count ? 0 : 1;
+    }
+
+    /// Every class every file names, against the definition this build holds for it.
+    ///
+    /// A packfile stores four bytes in front of each class name, and those four bytes are what a
+    /// class definition is: change a member's type or add one and the signature changes with it. So
+    /// this is the one check that can say a file was written against the same classes we read it
+    /// with, rather than merely that it parsed.
+    private static int Signatures(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        int read = 0, refused = 0, checkedNames = 0;
+        var problems = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (string file in files)
+        {
+            PackfileObjects objects;
+            try { objects = new PackfileObjects(PackfileImage.Read(file)); }
+            catch (Exception) { refused++; continue; }
+
+            read++;
+            var names = objects.ClassNames().ToList();
+            checkedNames += names.Count;
+            foreach (string problem in HavokClassTypes.Shipped.SignatureProblems(names))
+                problems[problem] = problems.GetValueOrDefault(problem) + 1;
+        }
+
+        Console.WriteLine($"{read} packfile(s) read, {refused} refused, " +
+                          $"{checkedNames} class name(s) checked, {problems.Count} kind(s) of problem");
+        foreach (var (problem, count) in problems.OrderByDescending(p => p.Value).Take(20))
+            Console.WriteLine($"   {problem} ({count} file(s))");
+
+        return problems.Count == 0 && read > 0 ? 0 : 1;
+    }
+
+    /// The gate on the class table: build the list of fields a file holds from the table alone, and
+    /// compare it to the list hkxpack writes for the same file.
+    ///
+    /// This is the whole question the table exists to answer. The panel's field list comes from
+    /// hkxpack's XML today, and it can only stop doing that if the table produces the same list —
+    /// the same names, in the same order, including the fields of every struct written inline, which
+    /// is where the count of elements has to be read out of the file itself.
+    private static int Fields(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx").OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        int exact = 0, wrong = 0, unresolved = 0, skipped = 0;
+        var examples = new List<string>();
+
+        foreach (string file in files)
+        {
+            string work = Path.Combine(Path.GetTempPath(), "symrm-fields");
+            string xml;
+            try
+            {
+                HkxTextEdit.ResetDirectory(work);
+                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+            }
+            catch (Exception e)
+            {
+                skipped++;
+                if (examples.Count < 8) examples.Add($"{Path.GetFileName(file)}: {e.Message.Split('\n')[0]}");
+                continue;
+            }
+
+            var objects = new PackfileObjects(PackfileImage.Read(file));
+            var ids = HkxTextEdit.ObjectIds(xml);
+            if (ids.Count != objects.Instances.Count) { skipped++; continue; }
+
+            for (int i = 0; i < ids.Count; i++)
+            {
+                var predicted = ClassFields.Of(objects, objects.Instances[i]);
+                if (predicted == null) { unresolved++; continue; }
+
+                var seen = HkxTextEdit.ReadParams(xml, ids[i]).Select(p => p.Name).ToList();
+                if (predicted.SequenceEqual(seen, StringComparer.Ordinal)) { exact++; continue; }
+
+                wrong++;
+                if (examples.Count < 8)
+                    examples.Add($"{Path.GetFileName(file)} #{ids[i]} {objects.Instances[i].ClassName}\n" +
+                                 $"      from the table: {string.Join(" ", predicted.Take(20))}\n" +
+                                 $"      from hkxpack  : {string.Join(" ", seen.Take(20))}");
+            }
+        }
+
+        Console.WriteLine($"{files.Length} file(s): {exact} object(s) whose field list the table " +
+                          $"predicts exactly, {wrong} wrong, {unresolved} it could not work out, " +
+                          $"{skipped} file(s) skipped");
+        foreach (string line in examples) Console.WriteLine("   " + line);
+
+        return wrong == 0 && unresolved == 0 && exact > 0 ? 0 : 1;
+    }
+
     /// What the properties panel would show for every object in a file, against what hkxpack says
     /// about the same fields.
     ///

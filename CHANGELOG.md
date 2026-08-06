@@ -3,6 +3,39 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, a class table, so a field list can come from the file
+
+The properties panel gets its list of field *names* from hkxpack's XML, and that is the last thing
+holding the Java requirement in place for reading. The values already come from the bytes. The names
+cannot, because the class dump read out of Fallout 4 keeps two things back: it does not say which of
+a class's members the engine ever writes to a file, and where a struct is written inline it records
+the word `struct` and not which class that struct is.
+
+Both are in the class database hkxpack carries inside its own jar, under `classxml/`. `symrm classes`
+reads it out — **as a zip, so nothing here runs Java** — and merges it with the instance sizes from
+the dump, which hkxpack's data does not carry and which is what an array of structs needs to step
+through its elements. The result is `src/Hkx/HavokClassTypes.json`: **908 classes, 3,915 members, of
+which 482 are never written out and 722 name the class of a struct, plus 1,007 enum values across 195
+enums.** One class per line, because a generated file that cannot be read in a diff hides its own
+mistakes.
+
+**Gated on the only question it exists to answer.** `symrm fields` builds each object's whole field
+list from the table and the file's own bytes — walking into every inline struct, stepping through
+every array of them at the count the file states, and expanding a fixed length `hkReal[8]` into the
+eight fields hkxpack writes — and compares it to what hkxpack writes for the same object. Across all
+**531** vanilla behaviours: **36,340 objects, every list exactly right, none wrong, none it could not
+work out.**
+
+**And a check the tool has never had.** A packfile stores four bytes in front of every class name,
+and those four bytes are what a class definition *is*: change a member and the signature changes. So
+a file can now be asked whether it was written against the same classes we read it with, rather than
+merely whether it parsed. **20,833 class names across the 531 vanilla behaviours and 1,331 files in a
+mod folder: every signature matches, none unknown.** On load, a file whose classes disagree puts the
+byte reader aside and goes back to reading through hkxpack, which reads the file's own definitions
+rather than ours, and the status line says why.
+
+Nothing about the panel changed yet. That is the next piece.
+
 ## 2026-08-05, the check stops tidying up what it is meant to be checking
 
 Every "all agreeing" number here so far came from a 76 file sample. Run over all **531**, the check

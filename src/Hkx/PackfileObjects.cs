@@ -185,15 +185,38 @@ public sealed class PackfileObjects
     public Elements? ReadArray(Instance instance, string field)
     {
         int? at = FieldAt(instance, field);
-        if (at == null || at + 12 > _data.Data.Length) return null;
+        return at == null ? null : ArrayAt(at.Value);
+    }
 
-        int count = BitConverter.ToInt32(_data.Data, at.Value + 8);
+    /// The same, by offset rather than by name. A struct written inside an object is not at any
+    /// offset that object's class describes, so reading one means working out where it sits and
+    /// asking from there.
+    public Elements? ArrayAt(int at)
+    {
+        if (at < 0 || at + 12 > _data.Data.Length) return null;
+
+        int count = BitConverter.ToInt32(_data.Data, at + 8);
         if (count < 0) return null;
 
-        int? destination = Aim(at.Value);
+        int? destination = Aim(at);
         if (destination == null) return count == 0 ? new Elements(0, 0) : null;
 
         return new Elements(destination.Value, count);
+    }
+
+    /// Every class the file names, with the signature it stores in front of the name. A class name
+    /// in `__classnames__` is four bytes of signature, one separator, the text, and a terminator.
+    public IEnumerable<(uint Signature, string Name)> ClassNames()
+    {
+        var blob = _classNames.Data;
+        for (int at = 0; at + 5 < blob.Length; )
+        {
+            int end = Array.IndexOf(blob, (byte)0, at + 5);
+            if (end < 0) yield break;
+
+            yield return (BitConverter.ToUInt32(blob, at), Encoding.ASCII.GetString(blob, at + 5, end - at - 5));
+            at = end + 1;
+        }
     }
 
     public IReadOnlyList<string?>? ReadStringArray(Instance instance, string field)
