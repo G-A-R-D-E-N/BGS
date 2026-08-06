@@ -57,7 +57,7 @@ public static class Tests
         ("AStringIsWrittenAtWhateverLength", AStringIsWrittenAtWhateverLength),
         ("WideAndVectorFieldsReadFromTheBytes", WideAndVectorFieldsReadFromTheBytes),
         ("ReferencesAndArraysReadFromTheBytes", ReferencesAndArraysReadFromTheBytes),
-        ("AnUnseenEnumValueIsNotNamed", AnUnseenEnumValueIsNotNamed),
+        ("AnUndeclaredEnumValueIsNotNamed", AnUndeclaredEnumValueIsNotNamed),
         ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
         ("ASpaceInAValueIsKept", ASpaceInAValueIsKept),
@@ -1451,30 +1451,35 @@ public static class Tests
               elements?[1]?.Offset);
     }
 
-    /// The names of an enum's values were read off vanilla files rather than taken from a
-    /// specification, so a value no vanilla file uses has no name. That has to read as "no name"
-    /// rather than as a number or an invented one: a wrong name is the kind of wrong nobody checks.
-    private static void AnUnseenEnumValueIsNotNamed()
+    /// A value the class table does not declare has no name, and has to read as "no name" rather
+    /// than as an invented one: a wrong name is the kind of wrong nobody checks.
+    ///
+    /// These names used to be measured off vanilla files, one field at a time, and kept in a table
+    /// of their own. The class table declares them instead, 1,007 values against the measurement's
+    /// 47, and the two agreed on all 47 before the measurement was removed.
+    private static void AnUndeclaredEnumValueIsNotNamed()
     {
-        Console.WriteLine("\nan enum value nobody has seen is left unnamed");
+        Console.WriteLine("\nan enum value the table does not declare is left unnamed");
 
-        var mode = HavokClasses.Shipped.Field("hkbClipGenerator", "mode")!;
-        string key = HavokEnums.Key(mode);
+        var types = HavokClassTypes.Shipped;
+        var mode = types.Members("hkbClipGenerator").First(m => m.Name == "mode");
 
-        Check("the key names the class that declares the field", "hkbClipGenerator.mode", key);
-        Check("a value vanilla uses is named", "MODE_SINGLE_PLAY", HavokEnums.Shipped.Name(key, 0));
-        Check("a value nothing uses is not", null, HavokEnums.Shipped.Name(key, 99));
-        Check("neither is a field with no table at all", null,
-              HavokEnums.Shipped.Name("hkbNothing.nowhere", 0));
+        Check("the field names the enum that gives its values names", "PlaybackMode", mode.EType);
+        Check("a declared value is named", "MODE_SINGLE_PLAY",
+              types.NameOf("hkbClipGenerator", mode, 0));
+        Check("an undeclared one is not", null, types.NameOf("hkbClipGenerator", mode, 99));
+        Check("neither is a field whose enum the table has never heard of", null,
+              types.NameOf("hkbNothing", new HavokClassTypes.Member { EType = "Nowhere" }, 0));
 
         // Flags combine, and a combination is only as good as its parts.
-        var flags = HavokClasses.Shipped.Field("hkbBlendingTransitionEffect", "flags")!;
-        string bits = HavokEnums.Key(flags);
-        Check("a single flag is named", "FLAG_SYNC", HavokEnums.Shipped.Name(bits, 2));
-        Check("so is a combination of named flags", "FLAG_SYNC|FLAG_IGNORE_TO_WORLD_FROM_MODEL",
-              HavokEnums.Shipped.Name(bits, 6));
+        var flags = types.Members("hkbBlendingTransitionEffect").First(m => m.Name == "flags");
+
+        Check("a single flag is named", "FLAG_SYNC",
+              types.NameOf("hkbBlendingTransitionEffect", flags, 2));
+        Check("so is a combination of declared flags", "FLAG_SYNC|FLAG_IGNORE_TO_WORLD_FROM_MODEL",
+              types.NameOf("hkbBlendingTransitionEffect", flags, 6));
         Check("a combination holding a bit with no name is refused whole", null,
-              HavokEnums.Shipped.Name(bits, 6 | 1 << 20));
+              types.NameOf("hkbBlendingTransitionEffect", flags, 6 | 1 << 20));
     }
 
     /// The panel reads from the bytes and falls back to hkxpack for one field at a time. What must

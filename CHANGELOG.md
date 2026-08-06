@@ -3,6 +3,24 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, the measured enum names are gone
+
+`HavokEnumNames.json` was the enum value names read off vanilla files by setting our reading of the
+bytes beside hkxpack's reading of the same field. It stopped being consulted when the class table
+arrived, and the previous entry left it in place as an independent check on the table. It was never
+an automated one, so it was checked once and then removed rather than left sitting there looking
+load bearing.
+
+The check: 22 fields, 47 values, all 47 named the same thing in both. Nothing the measurement found
+is missing from the table and nothing disagrees. The table declares 1,007 values across 195 enums,
+so the measurement was a strict subset of it.
+
+Removed with it: `HavokEnums.cs`, the `symrm names` command that rebuilt the file, and the embedded
+resource entries in both project files. The suite still stands at 389 checks, because the seven that
+covered the measurement now cover `HavokClassTypes.NameOf` instead, including the two that matter
+most: a value the table does not declare comes back unnamed, and a combination of flags holding one
+bit with no name is refused whole rather than answered in part.
+
 ## 2026-08-05, the panel's field list comes from the file now, not from hkxpack
 
 The values in the properties panel have come from the file's own bytes for a while. The list of
