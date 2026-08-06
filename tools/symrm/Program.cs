@@ -1133,7 +1133,7 @@ public static class Program
 
             for (int i = 0; i < ids.Count; i++)
             {
-                var predicted = ClassFields.Of(objects, objects.Instances[i]);
+                var predicted = ClassFields.NamesOf(objects, objects.Instances[i]);
                 if (predicted == null) { unresolved++; continue; }
 
                 var seen = HkxTextEdit.ReadParams(xml, ids[i]).Select(p => p.Name).ToList();
@@ -1196,14 +1196,15 @@ public static class Program
             return at >= 0 && at < ids.Count ? "#" + ids[at] : "";
         }
 
-        int shown = 0, fromBytes = 0, fell = 0, agreed = 0;
+        int shown = 0, fromBytes = 0, fell = 0, agreed = 0, strided = 0;
         var byClassFallback = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var stridedClasses = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var disagreements = new List<string>();
 
         for (int i = 0; i < ids.Count; i++)
         {
             var xml = HkxTextEdit.ReadParams(xmlText, ids[i])
-                                 .Select(p => (p.Name, p.Value, p.Own)).ToList();
+                                 .Select(p => (p.Name, p.Value)).ToList();
             var fields = PanelFields.For(objects, objects.Instances[i], xml, Reference);
 
             for (int f = 0; f < fields.Count; f++)
@@ -1233,6 +1234,20 @@ public static class Program
                     continue;
                 }
 
+                // Not every disagreement is ours. A struct holding a vector is sixteen aligned, so
+                // the compiler pads it and the game records the padded size; hkxpack has no size in
+                // its data and rounds the end of the last member up to eight, so from the second
+                // element of an array of one of those onwards it reads from the wrong place. Those
+                // are counted apart and named, because calling them our disagreements would be
+                // wrong and dropping them would be worse.
+                if (fields[f].Owner.Length > 0 &&
+                    HavokClassTypes.Shipped.PaddedBeyondHkxPack(fields[f].Owner))
+                {
+                    strided++;
+                    stridedClasses[fields[f].Owner] = stridedClasses.GetValueOrDefault(fields[f].Owner) + 1;
+                    continue;
+                }
+
                 if (disagreements.Count < 20)
                     disagreements.Add($"#{ids[i]} {objects.Instances[i].ClassName}.{fields[f].Name} " +
                                       $"({fields[f].From}): panel shows '{fields[f].Value}', " +
@@ -1242,13 +1257,17 @@ public static class Program
 
         Console.WriteLine($"{Path.GetFileName(file)}: {shown} values on the panel, " +
                           $"{fromBytes} from the bytes, {fell} fallen back to hkxpack, " +
-                          $"{agreed} agreeing, {shown - agreed} not");
+                          $"{agreed} agreeing, {shown - agreed - strided} not" +
+                          (strided > 0 ? $", {strided} where hkxpack strides a padded struct wrongly" : ""));
+
+        foreach (var (cls, count) in stridedClasses.OrderByDescending(c => c.Value))
+            Console.WriteLine($"  hkxpack mis-strides {cls} x{count}");
 
         foreach (var (what, count) in byClassFallback.OrderByDescending(f => f.Value).Take(8))
             Console.WriteLine($"  fell back: {what} x{count}");
         foreach (string line in disagreements) Console.WriteLine("  " + line);
 
-        return shown == agreed ? 0 : 1;
+        return shown == agreed + strided ? 0 : 1;
     }
 
     /// Builds the table of what an enum's numbers are called, by reading every enum and flags field
@@ -1580,7 +1599,16 @@ public static class Program
             : target != null && indexOf.TryGetValue(target, out int at) ? "@" + at
             : "a pointer landing where no object begins";
 
-        return FieldRender.Render(objects, instance, member, Reference, expected);
+        // The checker walks a class's members from the dump; the renderer works from the table.
+        // Where a member is in both, the offsets agree, which is a thing 3,894 comparisons say and
+        // not an assumption. Where it is only in the dump there is nothing to render it with, and
+        // it is counted as unread rather than guessed at.
+        var described = HavokClassTypes.Shipped.Members(instance.ClassName)
+                                       .FirstOrDefault(m => m.Name == member.Name);
+        if (described == null) return null;
+
+        return FieldRender.Render(objects, instance.Offset + described.Offset, instance.ClassName,
+                                  described, Reference, expected);
     }
 
     /// hkxpack and a raw read spell the same value differently: 1 against 1.0, true against 1, and a

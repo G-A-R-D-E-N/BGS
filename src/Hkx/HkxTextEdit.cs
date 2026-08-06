@@ -12,14 +12,6 @@ public static class HkxTextEdit
     {
         public string Name = "";
         public string Value = "";
-
-        /// Whether the field belongs to the object itself rather than to something written inside
-        /// it. An object's block runs to the start of the next one, so it carries the inline
-        /// objects nested in it as well, and their fields look exactly like the object's own. They
-        /// are shown and edited the same way, but they cannot be read out of the object's bytes,
-        /// because they are not at any offset the object's class describes. Telling them apart is
-        /// the difference between falling back for one and quietly reading the wrong field.
-        public bool Own = true;
     }
 
     private static readonly Regex ObjectHead =
@@ -278,7 +270,6 @@ public static class HkxTextEdit
             {
                 Name = m.Groups["name"].Value,
                 Value = Decode(m.Groups["value"].Value),
-                Own = Depth(block, m.Index) == 1,
             });
         return result;
     }
@@ -291,21 +282,6 @@ public static class HkxTextEdit
 
     private static string Escape(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
-
-    /// How many objects are open at a position: 1 inside the object itself, more inside something
-    /// written inline in it. Counted rather than parsed, because the text is not well formed XML
-    /// until the block is closed and this has to work on a block that was cut out of a larger file.
-    private static int Depth(string block, int at)
-    {
-        int depth = 0;
-        for (int i = 0; i < at; i++)
-        {
-            if (block[i] != '<') continue;
-            if (string.CompareOrdinal(block, i, "<hkobject", 0, 9) == 0) depth++;
-            else if (string.CompareOrdinal(block, i, "</hkobject", 0, 10) == 0) depth--;
-        }
-        return depth;
-    }
 
     public static string SetParam(string xmlText, string id, string paramName, string newValue)
     {

@@ -1700,7 +1700,7 @@ public class MainWindow : Window
     private List<PanelFields.Field> PanelValues(string objectId,
                                                 IReadOnlyList<HkxTextEdit.Param> parameters)
     {
-        var plain = parameters.Select(p => (p.Name, p.Value, p.Own)).ToList();
+        var plain = parameters.Select(p => (p.Name, p.Value)).ToList();
 
         int index = _objectIds.IndexOf(objectId);
         if (_bytes == null || index < 0 || index >= _bytes.Instances.Count)

@@ -177,6 +177,47 @@ public sealed class HavokClassTypes
         return problems;
     }
 
+    /// Whether an instance of this class is bigger than the end of its last member, by more than
+    /// rounding up to eight would explain.
+    ///
+    /// This is the shape of a real disagreement with hkxpack rather than a curiosity. A struct
+    /// holding a vector or a transform is aligned to sixteen, so the compiler pads it out and the
+    /// game's own class registration records the padded size. hkxpack has no size in its data and
+    /// works one out by rounding the end of the last member up to eight, which is right until a
+    /// class is sixteen aligned. Every element after the first in an array of one of those is then
+    /// read from the wrong place — by hkxpack, not by us, because we take the size from the game.
+    public bool PaddedBeyondHkxPack(string className)
+    {
+        if (this[className]?.Size is not int size) return false;
+
+        int end = 0;
+        foreach (var m in Members(className))
+        {
+            int width = m.CType != null && m.VType == "TYPE_STRUCT" ? this[m.CType]?.Size ?? 4 : Width(m.VType);
+            end = Math.Max(end, m.Offset + width * Math.Max(1, m.ArrSize));
+        }
+
+        // Both halves are needed. Rounding to eight has to be wrong, *and* rounding to sixteen has
+        // to be right: that pair is what says the class is sixteen aligned and hkxpack stopped at
+        // eight. Without the second half this catches every small class as well — `hkbVariableInfo`
+        // is six bytes, which is neither, and hkxpack strides it perfectly well — and a check that
+        // excuses a disagreement in one of those is worse than no check at all.
+        return size != (end + 7) / 8 * 8 && size == (end + 15) / 16 * 16;
+    }
+
+    private static int Width(string vtype) => vtype switch
+    {
+        "TYPE_BOOL" or "TYPE_CHAR" or "TYPE_INT8" or "TYPE_UINT8" => 1,
+        "TYPE_INT16" or "TYPE_UINT16" or "TYPE_HALF" => 2,
+        "TYPE_INT64" or "TYPE_UINT64" or "TYPE_ULONG" or "TYPE_POINTER"
+            or "TYPE_STRINGPTR" or "TYPE_CSTRING" or "TYPE_RELARRAY" => 8,
+        "TYPE_VECTOR4" or "TYPE_QUATERNION" or "TYPE_ARRAY" or "TYPE_SIMPLEARRAY"
+            or "TYPE_VARIANT" => 16,
+        "TYPE_QSTRANSFORM" or "TYPE_MATRIX3" or "TYPE_ROTATION" => 48,
+        "TYPE_TRANSFORM" or "TYPE_MATRIX4" => 64,
+        _ => 4,
+    };
+
     public static HavokClassTypes Parse(Stream json)
     {
         using var document = JsonDocument.Parse(json);

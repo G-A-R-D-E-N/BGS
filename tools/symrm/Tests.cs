@@ -58,13 +58,15 @@ public static class Tests
         ("WideAndVectorFieldsReadFromTheBytes", WideAndVectorFieldsReadFromTheBytes),
         ("ReferencesAndArraysReadFromTheBytes", ReferencesAndArraysReadFromTheBytes),
         ("AnUnseenEnumValueIsNotNamed", AnUnseenEnumValueIsNotNamed),
-        ("ThePanelFallsBackOneFieldAtATime", ThePanelFallsBackOneFieldAtATime),
+        ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
         ("ASpaceInAValueIsKept", ASpaceInAValueIsKept),
         ("TheClassTableKnowsWhatTheDumpCannot", TheClassTableKnowsWhatTheDumpCannot),
         ("AFieldListIsBuiltWithoutHkxPack", AFieldListIsBuiltWithoutHkxPack),
         ("AClassSignedDifferentlyIsRefused", AClassSignedDifferentlyIsRefused),
         ("AMisSignedFileIsNotWrittenInto", AMisSignedFileIsNotWrittenInto),
+        ("AnEnumIsNamedSignedAndPrintedUnsigned", AnEnumIsNamedSignedAndPrintedUnsigned),
+        ("APaddedStructIsKnownFromHkxPacksIdeaOfIt", APaddedStructIsKnownFromHkxPacksIdeaOfIt),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -1478,51 +1480,51 @@ public static class Tests
     /// The panel reads from the bytes and falls back to hkxpack for one field at a time. What must
     /// not happen is the third thing: reading a field off the bytes that is not that object's field
     /// and showing the answer as though it were.
-    private static void ThePanelFallsBackOneFieldAtATime()
+    /// The panel's list of names used to be hkxpack's list of names. It is the class table's now,
+    /// and hkxpack is left holding one thing: a value to fall back to, field by field.
+    private static void ThePanelReadsItsListFromTheTable()
     {
-        Console.WriteLine("\nthe panel falls back one field at a time");
+        Console.WriteLine("\nthe panel reads its list from the table");
 
         var image = ClipInAPackfile("A.hkx", out _);
         var objects = new PackfileObjects(image);
         var clip = objects.Instances.Single();
 
-        // hkxpack's side of the same object. The stale playbackSpeed is deliberate: the file says
-        // 2.5 and this says otherwise, so which one comes back says which was read.
-        var xml = new List<(string, string, bool)>
-        {
-            ("animationName", "wrong.hkx", true),
-            ("playbackSpeed", "9.0", true),
-            ("animationBundleName", "", true),
-            ("startTime", "0.0", true),
-            // A field of an object written inside this one. `id` is a real member of hkbNode, so
-            // reading it off this object would find a number, and it would be the wrong number.
-            ("id", "-1", false),
-            // Nothing in the class has this name at all.
-            ("madeUpField", "kept", true),
-        };
+        var names = ClassFields.NamesOf(objects, clip)!;
+        CheckTrue("the list holds the fields hkxpack writes",
+                  names.Contains("animationName") && names.Contains("playbackSpeed"));
+        CheckTrue("and not the running state it does not",
+                  !names.Contains("localTime") && !names.Contains("atEnd"));
 
+        // Every value hkxpack's side could offer is wrong on purpose. What comes back says which
+        // side was read.
+        var xml = names.Select(n => (n, "from-hkxpack")).ToList();
         var fields = PanelFields.For(objects, clip, xml, (_, wasNull) => wasNull ? "null" : "");
 
-        Check("the name comes from the bytes, not from the text", "A.hkx",
-              fields[0].Value);
-        Check("and so does a value the text disagrees with", "2.5", fields[1].Value);
-        Check("a null string is an empty box rather than a symbol", "", fields[2].Value);
-        Check("everything readable is marked as read", PanelFields.Source.Bytes, fields[3].From);
-
-        Check("a field belonging to an object written inline falls back", PanelFields.Source.Fallback,
-              fields[4].From);
-        Check("and keeps hkxpack's value rather than a number read off the wrong object", "-1",
-              fields[4].Value);
-        Check("a field the class does not have falls back too", PanelFields.Source.Fallback,
-              fields[5].From);
-        Check("with its value intact", "kept", fields[5].Value);
+        Check("one field per name in the table's list", names.Count, fields.Count);
+        Check("the name comes from the bytes", "A.hkx",
+              fields[names.IndexOf("animationName")].Value);
+        Check("and so does a number the text disagrees with", "2.5",
+              fields[names.IndexOf("playbackSpeed")].Value);
+        Check("a null string is an empty box rather than a symbol", "",
+              fields[names.IndexOf("animationBundleName")].Value);
+        Check("nothing fell back to hkxpack", 0,
+              fields.Count(f => f.From == PanelFields.Source.Fallback));
 
         // An edit lives in the text form until it is saved, so for that one field the text is newer
         // than the bytes and has to win, or typing would be undone by the next redraw.
         var edited = PanelFields.For(objects, clip, xml, (_, _) => "",
                                      new HashSet<string> { "playbackSpeed" });
-        Check("an edited field shows the edit, not the bytes", "9.0", edited[1].Value);
-        Check("and says so", PanelFields.Source.Edited, edited[1].From);
+        int speed = names.IndexOf("playbackSpeed");
+        Check("an edited field shows the edit, not the bytes", "from-hkxpack", edited[speed].Value);
+        Check("and says so", PanelFields.Source.Edited, edited[speed].From);
+
+        // The load path puts the byte reader aside when it cannot trust it; this is the same idea
+        // one level down. Two lists that do not line up means one of them is wrong about this file.
+        var short_ = PanelFields.For(objects, clip, xml.Take(3).ToList(), (_, _) => "");
+        Check("a list that does not line up with hkxpack's degrades to hkxpack's", 3, short_.Count);
+        Check("and reads none of it from the bytes", 3,
+              short_.Count(f => f.From == PanelFields.Source.Fallback));
     }
 
     /// A value is XML. `cond(x &gt; 0.0, 1.0, -1.0)` is an expression with a greater than sign in
@@ -1563,10 +1565,11 @@ public static class Tests
         Check("both ends survive the read", " StateMachine00 ",
               objects.ReadString(clip, "animationName"));
 
-        var xml = new List<(string, string, bool)> { ("animationName", "StateMachine00", true) };
-        var shown = PanelFields.For(objects, clip, xml, (_, _) => "");
+        var names = ClassFields.NamesOf(objects, clip)!;
+        var shown = PanelFields.For(objects, clip, names.Select(n => (n, "tidied")).ToList(),
+                                    (_, _) => "");
         Check("and the panel shows what the file holds rather than the tidied text",
-              " StateMachine00 ", shown[0].Value);
+              " StateMachine00 ", shown[names.IndexOf("animationName")].Value);
 
         // A number in an array is spelled the way a number on its own is. hkxpack prints the bytes
         // as they sit, so 0xFFFF is 65535 in both places; -1 in one and 65535 in the other agrees
@@ -1632,7 +1635,7 @@ public static class Tests
 
         var image = ClipInAPackfile("A.hkx", out _);
         var objects = new PackfileObjects(image);
-        var names = ClassFields.Of(objects, objects.Instances.Single());
+        var names = ClassFields.NamesOf(objects, objects.Instances.Single());
 
         CheckTrue("a list comes back at all", names != null);
         CheckTrue("it holds the fields hkxpack writes", names!.Contains("animationName") &&
@@ -1723,6 +1726,67 @@ public static class Tests
 
         File.Delete(good);
         File.Delete(bad);
+    }
+
+    /// A byte of 0xFF in an enum of int8 is -1 to whoever declared the names and 255 to whoever
+    /// prints the bytes. Both are the same byte, and a reading that picks one loses either the name
+    /// or the comparison.
+    private static void AnEnumIsNamedSignedAndPrintedUnsigned()
+    {
+        Console.WriteLine("\nan enum is named signed and printed unsigned");
+
+        var types = HavokClassTypes.Shipped;
+        var type = types.Members("hkbVariableInfo").Single(m => m.Name == "type");
+        Check("the declaration really does go negative", "VARIABLE_TYPE_INVALID",
+              types.NameOf("hkbVariableInfo", type, -1));
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        var objects = new PackfileObjects(image);
+        var clip = objects.Instances.Single();
+        int mode = types.Members("hkbClipGenerator").Single(m => m.Name == "mode").Offset;
+        var member = types.Members("hkbClipGenerator").Single(m => m.Name == "mode");
+        var data = image.Section("__data__")!.Data;
+
+        data[clip.Offset + mode] = 2;
+        Check("a value with a name reads as its name", "2:MODE_USER_CONTROLLED",
+              FieldRender.Render(objects, clip.Offset + mode, "hkbClipGenerator", member, (_, _) => ""));
+
+        // 0xFF is not one of the playback modes, so there is no name and only the number is left.
+        // Printed the way hkxpack prints it, or the same byte would read as a difference.
+        data[clip.Offset + mode] = 0xFF;
+        Check("a value with none reads as the byte, unsigned", "255",
+              FieldRender.Render(objects, clip.Offset + mode, "hkbClipGenerator", member,
+                                 (_, _) => "", "255"));
+    }
+
+    /// Where hkxpack is wrong rather than us, and how it is told apart from where we are.
+    private static void APaddedStructIsKnownFromHkxPacksIdeaOfIt()
+    {
+        Console.WriteLine("\na padded struct is known from hkxpack's idea of it");
+
+        var types = HavokClassTypes.Shipped;
+
+        // 16 aligned because it holds vectors and transforms: the game says an instance is 528
+        // bytes, and the end of its last member rounded up to eight is 520. Every element after the
+        // first of an array of these is somewhere hkxpack does not look.
+        Check("the game's size for the bone data", 528, types["BSLookAtModifierBoneData"]!.Size);
+        CheckTrue("and it is padded past what hkxpack would work out",
+                  types.PaddedBeyondHkxPack("BSLookAtModifierBoneData"));
+
+        // 8 aligned, so both arrive at 72 and every one of the 36,340 field lists agreed.
+        Check("a struct with nothing wider than a pointer", 72,
+              types["hkbStateMachineTransitionInfo"]!.Size);
+        CheckTrue("is not padded past it",
+                  !types.PaddedBeyondHkxPack("hkbStateMachineTransitionInfo"));
+
+        // Neither is a class smaller than the rounding itself. hkbVariableInfo is six bytes, which
+        // is neither eight nor sixteen, and hkxpack strides it perfectly well: 309 arrays of them
+        // in the vanilla corpus agree. Calling it padded would let a real disagreement in any of
+        // those pass as somebody else's fault, which is worse than not checking.
+        Check("a class smaller than the rounding itself", 6, types["hkbVariableInfo"]!.Size);
+        CheckTrue("is not called padded", !types.PaddedBeyondHkxPack("hkbVariableInfo"));
+        Check("nor is a four byte one", 4, types["hkbEventInfo"]!.Size);
+        CheckTrue("either", !types.PaddedBeyondHkxPack("hkbEventInfo"));
     }
 
     /// One hkbClipGenerator in a packfile of two sections, which is the least a reader needs: a name

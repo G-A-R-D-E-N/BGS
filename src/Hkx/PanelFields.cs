@@ -6,10 +6,16 @@ namespace OpenCommonwealth.Services.Hkx;
 
 // What the properties panel shows for one object, read from the file's own bytes.
 //
-// The window used to take every value from hkxpack's XML. It reads them from the bytes now, and
-// falls back to the XML for one field at a time rather than for the whole panel: the only fields the
-// byte reader cannot attribute a class to are structs written inline, and there is no reason for a
-// handful of those to decide where the other forty values come from.
+// Both halves of that used to come from hkxpack. The values moved to the bytes first; the list of
+// names stayed behind, because a class dump read out of the game says nothing about which of a
+// class's fields are ever written to a file, nor what class a struct written inline is. Those are
+// in the class table now, so the list comes from the table and the file, and hkxpack is left as a
+// fallback for one field at a time.
+//
+// The XML is still passed in and is still worth having: it is what a field falls back to when the
+// bytes cannot answer, and its length is the check that the table and the file agree about what is
+// in front of us. If the two lists are not the same length then one of them is wrong about this
+// file, and the honest thing is to show hkxpack's and say nothing was read.
 //
 // This is shared with `symrm panel` on purpose. Checking the reader against hkxpack says nothing
 // about the window unless the window is going through the same code, so it is this code that both
@@ -32,44 +38,44 @@ public static class PanelFields
     /// `Value` is what goes in the box. `Raw` is what the reader produced before it was made fit to
     /// read: for an enum that is the number as well as the name, which is the only form a
     /// comparison can meet hkxpack in, because hkxpack prints one or the other as it pleases.
-    public sealed record Field(string Name, string Value, Source From, string Raw)
+    public sealed record Field(string Name, string Value, Source From, string Raw, string Owner = "")
     {
         public override string ToString() => $"{Name} = {Value}" + (From == Source.Bytes ? "" : $"  ({From})");
     }
 
     /// The fields for one object, in the order the panel shows them.
-    ///
-    /// `xml` is what hkxpack says about the same object, and it decides which fields appear, because
-    /// the class layout also holds fields the engine never writes out and offering those for editing
-    /// would put values in a file that vanilla does not have. It is also where a fallback comes from.
     public static List<Field> For(PackfileObjects objects, PackfileObjects.Instance instance,
-                                  IReadOnlyList<(string Name, string Value, bool Own)> xml,
+                                  IReadOnlyList<(string Name, string Value)> xml,
                                   FieldRender.Reference reference,
-                                  ISet<string>? edited = null)
+                                  ISet<string>? edited = null,
+                                  HavokClassTypes? types = null)
     {
-        var layout = HavokClasses.Shipped.Members(instance.ClassName)
-                                 .ToDictionary(m => m.Name, m => m, StringComparer.Ordinal);
+        var found = ClassFields.Of(objects, instance, types);
 
-        var fields = new List<Field>(xml.Count);
-        foreach (var (name, value, own) in xml)
+        // Degrading the same way the load path does. A class the table has no entry for, a struct
+        // it cannot name, or a list that does not line up with hkxpack's, and the panel goes back
+        // to being what it was before any of this: hkxpack's names and hkxpack's values.
+        if (found == null || found.Count != xml.Count)
+            return xml.Select(p => new Field(p.Name, p.Value, Source.Fallback, p.Value)).ToList();
+
+        var fields = new List<Field>(found.Count);
+        for (int i = 0; i < found.Count; i++)
         {
-            if (edited != null && edited.Contains(name))
+            var field = found[i];
+            string text = xml[i].Value;
+
+            if (edited != null && edited.Contains(field.Name))
             {
-                fields.Add(new Field(name, value, Source.Edited, value));
+                fields.Add(new Field(field.Name, text, Source.Edited, text, field.Owner));
                 continue;
             }
 
-            // A field of an object written inline is not at any offset this object's class
-            // describes, so reading its name off this object would find a different field that
-            // happens to share the name. `hkbStateMachine` and the `hkbEvent` inside it both have
-            // an `id`, and they are not the same `id`.
-            string? shown = own && layout.TryGetValue(name, out var member)
-                ? FieldRender.Render(objects, instance, member, reference, value)
-                : null;
+            string? shown = FieldRender.Render(objects, field.At, field.Owner, field.Member,
+                                               reference, text, field.Element, types);
 
             fields.Add(shown == null
-                ? new Field(name, value, Source.Fallback, value)
-                : new Field(name, Shown(shown), Source.Bytes, shown));
+                ? new Field(field.Name, text, Source.Fallback, text, field.Owner)
+                : new Field(field.Name, Shown(shown), Source.Bytes, shown, field.Owner));
         }
 
         return fields;

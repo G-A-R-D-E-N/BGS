@@ -3,6 +3,90 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-05, the panel's field list comes from the file now, not from hkxpack
+
+The values in the properties panel have come from the file's own bytes for a while. The list of
+*names* did not: it was hkxpack's list, read back out of the XML, and it was the reason nearly half
+the panel still fell back. A name on its own cannot be read — a struct written inside an object sits
+at no offset that object's class describes — so the fallback was not stubbornness, it was the only
+honest thing to do with a name and no address.
+
+The class table fixed that. The list is built by walking the class: into every struct written inline,
+through every array of them at the count the file itself states, expanding a fixed length `hkReal[8]`
+into the eight fields hkxpack writes. Every field comes back **with the offset it sits at**, which is
+what makes it readable rather than merely nameable.
+
+On Dogmeat's behaviour:
+
+| | before | after |
+|---|---|---|
+| values on the panel | 11,882 | 11,882 |
+| read from the file | 7,062 | **11,882** |
+| fallen back to hkxpack | 4,820 | **0** |
+| agreeing with hkxpack | 11,882 | 11,882 |
+
+The fallback did not get better at guessing. It stopped being needed.
+
+Underneath, the renderer now reads at an offset rather than by field name, which is the same change
+in a smaller place: asking for a field by name finds a different field that happens to share it, and
+`hkbStateMachine` and the `hkbEvent` written inside it both have an `id`. Two pieces of scaffolding
+came out with it. The XML nesting depth that told the panel which fields were the object's own is
+gone, because the walk knows structurally. And `HavokEnumNames.json`, the enum names measured off
+vanilla, is no longer consulted when reading: the table declares 1,007 values where the measurement
+found 47, and the two agree on all 47. The measurement stays as what it is, an independent check on
+the table rather than a source.
+
+**hkxpack has not left the read path, and it is worth being exact about what it still does.** It is
+still what produces the XML the window parses for the graph, the symbols tab, the validator, event
+usage and the compare tab, and it is still where a field falls back to when the bytes cannot answer.
+What it no longer does is decide what a field list is.
+
+### Two things reading the inner fields turned up
+
+Neither could have been seen before, because nothing had ever read them.
+
+**A byte of `0xFF` in an enum is `-1` to whoever declared the names and `255` to whoever prints the
+bytes.** `hkbVariableInfo` declares `VARIABLE_TYPE_INVALID = -1`, so the name is only found signed;
+hkxpack writes `255`. The name is looked up with one and printed with the other, because picking
+either alone loses the name or loses the comparison.
+
+**And in one place hkxpack is wrong rather than us.** A struct holding a vector or a transform is
+sixteen aligned, so the compiler pads it out, and the game's own class registration records the
+padded size — `BSLookAtModifierBoneData` is 528 bytes where its last member ends at 520. hkxpack has
+no size in its data and works one out by rounding up to eight, which is right until a class is
+sixteen aligned. From the second element of an array of one of those onwards, it reads from eight
+bytes short of where the element is.
+
+Which of us is right is not a matter of opinion here. At our stride the second bone reads
+`index 13`, `fwdAxisLS (0 1 0 0)`, `upAxisLS (1 0 0 0)` — a bone index and two unit axes. At
+hkxpack's it reads `index 0` and `(0 0 0 1)`, which is that entry seen eight bytes early.
+
+Telling those apart takes both halves of a test and not one: rounding to eight has to be wrong *and*
+rounding to sixteen has to be right. The first half alone catches `hkbVariableInfo`, which is six
+bytes and is neither, and hkxpack strides it perfectly well across 309 arrays of them. A check that
+excused a disagreement in one of those would be worse than no check at all. 14 of the 165 classes
+used as array elements answer to both halves.
+
+`symrm panel` counts them apart and names the class rather than calling them our disagreements or
+quietly dropping them.
+
+**Over all 531 vanilla behaviours**, with that test in place:
+
+| | panel | crosscheck |
+|---|---|---|
+| files with anything wrong | **0 of 531** | **0 of 531** |
+| values | 485,793 | 258,933 |
+| read from the file | **485,793** | |
+| fallen back to hkxpack | **0** | |
+| agreeing | 484,736 | **258,933** |
+| hkxpack striding a padded struct wrongly | 1,057 | |
+
+Every value is accounted for as one or the other, and nothing is left over. The 1,057 are three
+classes in 22 files: `BSLookAtModifierBoneData` (1,049 values across 20 files),
+`hkbHandIkControlData` (6) and `hkbHandIkControlsModifierHand` (2). The middle one is reached
+through the last: it is an inline struct inside a hand, and the hand is the array element hkxpack
+misplaces.
+
 ## 2026-08-05, the signature check reaches the save path, and says why on every load
 
 The check landed with the class table and was wired into loading a file: a packfile whose classes are
