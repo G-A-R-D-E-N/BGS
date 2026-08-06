@@ -2031,7 +2031,25 @@ public static class Program
         if (argv.Length < 2) { Usage(); return 1; }
 
         NeedHkxPack();
-        string file = Path.GetFullPath(argv[1]);
+
+        // A directory sweeps every file under it, the same way model, consumers, walk and panel do.
+        // It did not before, and pointing it at one made it try to unpack the directory itself.
+        string target = Path.GetFullPath(argv[1]);
+        if (Directory.Exists(target))
+        {
+            int clean = 0, bad = 0;
+            foreach (string each in Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                                             .OrderBy(f => f, StringComparer.Ordinal))
+            {
+                var carried = new[] { argv[0], each }.Concat(argv.Skip(2)).ToArray();
+                if (CrossCheck(carried) == 0) clean++; else bad++;
+            }
+
+            Console.WriteLine($"\n{clean} file(s) where every value agrees, {bad} not");
+            return bad == 0 ? 0 : 1;
+        }
+
+        string file = target;
         string work = WorkDirectory("symrm-crosscheck-", file);
         if (Directory.Exists(work)) Directory.Delete(work, true);
 
