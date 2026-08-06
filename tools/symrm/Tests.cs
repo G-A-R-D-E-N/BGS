@@ -61,6 +61,7 @@ public static class Tests
         ("TheModelComparisonCatchesFaultsPutThereOnPurpose", TheModelComparisonCatchesFaultsPutThereOnPurpose),
         ("AFloatIsSpelledTheWayHkxPackSpellsIt", AFloatIsSpelledTheWayHkxPackSpellsIt),
         ("AnAppendedObjectLandsWhereItsNumberSaysItWill", AnAppendedObjectLandsWhereItsNumberSaysItWill),
+        ("RemovingAnObjectIsRefusedAndOrphaningIsNot", RemovingAnObjectIsRefusedAndOrphaningIsNot),
         ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
         ("TheConsumerComparisonCatchesADifferentAnswer", TheConsumerComparisonCatchesADifferentAnswer),
         ("APointerIsRewiredByMovingItsFixup", APointerIsRewiredByMovingItsFixup),
@@ -2555,6 +2556,46 @@ public static class Tests
 
         var rubbishElement = NativeSave.Compare(Machine, Machine.Replace("#0092<", "elsewhere<"));
         CheckTrue("an element that is not an object id is refused", !rubbishElement.Possible);
+    }
+
+    /// What removal refuses, which today is most of it.
+    ///
+    /// Written before the orphan path so the refusals are the thing being described rather than
+    /// whatever fell out of the implementation. Two of these are meant to keep failing until #19
+    /// comes back from the game: full removal renumbers every object after the hole, and there is no
+    /// way to check a renumber against the engine from here.
+    private static void RemovingAnObjectIsRefusedAndOrphaningIsNot()
+    {
+        Console.WriteLine("\nremoving an object is refused and orphaning is not");
+
+        // Full removal, through the front end the editor's save goes down. Still refused, and meant
+        // to stay refused until #19 comes back: dropping an object renumbers every one after it, and
+        // a renumber cannot be checked against the engine from here. The refusal itself is covered
+        // by AnAddedObjectHasToLandWhereItsIdSays, which owns that fixture.
+        var image = ClipInAPackfile("A.hkx", out _);
+
+        // An id the file does not have. The message names the range rather than saying no, because
+        // an off by one here is the difference between two objects.
+        string refused = "";
+        try { NativeRemove.Orphan(image, 4000); }
+        catch (InvalidOperationException e) { refused = e.Message; }
+        CheckTrue("an id the file does not hold is refused",
+                  refused.Contains("#4000", StringComparison.Ordinal));
+        CheckTrue("and the refusal says what the file does hold",
+                  refused.Contains("#" + NativeGraphModel.FirstId, StringComparison.Ordinal));
+
+        // Nothing points at the only object in this fixture, so orphaning it is a no change rather
+        // than an error. Saying "reached from nowhere" is the useful answer.
+        var already = NativeRemove.Orphan(image, NativeGraphModel.FirstId);
+        CheckTrue("orphaning something nothing reaches changes nothing", !already.Reached);
+        Check("no pointer cleared", 0, already.PointersCleared);
+        Check("no element dropped", 0, already.ElementsDropped);
+
+        // And the file is untouched by that, byte for byte, rather than merely still valid.
+        var untouched = ClipInAPackfile("A.hkx", out _);
+        NativeRemove.Orphan(untouched, NativeGraphModel.FirstId);
+        CheckTrue("leaving the file exactly as it was",
+                  untouched.Rebuild().SequenceEqual(ClipInAPackfile("A.hkx", out _).Rebuild()));
     }
 
     /// Putting a new object into a file without moving anything already in it.

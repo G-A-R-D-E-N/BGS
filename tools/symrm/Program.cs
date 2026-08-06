@@ -46,6 +46,7 @@ public static class Program
             case "symbols": return Symbols(argv);
             case "walk": return Walk(argv);
             case "append": return Append(argv);
+            case "orphan": return Orphan(argv);
             case "classes": return Classes(argv);
             case "fields": return Fields(argv);
             case "signatures": return Signatures(argv);
@@ -1698,6 +1699,81 @@ public static class Program
 
         return moved == 0 && numbered && wired && read.Count == told.Count + 1 ? 0 : 1;
     }
+
+    /// Takes an object out of the graph without taking it out of the file, and checks what hkxpack
+    /// makes of the result.
+    ///
+    /// The check is not that the object is gone, because it is not meant to be. It is that nothing
+    /// reaches it any more, that it still holds the class it held, that every other number is
+    /// untouched, and that an array which held it got shorter rather than gaining a null. That last
+    /// one matters more than it looks: the engine reads a child's vtable without a null check, so a
+    /// null left in a children array is a crash on load.
+    private static int Orphan(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string file = Path.GetFullPath(argv[1]);
+        int id = int.Parse(argv[2]);
+
+        var original = File.ReadAllBytes(file);
+        if (!PackfileImage.Read(original).Rebuild().SequenceEqual(original))
+        {
+            Console.WriteLine("the file does not survive a save that changes nothing");
+            return 1;
+        }
+
+        string work = WorkDirectory("symrm-orphan-", file);
+        HkxTextEdit.ResetDirectory(work);
+        string beforeXml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+        var told = Numbered(beforeXml);
+
+        int pointedAt = References(beforeXml, id);
+        Console.WriteLine($"{Path.GetFileName(file)}: #{id} is a {told.GetValueOrDefault(id, "?")}, " +
+                          $"reached from {pointedAt} place(s)");
+
+        var image = PackfileImage.Read(original);
+        var result = NativeRemove.Orphan(image, id);
+        Console.WriteLine($"orphaned {result}");
+
+        string written = Path.Combine(work, "orphaned.hkx");
+        image.Save(written);
+
+        string second = WorkDirectory("symrm-orphan-out-", written);
+        HkxTextEdit.ResetDirectory(second);
+        string afterXml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, written, second));
+        var read = Numbered(afterXml);
+
+        int moved = told.Count(p => !read.TryGetValue(p.Key, out string? now) || now != p.Value);
+        int left = References(afterXml, id);
+        bool present = read.ContainsKey(id) && read[id] == told.GetValueOrDefault(id);
+
+        // A null child is the thing that must not appear. Counted across the whole file rather than
+        // in the arrays that changed, because an orphan that pushes one anywhere is still a crash.
+        int nullsBefore = Nulls(beforeXml), nullsAfter = Nulls(afterXml);
+
+        Console.WriteLine($"\nhkxpack read {told.Count} object(s) before and {read.Count} after, " +
+                          $"{moved} of the original numbers holding something else, " +
+                          $"#{id} is {(present ? "still there" : "gone")} and now reached from " +
+                          $"{left} place(s), null children {nullsBefore} before and {nullsAfter} after");
+
+        return moved == 0 && present && left == 0 && read.Count == told.Count
+               && nullsAfter == nullsBefore ? 0 : 1;
+    }
+
+    /// How many places in the text point at an object, not counting the line that declares it.
+    /// hkxpack writes the object's own id as its name attribute, and counting that as a reference
+    /// makes an orphan look like it is still reached from one place.
+    private static int References(string xml, int id) =>
+        System.Text.RegularExpressions.Regex.Matches(xml, $@"#{id}\b").Count
+        - System.Text.RegularExpressions.Regex.Matches(xml, $@"name=""#{id}""").Count;
+
+    /// Null elements inside an array of object pointers, which is the shape the engine crashes on.
+    private static int Nulls(string xml) =>
+        System.Xml.Linq.XDocument.Parse(xml).Descendants("hkparam")
+            .Where(p => p.Attribute("numelements") != null && !p.Elements().Any())
+            .Sum(p => (p.Value ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                                     .Count(t => t == "null"));
 
     /// Every object hkxpack numbers, by number, with the class it holds.
     private static Dictionary<int, string> Numbered(string xml)
