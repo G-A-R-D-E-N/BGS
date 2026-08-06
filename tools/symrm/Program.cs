@@ -1713,11 +1713,36 @@ public static class Program
                               $"expected #{added.Id}");
         }
 
+        // The editor's save path adds an object too, and it used to answer a class the file has
+        // never named by refusing while this path named it. There is one answer now, and this is
+        // what says so: the same addition made through NativeSave lands the same class name in the
+        // same section, on the file hkxpack just agreed about.
+        string viaSave = Path.Combine(work, "via-save.hkx");
+        File.WriteAllBytes(viaSave, original);
+
+        var plan = new NativeSave.Plan(
+            new List<NativeSave.Change> { new(className, 0, "", "#" + added.Id, Added: true) }, null);
+
+        var saved = PackfileImage.Read(NativeSave.Apply(viaSave, plan));
+        var savedObjects = new PackfileObjects(saved);
+
+        // Both read back off their written bytes rather than one out of memory, because the name
+        // table is trimmed of its 0xFF filler while a name is being added and padded again on the
+        // way out, so an in memory section and a written one differ for a reason that is not this.
+        bool agrees = savedObjects.Instances.Count == reloaded.Instances.Count &&
+                      savedObjects.Instances[^1].ClassName == className &&
+                      saved.Section("__classnames__")!.Data
+                           .SequenceEqual(PackfileImage.Read(written).Section("__classnames__")!.Data);
+
+        Console.WriteLine($"the save path adds it too: {savedObjects.Instances.Count} object(s), " +
+                          $"last is {savedObjects.Instances[^1].ClassName}, name table " +
+                          (agrees ? "identical to the append path" : "DIFFERENT from the append path"));
+
         Console.WriteLine($"\nhkxpack read {told.Count} object(s) before and {read.Count} after, " +
                           $"{moved} of the original numbers holding something else, " +
                           $"the new one is {(numbered ? $"#{added.Id} {className} as predicted" : "not where it was predicted")}");
 
-        return moved == 0 && numbered && wired && read.Count == told.Count + 1 ? 0 : 1;
+        return moved == 0 && numbered && wired && agrees && read.Count == told.Count + 1 ? 0 : 1;
     }
 
     /// Takes an object out of the graph without taking it out of the file, and checks what hkxpack

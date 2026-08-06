@@ -30,9 +30,10 @@ public static class NativeSave
         public bool Possible => Refusal == null;
         public bool Empty => Changes.Count == 0;
 
-        /// Whether carrying this out makes the file longer. Text is appended rather than overwritten,
-        /// so a caller comparing the result to the original byte for byte has to expect it.
-        public bool Grows => Changes.Exists(c => c.Text || c.Array);
+        /// Whether carrying this out makes the file longer. Text, arrays and new objects are all
+        /// appended rather than overwritten, so a caller comparing the result to the original byte
+        /// for byte has to expect it.
+        public bool Grows => Changes.Exists(c => c.Text || c.Array || c.Added);
     }
 
     public sealed record Change(string ClassName, int Index, string Field, string Value,
@@ -233,15 +234,19 @@ public static class NativeSave
             var data = image.Section("__data__")
                 ?? throw new InvalidOperationException("this file has no data section");
 
-            if (HavokClassTypes.Shipped[add.ClassName]?.Size is not int size || size <= 0)
+            var layout = HavokClassTypes.Shipped[add.ClassName];
+            if (layout?.Size is not int size || size <= 0)
                 throw new InvalidOperationException(
                     $"No size for {add.ClassName}, so no object of it was added.");
 
-            // The class has to be one the file already names. Growing the class name section is a
-            // different problem with its own offsets, and nothing has needed it.
-            if (objects.ClassNameOffset(add.ClassName) is not int nameAt)
-                throw new InvalidOperationException(
-                    $"{add.ClassName} is not named in this file, so an object of it cannot be added.");
+            var names = image.Section("__classnames__")
+                ?? throw new InvalidOperationException("this file has no class name section");
+
+            // A class the file has never named gets named here rather than refused. That section can
+            // be grown, and the one implementation that does it lives in NativeAppend, which knows
+            // the part that is easy to get wrong: the section is padded to sixteen with 0xFF and a
+            // name written after that padding is one our reader finds and the game never does.
+            int nameAt = NativeAppend.NameOffset(names, add.ClassName, layout.Signature);
 
             // Where it will land, and therefore what id it must have. The editor numbers a new
             // object one past the highest and this appends it past the last, so the two agree. They
@@ -253,7 +258,7 @@ public static class NativeSave
                     $"The new {add.ClassName} is {add.Value} in the document and would be {expected} " +
                     "in the file, so nothing was written.");
 
-            data.AddVirtual(data.AppendObject(new byte[size]), 0, nameAt);
+            data.AddVirtual(data.AppendObject(new byte[size]), image.Sections.IndexOf(names), nameAt);
             adding++;
         }
 

@@ -270,24 +270,6 @@ public sealed class PackfileObjects
         }
     }
 
-    /// Where a class's name sits inside `__classnames__`, which is what a new object's entry in the
-    /// virtual table has to point at. Null when the file does not name that class, and a caller that
-    /// gets null must refuse rather than add the name: growing that section is a different problem
-    /// with its own offsets, and no vanilla file has needed it.
-    public int? ClassNameOffset(string className)
-    {
-        var blob = _classNames.Data;
-        for (int at = 0; at + 5 < blob.Length; )
-        {
-            int end = Array.IndexOf(blob, (byte)0, at + 5);
-            if (end < 0) return null;
-
-            if (Encoding.ASCII.GetString(blob, at + 5, end - at - 5) == className) return at + 5;
-            at = end + 1;
-        }
-        return null;
-    }
-
     public IReadOnlyList<string?>? ReadStringArray(Instance instance, string field) =>
         FieldAt(instance, field) is { } at ? ReadStringArrayAt(at) : null;
 

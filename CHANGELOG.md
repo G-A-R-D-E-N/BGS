@@ -3,6 +3,28 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, one answer to where a class name lives
+
+Two pieces of code put an object into a file, and they disagreed about a file that has never named
+that object's class. The append path wrote the name into the table. The editor's save path refused,
+on the grounds that growing that section was unsolved. It was not unsolved; the append path had
+already been proved against hkxpack.
+
+Saving now names the class, through the same function the append path uses, and the lookup that only
+knew how to refuse is gone. So a new state with a clip generator can go into a file that has no clip
+generator in it, which is the case that was worth having.
+
+The trap underneath this is why there is one implementation rather than two agreeing ones. The name
+table is padded out to sixteen bytes with `0xFF`, and a name written after that padding is one our
+own reader finds, because it looks a name up at the offset the fixup names, and hkxpack never does,
+because it walks the section from the front and stops at the filler. The object then exists for us
+and not for the game, with every check on our side passing. The one function strips the padding
+first. A second implementation would have had to know that, and the refusing path's comment did not
+mention it.
+
+`symrm append` now makes the same addition both ways and compares the name tables, so the two
+staying in step is measured rather than assumed.
+
 ## 2026-08-06, the pointer tables' order is worked out and reproduced
 
 The array work found that where an entry sits in a pointer table is not free, and left the rule as

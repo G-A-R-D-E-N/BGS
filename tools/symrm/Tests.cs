@@ -2449,17 +2449,27 @@ public static class Tests
         CheckTrue("and the refusal says which id it would have had",
                   said.Contains("#91", StringComparison.Ordinal));
 
-        // A class the file does not name cannot have an object added, because the entry that says
-        // what class an object is has to point at a name that is already there.
+        // A class the file has never named is named on the way in rather than refused. The save path
+        // used to refuse this while `symrm append` did it, which is two answers to one question; now
+        // both come through NativeAppend.NameOffset.
         var unnamed = new NativeSave.Plan(
             new List<NativeSave.Change> { new("hkbBlenderGenerator", 0, "", "#91", Added: true) }, null);
 
-        said = "";
-        try { NativeSave.Apply(path, unnamed); }
-        catch (InvalidOperationException e) { said = e.Message; }
+        int namesWere = image.Section("__classnames__")!.Data.Length;
+        var written = PackfileImage.Read(NativeSave.Apply(path, unnamed));
+        var grown = new PackfileObjects(written);
 
-        CheckTrue("a class the file does not name is refused",
-                  said.Contains("not named in this file", StringComparison.Ordinal));
+        Check("a class the file never named is added anyway", 2, grown.Instances.Count);
+        Check("reading back as the class asked for", "hkbBlenderGenerator",
+              grown.Instances[^1].ClassName);
+        CheckTrue("with its name written into the table",
+                  written.Section("__classnames__")!.Data.Length > namesWere);
+        CheckTrue("and no 0xFF filler left in front of it",
+                  !written.Section("__classnames__")!.Data.SkipLast(1).Any(b => b == 0xFF));
+
+        // Adding an object makes the file longer, and a caller comparing it to the original byte for
+        // byte has to be told so.
+        CheckTrue("an addition counts as growing the file", unnamed.Grows);
 
         System.IO.File.Delete(path);
     }

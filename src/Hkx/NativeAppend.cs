@@ -157,11 +157,15 @@ public static class NativeAppend
     /// Where a class's name sits in `__classnames__`, adding it when the file has never named that
     /// class before.
     ///
+    /// This is the only answer to that question. Both paths that put an object into a file, this one
+    /// and the editor's save, come through here, so a file cannot end up with a name written one way
+    /// on one route and refused on the other.
+    ///
     /// A file that gains its first object of some class hits the second path, and it is the one
     /// worth having found now rather than after a failed load. Each name is stored as four bytes of
     /// signature, a `0x09` separator, the name, and a terminator, and the fixup points at the name
     /// itself rather than at the signature in front of it.
-    private static int NameOffset(PackfileSection names, string className, uint signature)
+    public static int NameOffset(PackfileSection names, string className, uint signature)
     {
         var wanted = Encoding.ASCII.GetBytes(className);
 
