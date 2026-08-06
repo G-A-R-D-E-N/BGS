@@ -386,6 +386,14 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   joint hover radius is comfortable. Those are the parts to look at first.
 - An animation whose class the reader cannot decode has no frames, so it cannot be drawn. That is the
   same list the Animation tab reports and it is not specific to playback.
+- **Reading a file without hkxpack is nearly complete, and is not yet what the window does.** The
+  byte reader now handles every field type in a behaviour except a struct written inline, which the
+  class dump does not name the class of: references between objects, arrays of all kinds, enums and
+  flags by name, strings, and every width of number. Measured against hkxpack file by file with
+  `symrm crosscheck`: across 76 vanilla behaviours, 53,956 field values compared and all of them
+  agreeing, with 519 inline structs reported as unread rather than passed over. What has not changed
+  is where the window gets its values from: opening a file for editing still goes out through
+  hkxpack's XML, so Java is still required to edit. See #34.
 - Reading is measured, not assumed, over the whole game rather than a subset. All 531 behaviour files
   in `Fallout4 - Animations.ba2`, all 5329 states: every one resolves to a generator that exists in
   its own file, across 15 generator classes, and every transition resolves its event name. Nothing is
