@@ -3,6 +3,42 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, the window reads the graph from the file, and no longer needs Java to show it
+
+Opening a behaviour used to mean handing it to Java. Without a Java runtime and the jar, the window
+showed a tree and four empty tabs and said so. That was the honest message at the time, because
+everything except the tree came out of the text hkxpack produces.
+
+It comes out of the file's own bytes now. On Dogmeat, with Java on the machine and with no Java on
+it at all:
+
+| | with Java | without |
+|---|---|---|
+| nodes drawn on the canvas | 799 | **799** |
+| symbol rows | 883 | 380 |
+| properties, tree, filtering | yes | **yes** |
+| editing and saving | yes | no |
+
+The canvas is identical. The symbol rows are not, and the difference is one thing: what each event
+is used for. That is a scan of the text form for every place an index appears, including nesting the
+model does not carry, so the rows are built either way and the roles are only filled when there is
+text to scan. The checker's symbol index pass is the same case. Both are named rather than hidden.
+
+Editing still rewrites the text and hands it back to Java to repack, so saving still needs both. The
+window now says which of the two things it can do rather than calling itself read only.
+
+### The smoke test was passing on a build nobody ships
+
+Found while proving the above. The headless window test compiles the application's own source but
+had never embedded the class table data file the application embeds, so in that build the class
+table was empty, the window could not read a file from its bytes, and every check passed while
+testing the old path. It passed through the whole of this work for that reason.
+
+The data is embedded there now, and the test tells apart the two states it used to treat as one: no
+symbol rows at all is a fault, rows without roles is the no Java case. The canvas check was moved
+outside the guard that skipped it, because inside it a window that drew nothing would have skipped
+the check and passed.
+
 ## 2026-08-06, the behaviour graph is read from the file, and the tool behaves the same on it
 
 The reading built from the bytes agrees with hkxpack field by field across the whole corpus. This is

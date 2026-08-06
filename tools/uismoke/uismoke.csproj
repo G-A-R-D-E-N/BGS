@@ -27,4 +27,12 @@
     <None Include="../../tools/hkxpack-cli.jar" Link="tools/hkxpack-cli.jar"
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <!-- The same data the application embeds. Without it the class table is empty, the window cannot
+       read a file from its own bytes, and every check here runs against a build nobody ships. That
+       is not a smaller test, it is a test of something else: it passed the whole time the window
+       was being moved onto the bytes, because in this build the window never got there. -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../src/Hkx/HavokClassLayouts.json" />
+    <EmbeddedResource Include="../../src/Hkx/HavokClassTypes.json" Condition="Exists('../../src/Hkx/HavokClassTypes.json')" />
+  </ItemGroup>
 </Project>

@@ -114,12 +114,19 @@ public static class Smoke
                 var said = Find<TextBlock>(window).Select(t => t.Text ?? "")
                     .Where(t => roles.Any(r => t.Contains(r, StringComparison.Ordinal))).ToList();
 
-                // Symbols are only built once the file has been unpacked, which needs a Java runtime
-                // and the bundled jar. Without them the window is read only by design, so there is
-                // nothing here to check and saying so beats failing.
-                if (window.SymbolGrid.RowCount == 0)
+                // The symbols themselves come from the file's own bytes now, so they are built with
+                // or without Java. What each event is used for does not: that is a scan of the text
+                // form for every place an index appears, including nesting the model does not carry,
+                // so with no text the rows are there and the roles are not. Checked as two separate
+                // things rather than one, because "no rows at all" and "rows without roles" are
+                // different states and only the first is a fault.
+                CheckTrue($"{name}: the symbols are built from the file itself",
+                          window.SymbolGrid.RowCount > 0);
+
+                if (window.LoadedXml.Length == 0)
                 {
-                    Console.WriteLine("        symbols: none built, the window opened read only");
+                    Console.WriteLine($"        symbols: {window.SymbolGrid.RowCount} rows, no roles " +
+                                      "without a text form to scan");
                 }
                 else
                 {
@@ -130,6 +137,18 @@ public static class Smoke
                     Console.WriteLine($"        symbols: {window.SymbolGrid.RowCount} rows, " +
                                       $"{said.Count} of them naming a role, e.g. \"{said.FirstOrDefault()}\"");
                 }
+            }
+
+            // The canvas is drawn from the model, and the model comes from the file's own bytes, so
+            // it fills whether or not Java is present. Checked outside the text guard below on
+            // purpose: inside it, a window that drew nothing would skip the check and pass.
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                int drawn = Find<GraphView>(window).First().DrawnIds.Count;
+                Console.WriteLine($"        canvas: {drawn} node(s) drawn");
+                CheckTrue($"{name}: the canvas draws the graph", drawn > 0);
             }
 
             // The fields have to be reachable from the canvas, not only from the tree. A node's
@@ -429,6 +448,15 @@ public static class Smoke
         // It stops short of actually saving: writing the example file is not this test's business.
         foreach (string path in args.Where(System.IO.File.Exists))
         {
+            // Editing is done by rewriting the text form, so with no Java there is no document to
+            // type into and nothing here to check. The window is still readable, which is what the
+            // checks above cover.
+            if (window.LoadedXml.Length == 0)
+            {
+                Console.WriteLine("        editing: skipped, the window opened without a text form");
+                continue;
+            }
+
             string clip = OpenCommonwealth.Services.Hkx.HkxTextEdit
                 .IdsOfClass(window.LoadedXml, "hkbClipGenerator").FirstOrDefault() ?? "";
             CheckTrue("a clip to edit was found", clip.Length > 0);
