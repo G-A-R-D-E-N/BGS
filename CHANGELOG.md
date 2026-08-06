@@ -3,6 +3,49 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, an event says what it is for without Java, and so does the checker
+
+The last two things the reading still needed hkxpack for. The symbols tab could list the events but
+not say which one is raised where, and the checker could not run its symbol index pass at all.
+
+Both are the same walk: every place in the file where an event or variable index is written. The
+graph model genuinely cannot answer it, because those indices sit deeper than the one level of
+nesting the model records, an event property inside a transition inside a transition array. So this
+walks the class table over the bytes rather than the model, into every inline struct and every
+element of every struct array, as far down as the classes go.
+
+Two things the text says out loud have to be worked out instead. hkxpack writes a class attribute on
+a struct written under a name and none on an array element, so inside an element the nearest named
+class is still the one the array belongs to. Reporting the element's own class was the only thing the
+two walks disagreed about, ten times on Dogmeat. And the value goes through the same renderer as the
+rest of the reading, so a number spelled a particular way in the text is spelled that way here.
+
+| | |
+|---|---|
+| files agreeing | 533 of 533 |
+| index usages compared | 28,701 |
+| differing | 0 |
+
+The same file opened with a Java runtime present and with Java hidden every way the tool looks for
+it:
+
+| | with Java | without |
+|---|---|---|
+| nodes drawn | 799 | 799 |
+| symbol rows | 883 | 883 |
+| events naming a role | 143 | 143 |
+| editing and saving | yes | no |
+
+Editing and saving still rewrite the text and hand it back to be repacked, which is the one thing
+left that needs Java, and it is gated on loading something this tool wrote in Fallout 4 first.
+
+### Hiding Java is harder than emptying PATH
+
+`tools/no-java.sh` exists because the first two attempts at testing this proved nothing. The lookup
+checks the saved setting, `JAVA_HOME`, `~/.local/jdk` and then PATH, and this machine has the third,
+so a run that only cleared PATH found Java anyway and exercised the with-Java path while reporting
+itself as the other one. Every check passed. They passed on the wrong build.
+
 ## 2026-08-06, the window reads the graph from the file, and no longer needs Java to show it
 
 Opening a behaviour used to mean handing it to Java. Without a Java runtime and the jar, the window
