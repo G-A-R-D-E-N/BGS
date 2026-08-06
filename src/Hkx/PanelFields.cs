@@ -38,8 +38,13 @@ public static class PanelFields
     /// `Value` is what goes in the box. `Raw` is what the reader produced before it was made fit to
     /// read: for an enum that is the number as well as the name, which is the only form a
     /// comparison can meet hkxpack in, because hkxpack prints one or the other as it pleases.
-    public sealed record Field(string Name, string Value, Source From, string Raw, string Owner = "")
+    /// `Choices` holds an enum's declared value names when the panel can safely offer them instead
+    /// of a text box, and is empty otherwise. Empty is the common case and the safe one.
+    public sealed record Field(string Name, string Value, Source From, string Raw, string Owner = "",
+                               IReadOnlyList<string>? Choices = null)
     {
+        public IReadOnlyList<string> Options => Choices ?? Array.Empty<string>();
+
         public override string ToString() => $"{Name} = {Value}" + (From == Source.Bytes ? "" : $"  ({From})");
     }
 
@@ -73,12 +78,46 @@ public static class PanelFields
             string? shown = FieldRender.Render(objects, field.At, field.Owner, field.Member,
                                                reference, text, field.Element, types);
 
-            fields.Add(shown == null
-                ? new Field(field.Name, text, Source.Fallback, text, field.Owner)
-                : new Field(field.Name, Shown(shown), Source.Bytes, shown, field.Owner));
+            if (shown == null)
+            {
+                fields.Add(new Field(field.Name, text, Source.Fallback, text, field.Owner));
+                continue;
+            }
+
+            string value = Shown(shown);
+            fields.Add(new Field(field.Name, value, Source.Bytes, shown, field.Owner,
+                                 Choices(field.Owner, field.Member, value, types)));
         }
 
         return fields;
+    }
+
+    /// The names a field's value is allowed to take, when offering them is safe.
+    ///
+    /// Three things have to hold, and each of them is a way this goes wrong:
+    ///
+    /// It has to be an enum and not a flags field. A flags value is a combination of bits, so it is
+    /// usually not any one of the declared names, and a list of single values would quietly replace
+    /// a combination with whichever one the user picked.
+    ///
+    /// The table has to declare values for it. Nothing is invented here: these are the names the
+    /// game itself registers, read out of the class database, and a field whose enum is unknown
+    /// stays a plain box rather than gaining a guess.
+    ///
+    /// The value in the file has to be one of them. A file holding a number no name covers is a file
+    /// saying something the enum does not describe, and turning that box into a list would offer no
+    /// way to keep what is already there. That case stays typeable.
+    private static IReadOnlyList<string>? Choices(string owner, HavokClassTypes.Member member,
+                                                  string value, HavokClassTypes? types)
+    {
+        if (member.VType != "TYPE_ENUM" || member.EType == null) return null;
+
+        types ??= HavokClassTypes.Shipped;
+        var declared = types.Enum(owner, member.EType);
+        if (declared == null || declared.Count == 0) return null;
+
+        var names = declared.OrderBy(v => v.Value).Select(v => v.Key).ToList();
+        return names.Contains(value, StringComparer.Ordinal) ? names : null;
     }
 
     /// What a person should see, rather than what a comparison wants. An enum carries its number as

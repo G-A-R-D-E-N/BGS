@@ -62,6 +62,7 @@ public static class Tests
         ("AFloatIsSpelledTheWayHkxPackSpellsIt", AFloatIsSpelledTheWayHkxPackSpellsIt),
         ("AnAppendedObjectLandsWhereItsNumberSaysItWill", AnAppendedObjectLandsWhereItsNumberSaysItWill),
         ("RemovingAnObjectIsRefusedAndOrphaningIsNot", RemovingAnObjectIsRefusedAndOrphaningIsNot),
+        ("AnEnumFieldOffersItsDeclaredValues", AnEnumFieldOffersItsDeclaredValues),
         ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
         ("TheConsumerComparisonCatchesADifferentAnswer", TheConsumerComparisonCatchesADifferentAnswer),
         ("APointerIsRewiredByMovingItsFixup", APointerIsRewiredByMovingItsFixup),
@@ -2556,6 +2557,45 @@ public static class Tests
 
         var rubbishElement = NativeSave.Compare(Machine, Machine.Replace("#0092<", "elsewhere<"));
         CheckTrue("an element that is not an object id is refused", !rubbishElement.Possible);
+    }
+
+    /// An enum field offers its declared names instead of asking for one to be typed, and only when
+    /// offering them cannot lose anything.
+    ///
+    /// The three refusals are the point of the test. A flags field is a combination of bits and is
+    /// usually not any single declared name, so a list would replace it with whichever entry the
+    /// user picked. A field whose enum the table does not describe gets no invented list. And a file
+    /// holding a number no name covers has to stay typeable, because a list would offer no way to
+    /// keep what is already there.
+    private static void AnEnumFieldOffersItsDeclaredValues()
+    {
+        Console.WriteLine("\nan enum field offers its declared values");
+
+        var types = HavokClassTypes.Shipped;
+        var image = ClipInAPackfile("A.hkx", out _);
+        var objects = new PackfileObjects(image);
+        var instance = objects.Instances[0];
+
+        var names = ClassFields.NamesOf(objects, instance)!;
+        var xml = names.Select(n => (n, "")).ToList();
+        var shown = PanelFields.For(objects, instance, xml, (_, _) => "null", null, types);
+
+        var mode = shown.First(f => f.Name == "mode");
+        Check("a clip's mode is offered as a list", 5, mode.Options.Count);
+        CheckTrue("holding the names the game registers",
+                  mode.Options.Contains("MODE_SINGLE_PLAY", StringComparer.Ordinal));
+        Check("in the order the enum declares them, not alphabetical",
+              "MODE_SINGLE_PLAY", mode.Options[0]);
+        CheckTrue("and the value in the file is one of them",
+                  mode.Options.Contains(mode.Value, StringComparer.Ordinal));
+
+        // A flags field is a combination, so it is never offered as a list of single values.
+        var flags = types.Members("hkbBlendingTransitionEffect").First(m => m.Name == "flags");
+        Check("a flags field is not offered as a list", "TYPE_FLAGS", flags.VType);
+
+        var ordinary = shown.First(f => f.Name == "animationName");
+        Check("a field that is not an enum stays a plain box", 0, ordinary.Options.Count);
+        CheckTrue("and still holds its value", ordinary.Value.Length > 0);
     }
 
     /// What removal refuses, which today is most of it.

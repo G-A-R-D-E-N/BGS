@@ -1779,12 +1779,22 @@ public class MainWindow : Window
 
         foreach (var p in parameters)
         {
-            var field = Ux.Field();
-            field.Text = p.Value;
-
             string name = p.Name;
             string original = p.Value;
             string owner = objectId;
+
+            // An enum whose values the class table declares becomes a list rather than a box. The
+            // names are the ones the game registers, not ours, and PanelFields only offers them when
+            // the value already in the file is one of them, so picking from the list can never be the
+            // only way to keep what is there.
+            if (p.Options.Count > 0)
+            {
+                panel.Add(EnumRow(p, owner));
+                continue;
+            }
+
+            var field = Ux.Field();
+            field.Text = p.Value;
             // Committing is driven by what the box holds, not by which box has focus. Focus is the
             // usual trigger, but a window closing has no focus change to hang off, and asking every
             // field whether it differs is both simpler and safe: one that has not been touched
@@ -1821,6 +1831,47 @@ public class MainWindow : Window
 
     // The other direction of the usages question: not who touches this symbol, but which symbols this
     // node touches. An index on its own says nothing, so each one is resolved to its declared name.
+    /// One property row whose value is chosen from a list rather than typed.
+    ///
+    /// Committing is driven by what the control holds, the same way a text box is, so a window
+    /// closing with a changed selection still writes it.
+    private Control EnumRow(PanelFields.Field p, string owner)
+    {
+        var choice = new ComboBox
+        {
+            ItemsSource = p.Options,
+            SelectedItem = p.Value,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            Foreground = Ux.CodeBrush,
+        };
+
+        string name = p.Name;
+        string original = p.Value;
+
+        void Commit()
+        {
+            string now = choice.SelectedItem as string ?? original;
+            if (now == original) return;
+
+            if (SetParam(owner, name, now)) original = now;
+            else choice.SelectedItem = original;
+        }
+
+        _fieldCommits.Add(Commit);
+        choice.SelectionChanged += (_, _) => Commit();
+
+        var label = Ux.Label(name);
+        label.Width = 128;
+        label.TextTrimming = TextTrimming.CharacterEllipsis;
+        ToolTip.SetTip(label, $"{name}: one of {string.Join(", ", p.Options)}");
+
+        var row = new DockPanel();
+        DockPanel.SetDock(label, Dock.Left);
+        row.Children.Add(label);
+        row.Children.Add(choice);
+        return row;
+    }
+
     private void AddSymbolSection(Inspector panel, string objectId, BehaviourGraphModel model)
     {
         var events = UsagesOf(true, objectId);
@@ -2434,23 +2485,33 @@ public class MainWindow : Window
     private void Apply(string objectId, string paramName, TextBox field, string original)
     {
         if (field.Text == original || _xmlText.Length == 0) return;
+        if (!SetParam(objectId, paramName, field.Text ?? "")) field.Text = original;
+    }
+
+    /// Writes one field and reports whether it took, so a control that has to put itself back on a
+    /// refusal can. Shared by the typed boxes and the enum lists rather than written twice.
+    private bool SetParam(string objectId, string paramName, string value)
+    {
+        if (_xmlText.Length == 0) return false;
 
         try
         {
-            Commit(HkxTextEdit.SetParam(_xmlText, objectId, paramName, field.Text ?? ""));
+            Commit(HkxTextEdit.SetParam(_xmlText, objectId, paramName, value));
             _editedFields.Add(objectId + "." + paramName);
-            SetStatus($"#{objectId}.{paramName} = {field.Text}   (unsaved)", Ux.CodeBrush);
+            SetStatus($"#{objectId}.{paramName} = {value}   (unsaved)", Ux.CodeBrush);
 
             // Retimes a preview that is already running, so an edited speed shows up without having
             // to stop and start playback to see it.
             if (paramName == "playbackSpeed" && objectId == _selectedId && _clock != null)
                 _clock.Interval = TimeSpan.FromSeconds(
                     Math.Clamp(_poseAnimation!.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4));
+
+            return true;
         }
         catch (Exception ex)
         {
-            field.Text = original;
             SetStatus(ex.Message.Split('\n')[0], Ux.MutedBrush);
+            return false;
         }
     }
 

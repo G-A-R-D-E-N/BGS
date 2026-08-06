@@ -1335,7 +1335,25 @@ public static class Program
         if (argv.Length < 2) { Usage(); return 1; }
         NeedHkxPack();
 
-        string file = Path.GetFullPath(argv[1]);
+        // A directory sweeps every file under it, the same way model, consumers and walk do. It did
+        // not before, and pointing it at one made it try to unpack the directory itself and fall over
+        // with a permission error, which reads as a broken tool rather than a wrong argument.
+        string target = Path.GetFullPath(argv[1]);
+        if (Directory.Exists(target))
+        {
+            int clean = 0, bad = 0;
+            foreach (string each in Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                                             .OrderBy(f => f, StringComparer.Ordinal))
+            {
+                var carried = new[] { argv[0], each }.Concat(argv.Skip(2)).ToArray();
+                if (Panel(carried) == 0) clean++; else bad++;
+            }
+
+            Console.WriteLine($"\n{clean} file(s) with nothing wrong on the panel, {bad} not");
+            return bad == 0 ? 0 : 1;
+        }
+
+        string file = target;
         string work = WorkDirectory("symrm-panel-", file);
         if (Directory.Exists(work)) Directory.Delete(work, true);
 
@@ -1358,7 +1376,7 @@ public static class Program
             return at >= 0 && at < ids.Count ? "#" + ids[at] : "";
         }
 
-        int shown = 0, fromBytes = 0, fell = 0, agreed = 0, strided = 0;
+        int shown = 0, fromBytes = 0, fell = 0, agreed = 0, strided = 0, offered = 0;
         var byClassFallback = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var stridedClasses = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var disagreements = new List<string>();
@@ -1372,6 +1390,7 @@ public static class Program
             for (int f = 0; f < fields.Count; f++)
             {
                 shown++;
+                if (fields[f].Options.Count > 0) offered++;
                 if (fields[f].From == PanelFields.Source.Fallback)
                 {
                     fell++;
@@ -1420,7 +1439,8 @@ public static class Program
         Console.WriteLine($"{Path.GetFileName(file)}: {shown} values on the panel, " +
                           $"{fromBytes} from the bytes, {fell} fallen back to hkxpack, " +
                           $"{agreed} agreeing, {shown - agreed - strided} not" +
-                          (strided > 0 ? $", {strided} where hkxpack strides a padded struct wrongly" : ""));
+                          (strided > 0 ? $", {strided} where hkxpack strides a padded struct wrongly" : "") +
+                          $", {offered} offered as a list of declared values");
 
         foreach (var (cls, count) in stridedClasses.OrderByDescending(c => c.Value))
             Console.WriteLine($"  hkxpack mis-strides {cls} x{count}");
