@@ -377,7 +377,7 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   weights 45 of its 58 bones to skin helper bones, `Chest_skin` and the like, which live in the mesh
   skeleton and not in the Havok one, so those vertices hold their rest position. `symrm mesh` reports
   the shortfall by name. Whether the residual drift on the human's remaining bones is that same
-  mismatch or something else is not established.
+  mismatch or something else is not established. See #43.
 - The pose itself is checked against known numbers and against real game files: a three bone rig with
   hand-worked positions in `symrm test`, and the vanilla 95 bone character skeleton posed through
   `symrm pose`, where the composed frame puts the pelvis at z 65, the head at z 101 and the feet near
@@ -386,16 +386,18 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   joint hover radius is comfortable. Those are the parts to look at first.
 - An animation whose class the reader cannot decode has no frames, so it cannot be drawn. That is the
   same list the Animation tab reports and it is not specific to playback.
-- **The properties panel reads the file, and falls back to hkxpack one field at a time.** The byte
-  reader handles every field type in a behaviour except a struct written inline, which the class dump
-  does not name the class of: references between objects, arrays of all kinds, enums and flags by
-  name, strings, and every width of number. Measured two ways against hkxpack across 76 vanilla
-  behaviours, and then over all 531: `symrm crosscheck` compares the reader, **258,933 values and all
-  of them agreeing**; `symrm panel` compares what the panel itself would display, **485,793 values of
-  which 231,693 come from the bytes and 254,100 fall back**, all agreeing. The fallbacks are mostly fields of objects written inside the
-  selected one, such as a transition inside a state machine, which are not at any offset the
-  selected object's class describes. **Java is still needed to open a file for editing**, because the
-  panel's field list, and every fallback in it, still comes from the XML. See #34.
+- **The properties panel reads the file, and nothing falls back any more.** The byte reader handles
+  every field type in a behaviour, including a struct written inline, whose class the class dump does
+  not name and the class table does: references between objects, arrays of all kinds, enums and flags
+  by name, strings, and every width of number. Measured against hkxpack over all 533 vanilla
+  behaviours: `symrm crosscheck` compares the reader, **274,107 values and all of them agreeing**;
+  `symrm panel` compares what the panel itself would display, **509,557 values, every one of them read
+  from the file's own bytes with none falling back**, all agreeing. An enum field offers its declared
+  values rather than asking for the name to be typed, which covers 42,733 of those fields.
+- **Java is no longer needed to open a file.** The graph, the tree, the properties, the symbols, what
+  each event is used for, and the whole checker are read from the file's own bytes. What still needs
+  it: saving anything the byte writer cannot do on its own, the compare tab, and walking a project
+  chain. See #32 and #34.
 - Reading is measured, not assumed, over the whole game rather than a subset. All 531 behaviour files
   in `Fallout4 - Animations.ba2`, all 5329 states: every one resolves to a generator that exists in
   its own file, across 15 generator classes, and every transition resolves its event name. Nothing is
@@ -415,13 +417,20 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   by this tool and repacked by hkxpack. That is the first time anything here has been proven against
   the engine rather than against hkxpack, and it moves the tool from "the file reads back correctly"
   to "the game accepted at least one of these".
-  It says nothing about structural editing. Adding a state, removing one, retargeting a transition or
-  renumbering a symbol have never been put in front of the game, and `symrm door`'s additive edit in
+  It says nothing about structural editing. Rewiring a pointer, resizing an array of children,
+  appending an object, attaching one and orphaning one are all written into the file's own bytes now,
+  and all of them are proved through hkxpack on real vanilla files. **None of them has been put in
+  front of the game.** Neither has renumbering a symbol, and `symrm door`'s additive edit in
   particular has not. Everything else has been round tripped through hkxpack and read back from the
   binary and no further, and hkxpack accepting a file is still not the engine accepting it. Keep the
   `.bak`.
-- Deleting a node leaves whatever pointed at it holding null. Delete refuses while references exist,
-  but detaching by hand first and then deleting can still leave, say, a state with no generator.
+- Deleting a node does not remove it from the file. It is orphaned instead: every pointer into it is
+  cleared and its own entry and bytes are left where they are, so nothing renumbers. The file keeps a
+  node nothing reaches, which is the honest cost of not renumbering, and hkxpack still lists it. An
+  element of a pointer array is dropped and the array shrinks rather than being set to null, because
+  a null child is a crash on load rather than an empty slot. Full removal, which would drop the entry
+  and renumber everything after it, is refused. See #19 and #34.
+- Clearing the last pointer into a node can still leave, say, a state with no generator.
   **Fallout 4 crashes while loading any graph that contains one**, before a state is entered, so
   reachability does not save it. The engine's own graph walk pops every child a node reports and
   reads its vtable pointer with no null check, so the null goes straight into an access violation:
