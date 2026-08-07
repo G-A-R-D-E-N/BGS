@@ -15,6 +15,14 @@ the game, with the evidence behind it, lives in the
 ## What it does
 
 - Opens any FO4 behaviour, character or project `.hkx` and shows the object graph.
+- **Straight out of a `.ba2`**: "From archive..." reads a Bethesda archive's index and lists what is
+  in it, so a vanilla behaviour can be opened without unpacking the archive around it. Every
+  behaviour in the game is inside `Fallout4 - Animations.ba2`, which holds 29,716 entries; reading
+  the index takes about a second and touches none of the file data. Type words in any order to
+  narrow the list, since the useful query is "dogmeat behavior" and the archive stores that as
+  `meshes/actors/dogmeat/behaviors/...`. A file opened this way is **read only**: it is a copy in a
+  temporary folder, Save is greyed out, and the window says where the copy went so it can be put
+  somewhere of your own if you want to edit it.
 - **Tree view**: nesting, Havok class per row, the animation each clip points at, file offset.
 - **Graph view**: a node canvas laid out in columns by depth from the root, edges drawn from the real
   reference fields and labelled with the field that owns each link, so an edge says why it exists.

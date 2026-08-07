@@ -108,6 +108,12 @@ public class MainWindow : Window
     private HkxBehaviorParser.BehaviorNode? _root;
 
     private string _hkxPath = "";
+
+    /// Set when the open file is a copy pulled out of a BA2 rather than a file on disk. The copy is
+    /// in a temporary folder, so saving into it would write somewhere the user will never look and
+    /// leave the archive untouched, which is worse than refusing.
+    private bool _readOnly;
+    private string _readOnlyWhy = "";
     private string _xmlPath = "";
     private string _xmlText = "";
     private ProjectChain? _projectChain;
@@ -138,6 +144,8 @@ public class MainWindow : Window
         open.Click += (_, _) => Load();
         var browse = Ux.Secondary("Browse...");
         browse.Click += async (_, _) => await Browse();
+        var archive = Ux.Secondary("From archive...");
+        archive.Click += async (_, _) => await OpenFromArchive();
         _pathField.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) Load(); };
 
         var expand = Ux.Secondary("Expand all");
@@ -195,7 +203,7 @@ public class MainWindow : Window
             Padding = new Thickness(14),
             Child = Rows(
                 (Ux.SectionTitle("Havok behaviour file"), false),
-                (Bar(_pathField, browse, open), false),
+                (Bar(_pathField, browse, archive, open), false),
                 (Ux.Pill(_summary), false),
                 (Bar(_filter, expand, collapse), false),
                 (tabs, true),
@@ -767,6 +775,79 @@ public class MainWindow : Window
             $"{animation.Duration:F2}s   {driven} of {_poseSkeleton!.BoneNames.Count} bones driven   " +
             $"on {_poseSkeleton.Name}", Ux.MetaBrush);
         UpdateFrameLabel();
+    }
+
+    /// Opens a behaviour straight out of a BA2, without unpacking the archive around it.
+    ///
+    /// Every behaviour in the game is inside Fallout4 - Animations.ba2, and reaching one of them used
+    /// to mean writing all 29,716 entries to disk first. Reading the index takes about a second and
+    /// touches no file data, so the browser lists the archive itself.
+    ///
+    /// The chosen file is written to a temporary folder and opened from there, because everything
+    /// downstream of here works on a path: the project chain, the animation reader, the mesh, the
+    /// validator. What it is not is somewhere to save. The window goes read only, and says so, rather
+    /// than letting an edit land in a temporary file the user will never find again.
+    private async Task OpenFromArchive()
+    {
+        var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Which archive to look in",
+            AllowMultiple = false,
+            SuggestedStartLocation = await StartFolder(),
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Bethesda archives") { Patterns = new[] { "*.ba2", "*.BA2" } },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        string? archivePath = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (archivePath == null) return;
+
+        OpenCommonwealth.Services.Archive.Ba2 archive;
+        try
+        {
+            archive = OpenCommonwealth.Services.Archive.Ba2.Open(archivePath);
+        }
+        catch (Exception e)
+        {
+            SetStatus("That archive could not be read: " + e.Message, Ux.BadBrush);
+            return;
+        }
+
+        using (archive)
+        {
+            var browser = new ArchiveBrowser(archive, ".hkx");
+            await browser.ShowDialog(this);
+            if (browser.Chosen is not { } entry) return;
+
+            try
+            {
+                // Under a folder named for the archive, so two files of the same name out of two
+                // archives do not land on top of each other, and the folder is one a person can find
+                // if they want the copy afterwards.
+                string folder = Path.Combine(Path.GetTempPath(), "BehaviourGraphStudio",
+                                             Path.GetFileNameWithoutExtension(archivePath));
+                Directory.CreateDirectory(folder);
+
+                string copy = Path.Combine(folder, entry.Name.Replace('/', '_'));
+                File.WriteAllBytes(copy, archive.Read(entry));
+
+                _pathField.Text = copy;
+                Load();
+
+                _readOnly = true;
+                _readOnlyWhy = $"{entry.FileName} came out of {Path.GetFileName(archivePath)}, and " +
+                               "nothing here writes back into an archive. Save a copy somewhere of " +
+                               "your own and open that to edit it.";
+                SetStatus($"Opened {entry.Name} from {Path.GetFileName(archivePath)}, read only. " +
+                          $"The copy is at {copy}", Ux.MetaBrush);
+            }
+            catch (Exception e)
+            {
+                SetStatus($"Could not open {entry.FileName} from the archive: " + e.Message, Ux.BadBrush);
+            }
+        }
     }
 
     // The behaviour chain names no mesh, and neither does the skeleton, so the only honest way to
@@ -1354,6 +1435,8 @@ public class MainWindow : Window
         _graph.Reset();
         ClearPose();
         ResetHistory();
+        _readOnly = false;
+        _readOnlyWhy = "";
 
         string path = (_pathField.Text ?? "").Trim().Trim('"');
         if (path.Length == 0) { SetSummary("Enter the path to a .hkx file.", Ux.MutedBrush); return; }
@@ -2671,6 +2754,8 @@ public class MainWindow : Window
         CommitPendingFields();
         if (!_dirty || _xmlText.Length == 0) return;
 
+        if (_readOnly) { SetStatus("Not saved: " + _readOnlyWhy, Ux.BadBrush); return; }
+
         // The graph checks apply whichever way the file gets written. The hkxpack round trip warning
         // does not, because writing the bytes in place has no round trip to lose anything in, so it
         // is asked for separately below rather than folded in here.
@@ -2771,7 +2856,12 @@ public class MainWindow : Window
     private void RefreshDirty()
     {
         _dirty = _xmlText.Length > 0 && _xmlText != _savedXml;
-        _saveButton.IsEnabled = _dirty;
+
+        // A file opened out of an archive can be edited and read, it just cannot be written back
+        // where it came from. Greying the button says that before an edit rather than after it, and
+        // Save refuses as well, so the answer does not depend on the button being right.
+        _saveButton.IsEnabled = _dirty && !_readOnly;
+        if (_readOnly) ToolTip.SetTip(_saveButton, _readOnlyWhy);
         _undoButton.IsEnabled = _undo.Count > 0;
         _redoButton.IsEnabled = _redo.Count > 0;
     }

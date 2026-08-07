@@ -46,6 +46,7 @@ public static class Tests
         ("EverySymbolUsageNamesItsObject", EverySymbolUsageNamesItsObject),
         ("PapyrusSendersAreReportedNotJudged", PapyrusSendersAreReportedNotJudged),
         ("APoseComposesDownTheBoneChain", APoseComposesDownTheBoneChain),
+        ("AnArchiveIsReadWithoutUnpackingIt", AnArchiveIsReadWithoutUnpackingIt),
         ("AClearChannelKeepsTheReferencePose", AClearChannelKeepsTheReferencePose),
         ("SplineUndrivenChannelsReadAsIdentity", SplineUndrivenChannelsReadAsIdentity),
         ("APackfileSurvivesBeingRebuilt", APackfileSurvivesBeingRebuilt),
@@ -1155,6 +1156,103 @@ public static class Tests
             new HkxBonePose(new Vector3(10, 0, 0), Quaternion.Identity, Vector3.One),
         },
     };
+
+    /// A BA2 built here rather than taken from the game, so the archive reader is checked on a
+    /// machine with no Fallout 4 on it.
+    ///
+    /// The format is a 24 byte header, one 36 byte entry per file, then a name table at the offset
+    /// the header names. Both storage forms are written: one entry plain and one zlib compressed,
+    /// because the compressed branch is the one that reads a different length than the index states.
+    private static string ArchiveOfTwoFiles(byte[] plain, byte[] compressible)
+    {
+        var names = new[] { "Meshes/Actors/Dogmeat/Behaviors/DogmeatRoot.hkx", "Meshes/Actors/Human/skeleton.nif" };
+
+        byte[] squashed;
+        using (var buffer = new MemoryStream())
+        {
+            using (var zlib = new System.IO.Compression.ZLibStream(
+                       buffer, System.IO.Compression.CompressionMode.Compress, true))
+                zlib.Write(compressible, 0, compressible.Length);
+            squashed = buffer.ToArray();
+        }
+
+        string path = Path.Combine(Path.GetTempPath(), "symrm-archive-probe.ba2");
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+
+        long headerEnd = 24 + 36 * 2;
+        long firstAt = headerEnd;
+        long secondAt = firstAt + plain.Length;
+        long nameTableAt = secondAt + squashed.Length;
+
+        writer.Write(new[] { 'B', 'T', 'D', 'X' });
+        writer.Write(1u);
+        writer.Write(new[] { 'G', 'N', 'R', 'L' });
+        writer.Write(2u);
+        writer.Write((ulong)nameTableAt);
+
+        void Entry(long at, uint packed, uint unpacked)
+        {
+            writer.Write(0u); writer.Write(0u); writer.Write(0u); writer.Write(0u);
+            writer.Write((ulong)at);
+            writer.Write(packed);
+            writer.Write(unpacked);
+            writer.Write(0u);
+        }
+
+        Entry(firstAt, 0, (uint)plain.Length);
+        Entry(secondAt, (uint)squashed.Length, (uint)compressible.Length);
+
+        writer.Write(plain);
+        writer.Write(squashed);
+
+        foreach (string name in names)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(name.Replace('/', '\\'));
+            writer.Write((ushort)bytes.Length);
+            writer.Write(bytes);
+        }
+
+        return path;
+    }
+
+    /// Opening an archive reads its index and none of its file data, which is the whole reason a
+    /// behaviour can be reached out of a 29,716 entry archive without writing 29,715 files first.
+    private static void AnArchiveIsReadWithoutUnpackingIt()
+    {
+        Console.WriteLine("\nan archive is read without unpacking it");
+
+        var plain = System.Text.Encoding.ASCII.GetBytes("a behaviour would go here");
+        var compressible = System.Text.Encoding.ASCII.GetBytes(new string('x', 4096));
+
+        string path = ArchiveOfTwoFiles(plain, compressible);
+
+        using (var archive = OpenCommonwealth.Services.Archive.Ba2.Open(path))
+        {
+            Check("both files are in the index", 2, archive.Entries.Count);
+            Check("with the archive's own path separators turned round", "Meshes/Actors/Dogmeat/Behaviors/DogmeatRoot.hkx",
+                  archive.Entries[0].Name);
+            Check("and the file name on its own", "DogmeatRoot.hkx", archive.Entries[0].FileName);
+            Check("and the folder it sits in", "Meshes/Actors/Dogmeat/Behaviors", archive.Entries[0].Folder);
+
+            // Words in any order, because the useful query is "dogmeat behavior" and the archive
+            // stores that as a path where no single substring matches both.
+            Check("words match in any order", 1, archive.Matching("dogmeat behavior").Count());
+            Check("and in the other order too", 1, archive.Matching("behavior dogmeat").Count());
+            Check("an extension narrows it", 1, archive.Matching("", ".nif").Count());
+            Check("a word nothing has matches nothing", 0, archive.Matching("mirelurk").Count());
+            Check("no filter matches everything", 2, archive.Matching("").Count());
+
+            // Both storage forms, because the compressed one reads a different number of bytes off
+            // disk than the index says the file is.
+            CheckTrue("a plainly stored file comes back as it went in",
+                      archive.Read(archive.Entries[0]).SequenceEqual(plain));
+            CheckTrue("and a compressed one is inflated",
+                      archive.Read(archive.Entries[1]).SequenceEqual(compressible));
+        }
+
+        File.Delete(path);
+    }
 
     private static HkxTrackData FullTrack(params (Vector3 Pos, Quaternion Rot)[] frames)
     {
