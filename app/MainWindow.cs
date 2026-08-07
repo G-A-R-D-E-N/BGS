@@ -46,10 +46,24 @@ public class MainWindow : Window
     private readonly TextBox _boneFilter = Ux.Field("bone", 150);
     private readonly TextBox _fraction = Ux.Field("0.0 to 1.0", 110);
     private readonly TextBlock _fractionAnswer = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private readonly TextBox _framePosition = Ux.Field("x, y, z", 170);
+    private readonly TextBox _frameRotation = Ux.Field("x, y, z, w", 210);
+    private readonly TextBox _frameScale = Ux.Field("x, y, z", 150);
+    private readonly TextBlock _frameEditAnswer = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
     private HkxAnimationData? _animationData;
     private HkxSkeleton? _animationSkeleton;
     private int _frameStart;
     private int _aimedFrame = -1;
+
+    /// Which frame the boxes above are showing, as the track and the frame it came from, or -1 for
+    /// neither. A frame is not addressable by anything in the file, so it is addressed by where it
+    /// sits, and the row carries that.
+    private int _editTrack = -1, _editFrame = -1;
+
+    /// Whether a frame has been changed since the file was opened. Kept apart from the behaviour
+    /// graph's own dirty flag: an animation is a different kind of file, saved a different way, and
+    /// running the two together would offer to write a clip out of a behaviour.
+    private bool _animationEdited;
 
     private readonly TextBox _symbolName = Ux.Field("name", 170);
     private readonly TextBox _symbolValue = Ux.Field("value, for a variable", 130);
@@ -326,6 +340,18 @@ public class MainWindow : Window
     public HkGrid SymbolGrid => _symbols;
     public string FractionAnswer => _fractionAnswer.Text ?? "";
     public int AimedFrame => _aimedFrame;
+
+    // The frame editing boxes, which are only meaningful together: what they hold, whether a frame
+    // is picked at all, and whether anything has been changed since the file was opened.
+    public string FrameEditAnswer => _frameEditAnswer.Text ?? "";
+    public string FramePositionText => _framePosition.Text ?? "";
+    public string FrameRotationText => _frameRotation.Text ?? "";
+    public bool AnimationEdited => _animationEdited;
+    public System.Numerics.Vector3 FramePosition(int track, int frame) =>
+        _animationData != null && track < _animationData.Tracks.Count &&
+        frame < _animationData.Tracks[track].Translations.Count
+            ? _animationData.Tracks[track].Translations[frame]
+            : default;
     public string LoadedXml => _xmlText;
     public Inspector GraphProperties => _graphProps;
     public GraphView Canvas => _graph;
@@ -359,6 +385,24 @@ public class MainWindow : Window
         _boneFilter.Text = needle;
         ShowAnimationFrames();
     }
+
+    /// Picks a frame row the way clicking one does, so the boxes fill through the same handler.
+    public bool PickFrame(int track, int frame)
+    {
+        bool found = _animation.SelectByTag($"f:{track}:{frame}");
+        if (found) ShowSelectedFrame();
+        return found;
+    }
+
+    /// Types a position into the box and presses the button, which is the whole edit path.
+    public void TypeFramePosition(string text)
+    {
+        _framePosition.Text = text;
+        SetFrame();
+    }
+
+    /// Presses the save button. Only worth driving on a copy: it writes the file.
+    public void PressSaveAnimation() => SaveAnimation();
 
     private Control BuildAnimationTab()
     {
@@ -398,8 +442,192 @@ public class MainWindow : Window
         DockPanel.SetDock(tools, Dock.Top);
         panel.Children.Add(tools);
 
+        // Changing a frame. Nothing here re-encodes a compressed animation, so a saved clip is
+        // written out uncompressed, which is a much larger file holding exactly the frames that went
+        // into it. That is said on the button rather than discovered afterwards.
+        var apply = Ux.Secondary("Set frame");
+        apply.Click += (_, _) => SetFrame();
+        var write = Ux.Primary("Save uncompressed");
+        write.Click += (_, _) => SaveAnimation();
+
+        foreach (var box in new[] { _framePosition, _frameRotation, _frameScale })
+            box.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) SetFrame(); };
+
+        _animation.SelectionChanged += ShowSelectedFrame;
+
+        var editing = Bar(_framePosition, _frameRotation, _frameScale, apply, write,
+                          Ux.Pill(_frameEditAnswer));
+        editing.Margin = new Thickness(0, 0, 0, 8);
+        DockPanel.SetDock(editing, Dock.Top);
+        panel.Children.Add(editing);
+
         panel.Children.Add(_animation);
         return panel;
+    }
+
+    /// Fills the boxes from whichever frame row is selected, so a frame is changed by picking it
+    /// rather than by typing where it is.
+    private void ShowSelectedFrame()
+    {
+        var anim = _animationData;
+        _editTrack = _editFrame = -1;
+
+        if (anim == null || _animation.SelectedTag is not string tag) { Clear(); return; }
+
+        var parts = tag.Split(':');
+        if (parts.Length != 3 || parts[0] != "f" ||
+            !int.TryParse(parts[1], out int track) || !int.TryParse(parts[2], out int frame))
+        {
+            Clear();
+            return;
+        }
+
+        if (track >= anim.Tracks.Count || frame >= anim.Tracks[track].Translations.Count) { Clear(); return; }
+
+        _editTrack = track;
+        _editFrame = frame;
+
+        var data = anim.Tracks[track];
+        _framePosition.Text = Triple(data.Translations[frame]);
+        _frameRotation.Text = frame < data.Rotations.Count
+            ? $"{F(data.Rotations[frame].X)}, {F(data.Rotations[frame].Y)}, " +
+              $"{F(data.Rotations[frame].Z)}, {F(data.Rotations[frame].W)}"
+            : "";
+        _frameScale.Text = frame < data.Scales.Count ? Triple(data.Scales[frame]) : "";
+
+        _frameEditAnswer.Text = $"{TrackName(anim, _animationSkeleton, track)}, frame {frame}";
+        _frameEditAnswer.Foreground = Ux.MetaBrush;
+
+        void Clear()
+        {
+            _framePosition.Text = _frameRotation.Text = _frameScale.Text = "";
+            _frameEditAnswer.Text = "Pick a frame row to change it.";
+            _frameEditAnswer.Foreground = Ux.MutedBrush;
+        }
+    }
+
+    private static string Triple(System.Numerics.Vector3 v) => $"{F(v.X)}, {F(v.Y)}, {F(v.Z)}";
+
+    private static string F(float value) =>
+        value.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// Writes the boxes back into the frame they came from.
+    ///
+    /// Only into the decoded animation held in memory. Nothing reaches the file until it is saved,
+    /// which is what makes several frames changeable before anything is written.
+    private void SetFrame()
+    {
+        var anim = _animationData;
+        if (anim == null || _editTrack < 0)
+        {
+            _frameEditAnswer.Text = "Pick a frame row first.";
+            _frameEditAnswer.Foreground = Ux.BadBrush;
+            return;
+        }
+
+        var track = anim.Tracks[_editTrack];
+
+        if (!Numbers(_framePosition.Text, 3, out float[] position) ||
+            !Numbers(_frameRotation.Text, 4, out float[] rotation) ||
+            (_frameScale.Text?.Trim().Length > 0 && !Numbers(_frameScale.Text, 3, out _)))
+        {
+            _frameEditAnswer.Text = "Position takes three numbers and rotation four, separated by commas.";
+            _frameEditAnswer.Foreground = Ux.BadBrush;
+            return;
+        }
+
+        track.Translations[_editFrame] = new System.Numerics.Vector3(position[0], position[1], position[2]);
+
+        if (_editFrame < track.Rotations.Count)
+            track.Rotations[_editFrame] =
+                new System.Numerics.Quaternion(rotation[0], rotation[1], rotation[2], rotation[3]);
+
+        // A track with no scale of its own prints none, so an empty box means leave it as it was
+        // rather than set it to nothing.
+        if (Numbers(_frameScale.Text, 3, out float[] scale) && _editFrame < track.Scales.Count)
+            track.Scales[_editFrame] = new System.Numerics.Vector3(scale[0], scale[1], scale[2]);
+
+        _animationEdited = true;
+        _frameEditAnswer.Text = $"{TrackName(anim, _animationSkeleton, _editTrack)}, frame {_editFrame} " +
+                                "changed   (unsaved)";
+        _frameEditAnswer.Foreground = Ux.CodeBrush;
+
+        int track_ = _editTrack, frame_ = _editFrame;
+        ShowAnimationFrames();
+        _animation.SelectByTag($"f:{track_}:{frame_}");
+    }
+
+    private static bool Numbers(string? text, int wanted, out float[] values)
+    {
+        values = new float[wanted];
+        var parts = (text ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != wanted) return false;
+
+        for (int i = 0; i < wanted; i++)
+            if (!float.TryParse(parts[i].Trim(), System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out values[i]))
+                return false;
+
+        return true;
+    }
+
+    /// Writes the clip back, uncompressed.
+    ///
+    /// Nothing here re-encodes a compressed animation, so what goes back is
+    /// `hkaInterleavedUncompressedAnimation`: every frame of every track stored as it is. The file
+    /// gets much larger and the frames are exact. The clip that was there is left in the file
+    /// unreferenced, so nothing already in it moves.
+    private void SaveAnimation()
+    {
+        var anim = _animationData;
+        if (anim == null)
+        {
+            _frameEditAnswer.Text = "This is not an animation file.";
+            _frameEditAnswer.Foreground = Ux.BadBrush;
+            return;
+        }
+
+        if (_readOnly)
+        {
+            _frameEditAnswer.Text = "Not saved: " + _readOnlyWhy;
+            _frameEditAnswer.Foreground = Ux.BadBrush;
+            return;
+        }
+
+        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
+        if (blocked != null)
+        {
+            _frameEditAnswer.Text = "Cannot save: " + blocked;
+            _frameEditAnswer.Foreground = Ux.BadBrush;
+            return;
+        }
+
+        try
+        {
+            var written = NativeAnimation.Interleave(_hkxPath, anim);
+
+            string backup = _hkxPath + ".bak";
+            if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
+            ReplaceFile(_hkxPath, written.Bytes);
+
+            _animationEdited = false;
+            string said =
+                $"Saved {written.Frames} frame(s) of {written.Tracks} track(s) uncompressed, " +
+                $"{written.Grew} bytes larger. The original is kept as {Path.GetFileName(backup)}.";
+
+            // Reloaded first and told afterwards. Opening a file clears these boxes, which is right
+            // when a different file is opened and wrong here: saying it before the reload put the
+            // message up and wiped it in the same breath, so pressing Save appeared to do nothing.
+            Load();
+            _frameEditAnswer.Text = said;
+            _frameEditAnswer.Foreground = Ux.MetaBrush;
+            SetStatus(said, Ux.MetaBrush);
+        }
+        catch (Exception e)
+        {
+            _frameEditAnswer.Text = "Not saved, and the original is untouched: " + e.Message;
+            _frameEditAnswer.Foreground = Ux.BadBrush;
+        }
     }
 
     /// userControlledTimeFraction is what a bound variable drives, so this is the lookup the clip work
@@ -464,9 +692,14 @@ public class MainWindow : Window
         _animationData = null;
         _animationSkeleton = null;
         _frameStart = 0;
-        // A frame aimed at in the last file means nothing in this one.
+        // A frame aimed at in the last file means nothing in this one, and neither does a frame
+        // picked for editing or a change made to one.
         _aimedFrame = -1;
+        _editTrack = _editFrame = -1;
+        _animationEdited = false;
         _fractionAnswer.Text = "";
+        _framePosition.Text = _frameRotation.Text = _frameScale.Text = "";
+        _frameEditAnswer.Text = "";
 
         HkxAnimationData anim;
         try
@@ -556,7 +789,10 @@ public class MainWindow : Window
                 string scl = scaled && f < track.Scales.Count
                     ? $"{track.Scales[f].X:F4}, {track.Scales[f].Y:F4}, {track.Scales[f].Z:F4}" : "";
                 bool aimed = f == _aimedFrame;
+                // Tagged with where it sits, because nothing in the file names a frame. That is what
+                // makes a row selectable and therefore changeable.
                 _animation.Add(head, aimed ? "->" : "", f.ToString(), $"{f * anim.FrameDuration:F3}s", pos, rot, scl)
+                          .Tag($"f:{t}:{f}")
                           .Colour(0, Ux.AccentBrush)
                           .Colour(1, aimed ? Ux.AccentBrush : Ux.DisabledBrush).Colour(2, Ux.MutedBrush)
                           .Colour(3, Ux.CodeBrush).Colour(4, Ux.MetaBrush).Colour(5, Ux.BadBrush);
