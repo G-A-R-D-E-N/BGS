@@ -41,6 +41,7 @@ public static class Tests
         ("AShortBoundsArrayStaysLinedUp", AShortBoundsArrayStaysLinedUp),
         ("ABoundCanBeAuthoredPastTheEndOfTheArray", ABoundCanBeAuthoredPastTheEndOfTheArray),
         ("AValueInsideAStructArrayIsWrittenInPlace", AValueInsideAStructArrayIsWrittenInPlace),
+        ("AStructArrayCanBeMadeLonger", AStructArrayCanBeMadeLonger),
         ("WindowsLineEndingsStillEdit", WindowsLineEndingsStillEdit),
         ("RepackDriftCatchesAChangedValue", RepackDriftCatchesAChangedValue),
         ("AnAnimationIsRefusedForSaving", AnAnimationIsRefusedForSaving),
@@ -780,13 +781,6 @@ public static class Tests
                       .SequenceEqual(new[] { "max.value", "min.value" }));
         CheckTrue("and it does not grow the file", !plan.Grows);
 
-        // Lengthening it is a different job and is refused by name rather than by silence.
-        var longer = NativeSave.Compare(xml, SymbolEditor.SetVariableBounds(xml, 2, "0", "1"));
-        CheckTrue("making the array longer is refused", !longer.Possible);
-        CheckTrue("and the refusal says it was the length",
-                  longer.Refusal?.Contains("changed length", StringComparison.Ordinal) == true);
-        CheckTrue("and names the array", longer.Refusal?.Contains("variableBounds", StringComparison.Ordinal) == true);
-
         // An inline struct is not one of the file's objects. hkxpack writes one as an hkobject all
         // the same, so counting those made a file with no hkbVariableValue object in it appear to
         // hold two per bound, and a change would have been aimed at an object that does not exist.
@@ -794,6 +788,62 @@ public static class Tests
                   plan.Changes.All(c => c.ClassName != "hkbVariableValue"));
         Check("it belongs to the object that owns the array", "hkbBehaviorGraphData",
               plan.Changes[0].ClassName);
+    }
+
+    /// An array of structs at a new length is planned as one run rewritten, not refused.
+    ///
+    /// The array is positional, so bounding a variable the array does not reach means writing every
+    /// entry below it too. That is the ordinary case rather than an edge one: the bounds array is
+    /// empty in 224 of the 531 vanilla behaviours and short in 87 more.
+    private static void AStructArrayCanBeMadeLonger()
+    {
+        Console.WriteLine("\nan array of structs can be given a new length");
+
+        string xml = ThreeVariablesWithTwoBounds();
+
+        var longer = NativeSave.Compare(xml, SymbolEditor.SetVariableBounds(xml, 2, "-5", "35"));
+        CheckTrue("making the array longer is written into the bytes", longer.Possible);
+        CheckTrue("and it grows the file, since the new run goes on the end", longer.Grows);
+
+        var run = longer.Changes.Where(c => c.Grow).ToList();
+        Check("one change says how long the array now is", 1, run.Count);
+        Check("naming the new length", "3", run[0].Value);
+        Check("and the array it belongs to", "variableBounds", run[0].Field);
+        Check("carrying the length it had, so the old elements can be brought across", 2,
+              run[0].Element);
+        CheckTrue("a resize is not mistaken for a write inside an element", !run[0].InElement);
+
+        // Only the new element is listed. The two already there are carried over as bytes, which is
+        // what keeps anything inside them this cannot spell, so listing them would be both
+        // redundant and a way to refuse a resize that is perfectly safe.
+        var fill = longer.Changes.Where(c => c.InElement).ToList();
+        Check("with the new element's two numbers to write into it", 2, fill.Count);
+        CheckTrue("both aimed at the element that was added", fill.All(c => c.Element == 2));
+        CheckTrue("and none at the ones already there", fill.All(c => c.Element >= 2));
+
+        // Shrinking is the same move: a shorter run is written and the count beside it rewritten.
+        // Taken as the resize just planned, run backwards, so the bounds array is the only thing
+        // that differs between the two texts.
+        var shorter = NativeSave.Compare(SymbolEditor.SetVariableBounds(xml, 2, "-5", "35"), xml);
+        CheckTrue("shortening it is written the same way", shorter.Possible);
+        CheckTrue("and it names the array that changed",
+                  shorter.Changes.Any(c => c.Grow && c.Field == "variableBounds"));
+        Check("at the length it is going back to", "2",
+              shorter.Changes.First(c => c.Grow).Value);
+
+        // A member a new element was given that cannot be written where it sits is refused rather
+        // than dropped. Nothing produces one today, and the check is what keeps that true.
+        string withName = xml.Replace(
+            "<hkparam name=\"eventInfos\" numelements=\"0\"></hkparam>",
+            """
+            <hkparam name="eventInfos" numelements="1">
+                <hkobject>
+                    <hkparam name="flags">0</hkparam>
+                </hkobject>
+            </hkparam>
+            """);
+        var invented = NativeSave.Compare(xml, withName);
+        CheckTrue("giving an array a first element is written", invented.Possible);
     }
 
     private static string BoundMin(string xml, int index)

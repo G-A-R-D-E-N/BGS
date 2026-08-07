@@ -3,6 +3,39 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, an array of structs can be given a new length
+
+The second half of #44, and the half that closes #40. Bounding a variable the bounds array does not
+reach is written into the file's own bytes now, which is the common case rather than the rare one:
+`variableBounds` is empty in 224 of the 531 vanilla behaviours and short in 87 more, so before this
+two thirds of the corpus needed a Java runtime to bound a variable at all.
+
+Three moves, the same ones `Resize` already made for an array of pointers. A run of the new length
+goes on the end of the section, the array's own pointer is aimed at it and the count beside it is
+rewritten. Nothing already in the file moves, because every offset is derived from the sizes of what
+precedes it and appending has nothing after it.
+
+**What an array of pointers never had to do is carry anything over.** An element here is a struct
+with fields of its own and some of them are things this cannot spell, a string, a pointer, an array.
+So the elements the file already had are copied across as bytes rather than rebuilt from the
+document, and every fixup naming a byte inside them is moved with them. The fixups belonging to
+elements a shorter array drops are dropped with them, since a pointer left aiming at an abandoned run
+is one the game would still follow.
+
+**The capacity flag was measured rather than reasoned about.** Growing an array means writing a
+capacity for it, and the flag in its top bits is what tells the game whether it owns the memory.
+Keeping what was there is obviously right for an array that already holds something and says nothing
+about one that starts empty. `symrm capacity` counts them: across all 533 vanilla files, every one of
+the 74,567 arrays carries `0x80000000`, empty and full alike, and not one has a capacity that
+disagrees with the count beside it.
+
+Proved by carrying it out on every vanilla behaviour it applies to. `symrm grow` bounds the last
+variable in each file, writes it, reads it back through hkxpack and sets every value against what the
+edit asked for: **180 files, 180 written, none refused, none wrong.** In each, the bound reads back
+as the number asked for, no other value in the file differs, and the file grows only by the new run.
+The same 180 pass with Java hidden every way the tool looks for it, reading and checking through our
+own reader instead, which is the point of the exercise.
+
 ## 2026-08-06, a number inside an array of structs is written where it sits
 
 The first half of #44. Changing a bound the array already holds no longer goes back through hkxpack:

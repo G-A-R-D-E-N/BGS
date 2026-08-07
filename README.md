@@ -36,8 +36,10 @@ the game, with the evidence behind it, lives in the
   value. The same panel sits beside the tree view.
   Save writes back to `.hkx` and keeps the original as `.bak`. A changed value goes straight into the
   file's own bytes; a changed name goes on the end of the file and its pointer is aimed at it, which
-  is how a longer name is written without moving anything already there. Only an edit that changes
-  the number of objects or the length of an array is rebuilt through hkxpack, and before that
+  is how a longer name is written without moving anything already there. An array at a new length is
+  written the same way, whether it holds pointers or structs: a run of the new length goes on the end
+  and the array is aimed at it, so nothing already in the file moves. Only an edit that changes the
+  number of objects, or the length of an array of text, is rebuilt through hkxpack, and before that
   overwrites anything it reads the file hkxpack just produced back out and counts it; if objects went
   missing on the way through, nothing is written and it says what was lost.
 - **Highlight one state's paths**: right click a node and pick "Highlight the paths of ...". Every
@@ -56,9 +58,9 @@ the game, with the evidence behind it, lives in the
   max, extending `variableBounds` to reach it when the array stops short, which it usually does: of
   the 531 vanilla files it is empty in 224 and shorter than the variable list in 87. The entries
   written in between are `0` to `0`, which is what the file already means by an unbounded variable
-  inside the array. Changing a bound the array already holds is written straight into the file's
-  bytes; giving one to a variable the array does not reach yet still goes back through hkxpack,
-  because lengthening an array of structs is not written in place yet. Removing renumbers every reference above it. Expand an
+  inside the array. Both go straight into the file's own bytes, whether the bound is one the array
+  already holds or one it has to be lengthened to reach, so neither needs a Java runtime.
+  Removing renumbers every reference above it. Expand an
   event to see what the file does with it: raised here, listened for here, or written somewhere with
   no established direction, each naming the class and member. No verdict comes with it, for the reason
   under Validating.
@@ -162,7 +164,10 @@ Things the format makes easy to get wrong, all handled here:
   it, so the struct has no field that could name a variable and position is the only key there can
   be. A short array means the variables past its end have no bound, and an unbounded variable inside
   it is written `0..0`. Removing a variable inside the array takes its bound with it; removing one
-  past the end leaves the array alone.
+  past the end leaves the array alone. Lengthening it to reach a variable is written into the file's
+  own bytes: `symrm grow` does it on every vanilla behaviour that has a variable the bounds do not
+  reach, **180 files, every one written, hkxpack agreeing about every value in the file afterwards
+  and nothing moved that was not asked to move**, and the same 180 with Java hidden.
 - **Event ids hide under a member called `id`.** Every scalar named `*EventId` carries one, but so
   does the plain `id` member of an `hkbEventProperty` or `hkbEvent`, and that accounts for roughly a
   third of the event references in a typical graph. The field table in `SymbolIndexFixup` was read
@@ -268,7 +273,7 @@ Linux one on a bare Debian image with no .NET and no build tools to prove it act
 - .NET 8 SDK to build. Nothing to build with, to run a release.
 - **A Java runtime**, only for a structural save. Reading, editing and comparing come from the native
   C# reader and work without it: the window's checks pass identically with Java present and with Java
-  hidden every way the tool looks for it, 77 checks either way. What still goes through hkxpack is
+  hidden every way the tool looks for it, 78 checks either way. What still goes through hkxpack is
   packing a file back after objects have been added or removed. hkxpack itself is
   bundled at `tools/hkxpack-cli.jar` (MIT, see `THIRD_PARTY_NOTICES.md`) and is found automatically
   next to the executable, so only Java has to be supplied. If it is installed somewhere the search
