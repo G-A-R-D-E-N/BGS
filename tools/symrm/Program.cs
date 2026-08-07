@@ -38,6 +38,8 @@ public static class Program
             case "skeleton": return Skeleton(argv);
             case "rig": return Rig(argv);
             case "extract": return Extract(argv);
+            case "ba2": return Ba2Browse(argv);
+            case "motion": return Motion(argv);
             case "pose": return Pose(argv);
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
@@ -212,7 +214,7 @@ public static class Program
     private static int Corpus(string[] argv)
     {
         if (argv.Length < 3) { Usage(); return 1; }
-        int written = Ba2.ExtractMatching(argv[1], "behavior", argv[2], ".hkx", Console.WriteLine);
+        int written = OpenCommonwealth.Services.Archive.Ba2.ExtractMatching(argv[1], "behavior", argv[2], ".hkx", Console.WriteLine);
         Console.WriteLine($"wrote {written} behaviour files to {argv[2]}");
         return 0;
     }
@@ -652,10 +654,129 @@ public static class Program
 
         bool tree = Array.IndexOf(argv, "--tree") >= 0;
         string extension = argv.Length > 4 && argv[4] != "--tree" ? argv[4] : ".hkx";
-        int written = Ba2.ExtractMatching(Path.GetFullPath(argv[1]), argv[2], Path.GetFullPath(argv[3]),
+        int written = OpenCommonwealth.Services.Archive.Ba2.ExtractMatching(Path.GetFullPath(argv[1]), argv[2], Path.GetFullPath(argv[3]),
                                           extension, Console.WriteLine, tree);
         Console.WriteLine($"wrote {written} files to {Path.GetFullPath(argv[3])}");
         return written > 0 ? 0 : 1;
+    }
+
+    /// Where a clip travels, read off its extracted motion.
+    ///
+    /// A walk does not move its bones across the ground: it plays on the spot and carries a separate
+    /// track saying where the character has got to. Point this at a folder to see which animations
+    /// carry one at all, which is the number worth knowing, since an idle carrying root motion and a
+    /// walk carrying none are both worth a second look.
+    private static int Motion(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+
+        if (Directory.Exists(target))
+        {
+            var files = Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories);
+            int carrying = 0, still = 0, failed = 0;
+            float furthest = 0;
+            string furthestName = "";
+
+            foreach (string file in files)
+            {
+                try
+                {
+                    var read = RootMotion.Read(file);
+                    if (!read.Any) { still++; continue; }
+
+                    carrying++;
+                    if (read.Travel.Length() > furthest)
+                    {
+                        furthest = read.Travel.Length();
+                        furthestName = Path.GetFileName(file);
+                    }
+                }
+                catch { failed++; }
+            }
+
+            Console.WriteLine($"{files.Length} files: {carrying} carry root motion, {still} stay on " +
+                              $"the spot, {failed} could not be read");
+            if (carrying > 0)
+                Console.WriteLine($"furthest travelled: {furthestName} at {furthest:F1} units");
+            return failed == files.Length ? 1 : 0;
+        }
+
+        var motion = RootMotion.Read(target);
+        Console.WriteLine($"{Path.GetFileName(target)}: {motion}");
+        if (!motion.Any) return 0;
+
+        Console.WriteLine($"up {motion.Up.X:F0} {motion.Up.Y:F0} {motion.Up.Z:F0}, " +
+                          $"forward {motion.Forward.X:F0} {motion.Forward.Y:F0} {motion.Forward.Z:F0}");
+
+        // Every eighth, because a walk carries dozens and the shape of the path is what is being
+        // looked at rather than each step of it.
+        for (int i = 0; i < motion.Samples.Count; i += Math.Max(1, motion.Samples.Count / 8))
+            Console.WriteLine($"  sample {i,3}  {motion.Samples[i]}");
+
+        Console.WriteLine($"  sample {motion.Samples.Count - 1,3}  {motion.Samples[^1]}");
+
+        // Reading between samples is what the viewport does, so it is checked here rather than only
+        // on screen. Halfway has to land between the ends and not outside them.
+        var half = RootMotion.At(motion, 0.5f);
+        Console.WriteLine($"halfway through: {half}");
+        return 0;
+    }
+
+    /// Reads an archive's index and finds files in it without unpacking anything, which is what the
+    /// window's own archive browser does.
+    ///
+    /// The index is the whole point. Fallout4 - Animations.ba2 holds 29,716 entries and reaching one
+    /// of them used to mean writing the other 29,715 to disk first. Reading one file out of it is
+    /// checked here rather than only in the window, because a file pulled out of an archive has to be
+    /// byte for byte what the same file is on disk.
+    private static int Ba2Browse(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        using var archive = OpenCommonwealth.Services.Archive.Ba2.Open(Path.GetFullPath(argv[1]));
+        Console.WriteLine($"{Path.GetFileName(argv[1])}: version {archive.Version}, " +
+                          $"{archive.Entries.Count} entries");
+
+        string query = argv.Length > 2 ? argv[2] : "";
+        string extension = argv.Length > 3 ? argv[3] : "";
+
+        var found = archive.Matching(query, extension).ToList();
+        Console.WriteLine($"{found.Count} match \"{query}\"{(extension.Length > 0 ? " ending " + extension : "")}");
+
+        foreach (var entry in found.Take(20))
+            Console.WriteLine($"  {entry.Name}  {entry.Unpacked} bytes" +
+                              (entry.Packed != 0 ? $", stored as {entry.Packed}" : ", stored plain"));
+
+        if (found.Count > 20) Console.WriteLine($"  and {found.Count - 20} more");
+        if (found.Count == 0) return 1;
+
+        // Reading one, so the index is not the only thing proved. A behaviour that comes out of the
+        // archive has to be one our own reader can take apart, which is the whole reason for opening
+        // it from here rather than extracting it first.
+        var first = found[0];
+        byte[] bytes = archive.Read(first);
+        Console.WriteLine($"\nread {first.FileName}: {bytes.Length} bytes" +
+                          (bytes.Length == first.Unpacked ? ", the length the index promised"
+                           : $", but the index said {first.Unpacked}"));
+
+        if (bytes.Length != first.Unpacked) return 1;
+        if (!first.Name.EndsWith(".hkx", StringComparison.OrdinalIgnoreCase)) return 0;
+
+        try
+        {
+            var image = PackfileImage.Read(bytes);
+            var objects = new PackfileObjects(image);
+            Console.WriteLine($"and it reads as a packfile: {objects.Instances.Count} objects, " +
+                              $"{objects.ClassNames().Count()} classes named");
+            return 0;
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine("but it does not read as a packfile: " + e.Message);
+            return 1;
+        }
     }
 
     // The pose the viewport draws, printed. Same AnimationPose call the window makes, so a shape that

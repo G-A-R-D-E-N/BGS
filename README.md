@@ -15,6 +15,14 @@ the game, with the evidence behind it, lives in the
 ## What it does
 
 - Opens any FO4 behaviour, character or project `.hkx` and shows the object graph.
+- **Straight out of a `.ba2`**: "From archive..." reads a Bethesda archive's index and lists what is
+  in it, so a vanilla behaviour can be opened without unpacking the archive around it. Every
+  behaviour in the game is inside `Fallout4 - Animations.ba2`, which holds 29,716 entries; reading
+  the index takes about a second and touches none of the file data. Type words in any order to
+  narrow the list, since the useful query is "dogmeat behavior" and the archive stores that as
+  `meshes/actors/dogmeat/behaviors/...`. A file opened this way is **read only**: it is a copy in a
+  temporary folder, Save is greyed out, and the window says where the copy went so it can be put
+  somewhere of your own if you want to edit it.
 - **Tree view**: nesting, Havok class per row, the animation each clip points at, file offset.
 - **Graph view**: a node canvas laid out in columns by depth from the root, edges drawn from the real
   reference fields and labelled with the field that owns each link, so an edge says why it exists.
@@ -71,6 +79,13 @@ the game, with the evidence behind it, lives in the
   than dropped, and vertices weighted only to those stay at their rest position. Nothing names a mesh
   from inside a behaviour, a character or a skeleton, so it has to be pointed at one; the race record
   lookup that would find it automatically is a later job.
+- **Where a clip takes you**: motion is extracted in this format, so a walk plays on the spot and
+  carries its displacement in a separate track that never reaches a bone. Measured: a Dogmeat walk
+  that travels 1,060 units moves its root bone 0.000 and its centre of mass 0.312. That makes travel
+  invisible in a viewport, so Playback says it in words on every clip, as `travels 187 units` or
+  `stays on the spot`, and **Follow travel** puts the two back together and walks the character along
+  its own path. Of 619 vanilla walk animations, 608 carry motion and 11 stay put; a clip named
+  `TurnLeft90` reads back as exactly 90 degrees.
 - **Playback tab**: select a clip generator and the animation it names is drawn on its own skeleton,
   as lines between joints, with play, pause, step and a scrub bar. The rig comes off the project
   chain, because a behaviour file names no skeleton and the character does. Drag to orbit, right
@@ -367,10 +382,9 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
 
 ## Known limits
 
-- The Playback viewport draws a wireframe, not a shaded character, and applies no root motion to the
-  camera, so a clip that travels walks off the middle of the view rather than staying put. What it is
-  for is seeing which animation a clip actually names and roughly what that animation does, not
-  judging how it looks in game.
+- The Playback viewport draws a wireframe, not a shaded character. What it is for is seeing which
+  animation a clip actually names and roughly what that animation does, not judging how it looks in
+  game.
 - A mesh only follows the skeleton for the bones the two agree on by name. Creature meshes match
   cleanly: Dogmeat's 118 bone references and the Mirelurk's 95 across eight shapes all found a
   skeleton bone. The human body mesh does not, and this is a real limit rather than a fault: it

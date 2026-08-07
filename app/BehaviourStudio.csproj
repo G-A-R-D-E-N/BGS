@@ -22,6 +22,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="*.cs" />
+    <Compile Include="../src/Archive/*.cs" />
     <Compile Include="../src/Hkx/*.cs" />
     <Compile Include="../src/Nif/*.cs" />
   </ItemGroup>

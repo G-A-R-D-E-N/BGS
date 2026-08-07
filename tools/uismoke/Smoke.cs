@@ -56,7 +56,7 @@ public static class Smoke
         // check has run would read as a check that found nothing.
         Check("the problem list is hidden until a check has run", 1, grids.Count(g => !g.IsVisible));
         foreach (string expected in new[]
-                 { "Open", "Browse...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove",
+                 { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove",
                    "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
                    "Play", "From selected node", "Fit" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
@@ -66,6 +66,20 @@ public static class Smoke
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         Check("the viewport draws nothing before a clip is picked", 0, window.Viewport.DrawnBones);
         CheckTrue("and is not playing", !window.IsPlaying);
+
+        // Both ticks exist and neither draws anything on its own. Follow travel moves the character
+        // along the path the clip carries, which is invisible otherwise, since motion is extracted in
+        // this format and the bones play on the spot.
+        var ticks = Find<CheckBox>(window).Select(c => c.Content?.ToString()).ToList();
+        CheckTrue("the reference pose tick is there", ticks.Contains("Reference pose"));
+        CheckTrue("and the follow travel tick", ticks.Contains("Follow travel"));
+
+        foreach (var tick in Find<CheckBox>(window))
+        {
+            tick.IsChecked = true;
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        }
+        Check("ticking them with nothing loaded still draws nothing", 0, window.Viewport.DrawnBones);
 
         tabs[0].SelectedIndex = 0;
         CheckTrue("save is disabled until something changes",
@@ -476,8 +490,89 @@ public static class Smoke
                       window.LoadedXml.Contains(typed, StringComparison.Ordinal));
         }
 
+        ArchiveBrowserBuilds();
+
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
+    }
+
+    /// The archive browser, built on a real archive written here rather than one from the game, so
+    /// this runs on a build machine with no Fallout 4 on it.
+    ///
+    /// Its own window, so it needs walking the same way the tabs do: a control that is never shown
+    /// is never built, and a filter that throws would otherwise only be found by a person typing
+    /// into it.
+    private static void ArchiveBrowserBuilds()
+    {
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-archive.ba2");
+        WriteArchive(path, new[]
+        {
+            "Meshes/Actors/Dogmeat/Behaviors/DogmeatRoot.hkx",
+            "Meshes/Actors/Character/Behaviors/Behavior.hkx",
+            "Meshes/Actors/Character/CharacterAssets/skeleton.nif",
+        });
+
+        using var archive = OpenCommonwealth.Services.Archive.Ba2.Open(path);
+        var browser = new ArchiveBrowser(archive, ".hkx");
+        browser.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        var lists = Find<ListBox>(browser);
+        var boxes = Find<TextBox>(browser);
+        Check("the browser has a list", 1, lists.Count);
+        Check("and a filter box", 1, boxes.Count);
+
+        // The extension is the browser's, not the caller's afterthought: a .nif in the archive must
+        // not be offered as a behaviour to open.
+        Check("only the two behaviours are offered", 2, lists[0].ItemCount);
+
+        boxes[0].Text = "dogmeat behaviors";
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        Check("typing words in any order narrows it", 1, lists[0].ItemCount);
+
+        boxes[0].Text = "mirelurk";
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        Check("and a word nothing matches empties it", 0, lists[0].ItemCount);
+        CheckTrue("with nothing chosen while the list is empty", browser.Chosen == null);
+
+        browser.Close();
+        System.IO.File.Delete(path);
+    }
+
+    /// The smallest valid BA2: a 24 byte header, one 36 byte entry per file, all stored plain, then
+    /// the name table. Enough for the browser to have something real to list.
+    private static void WriteArchive(string path, string[] names)
+    {
+        using var stream = System.IO.File.Create(path);
+        using var writer = new System.IO.BinaryWriter(stream);
+
+        var body = System.Text.Encoding.ASCII.GetBytes("file");
+        long at = 24 + 36 * names.Length;
+        long nameTableAt = at + body.Length * names.Length;
+
+        writer.Write(new[] { 'B', 'T', 'D', 'X' });
+        writer.Write(1u);
+        writer.Write(new[] { 'G', 'N', 'R', 'L' });
+        writer.Write((uint)names.Length);
+        writer.Write((ulong)nameTableAt);
+
+        for (int i = 0; i < names.Length; i++)
+        {
+            writer.Write(0u); writer.Write(0u); writer.Write(0u); writer.Write(0u);
+            writer.Write((ulong)(at + i * body.Length));
+            writer.Write(0u);
+            writer.Write((uint)body.Length);
+            writer.Write(0u);
+        }
+
+        foreach (var _ in names) writer.Write(body);
+
+        foreach (string name in names)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(name.Replace('/', '\\'));
+            writer.Write((ushort)bytes.Length);
+            writer.Write(bytes);
+        }
     }
 
     /// The value box on the row whose label is this field's name.
