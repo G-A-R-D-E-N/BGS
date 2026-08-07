@@ -3,6 +3,39 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-07, a frame can be changed from the window
+
+The other end of #35's first half. Writing a clip back was already done, but nothing in the window
+could change one, so the only way to edit an animation was to drive a harness.
+
+The Animation tab does it now. Pick a frame row and its position, rotation and scale fill three
+boxes; Set frame puts them back into the clip held in memory, so several frames can be changed
+before anything touches disk; Save uncompressed writes the clip out and keeps the original beside it
+as a `.bak`. The button says uncompressed because that is what it means: there is still no encoder,
+so a saved clip is every frame written out as it is, a much larger file holding exactly what went
+into it.
+
+**A frame is not addressable by anything in the file.** There is no id on it, no name, nothing a
+pointer aims at, because a clip is a run of numbers rather than a set of objects. So a row carries
+where it sits, the track and the frame, and that is what makes it selectable at all.
+
+**Two checks in the window harness were wrong for any animation file**, and are fixed rather than
+stepped around. One demanded a clip generator, which an animation has not got because it is a file of
+frames rather than a graph. The other took frame 0 and the last frame, found them equal and called
+the clip still, which is what a loop is; it asks whether the pose moves at all now, against the
+middle as well as the end.
+
+**A defect in the save came out from under it**, which is the third time driving a thing rather than
+reasoning about it has turned one up. The confirmation was written before the reload that a save
+performs, and opening a file clears those boxes, so pressing Save put the message up and wiped it in
+the same breath and read as a button that did nothing. It is said after the reload now.
+
+Proved by pressing the button on a copy of a real animation rather than by stopping at the decoded
+frames. The file on disk comes back as `hkaInterleavedUncompressedAnimation`, holds the frame that
+was typed, keeps its `.bak`, and every other frame of every other track is bit for bit where it was.
+Window checks 80 on an animation and 87 on a behaviour, and the same again with Java hidden. symrm
+595, xunit 65.
+
 ## 2026-08-07, an animation's frames can be written back
 
 The first half of #35, and the half that needed no encoder. A clip can be decoded, changed and
