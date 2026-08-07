@@ -356,6 +356,45 @@ public static class Smoke
                           filtered < unfiltered && filtered <= window.AnimationAnnotationCount + 1);
                 window.FilterBones("");
                 Check($"{name}: clearing the filter brings the tracks back", unfiltered, window.AnimationGrid.RowCount);
+
+                // Changing a frame. A frame is not addressable by anything in the file, so it is
+                // picked by its row, and the whole path from picking to typing to the number
+                // actually moving is what this drives. The file is not written: saving is the same
+                // call the harness proves on real animations, and doing it here would rewrite the
+                // sample.
+                CheckTrue($"{name}: nothing is picked before a row is", !window.AnimationEdited);
+
+                if (window.PickFrame(0, 0))
+                {
+                    CheckTrue($"{name}: picking a frame fills the position box",
+                              window.FramePositionText.Length > 0);
+                    CheckTrue($"{name}: and the rotation box", window.FrameRotationText.Length > 0);
+                    CheckTrue($"{name}: and says which frame it is",
+                              window.FrameEditAnswer.Contains("frame 0", StringComparison.Ordinal));
+
+                    window.TypeFramePosition("11.5, -22.25, 33.75");
+                    var moved = window.FramePosition(0, 0);
+                    CheckTrue($"{name}: typing a position moves that frame",
+                              Math.Abs(moved.X - 11.5f) < 0.001f && Math.Abs(moved.Y + 22.25f) < 0.001f &&
+                              Math.Abs(moved.Z - 33.75f) < 0.001f);
+                    CheckTrue($"{name}: and the file counts as changed", window.AnimationEdited);
+
+                    // Refused rather than half applied, because two numbers where three are wanted
+                    // would otherwise land as a position nobody typed.
+                    window.TypeFramePosition("1, 2");
+                    var still = window.FramePosition(0, 0);
+                    CheckTrue($"{name}: a position short of three numbers is refused",
+                              Math.Abs(still.X - 11.5f) < 0.001f);
+                    CheckTrue($"{name}: and it says what it wanted",
+                              window.FrameEditAnswer.Contains("three numbers", StringComparison.Ordinal));
+
+                    SaveOnACopy(window, path, name);
+
+                    // Back to the file the run was given, so the checks after this see the file they
+                    // were pointed at rather than the copy.
+                    window.Open(path);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                }
             }
 
             // Playback. Only reachable when a skeleton resolved for this file, which for a loose
@@ -418,9 +457,20 @@ public static class Smoke
                 window.ScrubTo(frames - 1);
                 var atEnd = window.PoseNow!;
 
+                window.ScrubTo(frames / 2);
+                var atMiddle = window.PoseNow!;
+                window.ScrubTo(frames - 1);
+
                 Check($"{name}: scrubbing to the last frame lands on it", frames - 1, window.PoseFrame);
-                CheckTrue($"{name}: and frame 0 and the last frame are different poses",
-                          OpenCommonwealth.Services.Hkx.AnimationPose.Distance(atStart, atEnd) > 0.01f);
+
+                // Against the middle as well as the end, because plenty of clips are loops and a
+                // loop ends where it began. Comparing only the two ends called a working idle
+                // broken, which is the check being wrong rather than the clip. What is really being
+                // asked is whether the pose moves at all as the clip runs.
+                CheckTrue($"{name}: and the pose moves as the clip runs",
+                          frames < 2 ||
+                          OpenCommonwealth.Services.Hkx.AnimationPose.Distance(atStart, atEnd) > 0.01f ||
+                          OpenCommonwealth.Services.Hkx.AnimationPose.Distance(atStart, atMiddle) > 0.01f);
                 CheckTrue($"{name}: with no bone landing on a NaN",
                           atEnd.Bones.All(b => !float.IsNaN(b.Position.X) && !float.IsNaN(b.Position.Y)
                                                                           && !float.IsNaN(b.Position.Z)));
@@ -467,8 +517,21 @@ public static class Smoke
 
             string clip = OpenCommonwealth.Services.Hkx.HkxTextEdit
                 .IdsOfClass(window.LoadedXml, "hkbClipGenerator").FirstOrDefault() ?? "";
-            CheckTrue("a clip to edit was found", clip.Length > 0);
-            if (clip.Length == 0) continue;
+
+            // An animation file holds no clip generator, and that is not a failure: it is a file of
+            // frames rather than a graph, and the frame editing above is what it gets checked on.
+            // Demanding one here reported every animation as broken. A behaviour with no clip in it
+            // is still a failure, so the check is kept for the files it means something for.
+            bool graph = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                .IdsOfClass(window.LoadedXml, "hkbBehaviorGraph").Count > 0;
+
+            if (graph) CheckTrue("a clip to edit was found", clip.Length > 0);
+
+            if (clip.Length == 0)
+            {
+                Console.WriteLine("        editing: skipped, this file holds no clip generator to type into");
+                continue;
+            }
 
             window.SelectNode(clip);
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -502,6 +565,68 @@ public static class Smoke
     /// Its own window, so it needs walking the same way the tabs do: a control that is never shown
     /// is never built, and a filter that throws would otherwise only be found by a person typing
     /// into it.
+    /// Presses the save button for real, on a copy.
+    ///
+    /// Everything above it stops at the decoded animation held in memory, which proves the editing
+    /// and nothing about the writing. The write is the part that replaces a file on disk, so it is
+    /// driven here rather than assumed from the harness that proves the converter: a copy is opened,
+    /// a frame is moved, the button is pressed, and the file on disk is read back and asked whether
+    /// the frame moved. The copy is used so the sample this run was pointed at is left alone.
+    private static void SaveOnACopy(MainWindow window, string path, string name)
+    {
+        string copy = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "uismoke-save-" + System.IO.Path.GetFileName(path));
+
+        try
+        {
+            System.IO.File.Copy(path, copy, true);
+            System.IO.File.Delete(copy + ".bak");
+        }
+        catch (System.IO.IOException) { return; }
+
+        window.Open(copy);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        if (!window.PickFrame(0, 0)) return;
+
+        window.TypeFramePosition("7.25, -8.5, 9.75");
+        window.PressSaveAnimation();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        Console.WriteLine("        " + window.FrameEditAnswer);
+
+        CheckTrue($"{name}: saving keeps the original as a .bak", System.IO.File.Exists(copy + ".bak"));
+        CheckTrue($"{name}: and says the file was written",
+                  window.FrameEditAnswer.StartsWith("Saved ", StringComparison.Ordinal));
+        CheckTrue($"{name}: and nothing is left unsaved afterwards", !window.AnimationEdited);
+
+        // Read off the disk rather than out of the window, because the window reloads itself after a
+        // save and would report its own memory either way.
+        var written = new OpenCommonwealth.Services.Hkx.HkxBinaryReader().ReadAnimation(copy);
+        Check($"{name}: the saved file is uncompressed", "hkaInterleavedUncompressedAnimation",
+              written.AnimationClass);
+
+        var landed = written.Tracks[0].Translations[0];
+        CheckTrue($"{name}: and holds the frame that was typed",
+                  Math.Abs(landed.X - 7.25f) < 0.001f && Math.Abs(landed.Y + 8.5f) < 0.001f &&
+                  Math.Abs(landed.Z - 9.75f) < 0.001f);
+
+        // The clip is not only correct where it was edited. Every other frame has to survive the
+        // round trip through the writer, or a save would quietly flatten the rest of the animation.
+        var before = new OpenCommonwealth.Services.Hkx.HkxBinaryReader().ReadAnimation(path);
+        float worst = 0;
+        for (int t = 0; t < before.NumTracks; t++)
+            for (int f = 0; f < before.NumFrames; f++)
+            {
+                if (t == 0 && f == 0) continue;
+                worst = Math.Max(worst,
+                    (before.Tracks[t].Translations[f] - written.Tracks[t].Translations[f]).Length());
+            }
+
+        Console.WriteLine($"        every other frame moved at most {worst:E2}");
+        CheckTrue($"{name}: leaving every other frame where it was", worst < 0.001f);
+    }
+
     private static void ArchiveBrowserBuilds()
     {
         string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-archive.ba2");
