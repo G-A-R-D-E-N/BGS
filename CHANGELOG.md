@@ -24,6 +24,36 @@ gets: `TurnLeft90` comes back as 90 degrees and no displacement, `turnLeft180` a
 walk as pure forward travel with no turn at all. Across 619 vanilla walk animations, 608 carry motion
 and 11 stay on the spot, none failed to read.
 
+## 2026-08-06, editing stops needing Java
+
+The text form a file is edited through is written from the file's own bytes now, instead of being
+unpacked by hkxpack. Reading had been native for a while; editing had not, and for one reason: an
+edit is made by rewriting that text and then working out what changed by comparing two texts. With no
+text there was nothing to rewrite, so every edit was refused.
+
+The measure that matters is whether our text is hkxpack's text. Over all 498 vanilla behaviours:
+
+| | |
+|---|---|
+| files hkxpack reads correctly | 370 |
+| of those, identical to ours | **370** |
+| lines compared | 385,773 |
+| files holding a class hkxpack strides wrongly | 128 |
+
+Those 128 are not a failure to match. hkxpack derives 520 bytes for `BSLookAtModifierBoneData` where
+the game uses 528, so its own reading of every element after the first is misaligned and its text is
+not a thing to match. The comparison says `COMPARABLE=no` on those rather than folding them into an
+average that would mean nothing.
+
+Seven rules were needed to reproduce that text, every one measured rather than reasoned about, and
+two of them only surfaced because the sweep ran over the whole corpus rather than a handful of files.
+The first reading of the array layout was three vectors a line, fitted to a single array in a single
+file; it is a sixty four character width, and 12,833 arrays say so.
+
+**The window's checks now pass identically with Java present and with Java hidden**, 77 either way,
+on a real 906 object behaviour. Comparing two files went native with the same change. What still
+needs Java is packing a file back after objects have been added or removed.
+
 ## 2026-08-06, behaviours open straight out of an archive
 
 Every behaviour in the game is inside `Fallout4 - Animations.ba2`. Opening one meant extracting the

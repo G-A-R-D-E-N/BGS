@@ -218,10 +218,11 @@ Download the release for your platform, unzip it, and run `BehaviourGraphStudio`
 `BehaviourGraphStudio.exe`). **Nothing to install.** It is one file with the .NET runtime inside it,
 and it does not need a game, a game engine, or an SDK. Keep the `tools/` folder next to it.
 
-Opening and reading a file needs nothing else at all. **Saving additionally needs a Java runtime**,
-because writing goes back through hkxpack. hkxpack itself ships in the release, in `tools/` beside
-the binary; Java does not, so install one if you intend to save. Without it the tool opens the file
-read only and says so in the status line rather than pretending.
+Opening, reading, editing and comparing a file need nothing else at all. **A Java runtime is only
+needed for a structural save**, meaning one that adds or removes objects rather than changing what is
+already there, because that still goes back through hkxpack. hkxpack itself ships in the release, in
+`tools/` beside the binary; Java does not. Without it the tool says so in the status line rather than
+pretending.
 
 There is a terminal mode for scripting and for proving a change without a display:
 
@@ -253,9 +254,10 @@ Linux one on a bare Debian image with no .NET and no build tools to prove it act
 ## Requirements
 
 - .NET 8 SDK to build. Nothing to build with, to run a release.
-- **A Java runtime** for anything beyond structure. The tree and the graph come from the native C#
-  reader and work without Java, but field-level editing and saving go through hkxpack. Without it the
-  tool stays read-only and says so in the status line rather than pretending. hkxpack itself is
+- **A Java runtime**, only for a structural save. Reading, editing and comparing come from the native
+  C# reader and work without it: the window's checks pass identically with Java present and with Java
+  hidden every way the tool looks for it, 77 checks either way. What still goes through hkxpack is
+  packing a file back after objects have been added or removed. hkxpack itself is
   bundled at `tools/hkxpack-cli.jar` (MIT, see `THIRD_PARTY_NOTICES.md`) and is found automatically
   next to the executable, so only Java has to be supplied. If it is installed somewhere the search
   does not reach, "Find Java..." in the status bar points the tool at it and remembers.
@@ -408,10 +410,13 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   `symrm panel` compares what the panel itself would display, **509,557 values, every one of them read
   from the file's own bytes with none falling back**, all agreeing. An enum field offers its declared
   values rather than asking for the name to be typed, which covers 42,733 of those fields.
-- **Java is no longer needed to open a file.** The graph, the tree, the properties, the symbols, what
-  each event is used for, and the whole checker are read from the file's own bytes. What still needs
-  it: saving anything the byte writer cannot do on its own, the compare tab, and walking a project
-  chain. See #32 and #34.
+- **Java is no longer needed to open, edit or compare a file.** The graph, the tree, the properties,
+  the symbols, what each event is used for, and the whole checker are read from the file's own bytes,
+  and the text form an edit is made through is written from those bytes as well rather than unpacked.
+  That text was set against hkxpack's own line by line over every vanilla behaviour: **of the 370
+  files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them**. The other 128
+  hold a class hkxpack strides wrongly, so its text is misaligned and there is nothing to match.
+  What still needs Java: packing a file back after objects have been added or removed. See #32 and #34.
 - Reading is measured, not assumed, over the whole game rather than a subset. All 531 behaviour files
   in `Fallout4 - Animations.ba2`, all 5329 states: every one resolves to a generator that exists in
   its own file, across 15 generator classes, and every transition resolves its event name. Nothing is

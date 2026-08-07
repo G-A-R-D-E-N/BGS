@@ -13,3 +13,5 @@ obj/
 
 # Test results
 [Tt]est[Rr]esults/
+.avalonia-build-tasks/
+/BehaviourGraphStudio/

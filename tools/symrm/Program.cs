@@ -40,6 +40,7 @@ public static class Program
             case "extract": return Extract(argv);
             case "ba2": return Ba2Browse(argv);
             case "motion": return Motion(argv);
+            case "xml": return Xml(argv);
             case "pose": return Pose(argv);
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
@@ -658,6 +659,154 @@ public static class Program
                                           extension, Console.WriteLine, tree);
         Console.WriteLine($"wrote {written} files to {Path.GetFullPath(argv[3])}");
         return written > 0 ? 0 : 1;
+    }
+
+    /// The text form written from the bytes, set against the text hkxpack writes for the same file.
+    ///
+    /// This is the last thing holding the Java requirement. Reading a behaviour has not needed
+    /// hkxpack for a while, but an edit is made by rewriting the unpacked text, so with no hkxpack
+    /// there is no text to rewrite. Producing the same text ourselves removes that without touching
+    /// any of the consumers written against it, and the only measure that matters is whether the two
+    /// are the same line for line.
+    private static int Xml(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string file = Path.GetFullPath(argv[1]);
+        string work = WorkDirectory("symrm-xml-", file);
+        HkxTextEdit.ResetDirectory(work);
+
+        string theirs = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+        string ours = NativeXml.From(File.ReadAllBytes(file));
+
+        // Written out beside the reference, so a disagreement can be read in place rather than only
+        // through this summary.
+        string beside = Path.Combine(work, "ours.xml");
+        File.WriteAllText(beside, ours);
+        Console.WriteLine($"ours written to {beside}");
+
+        var mine = ours.Replace("\r\n", "\n").Split('\n');
+        var them = theirs.Replace("\r\n", "\n").Split('\n');
+
+        // A real diff rather than comparing line one against line one. One extra line early on shifts
+        // every line after it, so an index by index comparison reports a whole file as different and
+        // buries the single rule that caused it. This walks both sides and resynchronises.
+        // Classes whose array elements hkxpack strides wrongly. Its own reading of one of these is
+        // misaligned from the second element on, which was measured and written up long before this:
+        // BSLookAtModifierBoneData is 528 bytes and hkxpack derives 520. Where our text differs
+        // inside one of those, hkxpack is the one that is wrong, so those differences are counted
+        // apart rather than chased.
+        var strided = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (_, className) in new PackfileObjects(PackfileImage.Read(file)).ClassNames())
+            foreach (var member in HavokClassTypes.Shipped.Members(className))
+                if (member.CType != null && HavokClassTypes.Shipped.PaddedBeyondHkxPack(member.CType))
+                    strided.Add(member.CType);
+
+        var edits = Diff(them, mine);
+        int differ = edits.Count;
+
+        // Which member names belong to one of those classes, so a differing line can be attributed to
+        // hkxpack's stride rather than merely coinciding with a file that holds one.
+        var theirFields = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string className in strided)
+            foreach (var member in HavokClassTypes.Shipped.Members(className))
+                theirFields.Add(member.Name);
+
+        // A comment counts as well as a value. The misaligned run inside one of these structs shifts
+        // its SERIALIZE_IGNORED lines along with its fields, and those carry the member name in a
+        // comment rather than in an attribute.
+        bool Excused(string line)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(
+                line, "<hkparam name=\"(\\w+)\"|<!-- (\\w+) SERIALIZE_IGNORED -->");
+            if (!m.Success) return false;
+
+            string name = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
+            return theirFields.Contains(name);
+        }
+
+        // The element boundaries around a misread struct, which carry no member name to attribute
+        // them by. Only counted in a file that holds one of those classes at all, and reported apart
+        // from the fields so the two are never one number.
+        bool Boundary(string line) =>
+            strided.Count > 0 && (line.Trim() == "<hkobject>" || line.Trim() == "</hkobject>");
+
+        int excused = edits.Count(e => Excused(e.Line));
+        int boundaries = edits.Count(e => !Excused(e.Line) && Boundary(e.Line));
+        differ -= excused + boundaries;
+        int shown = 0;
+
+        foreach (var (side, at, line) in edits)
+        {
+            if (Excused(line) || Boundary(line)) continue;
+            if (shown++ >= 16) break;
+            Console.WriteLine(side == '-' ? $"  hkxpack line {at + 1} has, and we do not:\n    {line}"
+                                          : $"  we have at line {at + 1}, and hkxpack does not:\n    {line}");
+        }
+
+        if (differ > shown) Console.WriteLine($"  and {differ - shown} more");
+
+        Console.WriteLine($"\n{Path.GetFileName(file)}: {them.Length} lines from hkxpack, " +
+                          $"{mine.Length} from us, {differ} line(s) differing" +
+                          (excused > 0 ? $", and {excused} where hkxpack strides a padded struct wrongly"
+                                       : "") +
+                          (boundaries > 0 ? $" with {boundaries} element boundary line(s) around them" : ""));
+
+        // A file holding one of those classes cannot be compared line by line with any confidence:
+        // hkxpack's own reading of it is misaligned, so the two texts genuinely diverge and a diff
+        // resynchronising through the wreckage reports more than is really there. Said as a flag so a
+        // sweep can hold the two kinds of file apart rather than averaging them.
+        Console.WriteLine(strided.Count > 0 ? "COMPARABLE=no" : "COMPARABLE=yes");
+        return differ == 0 ? 0 : 1;
+    }
+
+    /// The lines one side has and the other does not.
+    ///
+    /// Walks both sides together and, where they part, looks ahead on each for the nearest place they
+    /// agree again. That is the right shape for this comparison: the two texts are meant to be the
+    /// same file, so a disagreement is a handful of lines and not a rewrite, and a full longest
+    /// common subsequence over thirty thousand lines is nine hundred million cells for an answer that
+    /// resynchronises within twenty.
+    ///
+    /// The look ahead is bounded. Past the bound the two are not the same file with a rule wrong in
+    /// it, and saying so beats grinding.
+    private static List<(char Side, int At, string Line)> Diff(string[] left, string[] right)
+    {
+        const int Reach = 400;
+        var edits = new List<(char, int, string)>();
+
+        int a = 0, b = 0;
+        while (a < left.Length && b < right.Length)
+        {
+            if (left[a] == right[b]) { a++; b++; continue; }
+
+            // The nearest resynchronisation, preferring the shortest run of lines dropped from
+            // either side, so one inserted line is reported as one line and not as two.
+            int found = -1, skipLeft = 0, skipRight = 0;
+            for (int d = 1; d <= Reach && found < 0; d++)
+            {
+                if (a + d < left.Length && left[a + d] == right[b]) { found = d; skipLeft = d; }
+                else if (b + d < right.Length && left[a] == right[b + d]) { found = d; skipRight = d; }
+            }
+
+            if (found < 0)
+            {
+                edits.Add(('-', a++, left[a - 1]));
+                edits.Add(('+', b++, right[b - 1]));
+                continue;
+            }
+
+            for (int i = 0; i < skipLeft; i++) edits.Add(('-', a + i, left[a + i]));
+            for (int i = 0; i < skipRight; i++) edits.Add(('+', b + i, right[b + i]));
+            a += skipLeft;
+            b += skipRight;
+        }
+
+        while (a < left.Length) edits.Add(('-', a, left[a++]));
+        while (b < right.Length) edits.Add(('+', b, right[b++]));
+
+        return edits;
     }
 
     /// Where a clip travels, read off its extracted motion.
