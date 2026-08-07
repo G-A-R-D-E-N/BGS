@@ -3,6 +3,65 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-07, an animation's frames can be written back
+
+The first half of #35, and the half that needed no encoder. A clip can be decoded, changed and
+written back into a file.
+
+Nothing here re-encodes a compressed animation, and both formats the game ships are compressors, so
+an editor that can read a clip and not write one is an editor that cannot change a clip. Havok's own
+answer to that is a format with no compression in it, `hkaInterleavedUncompressedAnimation`, which is
+every frame of every track written out as it is. **Fallout 4 registers that class at startup**, read
+out of the class initializers the game itself runs, so the engine has the code to read one; it simply
+never ships a file that is one. The file gets much larger, which is the honest cost of not having an
+encoder and is what a re-encode would later have to beat rather than match.
+
+The old clip is not touched. Its bytes stay where they are and every pointer that named it is aimed
+at the new one, so it is left in the file unreferenced, which is the same shape as every other write
+here.
+
+**Three facts were measured rather than reasoned about**, and each would have been silently wrong.
+
+The frames are frame major, `transforms[frame * tracks + track]`, which is Havok's own indexing in
+its constructor and its sampler rather than the ordering that looks natural.
+
+A transform is four floats per channel and only three are the value. The fourth is the one nobody can
+look up: no decoder produces it and the class table only says the field is a transform. Counted with
+a new `symrm qstransform` over every reference pose in all 119 vanilla skeletons, 3,769 transforms:
+the translation's fourth lane takes **2,838 different values**, which is leftover memory rather than
+a number anybody wrote. So writing zero is as valid as anything the game ships.
+
+The annotations were shared with the clip they came from at first, which the format allows, since
+every array carries the flag saying the memory is not Havok's to free. It fails anyway, and not at
+runtime: the pointer tables are in the order the writer walked the objects, and a shared run's inner
+pointers can only sit at one place in that order. hkxpack read the second object's track names as
+empty and then lost its place, dropping the transform array entirely. They are copied now, with
+everything hanging off them.
+
+**A defect came out from under it**, the way one did last time. The lossless decoder never read
+annotation tracks at all, so a lossless clip came back with no bone names and no annotations while a
+spline clip beside it came back with both. It was invisible until the same clip was read two ways and
+the two readings disagreed. All 857 vanilla lossless animations were affected.
+
+Proved by carrying it out on real animations, not by planning it. `symrm interleave` decodes a clip,
+writes it out, decodes the file it produced, and compares every frame of every track, the bone names,
+the annotations and the duration. Then it moves one frame of one track by a known amount and requires
+that exactly that moved and nothing else did.
+
+| set | files | written | wrong |
+|---|---|---|---|
+| Dogmeat, checked with hkxpack as well | 443 | **443** | 0 |
+| Power Armor, our own reader only | 1,877 | **1,877** | 0 |
+
+Translation and scale come back bit for bit. Rotation comes back within a hundred thousandth of a
+degree, which is the normalising Havok itself applies to a stored rotation.
+
+One more thing that was the instrument rather than the data, worth recording because it read exactly
+like a real fault. The angle between two rotations was measured as `acos` of the dot product, which is
+the formula everyone writes and is useless near zero: the slope is infinite there, so a rounding error
+of one part in ten million came out as four hundredths of a degree and failed the threshold. Measured
+from how far apart the two lie instead, the same rotations agree to a hundred thousandth.
+
 ## 2026-08-06, an array of structs can be given a new length
 
 The second half of #44, and the half that closes #40. Bounding a variable the bounds array does not

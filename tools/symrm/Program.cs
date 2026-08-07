@@ -57,6 +57,8 @@ public static class Program
             case "objects": return Objects(argv);
             case "capacity": return Capacity(argv);
             case "grow": return Grow(argv);
+            case "qstransform": return QsTransform(argv);
+            case "interleave": return Interleave(argv);
             case "crosscheck": return CrossCheck(argv);
             case "savecheck": return SaveCheck(argv);
             case "mesh": return Mesh(argv);
@@ -150,6 +152,18 @@ public static class Program
               With a Java runtime the read back goes through hkxpack, which is a second
               implementation; without one it goes through our own reader, which is what proves the
               edit needs no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- interleave <animation.hkx | animDir>
+              Writes an animation's frames back out uncompressed, then decodes the file it produced
+              and checks every frame of every track against what went in, along with the bone names,
+              the annotations and the duration. Then moves one frame of one track by a known amount
+              and checks that exactly that moved and nothing else did. With Java it also asks
+              hkxpack, which is a second implementation, whether the file holds what it should.
+
+          dotnet run --project tools/symrm/symrm.csproj -- qstransform <skeleton.hkx | hkxDir>
+              What the fourth lane of a transform's translation and scale holds across the game's own
+              skeletons. Writing a transform means writing that lane, and it is the one nobody can
+              look up, so it is counted rather than reasoned about.
 
           dotnet run --project tools/symrm/symrm.csproj -- crosscheck <file.hkx>
               Reads every field it can out of the bytes and compares it against what hkxpack says
@@ -2778,6 +2792,319 @@ public static class Program
                 ?.Value.Trim() ?? "absent";
 
         return $"{Side("min")} to {Side("max")}";
+    }
+
+    // Writing an animation out uncompressed, and reading it back to see whether it survived.
+    //
+    // The check is the whole point. A compressed clip is decoded, written out frame by frame, and
+    // decoded again from the file that was produced, and every frame of every track has to come back
+    // the same. Nothing else in the file may move: the same skeleton, the same bone names, the same
+    // annotations, the same duration.
+    //
+    // Tolerance is not zero on purpose. Both compressed formats decode through floating point, and
+    // the written file stores exactly what came out of that, so the two decodes agree exactly on
+    // everything except the rotation, which is normalised on the way in the way Havok normalises it.
+    private static int Interleave(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        var files = Directory.Exists(argv[1])
+            ? Directory.EnumerateFiles(argv[1], "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToList()
+            : new List<string> { Path.GetFullPath(argv[1]) };
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm-interleave");
+        Directory.CreateDirectory(work);
+
+        // hkxpack is a second implementation, so a file it reads is a file whose layout is not just
+        // ours read back by ourselves. It is not required: without Java the round trip through our
+        // own reader still says whether the frames survived.
+        bool java = false;
+        try { NeedHkxPack(); java = true; }
+        catch (InvalidOperationException) { }
+
+        Console.WriteLine(java ? "checking the written files with hkxpack as well"
+                               : "no Java runtime, so checking with our own reader only");
+
+        int done = 0, refused = 0, wrong = 0, skipped = 0;
+        var reader = new HkxBinaryReader();
+
+        foreach (string file in files)
+        {
+            HkxAnimationData before;
+            try
+            {
+                if (!reader.TryReadAnimation(file, out before)) { skipped++; continue; }
+                if (before.NumFrames <= 0 || before.NumTracks <= 0) { skipped++; continue; }
+                if (Array.IndexOf(NativeAnimation.Compressed, before.AnimationClass) < 0) { skipped++; continue; }
+            }
+            catch (Exception) { skipped++; continue; }
+
+            Console.WriteLine($"\nFILE {Path.GetFileName(file)}");
+            Console.WriteLine($"  {before.AnimationClass}: {before.NumFrames} frame(s) of " +
+                              $"{before.NumTracks} track(s), {before.Duration:F4}s, " +
+                              $"{before.Annotations.Count} annotation(s)");
+
+            NativeAnimation.Result written;
+            try { written = NativeAnimation.Interleave(file, before); }
+            catch (InvalidOperationException e) { Console.WriteLine($"  REFUSED  {e.Message}"); refused++; continue; }
+            catch (Exception e) { Console.WriteLine($"  THREW  {e.Message}"); wrong++; continue; }
+
+            string outPath = Path.Combine(work, Path.GetFileNameWithoutExtension(file) + "-plain.hkx");
+            File.WriteAllBytes(outPath, written.Bytes);
+
+            HkxAnimationData after;
+            try { after = reader.ReadAnimation(outPath); }
+            catch (Exception e) { Console.WriteLine($"  UNREADABLE  {e.Message}"); wrong++; continue; }
+
+            if (after.AnimationClass != NativeAnimation.InterleavedClass)
+            {
+                Console.WriteLine($"  WRONG CLASS  came back as {after.AnimationClass}");
+                wrong++;
+                continue;
+            }
+
+            // Every frame of every track, both ways.
+            float worstT = 0, worstR = 0, worstS = 0;
+            int compared = 0;
+            string mismatch = "", worstWhere = "";
+
+            if (after.NumFrames != before.NumFrames || after.NumTracks != before.NumTracks)
+                mismatch = $"came back as {after.NumFrames} frame(s) of {after.NumTracks} track(s)";
+
+            if (mismatch.Length == 0)
+                for (int t = 0; t < before.NumTracks; t++)
+                {
+                    var a = before.Tracks[t];
+                    var b = after.Tracks[t];
+                    for (int f = 0; f < before.NumFrames; f++)
+                    {
+                        worstT = Math.Max(worstT, (a.Translations[f] - b.Translations[f]).Length());
+                        worstS = Math.Max(worstS, (a.Scales[f] - b.Scales[f]).Length());
+
+                        float turn = Angle(a.Rotations[f], b.Rotations[f]);
+                        if (turn > worstR)
+                        {
+                            worstR = turn;
+                            worstWhere = $"track {t} frame {f}: {a.Rotations[f]} became {b.Rotations[f]}";
+                        }
+                        compared++;
+                    }
+                }
+
+            string second = "not asked";
+            if (java)
+            {
+                try
+                {
+                    string checkDir = Path.Combine(work, "check");
+                    HkxTextEdit.ResetDirectory(checkDir);
+                    string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, outPath, checkDir));
+
+                    var held = System.Text.RegularExpressions.Regex.Match(
+                        xml, "class=\"" + NativeAnimation.InterleavedClass + "\"");
+                    var count = System.Text.RegularExpressions.Regex.Match(
+                        xml, "name=\"transforms\" numelements=\"(\\d+)\"");
+
+                    second = !held.Success ? "does not hold one"
+                        : !count.Success ? "holds one with no transforms"
+                        : count.Groups[1].Value == (before.NumFrames * before.NumTracks).ToString()
+                            ? $"reads {count.Groups[1].Value} transform(s)"
+                            : $"reads {count.Groups[1].Value} transform(s), not " +
+                              $"{before.NumFrames * before.NumTracks}";
+                }
+                catch (Exception e) { second = "could not read it: " + e.Message.Split('\n')[0]; }
+            }
+
+            bool secondAgrees = !java ||
+                second == $"reads {before.NumFrames * before.NumTracks} transform(s)";
+
+            bool sameNames = before.BoneNames.SequenceEqual(after.BoneNames);
+            bool sameAnnotations = before.Annotations.Count == after.Annotations.Count &&
+                before.Annotations.Zip(after.Annotations).All(p => p.First.Text == p.Second.Text &&
+                                                                   Math.Abs(p.First.Time - p.Second.Time) < 1e-6f);
+            bool sameDuration = Math.Abs(before.Duration - after.Duration) < 1e-6f;
+
+            // A hundredth of a degree, and a thousandth of a unit on a body measured in tens of
+            // units. Anything real is orders of magnitude above this; float rounding is orders
+            // below.
+            const float Place = 0.001f, Degree = 0.01f;
+            bool right = mismatch.Length == 0 && worstT < Place && worstS < Place && worstR < Degree &&
+                         sameNames && sameAnnotations && sameDuration && secondAgrees;
+
+            Console.WriteLine(mismatch.Length > 0
+                ? $"  {mismatch}"
+                : $"  read back: {compared} frame(s) compared, worst translation {worstT:E2}, " +
+                  $"scale {worstS:E2}, rotation {worstR:F5} degrees");
+            Console.WriteLine($"  bone names {(sameNames ? "identical" : "DIFFERENT")}, " +
+                              $"annotations {(sameAnnotations ? "identical" : "DIFFERENT")}, " +
+                              $"duration {(sameDuration ? "identical" : "DIFFERENT")}");
+            if (java) Console.WriteLine($"  hkxpack {second}");
+            Console.WriteLine($"  file grew by {written.Grew} bytes");
+            if (!right && worstWhere.Length > 0) Console.WriteLine("  worst rotation at " + worstWhere);
+
+            // Writing a clip back unchanged is the machinery, not the point. The point is changing
+            // one, so one frame of one track is moved by a known amount and the file is asked
+            // whether that is what happened: the nudged frame moved by exactly that, and nothing
+            // else moved at all.
+            if (right) right = Nudged(reader, file, before, work, ref mismatch);
+
+            Console.WriteLine("  " + (right ? "GOOD" : "WRONG"));
+
+            if (right) done++; else wrong++;
+        }
+
+        Console.WriteLine($"\nINTERLEAVE written={done} refused={refused} wrong={wrong} skipped={skipped}");
+        return wrong == 0 ? 0 : 1;
+    }
+
+    /// Moves one frame of one track and checks that the file says so.
+    ///
+    /// A clip that survives being written out unchanged proves the format was written correctly and
+    /// nothing about editing. This changes one number by an amount no animation would produce on its
+    /// own, writes it, reads it back, and requires two things: the frame that was moved moved by
+    /// exactly that, and every other frame of every other track did not move at all.
+    private static bool Nudged(HkxBinaryReader reader, string file, HkxAnimationData before,
+                               string work, ref string why)
+    {
+        var by = new System.Numerics.Vector3(1.5f, -2.25f, 0.75f);
+        int track = before.NumTracks / 2, frame = before.NumFrames / 2;
+
+        // Decoded again rather than reused, so the comparison below is against a reading that this
+        // edit has not touched.
+        var edited = reader.ReadAnimation(file);
+        var was = edited.Tracks[track].Translations[frame];
+        edited.Tracks[track].Translations[frame] = was + by;
+
+        NativeAnimation.Result written;
+        try { written = NativeAnimation.Interleave(file, edited); }
+        catch (Exception e) { Console.WriteLine("  NUDGE THREW  " + e.Message); why = e.Message; return false; }
+
+        string path = Path.Combine(work, Path.GetFileNameWithoutExtension(file) + "-nudged.hkx");
+        File.WriteAllBytes(path, written.Bytes);
+
+        HkxAnimationData after;
+        try { after = reader.ReadAnimation(path); }
+        catch (Exception e) { Console.WriteLine("  NUDGE UNREADABLE  " + e.Message); why = e.Message; return false; }
+
+        var landed = after.Tracks[track].Translations[frame];
+        float off = (landed - (was + by)).Length();
+
+        float elsewhere = 0;
+        for (int t = 0; t < before.NumTracks; t++)
+            for (int f = 0; f < before.NumFrames; f++)
+            {
+                if (t == track && f == frame) continue;
+                elsewhere = Math.Max(elsewhere,
+                    (before.Tracks[t].Translations[f] - after.Tracks[t].Translations[f]).Length());
+            }
+
+        bool ok = off < 0.001f && elsewhere < 0.001f;
+        Console.WriteLine($"  moved track {track} frame {frame} by {by}: landed {off:E2} from where it " +
+                          $"was asked to, worst movement anywhere else {elsewhere:E2}");
+        if (!ok) why = "the nudge did not land where it was asked to";
+        return ok;
+    }
+
+    /// How far apart two rotations are, in degrees, which is the only comparison that means anything
+    /// for a quaternion. Two things make comparing the components directly misleading: the same
+    /// rotation can be written two ways, negated throughout, and a quaternion of any length stands
+    /// for the same rotation as the unit one along it. The compressed decoders return rotations a
+    /// little off unit length, so without normalising both first this reports a fraction of a degree
+    /// of disagreement between two rotations that are the same rotation.
+    ///
+    /// Not `acos` of the dot product, which is the formula everyone writes and is useless here.
+    /// Near zero disagreement the dot product is near one, where `acos` has an infinite slope, so a
+    /// rounding error of one part in ten million comes out as four hundredths of a degree. That is
+    /// large enough to fail a threshold, and it reads as the data being wrong when the arithmetic
+    /// is. Measured the other way round instead, from how far apart the two lie, where the same
+    /// rounding error stays a rounding error.
+    private static float Angle(System.Numerics.Quaternion a, System.Numerics.Quaternion b)
+    {
+        a = System.Numerics.Quaternion.Normalize(a);
+        b = System.Numerics.Quaternion.Normalize(b);
+
+        // A rotation and its negation are the same rotation, so the nearer of the two is the one
+        // that means anything.
+        double near = Math.Min(Distance(a, b, 1), Distance(a, b, -1));
+        return (float)(2 * Math.Asin(Math.Clamp(near / 2, 0, 1)) * 180 / Math.PI);
+    }
+
+    private static double Distance(System.Numerics.Quaternion a, System.Numerics.Quaternion b, int sign)
+    {
+        double x = a.X - sign * b.X, y = a.Y - sign * b.Y, z = a.Z - sign * b.Z, w = a.W - sign * b.W;
+        return Math.Sqrt(x * x + y * y + z * z + w * w);
+    }
+
+    // The two lanes of a transform that nothing reads, counted in the game's own files.
+    //
+    // A Havok transform is 48 bytes: a translation, a rotation and a scale, each four floats wide.
+    // Only three of the four are the value. Writing a transform means writing the fourth as well,
+    // and it is the one nobody can look up: the decoders never produce it, the class table only says
+    // the field is a transform, and reasoning from Havok's identity constructor gives an answer about
+    // Havok rather than about Bethesda's data. So it is counted here out of every reference pose in
+    // every skeleton it is given, which is real vanilla transform data sitting in the same files.
+    private static int QsTransform(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        var files = Directory.Exists(argv[1])
+            ? Directory.EnumerateFiles(argv[1], "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToList()
+            : new List<string> { Path.GetFullPath(argv[1]) };
+
+        var translation = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var scale = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        int poses = 0, read = 0;
+
+        void Count(SortedDictionary<string, int> into, float w)
+        {
+            string key = w.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
+            into[key] = into.TryGetValue(key, out int had) ? had + 1 : 1;
+        }
+
+        foreach (string file in files)
+        {
+            PackfileImage image;
+            PackfileObjects objects;
+            try
+            {
+                image = PackfileImage.Read(file);
+                objects = new PackfileObjects(image);
+            }
+            catch (Exception) { continue; }
+
+            var data = image.Section("__data__");
+            if (data == null) continue;
+
+            bool any = false;
+            foreach (var instance in objects.OfClass("hkaSkeleton"))
+            {
+                int? at = objects.FieldAt(instance, "referencePose");
+                if (at == null) continue;
+
+                var array = objects.ArrayAt(at.Value);
+                if (array == null) continue;
+
+                for (int i = 0; i < array.Count; i++)
+                {
+                    int p = array.At + i * 48;
+                    if (p + 48 > data.Data.Length) break;
+
+                    Count(translation, BitConverter.ToSingle(data.Data, p + 12));
+                    Count(scale, BitConverter.ToSingle(data.Data, p + 44));
+                    poses++;
+                    any = true;
+                }
+            }
+            if (any) read++;
+        }
+
+        Console.WriteLine($"{read} skeleton file(s), {poses} transform(s)\n");
+        Console.WriteLine("the fourth lane of the translation");
+        foreach (var (key, n) in translation) Console.WriteLine($"  {key,-14} {n}");
+
+        Console.WriteLine("\nthe fourth lane of the scale");
+        foreach (var (key, n) in scale) Console.WriteLine($"  {key,-14} {n}");
+        return 0;
     }
 
     // What the top bits of an array's capacity word hold, across the corpus.
