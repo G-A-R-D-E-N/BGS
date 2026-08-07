@@ -53,6 +53,8 @@ public class MainWindow : Window
 
     private readonly TextBox _symbolName = Ux.Field("name", 170);
     private readonly TextBox _symbolValue = Ux.Field("value, for a variable", 130);
+    private readonly TextBox _symbolMin = Ux.Field("min", 80);
+    private readonly TextBox _symbolMax = Ux.Field("max", 80);
     private readonly TextBlock _symbolAudit = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
     private PapyrusEvents.Index _papyrus = new();
     private bool _papyrusScanned;
@@ -66,6 +68,13 @@ public class MainWindow : Window
     private HkxSkeleton? _poseSkeleton;
     private HkxAnimationData? _poseAnimation;
     private string _poseSource = "";
+
+    /// Where the open clip travels, which the drawn pose does not show. Motion is extracted in this
+    /// format: a walk plays on the spot and carries its displacement separately, so the bones stay
+    /// put no matter how far the clip takes you. Measured rather than assumed: a Dogmeat walk that
+    /// travels 1,060 units moves its root bone 0.000 and its centre of mass 0.312.
+    private RootMotion.Motion _poseMotion = new();
+    private bool _followTravel;
     private int _poseFrame;
     private bool _scrubbing;
     private DispatcherTimer? _clock;
@@ -108,6 +117,12 @@ public class MainWindow : Window
     private HkxBehaviorParser.BehaviorNode? _root;
 
     private string _hkxPath = "";
+
+    /// Set when the open file is a copy pulled out of a BA2 rather than a file on disk. The copy is
+    /// in a temporary folder, so saving into it would write somewhere the user will never look and
+    /// leave the archive untouched, which is worse than refusing.
+    private bool _readOnly;
+    private string _readOnlyWhy = "";
     private string _xmlPath = "";
     private string _xmlText = "";
     private ProjectChain? _projectChain;
@@ -138,6 +153,8 @@ public class MainWindow : Window
         open.Click += (_, _) => Load();
         var browse = Ux.Secondary("Browse...");
         browse.Click += async (_, _) => await Browse();
+        var archive = Ux.Secondary("From archive...");
+        archive.Click += async (_, _) => await OpenFromArchive();
         _pathField.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) Load(); };
 
         var expand = Ux.Secondary("Expand all");
@@ -195,7 +212,7 @@ public class MainWindow : Window
             Padding = new Thickness(14),
             Child = Rows(
                 (Ux.SectionTitle("Havok behaviour file"), false),
-                (Bar(_pathField, browse, open), false),
+                (Bar(_pathField, browse, archive, open), false),
                 (Ux.Pill(_summary), false),
                 (Bar(_filter, expand, collapse), false),
                 (tabs, true),
@@ -615,6 +632,21 @@ public class MainWindow : Window
             _skeleton.InvalidateVisual();
         };
 
+        var travel = new CheckBox
+        {
+            Content = "Follow travel",
+            Foreground = Ux.MetaBrush,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTip.SetTip(travel, "Move the character along the path the clip carries, instead of " +
+                               "playing it on the spot the way the file stores it.");
+        travel.IsCheckedChanged += (_, _) =>
+        {
+            _followTravel = travel.IsChecked == true;
+            ShowFrame(_poseFrame, stop: false);
+        };
+
         var reload = Ux.Secondary("From selected node");
         reload.Click += (_, _) => LoadPoseFromSelection(announce: true);
 
@@ -636,7 +668,7 @@ public class MainWindow : Window
 
         var transport = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         foreach (var control in new Control[]
-                 { _playButton, first, back, forward, last, fit, reference, reload, mesh, clearMesh })
+                 { _playButton, first, back, forward, last, fit, reference, travel, reload, mesh, clearMesh })
             transport.Children.Add(control);
 
         var bar = Bar(Ux.Pill(_playbackSummary), transport);
@@ -749,6 +781,11 @@ public class MainWindow : Window
         _poseSource = animationPath;
         _poseFrame = 0;
 
+        // Read off the file rather than off the decoded tracks, because it is not in them: the
+        // displacement lives in its own object and never reaches a bone.
+        try { _poseMotion = RootMotion.Read(animationPath); }
+        catch { _poseMotion = new RootMotion.Motion(); }
+
         var reference = AnimationPose.ReferencePose(_poseSkeleton!);
         var opening = AnimationPose.At(_poseSkeleton!, animation, 0);
         _skeleton.Show(opening, reference);
@@ -762,11 +799,94 @@ public class MainWindow : Window
         int driven = 0;
         foreach (int track in AnimationPose.TracksByBone(_poseSkeleton!, animation)) if (track >= 0) driven++;
 
+        // Travel is said here whether or not it is being drawn, because it is invisible otherwise:
+        // the bones stay on the spot, so a clip that takes the character 1,060 units looks exactly
+        // like one that goes nowhere until this line says so.
+        string travelled = _poseMotion.Any
+            ? $"   travels {_poseMotion.Travel.Length():F0} units" +
+              (Math.Abs(_poseMotion.Turn) > 0.02f
+                  ? $" and turns {_poseMotion.Turn * 180 / MathF.PI:F0} degrees"
+                  : "")
+            : "   stays on the spot";
+
         SetPlaybackSummary(
             $"{label}   {animation.NumFrames} frames at {1f / Math.Max(animation.FrameDuration, 0.0001f):F0} fps, " +
             $"{animation.Duration:F2}s   {driven} of {_poseSkeleton!.BoneNames.Count} bones driven   " +
-            $"on {_poseSkeleton.Name}", Ux.MetaBrush);
+            $"on {_poseSkeleton.Name}{travelled}", Ux.MetaBrush);
         UpdateFrameLabel();
+    }
+
+    /// Opens a behaviour straight out of a BA2, without unpacking the archive around it.
+    ///
+    /// Every behaviour in the game is inside Fallout4 - Animations.ba2, and reaching one of them used
+    /// to mean writing all 29,716 entries to disk first. Reading the index takes about a second and
+    /// touches no file data, so the browser lists the archive itself.
+    ///
+    /// The chosen file is written to a temporary folder and opened from there, because everything
+    /// downstream of here works on a path: the project chain, the animation reader, the mesh, the
+    /// validator. What it is not is somewhere to save. The window goes read only, and says so, rather
+    /// than letting an edit land in a temporary file the user will never find again.
+    private async Task OpenFromArchive()
+    {
+        var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Which archive to look in",
+            AllowMultiple = false,
+            SuggestedStartLocation = await StartFolder(),
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Bethesda archives") { Patterns = new[] { "*.ba2", "*.BA2" } },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        string? archivePath = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (archivePath == null) return;
+
+        OpenCommonwealth.Services.Archive.Ba2 archive;
+        try
+        {
+            archive = OpenCommonwealth.Services.Archive.Ba2.Open(archivePath);
+        }
+        catch (Exception e)
+        {
+            SetStatus("That archive could not be read: " + e.Message, Ux.BadBrush);
+            return;
+        }
+
+        using (archive)
+        {
+            var browser = new ArchiveBrowser(archive, ".hkx");
+            await browser.ShowDialog(this);
+            if (browser.Chosen is not { } entry) return;
+
+            try
+            {
+                // Under a folder named for the archive, so two files of the same name out of two
+                // archives do not land on top of each other, and the folder is one a person can find
+                // if they want the copy afterwards.
+                string folder = Path.Combine(Path.GetTempPath(), "BehaviourGraphStudio",
+                                             Path.GetFileNameWithoutExtension(archivePath));
+                Directory.CreateDirectory(folder);
+
+                string copy = Path.Combine(folder, entry.Name.Replace('/', '_'));
+                File.WriteAllBytes(copy, archive.Read(entry));
+
+                _pathField.Text = copy;
+                Load();
+
+                _readOnly = true;
+                _readOnlyWhy = $"{entry.FileName} came out of {Path.GetFileName(archivePath)}, and " +
+                               "nothing here writes back into an archive. Save a copy somewhere of " +
+                               "your own and open that to edit it.";
+                SetStatus($"Opened {entry.Name} from {Path.GetFileName(archivePath)}, read only. " +
+                          $"The copy is at {copy}", Ux.MetaBrush);
+            }
+            catch (Exception e)
+            {
+                SetStatus($"Could not open {entry.FileName} from the archive: " + e.Message, Ux.BadBrush);
+            }
+        }
     }
 
     // The behaviour chain names no mesh, and neither does the skeleton, so the only honest way to
@@ -902,6 +1022,9 @@ public class MainWindow : Window
         _poseAnimation = null;
         _poseSource = "";
         _poseFrame = 0;
+        // Left behind, the last clip's travel would be reported for the next one, and a stationary
+        // clip would be drawn walking down the path of the one before it.
+        _poseMotion = new RootMotion.Motion();
         _cachedSkeleton = null;
         _cachedSkeletonFor = "";
         _scrubbing = true;
@@ -1041,6 +1164,8 @@ public class MainWindow : Window
         // Update, not Show: re-fitting on every frame would jump the camera about as the pose's own
         // bounds change under it.
         var posed = AnimationPose.At(_poseSkeleton, _poseAnimation, _poseFrame);
+        if (_followTravel) posed = WithTravel(posed);
+
         _skeleton.Update(posed);
         UpdateMesh(posed, _poseSkeleton);
 
@@ -1048,6 +1173,37 @@ public class MainWindow : Window
         _scrub.Value = _poseFrame;
         _scrubbing = false;
         UpdateFrameLabel();
+    }
+
+    /// The same pose, moved along the path the clip carries.
+    ///
+    /// Motion is extracted in this format, so a walk plays on the spot and the displacement lives in
+    /// its own object. Drawing it means putting the two back together, which is what the game does to
+    /// the object rather than to the rig. The turn is about the animation's own up axis rather than
+    /// an assumed one, because the file states which axis that is.
+    private AnimationPose.Pose WithTravel(AnimationPose.Pose pose)
+    {
+        if (!_poseMotion.Any || _poseAnimation == null) return pose;
+
+        float fraction = _poseAnimation.NumFrames > 1
+            ? (float)_poseFrame / (_poseAnimation.NumFrames - 1)
+            : 0f;
+
+        var at = RootMotion.At(_poseMotion, fraction);
+        var turn = System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.Normalize(_poseMotion.Up), at.TurnRadians);
+
+        var moved = new AnimationPose.Pose { Frame = pose.Frame, Time = pose.Time };
+        moved.Links.AddRange(pose.Links);
+
+        foreach (var bone in pose.Bones)
+        {
+            var position = System.Numerics.Vector3.Transform(bone.Position, turn) + at.Position;
+            moved.Bones.Add(bone with { Position = position, Rotation = turn * bone.Rotation });
+            moved.Min = System.Numerics.Vector3.Min(moved.Min, position);
+            moved.Max = System.Numerics.Vector3.Max(moved.Max, position);
+        }
+
+        return moved;
     }
 
     private void UpdateFrameLabel()
@@ -1125,9 +1281,10 @@ public class MainWindow : Window
 
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-        if (java == null || jar == null)
+
+        if (_xmlText.Length == 0)
         {
-            SetDiffSummary("Comparing needs Java and hkxpack, the same as saving does.", Ux.BadBrush);
+            SetDiffSummary("Nothing is open to compare against.", Ux.BadBrush);
             return;
         }
 
@@ -1149,12 +1306,37 @@ public class MainWindow : Window
         ShowDiff(Path.GetFileName(other), result);
     }
 
-    private static BehaviourDiff.Result ComputeDiff(string mine, string other, string java, string jar)
+    /// The other file's text, written from its bytes where the class table describes it and unpacked
+    /// with hkxpack where it does not. Same order as opening a file, and for the same reason:
+    /// comparing is a reading, and a reading should not need Java.
+    private static string TextOf(string path, string? java, string? jar)
     {
+        try
+        {
+            var bytes = File.ReadAllBytes(path);
+            var objects = new PackfileObjects(PackfileImage.Read(bytes));
+
+            if (HavokClassTypes.Shipped.SignatureProblems(objects.ClassNames()).Count == 0)
+                return NativeXml.From(bytes);
+        }
+        catch (Exception) { }
+
+        if (java == null || jar == null) return "";
+
         string work = Path.Combine(Path.GetTempPath(), "bgs_compare");
         HkxTextEdit.ResetDirectory(work);
-        string xml = HkxTextEdit.Unpack(java, jar, other, work);
-        return BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(HkxTextEdit.ReadXml(xml)));
+        return HkxTextEdit.ReadXml(HkxTextEdit.Unpack(java, jar, path, work));
+    }
+
+    private static BehaviourDiff.Result ComputeDiff(string mine, string other, string? java, string? jar)
+    {
+        string theirs = TextOf(other, java, jar);
+        if (theirs.Length == 0)
+            throw new InvalidOperationException(
+                "this file's classes are not ones this build describes, and there is no hkxpack " +
+                "to fall back on");
+
+        return BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(theirs));
     }
 
     /// Runs the comparison through the same code the picker feeds, so a check exercises what a person
@@ -1163,7 +1345,7 @@ public class MainWindow : Window
     {
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-        if (_xmlText.Length == 0 || java == null || jar == null) return "";
+        if (_xmlText.Length == 0) return "";
 
         ShowDiff(Path.GetFileName(other), ComputeDiff(_xmlText, other, java, jar));
         return _diffSummary.Text ?? "";
@@ -1213,6 +1395,8 @@ public class MainWindow : Window
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         bar.Children.Add(_symbolName);
         bar.Children.Add(_symbolValue);
+        bar.Children.Add(_symbolMin);
+        bar.Children.Add(_symbolMax);
 
         foreach (var (label, type) in new (string, SymbolEditor.VariableType)[]
                  {
@@ -1232,6 +1416,7 @@ public class MainWindow : Window
                      ("+ event", AddSymbolEvent),
                      ("Rename", RenameSymbol),
                      ("Set value", SetSymbolValue),
+                     ("Set bounds", SetSymbolBounds),
                      ("Remove", RemoveSymbol),
                  })
         {
@@ -1354,6 +1539,8 @@ public class MainWindow : Window
         _graph.Reset();
         ClearPose();
         ResetHistory();
+        _readOnly = false;
+        _readOnlyWhy = "";
 
         string path = (_pathField.Text ?? "").Trim().Trim('"');
         if (path.Length == 0) { SetSummary("Enter the path to a .hkx file.", Ux.MutedBrush); return; }
@@ -1488,7 +1675,50 @@ public class MainWindow : Window
         // came out the same, so this is the same picture drawn without the dependency.
         var reading = _bytes == null ? null : NativeGraphModel.From(_bytes);
 
-        if (text)
+        // The text form is written from the file's own bytes when the class table can describe it,
+        // and unpacked with hkxpack when it cannot. That is what takes Java off the editing path as
+        // well as the reading one: an edit is made by rewriting this text, so with no text every edit
+        // was refused.
+        //
+        // The two texts were set against each other line by line across every vanilla behaviour. Of
+        // the 370 files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them.
+        // The other 128 hold a class hkxpack strides wrongly, so its own text is misaligned and there
+        // is nothing there to match.
+        bool own = false;
+        if (_bytes != null && reading != null)
+        {
+            try
+            {
+                string work = Path.Combine(Path.GetTempPath(), "bgs_edit",
+                                           Path.GetFileNameWithoutExtension(_hkxPath));
+                HkxTextEdit.ResetDirectory(work);
+
+                // Written to disk as well as held in memory, because saving a structural change still
+                // packs this file back through hkxpack when Java is there to do it.
+                _xmlPath = Path.Combine(work, Path.GetFileNameWithoutExtension(_hkxPath) + ".xml");
+                // Read off disk rather than from the objects already in hand, because the writer
+                // needs the file's header as well as its objects and the file has not changed since
+                // it was opened.
+                _xmlText = NativeXml.From(File.ReadAllBytes(_hkxPath));
+                File.WriteAllText(_xmlPath, _xmlText);
+
+                _objectIds = HkxTextEdit.ObjectIds(_xmlText);
+                own = _objectIds.Count == _objects.Count;
+
+                if (!own)
+                {
+                    _xmlText = "";
+                    _objectIds = new List<string>();
+                }
+            }
+            catch
+            {
+                _xmlText = "";
+                _objectIds = new List<string>();
+            }
+        }
+
+        if (text && !own)
         {
             try
             {
@@ -2162,12 +2392,49 @@ public class MainWindow : Window
 
         _symbolName.Text = names[index];
 
-        if (!variable) { _symbolValue.Text = ""; return; }
+        if (!variable) { _symbolValue.Text = ""; _symbolMin.Text = ""; _symbolMax.Text = ""; return; }
         var types = SymbolEditor.VariableTypes(model);
         var values = SymbolEditor.VariableValues(model);
+        var type = index < types.Count ? types[index] : SymbolEditor.VariableType.Int32;
+
         _symbolValue.Text = index < values.Count
-            ? SymbolEditor.DecodeValue(index < types.Count ? types[index] : SymbolEditor.VariableType.Int32, values[index])
+            ? SymbolEditor.DecodeValue(type, values[index])
             : "";
+
+        // Empty rather than zero where the array stops short of this variable, because the array is
+        // allowed to stop short and an unbounded variable is not one bounded to zero.
+        var bounds = SymbolEditor.VariableBounds(model);
+        _symbolMin.Text = index < bounds.Count ? SymbolEditor.DecodeValue(type, bounds[index].Min) : "";
+        _symbolMax.Text = index < bounds.Count ? SymbolEditor.DecodeValue(type, bounds[index].Max) : "";
+    }
+
+    /// Gives the selected variable a min and a max, which nothing in the window could do before: the
+    /// array could be inherited from vanilla or lost, never authored, so a variable added here never
+    /// got a bound at all.
+    private void SetSymbolBounds()
+    {
+        if (!SelectedSymbol(out bool variable, out int index) || !variable)
+        {
+            SetStatus("pick a variable row; events have no bounds.", Ux.MutedBrush);
+            return;
+        }
+
+        EditSymbols(xml =>
+        {
+            var types = SymbolEditor.VariableTypes(BehaviourGraphModel.Parse(xml));
+            var type = index < types.Count ? types[index] : SymbolEditor.VariableType.Int32;
+
+            string min = (_symbolMin.Text ?? "").Trim();
+            string max = (_symbolMax.Text ?? "").Trim();
+            if (min.Length == 0) min = "0";
+            if (max.Length == 0) max = "0";
+
+            xml = SymbolEditor.SetVariableBounds(xml, index, SymbolEditor.EncodeValue(type, min),
+                                                 SymbolEditor.EncodeValue(type, max));
+
+            SetStatus($"variable {index} is bounded {min} to {max}   (unsaved)", Ux.CodeBrush);
+            return xml;
+        });
     }
 
     private bool SelectedSymbol(out bool variable, out int index)
@@ -2671,6 +2938,8 @@ public class MainWindow : Window
         CommitPendingFields();
         if (!_dirty || _xmlText.Length == 0) return;
 
+        if (_readOnly) { SetStatus("Not saved: " + _readOnlyWhy, Ux.BadBrush); return; }
+
         // The graph checks apply whichever way the file gets written. The hkxpack round trip warning
         // does not, because writing the bytes in place has no round trip to lose anything in, so it
         // is asked for separately below rather than folded in here.
@@ -2771,7 +3040,12 @@ public class MainWindow : Window
     private void RefreshDirty()
     {
         _dirty = _xmlText.Length > 0 && _xmlText != _savedXml;
-        _saveButton.IsEnabled = _dirty;
+
+        // A file opened out of an archive can be edited and read, it just cannot be written back
+        // where it came from. Greying the button says that before an edit rather than after it, and
+        // Save refuses as well, so the answer does not depend on the button being right.
+        _saveButton.IsEnabled = _dirty && !_readOnly;
+        if (_readOnly) ToolTip.SetTip(_saveButton, _readOnlyWhy);
         _undoButton.IsEnabled = _undo.Count > 0;
         _redoButton.IsEnabled = _redo.Count > 0;
     }

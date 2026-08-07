@@ -39,6 +39,7 @@ public static class Tests
         ("AddedVariablesCarryTheirDeclaredType", AddedVariablesCarryTheirDeclaredType),
         ("EveryFindingPointsAtAnObject", EveryFindingPointsAtAnObject),
         ("AShortBoundsArrayStaysLinedUp", AShortBoundsArrayStaysLinedUp),
+        ("ABoundCanBeAuthoredPastTheEndOfTheArray", ABoundCanBeAuthoredPastTheEndOfTheArray),
         ("WindowsLineEndingsStillEdit", WindowsLineEndingsStillEdit),
         ("RepackDriftCatchesAChangedValue", RepackDriftCatchesAChangedValue),
         ("AnAnimationIsRefusedForSaving", AnAnimationIsRefusedForSaving),
@@ -47,6 +48,8 @@ public static class Tests
         ("PapyrusSendersAreReportedNotJudged", PapyrusSendersAreReportedNotJudged),
         ("APoseComposesDownTheBoneChain", APoseComposesDownTheBoneChain),
         ("AMeshAuthoredAwayFromTheOriginIsNotAFault", AMeshAuthoredAwayFromTheOriginIsNotAFault),
+        ("AnArchiveIsReadWithoutUnpackingIt", AnArchiveIsReadWithoutUnpackingIt),
+        ("TravelIsReadBetweenSamples", TravelIsReadBetweenSamples),
         ("AClearChannelKeepsTheReferencePose", AClearChannelKeepsTheReferencePose),
         ("SplineUndrivenChannelsReadAsIdentity", SplineUndrivenChannelsReadAsIdentity),
         ("APackfileSurvivesBeingRebuilt", APackfileSurvivesBeingRebuilt),
@@ -709,6 +712,59 @@ public static class Tests
         Check("with the first bound untouched", "10", BoundMax(tail, 0));
     }
 
+    /// A bound can be given to a variable the array does not reach yet.
+    ///
+    /// The array is allowed to stop short and usually does, so bounding the last variable in a file
+    /// with two bounds means writing the missing entries first. They are written unbounded, 0 to 0,
+    /// which is what the file already means inside the array, rather than copying a neighbour's
+    /// bound onto a variable nobody asked to bound.
+    private static void ABoundCanBeAuthoredPastTheEndOfTheArray()
+    {
+        Console.WriteLine("\na bound can be authored past the end of the array");
+
+        string xml = ThreeVariablesWithTwoBounds();
+        Check("two bounds to begin with", 2, SymbolEditor.Audit(BehaviourGraphModel.Parse(xml)).Bounds);
+
+        // The third variable, which the array does not reach.
+        string after = SymbolEditor.SetVariableBounds(xml, 2, "-5", "35");
+        var counts = SymbolEditor.Audit(BehaviourGraphModel.Parse(after));
+
+        Check("the array now reaches it", 3, counts.Bounds);
+        CheckTrue("and is parallel with the variables", counts.BoundsAreParallel);
+        Check("the new bound is the one asked for", "35", BoundMax(after, 2));
+        Check("with its minimum too", "-5", BoundMin(after, 2));
+
+        // The entries already there are not disturbed, which is the whole risk of extending a
+        // positional array: a bound that slides lands on a variable nobody bounded.
+        Check("the first bound is untouched", "10", BoundMax(after, 0));
+        Check("and the second", "20", BoundMax(after, 1));
+
+        // One already inside the array is replaced rather than appended to.
+        string second = SymbolEditor.SetVariableBounds(xml, 0, "1", "2");
+        Check("bounding one already in the array does not lengthen it", 2,
+              SymbolEditor.Audit(BehaviourGraphModel.Parse(second)).Bounds);
+        Check("and it takes the new value", "2", BoundMax(second, 0));
+        Check("leaving its neighbour alone", "20", BoundMax(second, 1));
+
+        // A variable that does not exist has no bound to set, and saying so beats writing an entry
+        // that bounds nothing.
+        string refused = "";
+        try { SymbolEditor.SetVariableBounds(xml, 7, "0", "0"); }
+        catch (ArgumentOutOfRangeException e) { refused = e.Message; }
+        CheckTrue("bounding a variable the file does not have is refused",
+                  refused.Contains("3 variable(s)", StringComparison.Ordinal));
+    }
+
+    private static string BoundMin(string xml, int index)
+    {
+        int start = xml.IndexOf("name=\"variableBounds\"", StringComparison.Ordinal);
+        if (start < 0) return "";
+        var minima = System.Text.RegularExpressions.Regex
+            .Matches(xml[start..], "name=\"min\".*?name=\"value\">(-?\\d+)<",
+                     System.Text.RegularExpressions.RegexOptions.Singleline);
+        return index < minima.Count ? minima[index].Groups[1].Value : "";
+    }
+
     // The bound values sit in nested hkbVariableValue objects rather than as plain members, so this
     // reads them out of the text rather than through the model's scalar view.
     private static string BoundMax(string xml, int index)
@@ -1240,6 +1296,140 @@ public static class Tests
             .BindError(wrong, OpenCommonwealth.Services.Nif.SkinnedMesh.Bind(wrong, rig), rig, out _);
 
         CheckTrue("a bind turned the wrong way is still caught", broken > 10);
+    }
+
+    /// A BA2 built here rather than taken from the game, so the archive reader is checked on a
+    /// machine with no Fallout 4 on it.
+    ///
+    /// The format is a 24 byte header, one 36 byte entry per file, then a name table at the offset
+    /// the header names. Both storage forms are written: one entry plain and one zlib compressed,
+    /// because the compressed branch is the one that reads a different length than the index states.
+    private static string ArchiveOfTwoFiles(byte[] plain, byte[] compressible)
+    {
+        var names = new[] { "Meshes/Actors/Dogmeat/Behaviors/DogmeatRoot.hkx", "Meshes/Actors/Human/skeleton.nif" };
+
+        byte[] squashed;
+        using (var buffer = new MemoryStream())
+        {
+            using (var zlib = new System.IO.Compression.ZLibStream(
+                       buffer, System.IO.Compression.CompressionMode.Compress, true))
+                zlib.Write(compressible, 0, compressible.Length);
+            squashed = buffer.ToArray();
+        }
+
+        string path = Path.Combine(Path.GetTempPath(), "symrm-archive-probe.ba2");
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+
+        long headerEnd = 24 + 36 * 2;
+        long firstAt = headerEnd;
+        long secondAt = firstAt + plain.Length;
+        long nameTableAt = secondAt + squashed.Length;
+
+        writer.Write(new[] { 'B', 'T', 'D', 'X' });
+        writer.Write(1u);
+        writer.Write(new[] { 'G', 'N', 'R', 'L' });
+        writer.Write(2u);
+        writer.Write((ulong)nameTableAt);
+
+        void Entry(long at, uint packed, uint unpacked)
+        {
+            writer.Write(0u); writer.Write(0u); writer.Write(0u); writer.Write(0u);
+            writer.Write((ulong)at);
+            writer.Write(packed);
+            writer.Write(unpacked);
+            writer.Write(0u);
+        }
+
+        Entry(firstAt, 0, (uint)plain.Length);
+        Entry(secondAt, (uint)squashed.Length, (uint)compressible.Length);
+
+        writer.Write(plain);
+        writer.Write(squashed);
+
+        foreach (string name in names)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(name.Replace('/', '\\'));
+            writer.Write((ushort)bytes.Length);
+            writer.Write(bytes);
+        }
+
+        return path;
+    }
+
+    /// Opening an archive reads its index and none of its file data, which is the whole reason a
+    /// behaviour can be reached out of a 29,716 entry archive without writing 29,715 files first.
+    private static void AnArchiveIsReadWithoutUnpackingIt()
+    {
+        Console.WriteLine("\nan archive is read without unpacking it");
+
+        var plain = System.Text.Encoding.ASCII.GetBytes("a behaviour would go here");
+        var compressible = System.Text.Encoding.ASCII.GetBytes(new string('x', 4096));
+
+        string path = ArchiveOfTwoFiles(plain, compressible);
+
+        using (var archive = OpenCommonwealth.Services.Archive.Ba2.Open(path))
+        {
+            Check("both files are in the index", 2, archive.Entries.Count);
+            Check("with the archive's own path separators turned round", "Meshes/Actors/Dogmeat/Behaviors/DogmeatRoot.hkx",
+                  archive.Entries[0].Name);
+            Check("and the file name on its own", "DogmeatRoot.hkx", archive.Entries[0].FileName);
+            Check("and the folder it sits in", "Meshes/Actors/Dogmeat/Behaviors", archive.Entries[0].Folder);
+
+            // Words in any order, because the useful query is "dogmeat behavior" and the archive
+            // stores that as a path where no single substring matches both.
+            Check("words match in any order", 1, archive.Matching("dogmeat behavior").Count());
+            Check("and in the other order too", 1, archive.Matching("behavior dogmeat").Count());
+            Check("an extension narrows it", 1, archive.Matching("", ".nif").Count());
+            Check("a word nothing has matches nothing", 0, archive.Matching("mirelurk").Count());
+            Check("no filter matches everything", 2, archive.Matching("").Count());
+
+            // Both storage forms, because the compressed one reads a different number of bytes off
+            // disk than the index says the file is.
+            CheckTrue("a plainly stored file comes back as it went in",
+                      archive.Read(archive.Entries[0]).SequenceEqual(plain));
+            CheckTrue("and a compressed one is inflated",
+                      archive.Read(archive.Entries[1]).SequenceEqual(compressible));
+        }
+
+        File.Delete(path);
+    }
+
+    /// Reading between root motion samples, which is what a viewport does every frame.
+    ///
+    /// The samples are spread across the clip's duration and there is no promise there is one per
+    /// animation frame, so a frame lands between two of them. Checked on a made up motion rather
+    /// than on a game file, so this runs anywhere; the reading of real files is checked by
+    /// `symrm motion`, where a clip called TurnLeft90 comes back as 90 degrees.
+    private static void TravelIsReadBetweenSamples()
+    {
+        Console.WriteLine("\ntravel is read between the samples that carry it");
+
+        var motion = new RootMotion.Motion { Duration = 1 };
+        motion.Samples.Add(new RootMotion.Sample(Vector3.Zero, 0));
+        motion.Samples.Add(new RootMotion.Sample(new Vector3(0, 100, 0), MathF.PI));
+
+        CheckTrue("the start is the first sample", Near(RootMotion.At(motion, 0).Position, Vector3.Zero));
+        CheckTrue("the end is the last", Near(RootMotion.At(motion, 1).Position, new Vector3(0, 100, 0)));
+        CheckTrue("and halfway is halfway", Near(RootMotion.At(motion, 0.5f).Position, new Vector3(0, 50, 0)));
+        CheckTrue("the turn is read the same way",
+                  Math.Abs(RootMotion.At(motion, 0.5f).TurnRadians - MathF.PI / 2) < 0.001f);
+
+        // Past either end rather than off it, because a scrub bar reaches its own limits and a frame
+        // count that disagrees with the sample count by one should not throw.
+        CheckTrue("before the start is the start", Near(RootMotion.At(motion, -5).Position, Vector3.Zero));
+        CheckTrue("past the end is the end", Near(RootMotion.At(motion, 5).Position, new Vector3(0, 100, 0)));
+
+        Check("travel is the straight line between the ends", 100f, RootMotion.At(motion, 1).Position.Y);
+        CheckTrue("and the total is the same", Math.Abs(motion.Travel.Length() - 100) < 0.001f);
+
+        // A clip that goes nowhere has no reference frame object at all, which is the ordinary case
+        // rather than a failure, and it must not be reported as sitting at the first sample.
+        var still = new RootMotion.Motion();
+        CheckTrue("a clip with no motion carries none", !still.Any);
+        CheckTrue("and reads as the origin rather than throwing",
+                  Near(RootMotion.At(still, 0.5f).Position, Vector3.Zero));
+        CheckTrue("and travels nothing", still.Travel == Vector3.Zero);
     }
 
     private static HkxTrackData FullTrack(params (Vector3 Pos, Quaternion Rot)[] frames)

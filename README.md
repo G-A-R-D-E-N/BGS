@@ -15,6 +15,14 @@ the game, with the evidence behind it, lives in the
 ## What it does
 
 - Opens any FO4 behaviour, character or project `.hkx` and shows the object graph.
+- **Straight out of a `.ba2`**: "From archive..." reads a Bethesda archive's index and lists what is
+  in it, so a vanilla behaviour can be opened without unpacking the archive around it. Every
+  behaviour in the game is inside `Fallout4 - Animations.ba2`, which holds 29,716 entries; reading
+  the index takes about a second and touches none of the file data. Type words in any order to
+  narrow the list, since the useful query is "dogmeat behavior" and the archive stores that as
+  `meshes/actors/dogmeat/behaviors/...`. A file opened this way is **read only**: it is a copy in a
+  temporary folder, Save is greyed out, and the window says where the copy went so it can be put
+  somewhere of your own if you want to edit it.
 - **Tree view**: nesting, Havok class per row, the animation each clip points at, file offset.
 - **Graph view**: a node canvas laid out in columns by depth from the root, edges drawn from the real
   reference fields and labelled with the field that owns each link, so an edge says why it exists.
@@ -44,7 +52,12 @@ the game, with the evidence behind it, lives in the
   created unattached, and unattached nodes are drawn in a column of their own rather than vanishing.
   Delete refuses while anything still points at the node, and names what.
 - **Symbols tab**: every variable and event with its index, type, initial value, and what references
-  it. Add, rename, retype the value, or remove. Removing renumbers every reference above it. Expand an
+  it. Add, rename, retype the value, bound it, or remove. **Set bounds** gives a variable a min and a
+  max, extending `variableBounds` to reach it when the array stops short, which it usually does: of
+  the 531 vanilla files it is empty in 224 and shorter than the variable list in 87. The entries
+  written in between are `0` to `0`, which is what the file already means by an unbounded variable
+  inside the array. Saving a bound still goes back through hkxpack, because an array of structs
+  cannot yet be written into the bytes in place. Removing renumbers every reference above it. Expand an
   event to see what the file does with it: raised here, listened for here, or written somewhere with
   no established direction, each naming the class and member. No verdict comes with it, for the reason
   under Validating.
@@ -71,6 +84,13 @@ the game, with the evidence behind it, lives in the
   than dropped, and vertices weighted only to those stay at their rest position. Nothing names a mesh
   from inside a behaviour, a character or a skeleton, so it has to be pointed at one; the race record
   lookup that would find it automatically is a later job.
+- **Where a clip takes you**: motion is extracted in this format, so a walk plays on the spot and
+  carries its displacement in a separate track that never reaches a bone. Measured: a Dogmeat walk
+  that travels 1,060 units moves its root bone 0.000 and its centre of mass 0.312. That makes travel
+  invisible in a viewport, so Playback says it in words on every clip, as `travels 187 units` or
+  `stays on the spot`, and **Follow travel** puts the two back together and walks the character along
+  its own path. Of 619 vanilla walk animations, 608 carry motion and 11 stay put; a clip named
+  `TurnLeft90` reads back as exactly 90 degrees.
 - **Playback tab**: select a clip generator and the animation it names is drawn on its own skeleton,
   as lines between joints, with play, pause, step and a scrub bar. The rig comes off the project
   chain, because a behaviour file names no skeleton and the character does. Drag to orbit, right
@@ -203,10 +223,11 @@ Download the release for your platform, unzip it, and run `BehaviourGraphStudio`
 `BehaviourGraphStudio.exe`). **Nothing to install.** It is one file with the .NET runtime inside it,
 and it does not need a game, a game engine, or an SDK. Keep the `tools/` folder next to it.
 
-Opening and reading a file needs nothing else at all. **Saving additionally needs a Java runtime**,
-because writing goes back through hkxpack. hkxpack itself ships in the release, in `tools/` beside
-the binary; Java does not, so install one if you intend to save. Without it the tool opens the file
-read only and says so in the status line rather than pretending.
+Opening, reading, editing and comparing a file need nothing else at all. **A Java runtime is only
+needed for a structural save**, meaning one that adds or removes objects rather than changing what is
+already there, because that still goes back through hkxpack. hkxpack itself ships in the release, in
+`tools/` beside the binary; Java does not. Without it the tool says so in the status line rather than
+pretending.
 
 There is a terminal mode for scripting and for proving a change without a display:
 
@@ -238,9 +259,10 @@ Linux one on a bare Debian image with no .NET and no build tools to prove it act
 ## Requirements
 
 - .NET 8 SDK to build. Nothing to build with, to run a release.
-- **A Java runtime** for anything beyond structure. The tree and the graph come from the native C#
-  reader and work without Java, but field-level editing and saving go through hkxpack. Without it the
-  tool stays read-only and says so in the status line rather than pretending. hkxpack itself is
+- **A Java runtime**, only for a structural save. Reading, editing and comparing come from the native
+  C# reader and work without it: the window's checks pass identically with Java present and with Java
+  hidden every way the tool looks for it, 77 checks either way. What still goes through hkxpack is
+  packing a file back after objects have been added or removed. hkxpack itself is
   bundled at `tools/hkxpack-cli.jar` (MIT, see `THIRD_PARTY_NOTICES.md`) and is found automatically
   next to the executable, so only Java has to be supplied. If it is installed somewhere the search
   does not reach, "Find Java..." in the status bar points the tool at it and remembers.
@@ -367,10 +389,9 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
 
 ## Known limits
 
-- The Playback viewport draws a wireframe, not a shaded character, and applies no root motion to the
-  camera, so a clip that travels walks off the middle of the view rather than staying put. What it is
-  for is seeing which animation a clip actually names and roughly what that animation does, not
-  judging how it looks in game.
+- The Playback viewport draws a wireframe, not a shaded character. What it is for is seeing which
+  animation a clip actually names and roughly what that animation does, not judging how it looks in
+  game.
 - A mesh only follows the skeleton for the bones the two agree on by name. Creature meshes match
   cleanly: Dogmeat's 118 bone references and the Mirelurk's 95 across eight shapes all found a
   skeleton bone. The human body mesh does not, and this is a real limit rather than a fault: it
@@ -403,10 +424,13 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   `symrm panel` compares what the panel itself would display, **509,557 values, every one of them read
   from the file's own bytes with none falling back**, all agreeing. An enum field offers its declared
   values rather than asking for the name to be typed, which covers 42,733 of those fields.
-- **Java is no longer needed to open a file.** The graph, the tree, the properties, the symbols, what
-  each event is used for, and the whole checker are read from the file's own bytes. What still needs
-  it: saving anything the byte writer cannot do on its own, the compare tab, and walking a project
-  chain. See #32 and #34.
+- **Java is no longer needed to open, edit or compare a file.** The graph, the tree, the properties,
+  the symbols, what each event is used for, and the whole checker are read from the file's own bytes,
+  and the text form an edit is made through is written from those bytes as well rather than unpacked.
+  That text was set against hkxpack's own line by line over every vanilla behaviour: **of the 370
+  files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them**. The other 128
+  hold a class hkxpack strides wrongly, so its text is misaligned and there is nothing to match.
+  What still needs Java: packing a file back after objects have been added or removed. See #32 and #34.
 - Reading is measured, not assumed, over the whole game rather than a subset. All 531 behaviour files
   in `Fallout4 - Animations.ba2`, all 5329 states: every one resolves to a generator that exists in
   its own file, across 15 generator classes, and every transition resolves its event name. Nothing is

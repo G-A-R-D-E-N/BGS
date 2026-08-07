@@ -38,6 +38,9 @@ public static class Program
             case "skeleton": return Skeleton(argv);
             case "rig": return Rig(argv);
             case "extract": return Extract(argv);
+            case "ba2": return Ba2Browse(argv);
+            case "motion": return Motion(argv);
+            case "xml": return Xml(argv);
             case "pose": return Pose(argv);
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
@@ -212,7 +215,7 @@ public static class Program
     private static int Corpus(string[] argv)
     {
         if (argv.Length < 3) { Usage(); return 1; }
-        int written = Ba2.ExtractMatching(argv[1], "behavior", argv[2], ".hkx", Console.WriteLine);
+        int written = OpenCommonwealth.Services.Archive.Ba2.ExtractMatching(argv[1], "behavior", argv[2], ".hkx", Console.WriteLine);
         Console.WriteLine($"wrote {written} behaviour files to {argv[2]}");
         return 0;
     }
@@ -652,10 +655,277 @@ public static class Program
 
         bool tree = Array.IndexOf(argv, "--tree") >= 0;
         string extension = argv.Length > 4 && argv[4] != "--tree" ? argv[4] : ".hkx";
-        int written = Ba2.ExtractMatching(Path.GetFullPath(argv[1]), argv[2], Path.GetFullPath(argv[3]),
+        int written = OpenCommonwealth.Services.Archive.Ba2.ExtractMatching(Path.GetFullPath(argv[1]), argv[2], Path.GetFullPath(argv[3]),
                                           extension, Console.WriteLine, tree);
         Console.WriteLine($"wrote {written} files to {Path.GetFullPath(argv[3])}");
         return written > 0 ? 0 : 1;
+    }
+
+    /// The text form written from the bytes, set against the text hkxpack writes for the same file.
+    ///
+    /// This is the last thing holding the Java requirement. Reading a behaviour has not needed
+    /// hkxpack for a while, but an edit is made by rewriting the unpacked text, so with no hkxpack
+    /// there is no text to rewrite. Producing the same text ourselves removes that without touching
+    /// any of the consumers written against it, and the only measure that matters is whether the two
+    /// are the same line for line.
+    private static int Xml(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+        NeedHkxPack();
+
+        string file = Path.GetFullPath(argv[1]);
+        string work = WorkDirectory("symrm-xml-", file);
+        HkxTextEdit.ResetDirectory(work);
+
+        string theirs = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
+        string ours = NativeXml.From(File.ReadAllBytes(file));
+
+        // Written out beside the reference, so a disagreement can be read in place rather than only
+        // through this summary.
+        string beside = Path.Combine(work, "ours.xml");
+        File.WriteAllText(beside, ours);
+        Console.WriteLine($"ours written to {beside}");
+
+        var mine = ours.Replace("\r\n", "\n").Split('\n');
+        var them = theirs.Replace("\r\n", "\n").Split('\n');
+
+        // A real diff rather than comparing line one against line one. One extra line early on shifts
+        // every line after it, so an index by index comparison reports a whole file as different and
+        // buries the single rule that caused it. This walks both sides and resynchronises.
+        // Classes whose array elements hkxpack strides wrongly. Its own reading of one of these is
+        // misaligned from the second element on, which was measured and written up long before this:
+        // BSLookAtModifierBoneData is 528 bytes and hkxpack derives 520. Where our text differs
+        // inside one of those, hkxpack is the one that is wrong, so those differences are counted
+        // apart rather than chased.
+        var strided = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (_, className) in new PackfileObjects(PackfileImage.Read(file)).ClassNames())
+            foreach (var member in HavokClassTypes.Shipped.Members(className))
+                if (member.CType != null && HavokClassTypes.Shipped.PaddedBeyondHkxPack(member.CType))
+                    strided.Add(member.CType);
+
+        var edits = Diff(them, mine);
+        int differ = edits.Count;
+
+        // Which member names belong to one of those classes, so a differing line can be attributed to
+        // hkxpack's stride rather than merely coinciding with a file that holds one.
+        var theirFields = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string className in strided)
+            foreach (var member in HavokClassTypes.Shipped.Members(className))
+                theirFields.Add(member.Name);
+
+        // A comment counts as well as a value. The misaligned run inside one of these structs shifts
+        // its SERIALIZE_IGNORED lines along with its fields, and those carry the member name in a
+        // comment rather than in an attribute.
+        bool Excused(string line)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(
+                line, "<hkparam name=\"(\\w+)\"|<!-- (\\w+) SERIALIZE_IGNORED -->");
+            if (!m.Success) return false;
+
+            string name = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
+            return theirFields.Contains(name);
+        }
+
+        // The element boundaries around a misread struct, which carry no member name to attribute
+        // them by. Only counted in a file that holds one of those classes at all, and reported apart
+        // from the fields so the two are never one number.
+        bool Boundary(string line) =>
+            strided.Count > 0 && (line.Trim() == "<hkobject>" || line.Trim() == "</hkobject>");
+
+        int excused = edits.Count(e => Excused(e.Line));
+        int boundaries = edits.Count(e => !Excused(e.Line) && Boundary(e.Line));
+        differ -= excused + boundaries;
+        int shown = 0;
+
+        foreach (var (side, at, line) in edits)
+        {
+            if (Excused(line) || Boundary(line)) continue;
+            if (shown++ >= 16) break;
+            Console.WriteLine(side == '-' ? $"  hkxpack line {at + 1} has, and we do not:\n    {line}"
+                                          : $"  we have at line {at + 1}, and hkxpack does not:\n    {line}");
+        }
+
+        if (differ > shown) Console.WriteLine($"  and {differ - shown} more");
+
+        Console.WriteLine($"\n{Path.GetFileName(file)}: {them.Length} lines from hkxpack, " +
+                          $"{mine.Length} from us, {differ} line(s) differing" +
+                          (excused > 0 ? $", and {excused} where hkxpack strides a padded struct wrongly"
+                                       : "") +
+                          (boundaries > 0 ? $" with {boundaries} element boundary line(s) around them" : ""));
+
+        // A file holding one of those classes cannot be compared line by line with any confidence:
+        // hkxpack's own reading of it is misaligned, so the two texts genuinely diverge and a diff
+        // resynchronising through the wreckage reports more than is really there. Said as a flag so a
+        // sweep can hold the two kinds of file apart rather than averaging them.
+        Console.WriteLine(strided.Count > 0 ? "COMPARABLE=no" : "COMPARABLE=yes");
+        return differ == 0 ? 0 : 1;
+    }
+
+    /// The lines one side has and the other does not.
+    ///
+    /// Walks both sides together and, where they part, looks ahead on each for the nearest place they
+    /// agree again. That is the right shape for this comparison: the two texts are meant to be the
+    /// same file, so a disagreement is a handful of lines and not a rewrite, and a full longest
+    /// common subsequence over thirty thousand lines is nine hundred million cells for an answer that
+    /// resynchronises within twenty.
+    ///
+    /// The look ahead is bounded. Past the bound the two are not the same file with a rule wrong in
+    /// it, and saying so beats grinding.
+    private static List<(char Side, int At, string Line)> Diff(string[] left, string[] right)
+    {
+        const int Reach = 400;
+        var edits = new List<(char, int, string)>();
+
+        int a = 0, b = 0;
+        while (a < left.Length && b < right.Length)
+        {
+            if (left[a] == right[b]) { a++; b++; continue; }
+
+            // The nearest resynchronisation, preferring the shortest run of lines dropped from
+            // either side, so one inserted line is reported as one line and not as two.
+            int found = -1, skipLeft = 0, skipRight = 0;
+            for (int d = 1; d <= Reach && found < 0; d++)
+            {
+                if (a + d < left.Length && left[a + d] == right[b]) { found = d; skipLeft = d; }
+                else if (b + d < right.Length && left[a] == right[b + d]) { found = d; skipRight = d; }
+            }
+
+            if (found < 0)
+            {
+                edits.Add(('-', a++, left[a - 1]));
+                edits.Add(('+', b++, right[b - 1]));
+                continue;
+            }
+
+            for (int i = 0; i < skipLeft; i++) edits.Add(('-', a + i, left[a + i]));
+            for (int i = 0; i < skipRight; i++) edits.Add(('+', b + i, right[b + i]));
+            a += skipLeft;
+            b += skipRight;
+        }
+
+        while (a < left.Length) edits.Add(('-', a, left[a++]));
+        while (b < right.Length) edits.Add(('+', b, right[b++]));
+
+        return edits;
+    }
+
+    /// Where a clip travels, read off its extracted motion.
+    ///
+    /// A walk does not move its bones across the ground: it plays on the spot and carries a separate
+    /// track saying where the character has got to. Point this at a folder to see which animations
+    /// carry one at all, which is the number worth knowing, since an idle carrying root motion and a
+    /// walk carrying none are both worth a second look.
+    private static int Motion(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+
+        if (Directory.Exists(target))
+        {
+            var files = Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories);
+            int carrying = 0, still = 0, failed = 0;
+            float furthest = 0;
+            string furthestName = "";
+
+            foreach (string file in files)
+            {
+                try
+                {
+                    var read = RootMotion.Read(file);
+                    if (!read.Any) { still++; continue; }
+
+                    carrying++;
+                    if (read.Travel.Length() > furthest)
+                    {
+                        furthest = read.Travel.Length();
+                        furthestName = Path.GetFileName(file);
+                    }
+                }
+                catch { failed++; }
+            }
+
+            Console.WriteLine($"{files.Length} files: {carrying} carry root motion, {still} stay on " +
+                              $"the spot, {failed} could not be read");
+            if (carrying > 0)
+                Console.WriteLine($"furthest travelled: {furthestName} at {furthest:F1} units");
+            return failed == files.Length ? 1 : 0;
+        }
+
+        var motion = RootMotion.Read(target);
+        Console.WriteLine($"{Path.GetFileName(target)}: {motion}");
+        if (!motion.Any) return 0;
+
+        Console.WriteLine($"up {motion.Up.X:F0} {motion.Up.Y:F0} {motion.Up.Z:F0}, " +
+                          $"forward {motion.Forward.X:F0} {motion.Forward.Y:F0} {motion.Forward.Z:F0}");
+
+        // Every eighth, because a walk carries dozens and the shape of the path is what is being
+        // looked at rather than each step of it.
+        for (int i = 0; i < motion.Samples.Count; i += Math.Max(1, motion.Samples.Count / 8))
+            Console.WriteLine($"  sample {i,3}  {motion.Samples[i]}");
+
+        Console.WriteLine($"  sample {motion.Samples.Count - 1,3}  {motion.Samples[^1]}");
+
+        // Reading between samples is what the viewport does, so it is checked here rather than only
+        // on screen. Halfway has to land between the ends and not outside them.
+        var half = RootMotion.At(motion, 0.5f);
+        Console.WriteLine($"halfway through: {half}");
+        return 0;
+    }
+
+    /// Reads an archive's index and finds files in it without unpacking anything, which is what the
+    /// window's own archive browser does.
+    ///
+    /// The index is the whole point. Fallout4 - Animations.ba2 holds 29,716 entries and reaching one
+    /// of them used to mean writing the other 29,715 to disk first. Reading one file out of it is
+    /// checked here rather than only in the window, because a file pulled out of an archive has to be
+    /// byte for byte what the same file is on disk.
+    private static int Ba2Browse(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        using var archive = OpenCommonwealth.Services.Archive.Ba2.Open(Path.GetFullPath(argv[1]));
+        Console.WriteLine($"{Path.GetFileName(argv[1])}: version {archive.Version}, " +
+                          $"{archive.Entries.Count} entries");
+
+        string query = argv.Length > 2 ? argv[2] : "";
+        string extension = argv.Length > 3 ? argv[3] : "";
+
+        var found = archive.Matching(query, extension).ToList();
+        Console.WriteLine($"{found.Count} match \"{query}\"{(extension.Length > 0 ? " ending " + extension : "")}");
+
+        foreach (var entry in found.Take(20))
+            Console.WriteLine($"  {entry.Name}  {entry.Unpacked} bytes" +
+                              (entry.Packed != 0 ? $", stored as {entry.Packed}" : ", stored plain"));
+
+        if (found.Count > 20) Console.WriteLine($"  and {found.Count - 20} more");
+        if (found.Count == 0) return 1;
+
+        // Reading one, so the index is not the only thing proved. A behaviour that comes out of the
+        // archive has to be one our own reader can take apart, which is the whole reason for opening
+        // it from here rather than extracting it first.
+        var first = found[0];
+        byte[] bytes = archive.Read(first);
+        Console.WriteLine($"\nread {first.FileName}: {bytes.Length} bytes" +
+                          (bytes.Length == first.Unpacked ? ", the length the index promised"
+                           : $", but the index said {first.Unpacked}"));
+
+        if (bytes.Length != first.Unpacked) return 1;
+        if (!first.Name.EndsWith(".hkx", StringComparison.OrdinalIgnoreCase)) return 0;
+
+        try
+        {
+            var image = PackfileImage.Read(bytes);
+            var objects = new PackfileObjects(image);
+            Console.WriteLine($"and it reads as a packfile: {objects.Instances.Count} objects, " +
+                              $"{objects.ClassNames().Count()} classes named");
+            return 0;
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine("but it does not read as a packfile: " + e.Message);
+            return 1;
+        }
     }
 
     // The pose the viewport draws, printed. Same AnimationPose call the window makes, so a shape that
@@ -2968,6 +3238,42 @@ public static class Program
         Console.WriteLine("FILE " + Path.GetFileName(argv[1]));
         Report("BEFORE", xml);
         var before = Resolved(xml);
+
+        // Bounding a variable, which is the one symbol edit that has to lengthen a positional array
+        // to reach the variable it is about. Reported rather than assumed: whether it can be written
+        // into the file's own bytes or has to go back through hkxpack is worth knowing, since one of
+        // those needs Java and the other does not.
+        {
+            var names0 = SymbolEditor.VariableNames(BehaviourGraphModel.Parse(xml));
+            if (names0.Count > 0)
+            {
+                int last = names0.Count - 1;
+                int had = SymbolEditor.Audit(BehaviourGraphModel.Parse(xml)).Bounds;
+
+                string bounded = SymbolEditor.SetVariableBounds(xml, last, "-1", "7");
+                var lined = SymbolEditor.Audit(BehaviourGraphModel.Parse(bounded));
+
+                Console.WriteLine($"\n--- bound variable {last} '{names0[last]}' from -1 to 7 ---");
+                Console.WriteLine($"  bounds array {had} -> {lined.Bounds} for {lined.Names} variable(s), " +
+                                  $"parallel={lined.BoundsAreParallel}");
+
+                var plan = NativeSave.Compare(xml, bounded);
+                Console.WriteLine(plan.Possible
+                    ? $"  written into the bytes: {plan.Changes.Count} change(s), grows={plan.Grows}"
+                    : $"  needs hkxpack: {plan.Refusal}");
+
+                // Changing a bound the array already holds is a different question from adding one:
+                // nothing is lengthened, so it is a value write like any other.
+                if (had > 0)
+                {
+                    var inPlace = NativeSave.Compare(xml, SymbolEditor.SetVariableBounds(xml, 0, "-2", "9"));
+                    Console.WriteLine(inPlace.Possible
+                        ? $"  changing a bound already there: written into the bytes, " +
+                          $"{inPlace.Changes.Count} change(s)"
+                        : $"  changing a bound already there: needs hkxpack, {inPlace.Refusal}");
+                }
+            }
+        }
 
         Console.WriteLine("\n--- add a variable and an event ---");
         xml = SymbolEditor.AddVariable(xml, "fSymrmProbe", SymbolEditor.VariableType.Real, out int newVar);
