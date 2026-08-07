@@ -58,6 +58,7 @@ public static class Program
             case "crosscheck": return CrossCheck(argv);
             case "savecheck": return SaveCheck(argv);
             case "mesh": return Mesh(argv);
+            case "meshpng": return DrawMesh(argv);
             case "remove": return Remove(argv);
             case "door": return Door(argv);
             case "link": return Link(argv);
@@ -2888,6 +2889,166 @@ public static class Program
         }
         if (here.Bones.Count > 24) Console.WriteLine($"  ... and {here.Bones.Count - 24} more");
         return 0;
+    }
+
+    /// Draws the posed mesh to a PNG, so how it looks is something that can be answered here rather
+    /// than only by a person with the window open.
+    ///
+    /// Two views, front and side, side by side. Bones can be picked out by name and are drawn in
+    /// their own colour, which is the whole point: a mesh where one bone out of thirteen sits wrong
+    /// is a question about that bone, and grey wireframe on grey wireframe does not answer it.
+    private static int DrawMesh(string[] argv)
+    {
+        if (argv.Length < 4) { Usage(); return 1; }
+
+        var nif = OpenCommonwealth.Services.Nif.NifFile.Read(Path.GetFullPath(argv[1]));
+        var shapes = OpenCommonwealth.Services.Nif.NifGeometry.Shapes(nif);
+        var skeleton = new HkxBinaryReader().ReadSkeleton(Path.GetFullPath(argv[2]));
+        string outPath = Path.GetFullPath(argv[3]);
+
+        // Bones named on the command line get a colour each, in this order.
+        var wanted = argv.Skip(4).ToList();
+        var colours = new (byte R, byte G, byte B)[]
+        {
+            (255, 80, 80), (90, 220, 120), (110, 170, 255), (250, 200, 80),
+        };
+
+        var rest = AnimationPose.ReferencePose(skeleton);
+        const int Side = 900, Height = 1000;
+        var image = new Png(Side * 2, Height);
+
+        var all = new List<System.Numerics.Vector3>();
+        var drawn = new List<(OpenCommonwealth.Services.Nif.NifShape Shape,
+                              System.Numerics.Vector3[] Posed)>();
+
+        foreach (var shape in shapes)
+        {
+            var binding = OpenCommonwealth.Services.Nif.SkinnedMesh.Bind(shape, skeleton);
+            var posed = OpenCommonwealth.Services.Nif.SkinnedMesh.Pose(shape, binding, rest, skeleton);
+            drawn.Add((shape, posed));
+            all.AddRange(posed);
+        }
+
+        if (all.Count == 0) { Console.WriteLine("nothing to draw"); return 1; }
+
+        var min = new System.Numerics.Vector3(float.MaxValue);
+        var max = new System.Numerics.Vector3(float.MinValue);
+        foreach (var p in all)
+        {
+            min = System.Numerics.Vector3.Min(min, p);
+            max = System.Numerics.Vector3.Max(max, p);
+        }
+
+        float span = Math.Max(Math.Max(max.X - min.X, max.Y - min.Y), max.Z - min.Z);
+        if (span <= 0) span = 1;
+        float scale = (Height - 60) / span;
+        var centre = (min + max) * 0.5f;
+
+        // Front looks down the Y axis and side looks down the X, which for this game's axes puts the
+        // character upright in both.
+        (int X, int Y) Place(System.Numerics.Vector3 p, bool front)
+        {
+            float across = front ? p.X - centre.X : p.Y - centre.Y;
+            float up = p.Z - centre.Z;
+            int x = (int)(Side / 2 + across * scale) + (front ? 0 : Side);
+            int y = (int)(Height / 2 - up * scale);
+            return (x, y);
+        }
+
+        int marked = 0;
+        foreach (var (shape, posed) in drawn)
+        {
+            // Which bone owns each vertex, by the heaviest weight, so a vertex is drawn in the colour
+            // of the bone that actually moves it rather than of whichever slot came first.
+            var owner = new int[shape.Vertices.Count];
+            System.Array.Fill(owner, -1);
+
+            if (shape.IsSkinned)
+                for (int v = 0; v < shape.Vertices.Count; v++)
+                {
+                    float best = 0;
+                    for (int s = 0; s < 4; s++)
+                    {
+                        float w = shape.BoneWeights[v * 4 + s];
+                        if (w <= best) continue;
+                        best = w;
+                        owner[v] = shape.BoneIndices[v * 4 + s];
+                    }
+                }
+
+            foreach (var (a, b) in OpenCommonwealth.Services.Nif.SkinnedMesh.Edges(shape))
+            {
+                int which = -1;
+                for (int i = 0; i < wanted.Count && which < 0; i++)
+                {
+                    string name = wanted[i];
+                    bool hit = Named(shape, owner, a, name) || Named(shape, owner, b, name);
+                    if (hit) which = i;
+                }
+
+                var (r, g, bl) = which >= 0 ? colours[which % colours.Length] : ((byte)70, (byte)70, (byte)78);
+                if (which >= 0) marked++;
+
+                foreach (bool front in new[] { true, false })
+                {
+                    var (x0, y0) = Place(posed[a], front);
+                    var (x1, y1) = Place(posed[b], front);
+                    image.Line(x0, y0, x1, y1, r, g, bl);
+                }
+            }
+        }
+
+        // Where each named bone's vertices actually land, which is the number behind whatever the
+        // picture looks like.
+        foreach (string name in wanted)
+        {
+            float lo = float.MaxValue, hi = float.MinValue;
+            int count = 0;
+
+            foreach (var (shape, posed) in drawn)
+            {
+                if (!shape.IsSkinned) continue;
+                int b = shape.BoneNames.FindIndex(n => n.Equals(name, StringComparison.OrdinalIgnoreCase));
+                if (b < 0) continue;
+
+                for (int v = 0; v < shape.Vertices.Count; v++)
+                {
+                    float best = 0; int owns = -1;
+                    for (int sl = 0; sl < 4; sl++)
+                    {
+                        float w = shape.BoneWeights[v * 4 + sl];
+                        if (w <= best) continue;
+                        best = w; owns = shape.BoneIndices[v * 4 + sl];
+                    }
+                    if (owns != b) continue;
+
+                    lo = Math.Min(lo, posed[v].Z);
+                    hi = Math.Max(hi, posed[v].Z);
+                    count++;
+                }
+            }
+
+            Console.WriteLine(count == 0
+                ? $"  {name}: no vertex is weighted mostly to it"
+                : $"  {name}: {count} vertices, posed z {lo:F1} to {hi:F1}");
+        }
+
+        Console.WriteLine($"  whole mesh posed z {min.Z:F1} to {max.Z:F1}");
+
+        image.Save(outPath);
+        Console.WriteLine($"{Path.GetFileName(argv[1])} on {skeleton.Name}: {drawn.Count} shape(s), " +
+                          $"{all.Count} vertices, {marked} edge(s) marked, written to {outPath}");
+        for (int i = 0; i < wanted.Count; i++)
+            Console.WriteLine($"  {wanted[i]} drawn as {colours[i % colours.Length]}");
+        return 0;
+    }
+
+    private static bool Named(OpenCommonwealth.Services.Nif.NifShape shape, int[] owner, int vertex,
+                              string boneName)
+    {
+        int b = owner[vertex];
+        return b >= 0 && b < shape.BoneNames.Count &&
+               shape.BoneNames[b].Equals(boneName, StringComparison.OrdinalIgnoreCase);
     }
 
     // What the mesh reader got out of a NIF, and how well it lines up with a skeleton. The bone
