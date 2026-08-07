@@ -251,21 +251,46 @@ public class HkxBinaryReader
         // here before decoding, so a class this reader cannot decode is distinguishable from an
         // animation that really is empty. 857 of the 13990 vanilla animations are
         // hkaLosslessCompressedAnimation and used to come back as silently empty.
-        result.AnimationClass = objectClasses.Keys.FirstOrDefault(
-            c => c.StartsWith("hka", StringComparison.Ordinal) && c.EndsWith("Animation", StringComparison.Ordinal)) ?? "";
+        //
+        // Which one is the file's animation is asked of the binding rather than of the class list. A
+        // file can hold more than one: writing a clip out uncompressed leaves the compressed one it
+        // came from sitting in the file unreferenced, and picking by class name would decode the one
+        // that was replaced and report the file unchanged.
+        var byOffset = ParseObjectOffsets(data, dataSec, cnStart);
+        int animRel = -1;
 
-        // ── Parse the animation, whichever of the two classes it is ──
-        if (objectClasses.TryGetValue("hkaSplineCompressedAnimation", out int animRel))
+        if (objectClasses.TryGetValue("hkaAnimationBinding", out int boundRel))
         {
-            ParseSplineAnimation(data, dataAbs, animRel, fixups, result);
+            var pointers = ParseGlobalFixups(data, dataSec);
+            if (pointers.TryGetValue(boundRel + 0x18, out int target) && byOffset.ContainsKey(target))
+                animRel = target;
         }
-        else if (objectClasses.TryGetValue("hkaLosslessCompressedAnimation", out int losslessRel))
+
+        if (animRel < 0)
+            foreach (string wanted in HkxAnimationData.DecodedAnimationClasses)
+                if (objectClasses.TryGetValue(wanted, out int found)) { animRel = found; break; }
+
+        result.AnimationClass = animRel >= 0 && byOffset.TryGetValue(animRel, out string? bound)
+            ? bound
+            : objectClasses.Keys.FirstOrDefault(
+                  c => c.StartsWith("hka", StringComparison.Ordinal) &&
+                       c.EndsWith("Animation", StringComparison.Ordinal)) ?? "";
+
+        // ── Parse the animation, whichever class the binding led to ──
+        switch (result.AnimationClass)
         {
-            ParseLosslessAnimation(data, dataAbs, losslessRel, fixups, result);
-        }
-        else if (result.Skeleton != null)
-        {
-            result.OriginalSkeletonName = result.Skeleton.Name;
+            case "hkaSplineCompressedAnimation":
+                ParseSplineAnimation(data, dataAbs, animRel, fixups, result);
+                break;
+            case "hkaLosslessCompressedAnimation":
+                ParseLosslessAnimation(data, dataAbs, animRel, fixups, result);
+                break;
+            case "hkaInterleavedUncompressedAnimation":
+                ParseInterleavedAnimation(data, dataAbs, animRel, fixups, result);
+                break;
+            default:
+                if (result.Skeleton != null) result.OriginalSkeletonName = result.Skeleton.Name;
+                break;
         }
 
         // ── Parse hkaAnimationBinding if present ──
@@ -290,6 +315,47 @@ public class HkxBinaryReader
             if (src == unchecked((int)0xFFFFFFFF)) break;
             map[src] = dst;
             pos += 8;
+        }
+        return map;
+    }
+
+    /// <summary>
+    /// Which object sits at each offset. The same table as the one below, read the other way round,
+    /// so a pointer that has been resolved to an offset can be turned into a class name.
+    /// </summary>
+    private static Dictionary<int, string> ParseObjectOffsets(byte[] data, SectionInfo sec, int cnStart)
+    {
+        var map = new Dictionary<int, string>();
+        int pos = sec.VirtualFixupAbs;
+        int end = sec.ExportsAbs;
+        while (pos + 12 <= end && pos + 12 <= data.Length)
+        {
+            int src = ReadI32(data, pos);
+            int nameOff = ReadI32(data, pos + 8);
+            if (src == unchecked((int)0xFFFFFFFF)) break;
+            map[src] = ReadNullTermString(data, cnStart + nameOff, 256);
+            pos += 12;
+        }
+        return map;
+    }
+
+    /// <summary>
+    /// Parse the global fixup table: maps src_rel -> dst_rel, for pointers that stay in this
+    /// section. A pointer from one object to another is a global fixup, not a local one, so the
+    /// local table alone finds every string and array and no object reference at all.
+    /// </summary>
+    private static Dictionary<int, int> ParseGlobalFixups(byte[] data, SectionInfo sec)
+    {
+        var map = new Dictionary<int, int>();
+        int pos = sec.GlobalFixupAbs;
+        int end = sec.VirtualFixupAbs;
+        while (pos + 12 <= end && pos + 12 <= data.Length)
+        {
+            int src = ReadI32(data, pos);
+            int dst = ReadI32(data, pos + 8);
+            if (src == unchecked((int)0xFFFFFFFF)) { pos += 12; continue; }
+            map[src] = dst;
+            pos += 12;
         }
         return map;
     }
@@ -433,6 +499,72 @@ public class HkxBinaryReader
         }
     }
 
+    // hkaInterleavedUncompressedAnimation, which is every frame of every track written out as it is,
+    // with nothing to decompress.
+    //
+    // No vanilla animation is one, so this is here to read what we write rather than to read the
+    // game's own files. It is still the reading that proves the writing: a file written this way and
+    // decoded back has to give the frames it went in with.
+    //
+    //   +0x10 type   +0x14 duration   +0x18 transform tracks   +0x1C float tracks
+    //   +0x28 annotationTracks   +0x38 transforms (hkArray<hkQsTransform>, 48 bytes each)
+    //
+    // The transforms are frame major, transforms[frame * tracks + track], which is Havok's own
+    // indexing in hkaInterleavedUncompressedAnimation rather than a guess: it stores the array that
+    // way in its constructor and reads it back that way in sampleTracks.
+    private static void ParseInterleavedAnimation(byte[] data, int dataAbs, int animRel,
+        Dictionary<int, int> fixups, HkxAnimationData anim)
+    {
+        int a = dataAbs + animRel;
+        if (a + 0x48 > data.Length) return;
+
+        anim.Duration = ReadF32(data, a + 0x14);
+        anim.NumTracks = SafeReadI32(data, a + 0x18);
+
+        int transforms = SafeReadI32(data, a + 0x40);
+        if (anim.NumTracks <= 0 || transforms <= 0) return;
+
+        anim.NumFrames = transforms / anim.NumTracks;
+        anim.NumBlocks = 1;
+        anim.MaxFramesPerBlock = anim.NumFrames;
+        anim.BlockDuration = anim.Duration;
+        if (anim.NumFrames > 1 && anim.Duration > 0)
+            anim.FrameDuration = anim.Duration / (anim.NumFrames - 1);
+
+        ParseAnnotationTracks(data, dataAbs, animRel + 0x28, fixups, anim);
+
+        if (!fixups.TryGetValue(animRel + 0x38, out int runRel)) return;
+        int run = dataAbs + runRel;
+
+        for (int t = 0; t < anim.NumTracks; t++)
+        {
+            // Every channel is written out, so every channel is animated. There is no mask to say
+            // otherwise, which is the whole point of the format.
+            var track = new HkxTrackData { RotationAnimated = true };
+            for (int c = 0; c < 3; c++)
+            {
+                track.TranslationAnimated[c] = true;
+                track.ScaleAnimated[c] = true;
+            }
+
+            for (int f = 0; f < anim.NumFrames; f++)
+            {
+                int p = run + (f * anim.NumTracks + t) * QsTransformSize;
+                if (p + QsTransformSize > data.Length) break;
+
+                track.Translations.Add(new Vector3(ReadF32(data, p), ReadF32(data, p + 4), ReadF32(data, p + 8)));
+                track.Rotations.Add(new Quaternion(ReadF32(data, p + 16), ReadF32(data, p + 20),
+                                                   ReadF32(data, p + 24), ReadF32(data, p + 28)));
+                track.Scales.Add(new Vector3(ReadF32(data, p + 32), ReadF32(data, p + 36), ReadF32(data, p + 40)));
+            }
+            anim.Tracks.Add(track);
+        }
+    }
+
+    /// A translation, a rotation and a scale, each four floats wide, of which only three carry the
+    /// value. Confirmed against every reference pose in every vanilla skeleton.
+    public const int QsTransformSize = 48;
+
     private static void ParseAnnotationTracks(byte[] data, int dataAbs, int arrRel,
         Dictionary<int, int> fixups, HkxAnimationData anim)
     {
@@ -476,6 +608,13 @@ public class HkxBinaryReader
     // hkaLosslessCompressedAnimation::getType, ::getOffset and ::getFrameTransform do in the
     // 1.10.163 binary. See issue 14.
     private const int LosslessDuration = 20, LosslessTransformTracks = 24, LosslessNumFrames = 216;
+
+    /// Every animation class inherits hkaAnimation, so the annotation tracks sit at the same place in
+    /// all of them. The lossless decoder used to skip them, which is why a lossless clip came back
+    /// with no track names and no annotations at all while a spline one beside it came back with
+    /// both. It showed up only when the same clip was written out uncompressed and read again: the
+    /// two readings of one animation disagreed about its names, and only one of them was right.
+    private const int AnimationAnnotationTracks = 0x28;
     private const int LosslessDynamicTranslations = 56, LosslessStaticTranslations = 72, LosslessTranslationWords = 88;
     private const int LosslessDynamicRotations = 104, LosslessStaticRotations = 120, LosslessRotationWords = 136;
     private const int LosslessDynamicScales = 152, LosslessStaticScales = 168, LosslessScaleWords = 184;
@@ -498,6 +637,8 @@ public class HkxBinaryReader
         anim.BlockDuration = anim.Duration;
         if (anim.NumFrames > 1 && anim.Duration > 0)
             anim.FrameDuration = anim.Duration / (anim.NumFrames - 1);
+
+        ParseAnnotationTracks(data, dataAbs, animRel + AnimationAnnotationTracks, fixups, anim);
 
         var dynamicT = ReadFloats(data, dataAbs, animRel + LosslessDynamicTranslations, fixups);
         var staticT  = ReadFloats(data, dataAbs, animRel + LosslessStaticTranslations, fixups);

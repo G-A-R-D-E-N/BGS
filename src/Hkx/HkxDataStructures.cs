@@ -101,6 +101,7 @@ public class HkxAnimationData
     {
         "hkaSplineCompressedAnimation",
         "hkaLosslessCompressedAnimation",
+        "hkaInterleavedUncompressedAnimation",
     };
 
     public static string SupportedAnimationClasses => string.Join(" and ", DecodedAnimationClasses);

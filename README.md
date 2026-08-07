@@ -72,7 +72,13 @@ the game, with the evidence behind it, lives in the
   one bone's motion means seeing only that bone. Type a `userControlledTimeFraction` and it says which
   frame that is, jumps the page to it and marks the row, which is the question a variable driven clip
   asks. Scale prints only on the tracks that carry one, because almost every track in the game is a
-  flat 1,1,1 and printing all of them hides the ones that are not.
+  flat 1,1,1 and printing all of them hides the ones that are not. A clip's frames can also be
+  **written back**, which is what `NativeAnimation` does: the clip is decoded, whatever changed in it
+  is kept, and it is written out as `hkaInterleavedUncompressedAnimation`, every frame of every track
+  stored as it is. Nothing here re-encodes a compressed animation, so this is the way out of "reads a
+  clip and cannot change one". The file gets much larger, which is the honest cost of not having an
+  encoder, and the clip is exact. Fallout 4 registers the class at startup, so the engine has the code
+  to read one; it has not been loaded in game, which is #19's question and not this one's.
 - **Check graph**: looks for the mistakes hkxpack cannot, listed under Validating below. With a real
   project folder around the file it also checks every clip's animation against the folder on disk.
   Findings do not just print: the node each one is about is **outlined red for an error and amber for
