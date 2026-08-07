@@ -47,6 +47,7 @@ public static class Tests
         ("EverySymbolUsageNamesItsObject", EverySymbolUsageNamesItsObject),
         ("PapyrusSendersAreReportedNotJudged", PapyrusSendersAreReportedNotJudged),
         ("APoseComposesDownTheBoneChain", APoseComposesDownTheBoneChain),
+        ("AMeshAuthoredAwayFromTheOriginIsNotAFault", AMeshAuthoredAwayFromTheOriginIsNotAFault),
         ("AnArchiveIsReadWithoutUnpackingIt", AnArchiveIsReadWithoutUnpackingIt),
         ("TravelIsReadBetweenSamples", TravelIsReadBetweenSamples),
         ("AClearChannelKeepsTheReferencePose", AClearChannelKeepsTheReferencePose),
@@ -1211,6 +1212,91 @@ public static class Tests
             new HkxBonePose(new Vector3(10, 0, 0), Quaternion.Identity, Vector3.One),
         },
     };
+
+    /// A shape bound to the three bone chain, sitting wherever `placement` puts it.
+    ///
+    /// The bind is built the way a correct one has to be: skin to bone is whatever takes the mesh's
+    /// authored space into that bone's space, so composing it with the bone's reference pose comes
+    /// back as the placement, the same for every bone. Stored transposed, because that is how the
+    /// NIF stores a rotation and what the reader undoes.
+    private static OpenCommonwealth.Services.Nif.NifShape BoundShape(HkxSkeleton rig, Vector3 placement)
+    {
+        var rest = AnimationPose.ReferencePose(rig);
+        var shape = new OpenCommonwealth.Services.Nif.NifShape { Name = "TestShape" };
+
+        for (int b = 0; b < rig.BoneNames.Count; b++)
+        {
+            shape.BoneNames.Add(rig.BoneNames[b]);
+            shape.SkinToBone.Add(Matrix4x4.CreateTranslation(placement - rest.Bones[b].Position));
+        }
+
+        // One bone the skeleton has never heard of, so the vertices weighted to it are the ones no
+        // pose can move.
+        shape.BoneNames.Add("Tip_skin");
+        shape.SkinToBone.Add(Matrix4x4.Identity);
+
+        for (int b = 0; b < shape.BoneNames.Count; b++)
+        {
+            shape.Vertices.Add(new Vector3(b * 10, 0, 0));
+            for (int s = 0; s < 4; s++)
+            {
+                shape.BoneIndices.Add(s == 0 ? b : 0);
+                shape.BoneWeights.Add(s == 0 ? 1 : 0);
+            }
+        }
+
+        return shape;
+    }
+
+    /// A mesh does not have to be authored at the origin, and reading its placement as a fault is
+    /// what made the vanilla male body report 120 units of drift while every transform was composing
+    /// perfectly. The body is authored with its origin at the neck.
+    ///
+    /// So the measure is what the bones say relative to each other, not where they put the mesh. A
+    /// rotation read the wrong way round still fails it, because that gives every bone a different
+    /// wrong answer.
+    private static void AMeshAuthoredAwayFromTheOriginIsNotAFault()
+    {
+        Console.WriteLine("\na mesh authored away from the origin is placed, not broken");
+
+        var rig = ThreeBoneChain();
+        var rest = AnimationPose.ReferencePose(rig);
+
+        foreach (var placement in new[] { Vector3.Zero, new Vector3(0, 0, 120.84f) })
+        {
+            var shape = BoundShape(rig, placement);
+            var binding = OpenCommonwealth.Services.Nif.SkinnedMesh.Bind(shape, rig);
+
+            Check($"the helper bone does not match, at placement {placement.Z}", 1,
+                  binding.Unmatched.Count);
+
+            float spread = OpenCommonwealth.Services.Nif.SkinnedMesh
+                .BindError(shape, binding, rig, out int measured);
+
+            Check("every real bone is measured", 3, measured);
+            CheckTrue($"and they agree, wherever the mesh sits (placement {placement.Z})",
+                      spread < 0.001f);
+
+            // The vertices no bone can move go where the mesh went, not where the file wrote them.
+            // Left behind, they drew a second body 120 units under the first one.
+            var posed = OpenCommonwealth.Services.Nif.SkinnedMesh.Pose(shape, binding, rest, rig);
+            CheckTrue("a vertex on a bone the skeleton lacks is still placed with the mesh",
+                      Near(posed[^1], shape.Vertices[^1] + placement));
+            CheckTrue("and one on a bone it has lands in the same space",
+                      Near(posed[0], shape.Vertices[0] + placement));
+        }
+
+        // The fault the measure exists for. Turning one bone's bind gives an answer no other bone
+        // agrees with, whatever the mesh's placement is.
+        var wrong = BoundShape(rig, new Vector3(0, 0, 120.84f));
+        wrong.SkinToBone[1] = Matrix4x4.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2) *
+                              wrong.SkinToBone[1];
+
+        float broken = OpenCommonwealth.Services.Nif.SkinnedMesh
+            .BindError(wrong, OpenCommonwealth.Services.Nif.SkinnedMesh.Bind(wrong, rig), rig, out _);
+
+        CheckTrue("a bind turned the wrong way is still caught", broken > 10);
+    }
 
     /// A BA2 built here rather than taken from the game, so the archive reader is checked on a
     /// machine with no Fallout 4 on it.
@@ -2639,17 +2725,27 @@ public static class Tests
         CheckTrue("and the refusal says which id it would have had",
                   said.Contains("#91", StringComparison.Ordinal));
 
-        // A class the file does not name cannot have an object added, because the entry that says
-        // what class an object is has to point at a name that is already there.
+        // A class the file has never named is named on the way in rather than refused. The save path
+        // used to refuse this while `symrm append` did it, which is two answers to one question; now
+        // both come through NativeAppend.NameOffset.
         var unnamed = new NativeSave.Plan(
             new List<NativeSave.Change> { new("hkbBlenderGenerator", 0, "", "#91", Added: true) }, null);
 
-        said = "";
-        try { NativeSave.Apply(path, unnamed); }
-        catch (InvalidOperationException e) { said = e.Message; }
+        int namesWere = image.Section("__classnames__")!.Data.Length;
+        var written = PackfileImage.Read(NativeSave.Apply(path, unnamed));
+        var grown = new PackfileObjects(written);
 
-        CheckTrue("a class the file does not name is refused",
-                  said.Contains("not named in this file", StringComparison.Ordinal));
+        Check("a class the file never named is added anyway", 2, grown.Instances.Count);
+        Check("reading back as the class asked for", "hkbBlenderGenerator",
+              grown.Instances[^1].ClassName);
+        CheckTrue("with its name written into the table",
+                  written.Section("__classnames__")!.Data.Length > namesWere);
+        CheckTrue("and no 0xFF filler left in front of it",
+                  !written.Section("__classnames__")!.Data.SkipLast(1).Any(b => b == 0xFF));
+
+        // Adding an object makes the file longer, and a caller comparing it to the original byte for
+        // byte has to be told so.
+        CheckTrue("an addition counts as growing the file", unnamed.Grows);
 
         System.IO.File.Delete(path);
     }

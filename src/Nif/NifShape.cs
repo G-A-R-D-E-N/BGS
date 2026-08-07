@@ -31,6 +31,13 @@ public sealed class NifShape
     /// into each bone's space before that bone's animated transform means anything.
     public readonly List<Matrix4x4> SkinToBone = new();
 
+    /// The shape's own node transform, which is not applied to the vertices above. Read so a caller
+    /// can tell a mesh authored at the origin from one authored somewhere else, which is the
+    /// difference between a bind that is composing wrongly and one that is composing correctly onto a
+    /// mesh that was never at the origin to begin with.
+    public Vector3 NodeTranslation;
+    public float NodeScale = 1;
+
     public bool IsSkinned => BoneNames.Count > 0 && BoneWeights.Count == Vertices.Count * 4;
 
     public int TriangleCount => Indices.Count / 3;
@@ -80,7 +87,14 @@ public static class NifGeometry
         at += 4 * extras;
         at += 4;                    // controller
         at += 4;                    // flags
-        at += 12 + 36 + 4;          // translation, 3x3 rotation, scale
+
+        var translation = new Vector3(BitConverter.ToSingle(d, at), BitConverter.ToSingle(d, at + 4),
+                                      BitConverter.ToSingle(d, at + 8));
+        at += 12;
+        at += 36;                   // 3x3 rotation
+        float scale = BitConverter.ToSingle(d, at);
+        at += 4;
+
         at += 4;                    // collision object
         at += 16;                   // bounding sphere
 
@@ -104,7 +118,12 @@ public static class NifGeometry
                 $"{nif.Strings[nameIndex]}: dataSize is {dataSize} but {vertices} vertices at a stride of " +
                 $"{stride} plus {triangles} triangles needs {vertices * stride + triangles * 6}");
 
-        var shape = new NifShape { Name = nameIndex < nif.Strings.Count ? nif.Strings[nameIndex] : "" };
+        var shape = new NifShape
+        {
+            Name = nameIndex < nif.Strings.Count ? nif.Strings[nameIndex] : "",
+            NodeTranslation = translation,
+            NodeScale = scale,
+        };
         var layout = Layout(flags, stride);
 
         for (int v = 0; v < vertices; v++)

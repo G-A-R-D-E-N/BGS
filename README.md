@@ -396,9 +396,18 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   cleanly: Dogmeat's 118 bone references and the Mirelurk's 95 across eight shapes all found a
   skeleton bone. The human body mesh does not, and this is a real limit rather than a fault: it
   weights 45 of its 58 bones to skin helper bones, `Chest_skin` and the like, which live in the mesh
-  skeleton and not in the Havok one, so those vertices hold their rest position. `symrm mesh` reports
-  the shortfall by name. Whether the residual drift on the human's remaining bones is that same
-  mismatch or something else is not established. See #43.
+  skeleton and not in the Havok one, so those vertices cannot be animated. `symrm mesh` reports the
+  shortfall by name. They are still drawn in the right place: a mesh does not have to be authored at
+  the origin, and the male body is authored with its origin at the neck, so its vertices run from
+  -120 to -6 and the bind lifts the whole thing onto the ground.
+- A mesh's placement is not a fault, and reading it as one is what made the male body report 120 units
+  of drift for a while. What has to hold is that the bones agree with each other on the skeleton's own
+  reference pose, since the mesh is rigid in the space it was authored in. They do: 12 of the male
+  body's 13 matched bones agree to within a fifth of a unit, and Dogmeat's 21 agree to within a
+  thousandth. The thirteenth is `LLeg_Toe1`, 5.140 units from where the rest agree, while its right
+  hand twin is 0.172, so the mesh and the skeleton disagree about that one toe. Reading the stored
+  rotation any of the three wrong ways still fails the check, at 97 percent of bones disagreeing and
+  166 units.
 - The pose itself is checked against known numbers and against real game files: a three bone rig with
   hand-worked positions in `symrm test`, and the vanilla 95 bone character skeleton posed through
   `symrm pose`, where the composed frame puts the pelvis at z 65, the head at z 101 and the feet near
