@@ -236,7 +236,7 @@ public static class NativeGraphModel
     }
 
     /// One array's elements, each rendered as the type the array holds.
-    private static IEnumerable<string> Elements(PackfileObjects objects, HavokClassTypes types, int at,
+    internal static IEnumerable<string> Elements(PackfileObjects objects, HavokClassTypes types, int at,
                                                 HavokClassTypes.Member member,
                                                 FieldRender.Reference reference)
     {
@@ -269,11 +269,15 @@ public static class NativeGraphModel
     /// space therefore loses it, and three state machines in the vanilla weapon behaviour are named
     /// exactly that way. Losing it here too is what equivalence means; the file still holds the
     /// space, and the properties panel, which reads the bytes rather than this, still shows it.
-    private static string Trimmed(string value) => value.Trim();
+    internal static string Trimmed(string value) => value.Trim();
 
-    private static string Text(PackfileObjects objects, int at, string owner,
+    /// `trim` is what the parser does to a string and what writing the text back must not do. A
+    /// string in this format can carry a trailing space and six vanilla values do:
+    /// `NPCRobotAssaultronAttackHandSpinLP ` is one. The parser trims, so the model trims to match
+    /// it; the writer has to hand back what the file holds or the text stops being the file's.
+    internal static string Text(PackfileObjects objects, int at, string owner,
                                HavokClassTypes.Member member, FieldRender.Reference reference,
-                               int element, HavokClassTypes types)
+                               int element, HavokClassTypes types, bool trim = true)
     {
         // An enum or a flags field, spelled the way hkxpack spells it, which is not the way a panel
         // should. hkxpack writes the name when the number is exactly one the class declares and the
@@ -285,11 +289,18 @@ public static class NativeGraphModel
             long? value = FieldRender.Number(objects, at, member.VSub);
             if (value == null) return "";
 
+            // Matched against the unsigned reading, which is what hkxpack matches against. Six enums
+            // in the table declare a negative value, `VariableType.VARIABLE_TYPE_INVALID = -1` among
+            // them, and every member carrying one of those is an unsigned width. A stored 0xFF is
+            // -1 signed and 255 unsigned; hkxpack prints 255, so naming it INVALID here would be a
+            // reading the file's own text disagrees with.
+            long printed = FieldRender.Unsigned(value.Value, member.VSub);
+
             var declared = member.EType == null ? null : types.Enum(owner, member.EType);
             foreach (var (name, number) in declared ?? Empty)
-                if (number == value.Value) return name;
+                if (number == printed) return name;
 
-            return FieldRender.Unsigned(value.Value, member.VSub).ToString();
+            return printed.ToString();
         }
 
         string? rendered = FieldRender.Render(objects, at, owner, member, reference, null, element,
@@ -297,7 +308,8 @@ public static class NativeGraphModel
         if (rendered == null) return "";
 
         string shown = PanelFields.Shown(rendered);
-        return member.VType is "TYPE_STRINGPTR" or "TYPE_CSTRING" ? Trimmed(Escaped(shown)) : shown;
+        if (member.VType is not ("TYPE_STRINGPTR" or "TYPE_CSTRING")) return shown;
+        return trim ? Trimmed(Escaped(shown)) : Escaped(shown);
     }
 
     private static readonly IReadOnlyDictionary<string, long> Empty =
@@ -314,7 +326,7 @@ public static class NativeGraphModel
     /// Only these four. A sweep of every unpacked vanilla file turns up `&#13;` and no other
     /// numeric reference, so a general escaper would be inventing rules the file does not use.
     /// A newline is written as itself; only the carriage return beside it is escaped.
-    private static string Escaped(string value) =>
+    internal static string Escaped(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\r", "&#13;");
 
     private static int Stride(string vsub) => vsub switch

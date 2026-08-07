@@ -1279,9 +1279,10 @@ public class MainWindow : Window
 
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-        if (java == null || jar == null)
+
+        if (_xmlText.Length == 0)
         {
-            SetDiffSummary("Comparing needs Java and hkxpack, the same as saving does.", Ux.BadBrush);
+            SetDiffSummary("Nothing is open to compare against.", Ux.BadBrush);
             return;
         }
 
@@ -1303,12 +1304,37 @@ public class MainWindow : Window
         ShowDiff(Path.GetFileName(other), result);
     }
 
-    private static BehaviourDiff.Result ComputeDiff(string mine, string other, string java, string jar)
+    /// The other file's text, written from its bytes where the class table describes it and unpacked
+    /// with hkxpack where it does not. Same order as opening a file, and for the same reason:
+    /// comparing is a reading, and a reading should not need Java.
+    private static string TextOf(string path, string? java, string? jar)
     {
+        try
+        {
+            var bytes = File.ReadAllBytes(path);
+            var objects = new PackfileObjects(PackfileImage.Read(bytes));
+
+            if (HavokClassTypes.Shipped.SignatureProblems(objects.ClassNames()).Count == 0)
+                return NativeXml.From(bytes);
+        }
+        catch (Exception) { }
+
+        if (java == null || jar == null) return "";
+
         string work = Path.Combine(Path.GetTempPath(), "bgs_compare");
         HkxTextEdit.ResetDirectory(work);
-        string xml = HkxTextEdit.Unpack(java, jar, other, work);
-        return BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(HkxTextEdit.ReadXml(xml)));
+        return HkxTextEdit.ReadXml(HkxTextEdit.Unpack(java, jar, path, work));
+    }
+
+    private static BehaviourDiff.Result ComputeDiff(string mine, string other, string? java, string? jar)
+    {
+        string theirs = TextOf(other, java, jar);
+        if (theirs.Length == 0)
+            throw new InvalidOperationException(
+                "this file's classes are not ones this build describes, and there is no hkxpack " +
+                "to fall back on");
+
+        return BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(theirs));
     }
 
     /// Runs the comparison through the same code the picker feeds, so a check exercises what a person
@@ -1317,7 +1343,7 @@ public class MainWindow : Window
     {
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-        if (_xmlText.Length == 0 || java == null || jar == null) return "";
+        if (_xmlText.Length == 0) return "";
 
         ShowDiff(Path.GetFileName(other), ComputeDiff(_xmlText, other, java, jar));
         return _diffSummary.Text ?? "";
@@ -1644,7 +1670,50 @@ public class MainWindow : Window
         // came out the same, so this is the same picture drawn without the dependency.
         var reading = _bytes == null ? null : NativeGraphModel.From(_bytes);
 
-        if (text)
+        // The text form is written from the file's own bytes when the class table can describe it,
+        // and unpacked with hkxpack when it cannot. That is what takes Java off the editing path as
+        // well as the reading one: an edit is made by rewriting this text, so with no text every edit
+        // was refused.
+        //
+        // The two texts were set against each other line by line across every vanilla behaviour. Of
+        // the 370 files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them.
+        // The other 128 hold a class hkxpack strides wrongly, so its own text is misaligned and there
+        // is nothing there to match.
+        bool own = false;
+        if (_bytes != null && reading != null)
+        {
+            try
+            {
+                string work = Path.Combine(Path.GetTempPath(), "bgs_edit",
+                                           Path.GetFileNameWithoutExtension(_hkxPath));
+                HkxTextEdit.ResetDirectory(work);
+
+                // Written to disk as well as held in memory, because saving a structural change still
+                // packs this file back through hkxpack when Java is there to do it.
+                _xmlPath = Path.Combine(work, Path.GetFileNameWithoutExtension(_hkxPath) + ".xml");
+                // Read off disk rather than from the objects already in hand, because the writer
+                // needs the file's header as well as its objects and the file has not changed since
+                // it was opened.
+                _xmlText = NativeXml.From(File.ReadAllBytes(_hkxPath));
+                File.WriteAllText(_xmlPath, _xmlText);
+
+                _objectIds = HkxTextEdit.ObjectIds(_xmlText);
+                own = _objectIds.Count == _objects.Count;
+
+                if (!own)
+                {
+                    _xmlText = "";
+                    _objectIds = new List<string>();
+                }
+            }
+            catch
+            {
+                _xmlText = "";
+                _objectIds = new List<string>();
+            }
+        }
+
+        if (text && !own)
         {
             try
             {
