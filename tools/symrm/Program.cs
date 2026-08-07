@@ -39,6 +39,7 @@ public static class Program
             case "rig": return Rig(argv);
             case "extract": return Extract(argv);
             case "ba2": return Ba2Browse(argv);
+            case "motion": return Motion(argv);
             case "pose": return Pose(argv);
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
@@ -657,6 +658,70 @@ public static class Program
                                           extension, Console.WriteLine, tree);
         Console.WriteLine($"wrote {written} files to {Path.GetFullPath(argv[3])}");
         return written > 0 ? 0 : 1;
+    }
+
+    /// Where a clip travels, read off its extracted motion.
+    ///
+    /// A walk does not move its bones across the ground: it plays on the spot and carries a separate
+    /// track saying where the character has got to. Point this at a folder to see which animations
+    /// carry one at all, which is the number worth knowing, since an idle carrying root motion and a
+    /// walk carrying none are both worth a second look.
+    private static int Motion(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+
+        if (Directory.Exists(target))
+        {
+            var files = Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories);
+            int carrying = 0, still = 0, failed = 0;
+            float furthest = 0;
+            string furthestName = "";
+
+            foreach (string file in files)
+            {
+                try
+                {
+                    var read = RootMotion.Read(file);
+                    if (!read.Any) { still++; continue; }
+
+                    carrying++;
+                    if (read.Travel.Length() > furthest)
+                    {
+                        furthest = read.Travel.Length();
+                        furthestName = Path.GetFileName(file);
+                    }
+                }
+                catch { failed++; }
+            }
+
+            Console.WriteLine($"{files.Length} files: {carrying} carry root motion, {still} stay on " +
+                              $"the spot, {failed} could not be read");
+            if (carrying > 0)
+                Console.WriteLine($"furthest travelled: {furthestName} at {furthest:F1} units");
+            return failed == files.Length ? 1 : 0;
+        }
+
+        var motion = RootMotion.Read(target);
+        Console.WriteLine($"{Path.GetFileName(target)}: {motion}");
+        if (!motion.Any) return 0;
+
+        Console.WriteLine($"up {motion.Up.X:F0} {motion.Up.Y:F0} {motion.Up.Z:F0}, " +
+                          $"forward {motion.Forward.X:F0} {motion.Forward.Y:F0} {motion.Forward.Z:F0}");
+
+        // Every eighth, because a walk carries dozens and the shape of the path is what is being
+        // looked at rather than each step of it.
+        for (int i = 0; i < motion.Samples.Count; i += Math.Max(1, motion.Samples.Count / 8))
+            Console.WriteLine($"  sample {i,3}  {motion.Samples[i]}");
+
+        Console.WriteLine($"  sample {motion.Samples.Count - 1,3}  {motion.Samples[^1]}");
+
+        // Reading between samples is what the viewport does, so it is checked here rather than only
+        // on screen. Halfway has to land between the ends and not outside them.
+        var half = RootMotion.At(motion, 0.5f);
+        Console.WriteLine($"halfway through: {half}");
+        return 0;
     }
 
     /// Reads an archive's index and finds files in it without unpacking anything, which is what the

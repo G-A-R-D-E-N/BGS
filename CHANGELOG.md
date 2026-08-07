@@ -3,6 +3,27 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, where a clip takes you
+
+Root motion is read now, off `hkaAnimation.extractedMotion`. Every offset comes out of the class
+table rather than being written down, so a field that moves in some other build moves here too
+instead of quietly reading its neighbour.
+
+**The limit this was filed against was not real.** The README said a travelling clip walks off the
+middle of the view because no root motion is applied to the camera. It does not. Motion is extracted
+in this format: a walk plays on the spot and its displacement lives in its own object, never reaching
+a bone. Measured on a Dogmeat walk that travels 1,060 units, the root bone moves 0.000 and the centre
+of mass 0.312. The camera never needed holding, because the character never leaves.
+
+The real gap was the opposite one. Travel was invisible, and a clip that takes a character across a
+room looked exactly like one that goes nowhere. So Playback says it in words on every clip, and
+**Follow travel** puts the pose and the path back together and walks the character along it.
+
+The reading checks itself against the game's own file names, which is as close to an oracle as this
+gets: `TurnLeft90` comes back as 90 degrees and no displacement, `turnLeft180` as 178, and a straight
+walk as pure forward travel with no turn at all. Across 619 vanilla walk animations, 608 carry motion
+and 11 stay on the spot, none failed to read.
+
 ## 2026-08-06, behaviours open straight out of an archive
 
 Every behaviour in the game is inside `Fallout4 - Animations.ba2`. Opening one meant extracting the

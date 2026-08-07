@@ -67,6 +67,20 @@ public static class Smoke
         Check("the viewport draws nothing before a clip is picked", 0, window.Viewport.DrawnBones);
         CheckTrue("and is not playing", !window.IsPlaying);
 
+        // Both ticks exist and neither draws anything on its own. Follow travel moves the character
+        // along the path the clip carries, which is invisible otherwise, since motion is extracted in
+        // this format and the bones play on the spot.
+        var ticks = Find<CheckBox>(window).Select(c => c.Content?.ToString()).ToList();
+        CheckTrue("the reference pose tick is there", ticks.Contains("Reference pose"));
+        CheckTrue("and the follow travel tick", ticks.Contains("Follow travel"));
+
+        foreach (var tick in Find<CheckBox>(window))
+        {
+            tick.IsChecked = true;
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        }
+        Check("ticking them with nothing loaded still draws nothing", 0, window.Viewport.DrawnBones);
+
         tabs[0].SelectedIndex = 0;
         CheckTrue("save is disabled until something changes",
             Find<Button>(window).First(b => b.Content?.ToString() == "Save to .hkx").IsEnabled == false);

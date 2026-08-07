@@ -47,6 +47,7 @@ public static class Tests
         ("PapyrusSendersAreReportedNotJudged", PapyrusSendersAreReportedNotJudged),
         ("APoseComposesDownTheBoneChain", APoseComposesDownTheBoneChain),
         ("AnArchiveIsReadWithoutUnpackingIt", AnArchiveIsReadWithoutUnpackingIt),
+        ("TravelIsReadBetweenSamples", TravelIsReadBetweenSamples),
         ("AClearChannelKeepsTheReferencePose", AClearChannelKeepsTheReferencePose),
         ("SplineUndrivenChannelsReadAsIdentity", SplineUndrivenChannelsReadAsIdentity),
         ("APackfileSurvivesBeingRebuilt", APackfileSurvivesBeingRebuilt),
@@ -1252,6 +1253,43 @@ public static class Tests
         }
 
         File.Delete(path);
+    }
+
+    /// Reading between root motion samples, which is what a viewport does every frame.
+    ///
+    /// The samples are spread across the clip's duration and there is no promise there is one per
+    /// animation frame, so a frame lands between two of them. Checked on a made up motion rather
+    /// than on a game file, so this runs anywhere; the reading of real files is checked by
+    /// `symrm motion`, where a clip called TurnLeft90 comes back as 90 degrees.
+    private static void TravelIsReadBetweenSamples()
+    {
+        Console.WriteLine("\ntravel is read between the samples that carry it");
+
+        var motion = new RootMotion.Motion { Duration = 1 };
+        motion.Samples.Add(new RootMotion.Sample(Vector3.Zero, 0));
+        motion.Samples.Add(new RootMotion.Sample(new Vector3(0, 100, 0), MathF.PI));
+
+        CheckTrue("the start is the first sample", Near(RootMotion.At(motion, 0).Position, Vector3.Zero));
+        CheckTrue("the end is the last", Near(RootMotion.At(motion, 1).Position, new Vector3(0, 100, 0)));
+        CheckTrue("and halfway is halfway", Near(RootMotion.At(motion, 0.5f).Position, new Vector3(0, 50, 0)));
+        CheckTrue("the turn is read the same way",
+                  Math.Abs(RootMotion.At(motion, 0.5f).TurnRadians - MathF.PI / 2) < 0.001f);
+
+        // Past either end rather than off it, because a scrub bar reaches its own limits and a frame
+        // count that disagrees with the sample count by one should not throw.
+        CheckTrue("before the start is the start", Near(RootMotion.At(motion, -5).Position, Vector3.Zero));
+        CheckTrue("past the end is the end", Near(RootMotion.At(motion, 5).Position, new Vector3(0, 100, 0)));
+
+        Check("travel is the straight line between the ends", 100f, RootMotion.At(motion, 1).Position.Y);
+        CheckTrue("and the total is the same", Math.Abs(motion.Travel.Length() - 100) < 0.001f);
+
+        // A clip that goes nowhere has no reference frame object at all, which is the ordinary case
+        // rather than a failure, and it must not be reported as sitting at the first sample.
+        var still = new RootMotion.Motion();
+        CheckTrue("a clip with no motion carries none", !still.Any);
+        CheckTrue("and reads as the origin rather than throwing",
+                  Near(RootMotion.At(still, 0.5f).Position, Vector3.Zero));
+        CheckTrue("and travels nothing", still.Travel == Vector3.Zero);
     }
 
     private static HkxTrackData FullTrack(params (Vector3 Pos, Quaternion Rot)[] frames)
