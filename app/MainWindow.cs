@@ -2920,7 +2920,7 @@ public class MainWindow : Window
             SetStatus($"Saved {plan.Changes.Count} " +
                       $"change{(plan.Changes.Count == 1 ? "" : "s")} straight into the file, " +
                       (plan.Grows
-                          ? "with the new text added on the end so nothing already in it moved. "
+                          ? "with anything that grew added on the end so nothing already in it moved. "
                           : "leaving every other byte as it was. ") +
                       $"The original is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
             Load();

@@ -55,6 +55,8 @@ public static class Program
             case "signatures": return Signatures(argv);
             case "panel": return Panel(argv);
             case "objects": return Objects(argv);
+            case "capacity": return Capacity(argv);
+            case "grow": return Grow(argv);
             case "crosscheck": return CrossCheck(argv);
             case "savecheck": return SaveCheck(argv);
             case "mesh": return Mesh(argv);
@@ -136,6 +138,18 @@ public static class Program
               Every object in a file and what class it is, or with a class named, that class's
               fields read straight out of the bytes. Also reports how many objects are of a class
               whose field layout we do not have, which is the number worth watching.
+
+          dotnet run --project tools/symrm/symrm.csproj -- capacity <file.hkx | hkxDir>
+              What the top bits of every array's capacity word hold, split by whether the array is
+              empty, since growing one means writing a capacity for it and the flag is what tells
+              the game whether it owns the memory.
+
+          dotnet run --project tools/symrm/symrm.csproj -- grow <file.hkx | hkxDir>
+              Bounds the last variable, which lengthens an array of structs, then writes the file,
+              reads it back and checks that the bound is what was asked for and nothing else moved.
+              With a Java runtime the read back goes through hkxpack, which is a second
+              implementation; without one it goes through our own reader, which is what proves the
+              edit needs no Java.
 
           dotnet run --project tools/symrm/symrm.csproj -- crosscheck <file.hkx>
               Reads every field it can out of the bytes and compares it against what hkxpack says
@@ -2627,6 +2641,226 @@ public static class Program
     // class is asked about. The second half is the one that matters, because reading a field out of
     // the bytes is checkable against the same field in hkxpack's XML, and the two agreeing is what
     // says the offsets are right rather than merely plausible.
+    // Lengthening an array of structs, carried out rather than planned.
+    //
+    // Bounding a variable is the edit that needs it: the bounds array is positional, so a bound on
+    // variable 83 means an array 84 long, and it is empty in 224 of the 531 vanilla behaviours. The
+    // file is written, read back through hkxpack, and set against what the edit asked for, because a
+    // plan that says it can be written proves nothing about what lands in the bytes.
+    private static int Grow(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        // Java is what makes this worth proving twice. With a runtime the written file is read back
+        // through hkxpack, which is a second implementation and therefore the stronger check. Without
+        // one the whole edit still has to work, because lengthening an array is exactly the operation
+        // that used to send bounds through hkxpack, and the reason for doing it natively was to stop
+        // needing Java at all. So the read and the read back go through our own reader instead, and
+        // the run says which of the two it was.
+        bool java = false;
+        try { NeedHkxPack(); java = true; }
+        catch (InvalidOperationException) { }
+
+        Console.WriteLine(java
+            ? "reading and checking through hkxpack"
+            : "no Java runtime, so reading and checking through our own reader");
+
+        var files = Directory.Exists(argv[1])
+            ? Directory.EnumerateFiles(argv[1], "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToList()
+            : new List<string> { Path.GetFullPath(argv[1]) };
+
+        int done = 0, refused = 0, wrong = 0;
+
+        foreach (string file in files)
+        {
+            string work = WorkDirectory("symrm-grow-", file);
+            HkxTextEdit.ResetDirectory(work);
+            Directory.CreateDirectory(work);
+
+            string xml;
+            try
+            {
+                xml = java ? HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work))
+                           : NativeXml.From(File.ReadAllBytes(file));
+            }
+            catch (Exception e) { Console.WriteLine($"{Path.GetFileName(file),-46} unreadable: {e.Message}"); continue; }
+
+            var model = BehaviourGraphModel.Parse(xml);
+            var names = SymbolEditor.VariableNames(model);
+            if (names.Count == 0) { Console.WriteLine($"{Path.GetFileName(file),-46} no variables"); continue; }
+
+            int had = SymbolEditor.Audit(model).Bounds;
+            int target = names.Count - 1;
+            if (had > target) { Console.WriteLine($"{Path.GetFileName(file),-46} bounds already reach the last variable"); continue; }
+
+            const string low = "-1", high = "7";
+            string bounded = SymbolEditor.SetVariableBounds(xml, target, low, high);
+            var plan = NativeSave.Compare(xml, bounded);
+
+            Console.WriteLine($"\nFILE {Path.GetFileName(file)}");
+            Console.WriteLine($"  variableBounds {had} -> {names.Count} for {names.Count} variable(s), " +
+                              $"bounding '{names[target]}' from {low} to {high}");
+
+            if (!plan.Possible)
+            {
+                Console.WriteLine($"  REFUSED  {plan.Refusal}");
+                refused++;
+                continue;
+            }
+
+            Console.WriteLine($"  planned: {plan.Changes.Count} change(s), grows={plan.Grows}");
+
+            byte[] written;
+            try { written = NativeSave.Apply(file, plan); }
+            catch (Exception e) { Console.WriteLine($"  THREW  {e.Message}"); wrong++; continue; }
+
+            string grownPath = Path.Combine(work, "grown.hkx");
+            File.WriteAllBytes(grownPath, written);
+
+            string reread;
+            if (java)
+            {
+                string back = Path.Combine(work, "back");
+                HkxTextEdit.ResetDirectory(back);
+                reread = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, grownPath, back));
+            }
+            else reread = NativeXml.From(written);
+
+            // What the edit asked for, and nothing else. Every object hkxpack reads out of the
+            // written file is set against the same object in the text the edit produced, so a value
+            // that moved anywhere it was not asked to move shows up as a difference.
+            var wanted = RepackCheck.Take(bounded);
+            var got = RepackCheck.Take(reread);
+
+            int compared = Math.Min(wanted.InOrder.Count, got.InOrder.Count);
+            var differing = new List<string>();
+            for (int o = 0; o < compared; o++)
+                if (wanted.InOrder[o].Body != got.InOrder[o].Body)
+                    differing.Add($"#{wanted.InOrder[o].Id} {wanted.InOrder[o].Class}");
+
+            string readBack = BoundAt(reread, target);
+            bool right = readBack == $"{low} to {high}" && differing.Count == 0 &&
+                         wanted.Objects == got.Objects;
+
+            Console.WriteLine($"  bound {target} reads back as {readBack}");
+            Console.WriteLine($"  {wanted.Objects} object(s) asked for, {got.Objects} in the written " +
+                              $"file, {differing.Count} whose values differ" +
+                              (differing.Count > 0 ? ": " + string.Join(", ", differing.Take(4)) : ""));
+            Console.WriteLine($"  file grew by {written.Length - new FileInfo(file).Length} bytes");
+            Console.WriteLine("  " + (right ? "GOOD" : "WRONG"));
+
+            if (right) done++; else wrong++;
+        }
+
+        Console.WriteLine($"\nGROW written={done} refused={refused} wrong={wrong}");
+        return wrong == 0 ? 0 : 1;
+    }
+
+    /// One element of the bounds array as hkxpack wrote it, so a bound can be read back by position
+    /// rather than by hunting for the first one in the file.
+    private static string BoundAt(string xml, int index)
+    {
+        // Read through the document rather than off the text. A bound is two objects nested inside
+        // an element of an array, so the closing tag that ends the array is not the first one after
+        // it, and a reader that takes it as the first one reports an array of nothing however many
+        // bounds are really there.
+        var array = System.Xml.Linq.XDocument.Parse(xml).Descendants("hkparam")
+            .FirstOrDefault(p => p.Attribute("name")?.Value == "variableBounds");
+        if (array == null) return "absent";
+
+        var elements = array.Elements("hkobject").ToList();
+        if (index >= elements.Count) return $"only {elements.Count} bound(s)";
+
+        string Side(string which) =>
+            elements[index].Elements("hkparam").FirstOrDefault(p => p.Attribute("name")?.Value == which)
+                ?.Elements("hkobject").FirstOrDefault()
+                ?.Elements("hkparam").FirstOrDefault(p => p.Attribute("name")?.Value == "value")
+                ?.Value.Trim() ?? "absent";
+
+        return $"{Side("min")} to {Side("max")}";
+    }
+
+    // What the top bits of an array's capacity word hold, across the corpus.
+    //
+    // Growing an array means writing a capacity for it, and the existing writer keeps whatever flags
+    // were there and rewrites only the length. That is right for an array that already holds
+    // something and says nothing about one that starts empty, whose flags may be nothing like the
+    // flags a full array carries. Since the flag is what tells the game whether it owns the memory,
+    // getting it wrong is not cosmetic, so it is counted rather than reasoned about.
+    private static int Capacity(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        var files = Directory.Exists(argv[1])
+            ? Directory.EnumerateFiles(argv[1], "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToList()
+            : new List<string> { Path.GetFullPath(argv[1]) };
+
+        // Keyed by whether the array holds anything and what its top two bits are, then by the same
+        // split again for arrays of structs on their own, since those are the ones being grown.
+        var all = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var structs = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var mismatched = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        int read = 0;
+
+        void Count(SortedDictionary<string, int> into, string key) =>
+            into[key] = into.TryGetValue(key, out int had) ? had + 1 : 1;
+
+        var types = HavokClassTypes.Shipped;
+
+        foreach (string file in files)
+        {
+            PackfileImage image;
+            PackfileObjects objects;
+            try
+            {
+                image = PackfileImage.Read(file);
+                objects = new PackfileObjects(image);
+            }
+            catch (Exception) { continue; }
+
+            var data = image.Section("__data__");
+            if (data == null) continue;
+            read++;
+
+            foreach (var instance in objects.Instances)
+            {
+                if (!types.Knows(instance.ClassName)) continue;
+
+                foreach (var member in types.Members(instance.ClassName))
+                {
+                    if (member.VType is not ("TYPE_ARRAY" or "TYPE_SIMPLEARRAY")) continue;
+
+                    int at = instance.Offset + member.Offset;
+                    if (at + 16 > data.Data.Length) continue;
+
+                    int count = BitConverter.ToInt32(data.Data, at + 8);
+                    uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
+                    string key = $"{(count == 0 ? "empty" : "holds something")}  flags=0x{capacity & 0xC0000000u:x8}";
+
+                    Count(all, key);
+                    if (member.VSub == "TYPE_STRUCT") Count(structs, key);
+
+                    // The length half of the word against the count beside it. If they part company
+                    // in vanilla data then rewriting the length from the count is not safe either.
+                    if ((capacity & 0x3FFFFFFFu) != (uint)count)
+                        Count(mismatched, $"{instance.ClassName}.{member.Name} count={count} " +
+                                          $"capacity={capacity & 0x3FFFFFFFu}");
+                }
+            }
+        }
+
+        Console.WriteLine($"{read} file(s) read\n");
+        Console.WriteLine("every array");
+        foreach (var (key, n) in all) Console.WriteLine($"  {key,-34} {n}");
+
+        Console.WriteLine("\narrays of structs only");
+        foreach (var (key, n) in structs) Console.WriteLine($"  {key,-34} {n}");
+
+        Console.WriteLine($"\ncapacity disagreeing with the count beside it: {mismatched.Values.Sum()}");
+        foreach (var (key, n) in mismatched.Take(10)) Console.WriteLine($"  {key}  x{n}");
+        return 0;
+    }
+
     private static int Objects(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }

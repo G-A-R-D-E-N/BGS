@@ -33,20 +33,22 @@ public static class NativeSave
         /// Whether carrying this out makes the file longer. Text, arrays and new objects are all
         /// appended rather than overwritten, so a caller comparing the result to the original byte
         /// for byte has to expect it.
-        public bool Grows => Changes.Exists(c => c.Text || c.Array || c.Added);
+        public bool Grows => Changes.Exists(c => c.Text || c.Array || c.Added || c.Grow);
     }
 
     public sealed record Change(string ClassName, int Index, string Field, string Value,
                                 bool Text = false, bool Ref = false, bool Array = false,
-                                bool Added = false, int Element = -1, string Member = "")
+                                bool Added = false, int Element = -1, string Member = "",
+                                bool Grow = false)
     {
         /// Whether this writes into one element of an array of structs rather than into a field of
         /// the object itself.
-        public bool InElement => Element >= 0;
+        public bool InElement => Element >= 0 && !Grow;
 
         public override string ToString() =>
-            InElement ? $"{ClassName}[{Index}].{Field}[{Element}].{Member} = {Value}"
-                      : $"{ClassName}[{Index}].{Field} = {Value}";
+            Grow ? $"{ClassName}[{Index}].{Field} is now {Value} element(s) long"
+                 : InElement ? $"{ClassName}[{Index}].{Field}[{Element}].{Member} = {Value}"
+                             : $"{ClassName}[{Index}].{Field} = {Value}";
     }
 
     /// Which fixed width scalars a value can be written into. Arrays and pointers are absent because
@@ -142,12 +144,13 @@ public static class NativeSave
             // old value to compare against and everything the editor wrote is new.
             string? Consider(int i, string field, string now)
             {
-                // A member inside an array of structs, as `variableBounds[2].min.value`. The array's
-                // own length is a different question and is checked before this is reached, so
-                // getting here means the array is the same length and one number inside it moved.
+                // A member inside an array of structs, as `variableBounds[2].min.value`. A length
+                // change is a different question, handled before this is reached, so getting here
+                // means the array is the same length and one number inside it moved. The exception
+                // is an object being added, which has no old length to have changed from.
                 if (field.EndsWith(CountKey, StringComparison.Ordinal))
-                    return $"{className}.{field[..^CountKey.Length]} changed length, which is not " +
-                           "written in place yet";
+                    return $"a new {className} was given {now} element(s) in " +
+                           $"{field[..^CountKey.Length]}, which is not written in place yet";
 
                 int bracket = field.IndexOf('[');
                 if (bracket > 0)
@@ -210,9 +213,40 @@ public static class NativeSave
 
             for (int i = 0; i < originals.Count; i++)
             {
+                // Arrays of structs that changed length, taken first and taken whole. An element
+                // added at the end has no old value to compare against, and the elements below it
+                // land in a run that is being rewritten anyway, so the array is considered as one
+                // thing rather than key by key. Everything belonging to one of these is then left
+                // out of the ordinary comparison below, which would otherwise read a key the
+                // shorter side does not have as a field appearing or disappearing.
+                var resized = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var (field, was) in originals[i])
                 {
-                    if (field == IdKey) continue;
+                    if (!field.EndsWith(CountKey, StringComparison.Ordinal)) continue;
+                    if (edited[i].TryGetValue(field, out string? now) &&
+                        string.Equals(was, now, StringComparison.Ordinal)) continue;
+
+                    resized.Add(field[..^CountKey.Length]);
+                }
+
+                // An array the file left empty has no count key at all on the original side, so a
+                // first element only shows up as keys the edited side has and the original does not.
+                foreach (var field in edited[i].Keys)
+                {
+                    if (!field.EndsWith(CountKey, StringComparison.Ordinal)) continue;
+                    if (!originals[i].ContainsKey(field)) resized.Add(field[..^CountKey.Length]);
+                }
+
+                foreach (string arrayField in resized.OrderBy(f => f, StringComparer.Ordinal))
+                {
+                    string? refusal = Resized(classes, changes, className, layout, i,
+                                              originals[i], edited[i], arrayField);
+                    if (refusal != null) return new Plan(changes, refusal);
+                }
+
+                foreach (var (field, was) in originals[i])
+                {
+                    if (field == IdKey || Belongs(field, resized)) continue;
 
                     if (!edited[i].TryGetValue(field, out string? now))
                         return new Plan(changes, $"{className}.{field} is no longer in the file");
@@ -223,7 +257,7 @@ public static class NativeSave
                     if (refusal != null) return new Plan(changes, refusal);
                 }
 
-                if (edited[i].Count != originals[i].Count)
+                if (Counted(edited[i], resized) != Counted(originals[i], resized))
                     return new Plan(changes, $"a {className} gained or lost a field");
             }
 
@@ -240,6 +274,111 @@ public static class NativeSave
         }
 
         return new Plan(changes, null);
+    }
+
+    /// Which array a flattened key belongs to, or an empty string when it belongs to none.
+    /// `variableBounds[2].min.value` and `variableBounds#count` both belong to `variableBounds`.
+    private static string ArrayOf(string field)
+    {
+        if (field.EndsWith(CountKey, StringComparison.Ordinal))
+            return field[..^CountKey.Length];
+
+        int bracket = field.IndexOf('[');
+        return bracket > 0 ? field[..bracket] : "";
+    }
+
+    /// Whether a flattened key describes part of one of these arrays. An array with nothing in it is
+    /// written as a plain empty param and has no keys of its own at all, so its own name counts as
+    /// well as the element and length keys a full one has.
+    private static bool Belongs(string field, HashSet<string> arrays) =>
+        arrays.Contains(field) || arrays.Contains(ArrayOf(field));
+
+    private static int Counted(Dictionary<string, string> fields, HashSet<string> skip) =>
+        skip.Count == 0 ? fields.Count : fields.Count(f => !Belongs(f.Key, skip));
+
+    /// An array of structs at a new length, planned as one thing.
+    ///
+    /// The run of elements is rewritten wholesale rather than patched, so what this has to produce
+    /// is every element the edited document holds. The elements the file already had are carried
+    /// over as bytes when the run is written, which is what keeps anything inside them this cannot
+    /// spell, so only the members that moved are listed for those. A new element starts as zeroes,
+    /// so a member it leaves at zero needs nothing written and one it does not has to be a member
+    /// that can be written at all, or the whole resize is refused rather than losing it quietly.
+    private static string? Resized(HavokClasses classes, List<Change> changes, string className,
+                                   Dictionary<string, string> layout, int index,
+                                   Dictionary<string, string> before, Dictionary<string, string> after,
+                                   string arrayField)
+    {
+        if (!layout.TryGetValue(arrayField, out string? arrayType) || arrayType != "array of struct")
+            return $"{className}.{arrayField} changed length, and it is not an array of structs";
+
+        string? elementClass = ElementClass(className, arrayField);
+        if (elementClass == null)
+            return $"{className}.{arrayField} does not say what class its elements are";
+
+        if (HavokClassTypes.Shipped[elementClass]?.Size is not int stride || stride <= 0)
+            return $"{className}.{arrayField} holds {elementClass}, whose size this build does not know";
+
+        int had = Length(before, arrayField), now = Length(after, arrayField);
+        if (now < 0) return $"{className}.{arrayField} has no length in the edited file";
+
+        var fill = new List<Change>();
+        string prefix = arrayField + "[";
+
+        foreach (var (field, value) in after)
+        {
+            if (!field.StartsWith(prefix, StringComparison.Ordinal)) continue;
+
+            int close = field.IndexOf(']');
+            if (close < 0 || close + 2 > field.Length)
+                return $"{className}.{field} is not a name this understands";
+
+            if (!int.TryParse(field[prefix.Length..close], out int element))
+                return $"{className}.{field} does not name an element";
+
+            string member = field[(close + 2)..];
+
+            // Unchanged and already in the file, so the bytes carried over say it. Listing it would
+            // mean being able to write it, which for a string or a pointer this cannot do, and
+            // refusing there would refuse resizes that are perfectly safe.
+            bool carried = element < had && element < now;
+            if (carried && before.TryGetValue(field, out string? was) &&
+                string.Equals(was, value, StringComparison.Ordinal))
+                continue;
+
+            string? why = StructElementWritable(classes, className, arrayField, member, value);
+            if (why != null)
+            {
+                // A member of a brand new element that this cannot write is only a problem when it
+                // was asked to hold something. Zero is what an appended element already is.
+                if (!carried && MeansNothing(value)) continue;
+                return why;
+            }
+
+            fill.Add(new Change(className, index, arrayField, value, Element: element, Member: member));
+        }
+
+        changes.Add(new Change(className, index, arrayField, now.ToString(CultureInfo.InvariantCulture),
+                               Element: had, Grow: true));
+        changes.AddRange(fill);
+        return null;
+    }
+
+    /// How long a flattened object says one of its arrays is. Absent means the file left it empty,
+    /// which is a length of zero and not a missing answer.
+    private static int Length(Dictionary<string, string> fields, string arrayField) =>
+        !fields.TryGetValue(arrayField + CountKey, out string? text) ? 0
+            : int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) ? n : -1;
+
+    /// Whether a value is what a run of zero bytes already reads as, so writing it would change
+    /// nothing. A null pointer, an empty string and a zero number all are.
+    private static bool MeansNothing(string value)
+    {
+        string text = value.Trim();
+        if (text.Length == 0 || text == "null" || text == "false") return true;
+
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double n) &&
+               n == 0;
     }
 
     /// Applies a plan to a file and returns the new bytes. Throws rather than half applying: a file
@@ -322,9 +461,27 @@ public static class NativeSave
                     "nothing was written rather than guessing which one was meant.");
         }
 
+        // The struct array runs, before anything is written into one. Each is a fresh run appended
+        // to the section, so the writes that follow have to find the array where it now is rather
+        // than where it was, which means reading the objects again once the last one is done.
+        bool grew = false;
+        foreach (var change in plan.Changes.Where(c => c.Grow))
+        {
+            var instance = byClass[change.ClassName][change.Index];
+            Regrow(image, objects, instance, change);
+            grew = true;
+        }
+
+        if (grew)
+        {
+            objects = new PackfileObjects(image, classes);
+            byClass = objects.Instances.GroupBy(i => i.ClassName)
+                             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+        }
+
         foreach (var change in plan.Changes)
         {
-            if (change.Added) continue;
+            if (change.Added || change.Grow) continue;
 
             if (!byClass.TryGetValue(change.ClassName, out var instances) ||
                 change.Index >= instances.Count)
@@ -463,6 +620,86 @@ public static class NativeSave
         BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)elements.Length).CopyTo(data.Data, at + 12);
 
         return true;
+    }
+
+    /// Writes an array of structs at a new length.
+    ///
+    /// The same three moves `Resize` makes for an array of pointers. A run of the new length goes on
+    /// the end of the section, the array's own pointer is aimed at it and the count beside it is
+    /// rewritten, so nothing already in the file moves and no offset anybody holds goes stale. The
+    /// old run is left where it is, unreferenced, which is what an unreferenced run already looks
+    /// like in this format.
+    ///
+    /// What an array of pointers does not have to do is carry anything over. An element here is a
+    /// struct with fields of its own, and some of them are things this cannot spell: a string, a
+    /// pointer, an array. So the elements the file already had are copied across as bytes rather
+    /// than rebuilt from the document, and any fixup naming a byte inside them is moved with them.
+    /// A member the caller changed is then written over the copy.
+    ///
+    /// The fixups belonging to elements the resize drops are dropped with them. Left behind they
+    /// would aim at a run nothing refers to any more, which is a pointer the game would still
+    /// follow and fix up on load.
+    private static void Regrow(PackfileImage image, PackfileObjects objects,
+                               PackfileObjects.Instance instance, Change change)
+    {
+        var data = image.Section("__data__")
+            ?? throw new InvalidOperationException("this file has no data section");
+
+        if (objects.FieldAt(instance, change.Field) is not int at)
+            throw new InvalidOperationException(
+                $"No offset for {change.ClassName}.{change.Field}, so nothing was written.");
+
+        string elementClass = ElementClass(change.ClassName, change.Field)
+            ?? throw new InvalidOperationException(
+                $"{change.ClassName}.{change.Field} does not say what class its elements are.");
+
+        int stride = HavokClassTypes.Shipped[elementClass]?.Size ?? 0;
+        if (stride <= 0)
+            throw new InvalidOperationException(
+                $"No size for {elementClass}, so {change.Field} was not resized.");
+
+        int count = int.Parse(change.Value, CultureInfo.InvariantCulture);
+        var old = objects.ArrayAt(at);
+        int wasAt = old?.At ?? 0, had = old?.Count ?? 0;
+        int carried = Math.Min(had, count);
+
+        int run = -1;
+        if (count > 0)
+        {
+            // Sixteen, because a struct holding a vector is read with instructions that require the
+            // alignment. Every element after the first is on the same boundary already, since a
+            // class that needs it is padded to it.
+            data.AlignData(16);
+            run = data.AppendData(new byte[count * stride]);
+            if (carried > 0) Array.Copy(data.Data, wasAt, data.Data, run, carried * stride);
+        }
+
+        data.SetLocal(at, run);
+        Move(data.Locals().ToList(), data.SetLocals, l => l.Source, (l, s) => (s, l.Destination));
+        Move(data.Globals().ToList(), data.SetGlobals, g => g.Source, (g, s) => (s, g.Section, g.Destination));
+
+        BitConverter.GetBytes(count).CopyTo(data.Data, at + 8);
+        uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
+        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)count).CopyTo(data.Data, at + 12);
+
+        // Both tables get the same treatment: an entry inside a carried element follows it to the
+        // new run, an entry inside a dropped one goes, and everything else is left alone.
+        void Move<T>(List<T> entries, Action<IEnumerable<T>> write, Func<T, int> sourceOf,
+                     Func<T, int, T> moved)
+        {
+            if (had == 0) return;
+
+            var kept = new List<T>();
+            foreach (var entry in entries)
+            {
+                int source = sourceOf(entry);
+                if (source < wasAt || source >= wasAt + had * stride) { kept.Add(entry); continue; }
+                if (source >= wasAt + carried * stride) continue;
+
+                kept.Add(moved(entry, source - wasAt + run));
+            }
+            write(kept);
+        }
     }
 
     /// Writes one number inside one element of an array of structs.
