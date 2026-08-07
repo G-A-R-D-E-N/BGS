@@ -38,9 +38,15 @@ public static class NativeSave
 
     public sealed record Change(string ClassName, int Index, string Field, string Value,
                                 bool Text = false, bool Ref = false, bool Array = false,
-                                bool Added = false)
+                                bool Added = false, int Element = -1, string Member = "")
     {
-        public override string ToString() => $"{ClassName}[{Index}].{Field} = {Value}";
+        /// Whether this writes into one element of an array of structs rather than into a field of
+        /// the object itself.
+        public bool InElement => Element >= 0;
+
+        public override string ToString() =>
+            InElement ? $"{ClassName}[{Index}].{Field}[{Element}].{Member} = {Value}"
+                      : $"{ClassName}[{Index}].{Field} = {Value}";
     }
 
     /// Which fixed width scalars a value can be written into. Arrays and pointers are absent because
@@ -136,6 +142,38 @@ public static class NativeSave
             // old value to compare against and everything the editor wrote is new.
             string? Consider(int i, string field, string now)
             {
+                // A member inside an array of structs, as `variableBounds[2].min.value`. The array's
+                // own length is a different question and is checked before this is reached, so
+                // getting here means the array is the same length and one number inside it moved.
+                if (field.EndsWith(CountKey, StringComparison.Ordinal))
+                    return $"{className}.{field[..^CountKey.Length]} changed length, which is not " +
+                           "written in place yet";
+
+                int bracket = field.IndexOf('[');
+                if (bracket > 0)
+                {
+                    int close = field.IndexOf(']', bracket);
+                    if (close < 0 || close + 2 > field.Length)
+                        return $"{className}.{field} is not a name this understands";
+
+                    string arrayField = field[..bracket];
+                    if (!int.TryParse(field[(bracket + 1)..close], out int element))
+                        return $"{className}.{field} does not name an element";
+
+                    string member = field[(close + 2)..];
+
+                    if (!layout.TryGetValue(arrayField, out string? arrayType) ||
+                        arrayType != "array of struct")
+                        return $"{className}.{arrayField} is not an array of structs";
+
+                    string? why = StructElementWritable(classes, className, arrayField, member, now);
+                    if (why != null) return why;
+
+                    changes.Add(new Change(className, i, arrayField, now, Element: element,
+                                           Member: member));
+                    return null;
+                }
+
                 if (!layout.TryGetValue(field, out string? type))
                     return $"{className}.{field} changed, and we have no byte layout for it";
 
@@ -294,6 +332,14 @@ public static class NativeSave
                     $"{change} does not correspond to anything in the file, so nothing was written.");
 
             var instance = instances[change.Index];
+
+            if (change.InElement)
+            {
+                if (!WriteInElement(image, objects, instance, change))
+                    throw new InvalidOperationException($"{change} could not be written, so nothing was.");
+                continue;
+            }
+
             var member = (classes ?? HavokClasses.Shipped).Field(change.ClassName, change.Field)
                 ?? throw new InvalidOperationException($"No layout for {change.ClassName}.{change.Field}.");
 
@@ -419,6 +465,55 @@ public static class NativeSave
         return true;
     }
 
+    /// Writes one number inside one element of an array of structs.
+    ///
+    /// The elements sit in their own run somewhere else in the section, not inside the object, so
+    /// this is the array's own pointer followed to that run and then a stride into it. Nothing moves
+    /// and nothing changes length: it is the same write as any other fixed width value, aimed
+    /// somewhere the object's own class does not describe.
+    private static bool WriteInElement(PackfileImage image, PackfileObjects objects,
+                                       PackfileObjects.Instance instance, Change change)
+    {
+        var data = image.Section("__data__");
+        if (data == null) return false;
+
+        if (objects.FieldAt(instance, change.Field) is not int header) return false;
+
+        var array = objects.ArrayAt(header);
+        if (array == null || change.Element < 0 || change.Element >= array.Count) return false;
+
+        string? elementClass = ElementClass(change.ClassName, change.Field);
+        if (elementClass == null) return false;
+
+        int stride = HavokClassTypes.Shipped[elementClass]?.Size ?? 0;
+        if (stride <= 0) return false;
+
+        var found = StructMember(elementClass, change.Member);
+        if (found == null) return false;
+
+        string type = Narrow(found.Value.VType);
+        if (type.Length == 0) return false;
+
+        int at = array.At + change.Element * stride + found.Value.Offset;
+        int width = type switch
+        {
+            "int8" or "uint8" or "bool" or "enum" => 1,
+            "int16" or "uint16" => 2,
+            _ => 4,
+        };
+        if (at < 0 || at + width > data.Data.Length) return false;
+
+        if (type == "real")
+        {
+            BitConverter.GetBytes(AsFloat(change.Value)).CopyTo(data.Data, at);
+            return true;
+        }
+
+        long number = AsLong(change.Value, type);
+        for (int i = 0; i < width; i++) data.Data[at + i] = (byte)(number >> (8 * i));
+        return true;
+    }
+
     private static bool WriteNarrow(PackfileObjects objects, PackfileObjects.Instance instance,
                                     string field, string type, string value, PackfileSection data)
     {
@@ -495,9 +590,119 @@ public static class NativeSave
             "Named values are not resolved here on purpose: guessing one writes the wrong number.");
     }
 
-    /// Objects grouped by class in document order, each as its simple named values. Nested objects
-    /// appear in the document too and are counted here the same way, which is what makes the index
-    /// within a class line up with the same index in the file.
+    /// Where a member inside a struct array element sits, and whether it is one that can be written.
+    ///
+    /// The class table is what knows the element's class and the offsets inside it, since the layout
+    /// table used elsewhere here describes objects rather than the structs written inside them. The
+    /// path can go more than one level deep: `min.value` on a `hkbVariableBounds` is a
+    /// `hkbVariableValue` and then the number in it.
+    private static (int Offset, string VType, string Owner)? StructMember(string elementClass,
+                                                                          string path)
+    {
+        var types = HavokClassTypes.Shipped;
+        int offset = 0;
+        string owner = elementClass;
+
+        foreach (string step in path.Split('.'))
+        {
+            if (!types.Knows(owner)) return null;
+
+            var member = types.Members(owner).FirstOrDefault(m => m.Name == step);
+            if (member == null) return null;
+
+            offset += member.Offset;
+
+            if (member.VType == "TYPE_STRUCT")
+            {
+                if (member.CType == null) return null;
+                owner = member.CType;
+                continue;
+            }
+
+            return (offset, member.VType, owner);
+        }
+
+        return null;
+    }
+
+    /// The class of an array's elements, which the layout table does not carry.
+    private static string? ElementClass(string className, string arrayField) =>
+        HavokClassTypes.Shipped.Members(className).FirstOrDefault(m => m.Name == arrayField)?.CType;
+
+    /// Whether one member inside a struct array element can be written where it sits, and whether
+    /// the value given for it is really of that type.
+    private static string? StructElementWritable(HavokClasses classes, string className,
+                                                 string arrayField, string member, string value)
+    {
+        string? elementClass = ElementClass(className, arrayField);
+        if (elementClass == null)
+            return $"{className}.{arrayField} does not say what class its elements are";
+
+        var found = StructMember(elementClass, member);
+        if (found == null)
+            return $"{elementClass}.{member} is not a member this build can place";
+
+        string type = Narrow(found.Value.VType);
+        if (type.Length == 0)
+            return $"{elementClass}.{member} is a {found.Value.VType}, which is not written in " +
+                   "place yet";
+
+        if (!Parses(value, type))
+            return $"{elementClass}.{member} was set to '{value}', which is not a {type}";
+
+        return null;
+    }
+
+    /// The class table's spelling of a type, in the words the writers here use. Empty for anything
+    /// that is not a fixed width number, which is everything that would move what follows it.
+    private static string Narrow(string vtype) => vtype switch
+    {
+        "TYPE_REAL" => "real",
+        "TYPE_INT32" => "int32",
+        "TYPE_UINT32" => "uint32",
+        "TYPE_INT16" => "int16",
+        "TYPE_UINT16" => "uint16",
+        "TYPE_INT8" or "TYPE_CHAR" => "int8",
+        "TYPE_UINT8" => "uint8",
+        "TYPE_BOOL" => "bool",
+        "TYPE_ENUM" or "TYPE_FLAGS" => "enum",
+        _ => "",
+    };
+
+    /// How many elements a struct array holds, under a key no hkparam can have.
+    private const string CountKey = "#count";
+
+    /// One element of a struct array, as a key per member, walking into members that are themselves
+    /// written as an object. `hkbVariableBounds` holds its min and its max that way, each an
+    /// `hkbVariableValue` with a single number inside it, so nothing here is reachable without the
+    /// walk.
+    private static void Flatten(Dictionary<string, string> fields, string path, XElement element)
+    {
+        foreach (var p in element.Elements("hkparam"))
+        {
+            string? name = p.Attribute("name")?.Value;
+            if (name == null) continue;
+
+            var inner = p.Elements("hkobject").ToList();
+            if (inner.Count == 1) { Flatten(fields, $"{path}.{name}", inner[0]); continue; }
+
+            // An array inside an array element. Left as its joined text, which means a change in one
+            // is refused rather than written, and refusing is the honest answer until it is done.
+            fields[$"{path}.{name}"] = (p.Value ?? "").Trim();
+        }
+    }
+
+    /// Objects grouped by class in document order, each as its simple named values.
+    ///
+    /// Only the file's own objects. hkxpack writes a struct held inside another object as an
+    /// `hkobject` too, so walking every one of them counts things the file has no object for: a
+    /// behaviour with no `hkbVariableValue` object in it appears to hold hundreds, because every
+    /// bound carries two inline. The file's objects are the ones with an id, `name="#90"`, and an
+    /// inline struct is named after the field it sits in or not named at all.
+    ///
+    /// This never showed before because a change inside an inline struct was refused before anything
+    /// tried to write it. Now that those changes are written, counting them would send a value at an
+    /// object that does not exist.
     private static Dictionary<string, List<Dictionary<string, string>>> ByClass(string xml)
     {
         var byClass = new Dictionary<string, List<Dictionary<string, string>>>(StringComparer.Ordinal);
@@ -507,6 +712,10 @@ public static class NativeSave
         {
             string? className = element.Attribute("class")?.Value;
             if (className == null) continue;
+
+            string? id = element.Attribute("name")?.Value;
+            if (id == null || id.Length < 2 || id[0] != '#' || !id[1..].All(char.IsAsciiDigit))
+                continue;
 
             var fields = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -518,7 +727,24 @@ public static class NativeSave
             foreach (var p in element.Elements("hkparam"))
             {
                 string? name = p.Attribute("name")?.Value;
-                if (name != null) fields[name] = (p.Value ?? "").Trim();
+                if (name == null) continue;
+
+                // An array of structs is not one value. Kept whole it is a blob of every element's
+                // text joined together, so a single number changing inside it reads as the whole
+                // field changing and there is nothing left to say which element or which member.
+                // Split into a key per member instead, `variableBounds[2].min.value`, and the
+                // comparison below finds the one number that moved without knowing anything about
+                // arrays.
+                var elements = p.Elements("hkobject").ToList();
+                if (elements.Count > 0)
+                {
+                    fields[name + CountKey] = elements.Count.ToString();
+                    for (int e = 0; e < elements.Count; e++)
+                        Flatten(fields, $"{name}[{e}]", elements[e]);
+                    continue;
+                }
+
+                fields[name] = (p.Value ?? "").Trim();
             }
 
             if (!byClass.TryGetValue(className, out var list)) byClass[className] = list = new();

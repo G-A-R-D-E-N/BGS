@@ -810,6 +810,18 @@ public static class Program
         return edits;
     }
 
+    /// The first variableBounds element's min or max, out of hkxpack's text.
+    private static string FirstBound(string xml, string which)
+    {
+        int start = xml.IndexOf("name=\"variableBounds\"", StringComparison.Ordinal);
+        if (start < 0) return "absent";
+
+        var m = System.Text.RegularExpressions.Regex.Match(
+            xml[start..], $"name=\"{which}\".*?name=\"value\">(-?\\d+)<",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        return m.Success ? m.Groups[1].Value : "absent";
+    }
+
     /// Where a clip travels, read off its extracted motion.
     ///
     /// A walk does not move its bones across the ground: it plays on the spot and carries a separate
@@ -3427,11 +3439,48 @@ public static class Program
                 // nothing is lengthened, so it is a value write like any other.
                 if (had > 0)
                 {
-                    var inPlace = NativeSave.Compare(xml, SymbolEditor.SetVariableBounds(xml, 0, "-2", "9"));
+                    string edited = SymbolEditor.SetVariableBounds(xml, 0, "-2", "9");
+                    var inPlace = NativeSave.Compare(xml, edited);
                     Console.WriteLine(inPlace.Possible
                         ? $"  changing a bound already there: written into the bytes, " +
                           $"{inPlace.Changes.Count} change(s)"
                         : $"  changing a bound already there: needs hkxpack, {inPlace.Refusal}");
+
+                    // Carried out, not merely planned. The file is written, read back, and set
+                    // against hkxpack's own reading of it, because a plan that says it can be
+                    // written proves nothing about what lands in the bytes.
+                    if (inPlace.Possible)
+                    {
+                        byte[] written = NativeSave.Apply(argv[1], inPlace);
+
+                        string boundedPath = Path.Combine(work, "bounded.hkx");
+                        File.WriteAllBytes(boundedPath, written);
+
+                        string check = WorkDirectory("symrm-bounded-", boundedPath);
+                        HkxTextEdit.ResetDirectory(check);
+                        string reread = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, boundedPath, check));
+
+                        // Read out of the text rather than through the model, because a bound sits in
+                        // a nested object and the model records anything with contents of its own as
+                        // an empty string.
+                        Console.WriteLine($"  read back through hkxpack: bound 0 is " +
+                                          $"{FirstBound(reread, "min")} to {FirstBound(reread, "max")}");
+
+                        // Nothing else moved. Every value hkxpack reads out of the written file has
+                        // to match what it read out of the edited text, or the write went somewhere
+                        // it was not asked to go.
+                        var wanted = RepackCheck.Take(edited);
+                        var got = RepackCheck.Take(reread);
+
+                        int differ = 0;
+                        int compared = Math.Min(wanted.InOrder.Count, got.InOrder.Count);
+                        for (int o = 0; o < compared; o++)
+                            if (wanted.InOrder[o].Body != got.InOrder[o].Body) differ++;
+
+                        Console.WriteLine($"  {wanted.Objects} object(s) asked for, {got.Objects} in " +
+                                          $"the written file, {differ} whose values differ");
+                        Console.WriteLine($"  file grew by {written.Length - new FileInfo(argv[1]).Length} bytes");
+                    }
                 }
             }
         }

@@ -56,8 +56,9 @@ the game, with the evidence behind it, lives in the
   max, extending `variableBounds` to reach it when the array stops short, which it usually does: of
   the 531 vanilla files it is empty in 224 and shorter than the variable list in 87. The entries
   written in between are `0` to `0`, which is what the file already means by an unbounded variable
-  inside the array. Saving a bound still goes back through hkxpack, because an array of structs
-  cannot yet be written into the bytes in place. Removing renumbers every reference above it. Expand an
+  inside the array. Changing a bound the array already holds is written straight into the file's
+  bytes; giving one to a variable the array does not reach yet still goes back through hkxpack,
+  because lengthening an array of structs is not written in place yet. Removing renumbers every reference above it. Expand an
   event to see what the file does with it: raised here, listened for here, or written somewhere with
   no established direction, each naming the class and member. No verdict comes with it, for the reason
   under Validating.
