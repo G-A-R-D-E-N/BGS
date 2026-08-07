@@ -3,6 +3,37 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, a number inside an array of structs is written where it sits
+
+The first half of #44. Changing a bound the array already holds no longer goes back through hkxpack:
+it is the same fixed width write as any other value, aimed somewhere the object's own class does not
+describe.
+
+What was in the way was the comparison, not the writing. An array of structs was kept as one blob of
+every element's text joined together, so a single number moving inside it read as the whole field
+changing and there was nothing left to say which element or which member. It is split into a key per
+member now, `variableBounds[2].min.value`, and the comparison finds the one number that moved without
+knowing anything about arrays.
+
+**A counting bug came out from under it.** hkxpack writes a struct held inside another object as an
+`hkobject` too, and every one of those was being counted as one of the file's own objects. A
+behaviour with no `hkbVariableValue` object in it appeared to hold hundreds, two for every bound. It
+never showed because a change inside an inline struct was refused before anything tried to write it;
+the moment those changes were written, the first one was aimed at an object that does not exist. The
+file's objects are the ones with an id now.
+
+Proved by carrying it out rather than by planning it. On three vanilla behaviours the bound reads
+back through hkxpack as the number asked for, every other value in the file is unchanged, and the
+file does not grow by a single byte:
+
+| file | objects compared | differing | growth |
+|---|---|---|---|
+| `WeaponBehavior.hkx` | 4,645 | 0 | 0 bytes |
+| `SuperMutantBehavior.hkx` | 209 | 0 | 0 bytes |
+| `DogmeatRoot.hkx` | 161 | 0 | 0 bytes |
+
+Lengthening the array is the other half of #44 and is still refused, by name rather than by silence.
+
 ## 2026-08-06, the mesh can be looked at without opening the window
 
 "Does this look right" kept ending up as a question only a person with the program open could answer,

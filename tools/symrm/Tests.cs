@@ -40,6 +40,7 @@ public static class Tests
         ("EveryFindingPointsAtAnObject", EveryFindingPointsAtAnObject),
         ("AShortBoundsArrayStaysLinedUp", AShortBoundsArrayStaysLinedUp),
         ("ABoundCanBeAuthoredPastTheEndOfTheArray", ABoundCanBeAuthoredPastTheEndOfTheArray),
+        ("AValueInsideAStructArrayIsWrittenInPlace", AValueInsideAStructArrayIsWrittenInPlace),
         ("WindowsLineEndingsStillEdit", WindowsLineEndingsStillEdit),
         ("RepackDriftCatchesAChangedValue", RepackDriftCatchesAChangedValue),
         ("AnAnimationIsRefusedForSaving", AnAnimationIsRefusedForSaving),
@@ -753,6 +754,46 @@ public static class Tests
         catch (ArgumentOutOfRangeException e) { refused = e.Message; }
         CheckTrue("bounding a variable the file does not have is refused",
                   refused.Contains("3 variable(s)", StringComparison.Ordinal));
+    }
+
+    /// A number inside an element of an array of structs is written where it sits.
+    ///
+    /// Nothing moves and nothing changes length, so it is the same write as any other fixed width
+    /// value, aimed somewhere the object's own class does not describe. Before this the whole array
+    /// read as one blob of text, so one number changing looked like the whole field changing and
+    /// there was nothing left to say which element or which member.
+    private static void AValueInsideAStructArrayIsWrittenInPlace()
+    {
+        Console.WriteLine("\na value inside a struct array is written where it sits");
+
+        string xml = ThreeVariablesWithTwoBounds();
+
+        // A bound already inside the array. No growth, so nothing has to move.
+        var plan = NativeSave.Compare(xml, SymbolEditor.SetVariableBounds(xml, 0, "-2", "9"));
+        CheckTrue("changing a bound already in the array is writable", plan.Possible);
+        Check("as one change per number", 2, plan.Changes.Count);
+        CheckTrue("aimed at an element rather than at a field", plan.Changes.All(c => c.InElement));
+        Check("of the array that holds it", "variableBounds", plan.Changes[0].Field);
+        Check("naming the element", 0, plan.Changes[0].Element);
+        CheckTrue("and the member inside it",
+                  plan.Changes.Select(c => c.Member).OrderBy(m => m)
+                      .SequenceEqual(new[] { "max.value", "min.value" }));
+        CheckTrue("and it does not grow the file", !plan.Grows);
+
+        // Lengthening it is a different job and is refused by name rather than by silence.
+        var longer = NativeSave.Compare(xml, SymbolEditor.SetVariableBounds(xml, 2, "0", "1"));
+        CheckTrue("making the array longer is refused", !longer.Possible);
+        CheckTrue("and the refusal says it was the length",
+                  longer.Refusal?.Contains("changed length", StringComparison.Ordinal) == true);
+        CheckTrue("and names the array", longer.Refusal?.Contains("variableBounds", StringComparison.Ordinal) == true);
+
+        // An inline struct is not one of the file's objects. hkxpack writes one as an hkobject all
+        // the same, so counting those made a file with no hkbVariableValue object in it appear to
+        // hold two per bound, and a change would have been aimed at an object that does not exist.
+        CheckTrue("a change inside a bound is not attributed to hkbVariableValue",
+                  plan.Changes.All(c => c.ClassName != "hkbVariableValue"));
+        Check("it belongs to the object that owns the array", "hkbBehaviorGraphData",
+              plan.Changes[0].ClassName);
     }
 
     private static string BoundMin(string xml, int index)
