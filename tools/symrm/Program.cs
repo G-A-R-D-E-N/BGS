@@ -2994,6 +2994,42 @@ public static class Program
         Report("BEFORE", xml);
         var before = Resolved(xml);
 
+        // Bounding a variable, which is the one symbol edit that has to lengthen a positional array
+        // to reach the variable it is about. Reported rather than assumed: whether it can be written
+        // into the file's own bytes or has to go back through hkxpack is worth knowing, since one of
+        // those needs Java and the other does not.
+        {
+            var names0 = SymbolEditor.VariableNames(BehaviourGraphModel.Parse(xml));
+            if (names0.Count > 0)
+            {
+                int last = names0.Count - 1;
+                int had = SymbolEditor.Audit(BehaviourGraphModel.Parse(xml)).Bounds;
+
+                string bounded = SymbolEditor.SetVariableBounds(xml, last, "-1", "7");
+                var lined = SymbolEditor.Audit(BehaviourGraphModel.Parse(bounded));
+
+                Console.WriteLine($"\n--- bound variable {last} '{names0[last]}' from -1 to 7 ---");
+                Console.WriteLine($"  bounds array {had} -> {lined.Bounds} for {lined.Names} variable(s), " +
+                                  $"parallel={lined.BoundsAreParallel}");
+
+                var plan = NativeSave.Compare(xml, bounded);
+                Console.WriteLine(plan.Possible
+                    ? $"  written into the bytes: {plan.Changes.Count} change(s), grows={plan.Grows}"
+                    : $"  needs hkxpack: {plan.Refusal}");
+
+                // Changing a bound the array already holds is a different question from adding one:
+                // nothing is lengthened, so it is a value write like any other.
+                if (had > 0)
+                {
+                    var inPlace = NativeSave.Compare(xml, SymbolEditor.SetVariableBounds(xml, 0, "-2", "9"));
+                    Console.WriteLine(inPlace.Possible
+                        ? $"  changing a bound already there: written into the bytes, " +
+                          $"{inPlace.Changes.Count} change(s)"
+                        : $"  changing a bound already there: needs hkxpack, {inPlace.Refusal}");
+                }
+            }
+        }
+
         Console.WriteLine("\n--- add a variable and an event ---");
         xml = SymbolEditor.AddVariable(xml, "fSymrmProbe", SymbolEditor.VariableType.Real, out int newVar);
         xml = SymbolEditor.AddEvent(xml, "SymrmProbeEvent", out int newEvent);

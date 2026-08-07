@@ -186,10 +186,59 @@ public static class SymbolEditor
         return xml;
     }
 
-    private static string BoundsElement() =>
+    /// The min and max a variable is bounded by, as stored, or empty strings where the array stops
+    /// short of it. Positional like everything else here: element n bounds variable n.
+    public static List<(string Min, string Max)> VariableBounds(BehaviourGraphModel model)
+    {
+        var data = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraphData");
+        var bounds = new List<(string, string)>();
+        if (data == null || !data.StructLists.TryGetValue("variableBounds", out var rows)) return bounds;
+
+        foreach (var row in rows)
+            bounds.Add((row.TryGetValue("min", out var lo) ? lo : "",
+                        row.TryGetValue("max", out var hi) ? hi : ""));
+
+        return bounds;
+    }
+
+    /// Gives a variable a min and a max, extending the array to reach it when it stops short.
+    ///
+    /// The array is allowed to be shorter than the variable list and usually is: across the 531
+    /// vanilla files it is empty in 224 and shorter in 87. So bounding variable 9 in a file with two
+    /// bounds means writing seven unbounded entries before it, and 0 to 0 is what the file already
+    /// means by unbounded inside the array. Anything else would be inventing a bound for a variable
+    /// nobody asked to bound.
+    ///
+    /// Values are encoded the same way an initial value is, because a bound on a real is a float's
+    /// bit pattern in an int and not the text "0.5".
+    public static string SetVariableBounds(string xml, int index, string encodedMin, string encodedMax)
+    {
+        var dataIds = HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphData");
+        if (dataIds.Count == 0)
+            throw new InvalidOperationException("this file has no hkbBehaviorGraphData");
+
+        int variables = VariableNames(BehaviourGraphModel.Parse(xml)).Count;
+        if (index < 0 || index >= variables)
+            throw new ArgumentOutOfRangeException(nameof(index),
+                $"this file declares {variables} variable(s), so there is no variable {index} to bound");
+
+        int have = Audit(BehaviourGraphModel.Parse(xml)).Bounds;
+        for (int i = have; i <= index; i++)
+            xml = HkxTextEdit.ArrayAppend(xml, dataIds[0], "variableBounds", BoundsElement());
+
+        // Element by element replacement, because every element carries the same parameter names and
+        // there is nothing else to tell one from another.
+        xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], "variableBounds", index);
+        return HkxTextEdit.ArrayInsertAt(xml, dataIds[0], "variableBounds", index,
+                                         BoundsElement(encodedMin, encodedMax));
+    }
+
+    private static string BoundsElement() => BoundsElement("0", "0");
+
+    private static string BoundsElement(string min, string max) =>
         "                <hkobject>\n" +
-        BoundsMember("min", "0") +
-        BoundsMember("max", "0") +
+        BoundsMember("min", min) +
+        BoundsMember("max", max) +
         "                </hkobject>";
 
     private static string BoundsMember(string name, string value) =>
