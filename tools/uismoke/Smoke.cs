@@ -56,7 +56,7 @@ public static class Smoke
         // check has run would read as a check that found nothing.
         Check("the problem list is hidden until a check has run", 1, grids.Count(g => !g.IsVisible));
         foreach (string expected in new[]
-                 { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove",
+                 { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
                    "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
                    "Play", "From selected node", "Fit" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));

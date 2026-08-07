@@ -53,6 +53,8 @@ public class MainWindow : Window
 
     private readonly TextBox _symbolName = Ux.Field("name", 170);
     private readonly TextBox _symbolValue = Ux.Field("value, for a variable", 130);
+    private readonly TextBox _symbolMin = Ux.Field("min", 80);
+    private readonly TextBox _symbolMax = Ux.Field("max", 80);
     private readonly TextBlock _symbolAudit = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
     private PapyrusEvents.Index _papyrus = new();
     private bool _papyrusScanned;
@@ -1393,6 +1395,8 @@ public class MainWindow : Window
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         bar.Children.Add(_symbolName);
         bar.Children.Add(_symbolValue);
+        bar.Children.Add(_symbolMin);
+        bar.Children.Add(_symbolMax);
 
         foreach (var (label, type) in new (string, SymbolEditor.VariableType)[]
                  {
@@ -1412,6 +1416,7 @@ public class MainWindow : Window
                      ("+ event", AddSymbolEvent),
                      ("Rename", RenameSymbol),
                      ("Set value", SetSymbolValue),
+                     ("Set bounds", SetSymbolBounds),
                      ("Remove", RemoveSymbol),
                  })
         {
@@ -2387,12 +2392,49 @@ public class MainWindow : Window
 
         _symbolName.Text = names[index];
 
-        if (!variable) { _symbolValue.Text = ""; return; }
+        if (!variable) { _symbolValue.Text = ""; _symbolMin.Text = ""; _symbolMax.Text = ""; return; }
         var types = SymbolEditor.VariableTypes(model);
         var values = SymbolEditor.VariableValues(model);
+        var type = index < types.Count ? types[index] : SymbolEditor.VariableType.Int32;
+
         _symbolValue.Text = index < values.Count
-            ? SymbolEditor.DecodeValue(index < types.Count ? types[index] : SymbolEditor.VariableType.Int32, values[index])
+            ? SymbolEditor.DecodeValue(type, values[index])
             : "";
+
+        // Empty rather than zero where the array stops short of this variable, because the array is
+        // allowed to stop short and an unbounded variable is not one bounded to zero.
+        var bounds = SymbolEditor.VariableBounds(model);
+        _symbolMin.Text = index < bounds.Count ? SymbolEditor.DecodeValue(type, bounds[index].Min) : "";
+        _symbolMax.Text = index < bounds.Count ? SymbolEditor.DecodeValue(type, bounds[index].Max) : "";
+    }
+
+    /// Gives the selected variable a min and a max, which nothing in the window could do before: the
+    /// array could be inherited from vanilla or lost, never authored, so a variable added here never
+    /// got a bound at all.
+    private void SetSymbolBounds()
+    {
+        if (!SelectedSymbol(out bool variable, out int index) || !variable)
+        {
+            SetStatus("pick a variable row; events have no bounds.", Ux.MutedBrush);
+            return;
+        }
+
+        EditSymbols(xml =>
+        {
+            var types = SymbolEditor.VariableTypes(BehaviourGraphModel.Parse(xml));
+            var type = index < types.Count ? types[index] : SymbolEditor.VariableType.Int32;
+
+            string min = (_symbolMin.Text ?? "").Trim();
+            string max = (_symbolMax.Text ?? "").Trim();
+            if (min.Length == 0) min = "0";
+            if (max.Length == 0) max = "0";
+
+            xml = SymbolEditor.SetVariableBounds(xml, index, SymbolEditor.EncodeValue(type, min),
+                                                 SymbolEditor.EncodeValue(type, max));
+
+            SetStatus($"variable {index} is bounded {min} to {max}   (unsaved)", Ux.CodeBrush);
+            return xml;
+        });
     }
 
     private bool SelectedSymbol(out bool variable, out int index)

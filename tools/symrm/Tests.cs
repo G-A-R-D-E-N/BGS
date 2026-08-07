@@ -39,6 +39,7 @@ public static class Tests
         ("AddedVariablesCarryTheirDeclaredType", AddedVariablesCarryTheirDeclaredType),
         ("EveryFindingPointsAtAnObject", EveryFindingPointsAtAnObject),
         ("AShortBoundsArrayStaysLinedUp", AShortBoundsArrayStaysLinedUp),
+        ("ABoundCanBeAuthoredPastTheEndOfTheArray", ABoundCanBeAuthoredPastTheEndOfTheArray),
         ("WindowsLineEndingsStillEdit", WindowsLineEndingsStillEdit),
         ("RepackDriftCatchesAChangedValue", RepackDriftCatchesAChangedValue),
         ("AnAnimationIsRefusedForSaving", AnAnimationIsRefusedForSaving),
@@ -708,6 +709,59 @@ public static class Tests
         var tailCounts = SymbolEditor.Audit(BehaviourGraphModel.Parse(tail));
         Check("removing a variable past the bounds leaves them alone", 2, tailCounts.Bounds);
         Check("with the first bound untouched", "10", BoundMax(tail, 0));
+    }
+
+    /// A bound can be given to a variable the array does not reach yet.
+    ///
+    /// The array is allowed to stop short and usually does, so bounding the last variable in a file
+    /// with two bounds means writing the missing entries first. They are written unbounded, 0 to 0,
+    /// which is what the file already means inside the array, rather than copying a neighbour's
+    /// bound onto a variable nobody asked to bound.
+    private static void ABoundCanBeAuthoredPastTheEndOfTheArray()
+    {
+        Console.WriteLine("\na bound can be authored past the end of the array");
+
+        string xml = ThreeVariablesWithTwoBounds();
+        Check("two bounds to begin with", 2, SymbolEditor.Audit(BehaviourGraphModel.Parse(xml)).Bounds);
+
+        // The third variable, which the array does not reach.
+        string after = SymbolEditor.SetVariableBounds(xml, 2, "-5", "35");
+        var counts = SymbolEditor.Audit(BehaviourGraphModel.Parse(after));
+
+        Check("the array now reaches it", 3, counts.Bounds);
+        CheckTrue("and is parallel with the variables", counts.BoundsAreParallel);
+        Check("the new bound is the one asked for", "35", BoundMax(after, 2));
+        Check("with its minimum too", "-5", BoundMin(after, 2));
+
+        // The entries already there are not disturbed, which is the whole risk of extending a
+        // positional array: a bound that slides lands on a variable nobody bounded.
+        Check("the first bound is untouched", "10", BoundMax(after, 0));
+        Check("and the second", "20", BoundMax(after, 1));
+
+        // One already inside the array is replaced rather than appended to.
+        string second = SymbolEditor.SetVariableBounds(xml, 0, "1", "2");
+        Check("bounding one already in the array does not lengthen it", 2,
+              SymbolEditor.Audit(BehaviourGraphModel.Parse(second)).Bounds);
+        Check("and it takes the new value", "2", BoundMax(second, 0));
+        Check("leaving its neighbour alone", "20", BoundMax(second, 1));
+
+        // A variable that does not exist has no bound to set, and saying so beats writing an entry
+        // that bounds nothing.
+        string refused = "";
+        try { SymbolEditor.SetVariableBounds(xml, 7, "0", "0"); }
+        catch (ArgumentOutOfRangeException e) { refused = e.Message; }
+        CheckTrue("bounding a variable the file does not have is refused",
+                  refused.Contains("3 variable(s)", StringComparison.Ordinal));
+    }
+
+    private static string BoundMin(string xml, int index)
+    {
+        int start = xml.IndexOf("name=\"variableBounds\"", StringComparison.Ordinal);
+        if (start < 0) return "";
+        var minima = System.Text.RegularExpressions.Regex
+            .Matches(xml[start..], "name=\"min\".*?name=\"value\">(-?\\d+)<",
+                     System.Text.RegularExpressions.RegexOptions.Singleline);
+        return index < minima.Count ? minima[index].Groups[1].Value : "";
     }
 
     // The bound values sit in nested hkbVariableValue objects rather than as plain members, so this

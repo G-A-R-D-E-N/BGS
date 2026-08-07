@@ -3,6 +3,24 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, a variable can be given a bound
+
+`variableBounds` could be inherited from vanilla or lost, never authored, so a variable added by this
+tool never got a bound at all. The Symbols tab has a min and a max now, and a Set bounds button.
+
+The array is positional and allowed to stop short, and usually does: of the 531 vanilla files it is
+empty in 224 and shorter than the variable list in 87. So bounding variable 82 in a file with no
+bounds means writing 82 entries before it. Those are written `0` to `0`, which is what the file
+already means by an unbounded variable inside the array, rather than copying a neighbour's bound onto
+a variable nobody asked to bound. The entries already there are left exactly as they were, which is
+the whole risk of extending a positional array: a bound that slides lands on the wrong variable and
+the file stays valid while the wrong thing gets clamped.
+
+**Saving a bound still needs Java.** `variableBounds` is an array of structs and nothing can write
+one into the file's bytes yet, so the save falls back to hkxpack. That is true whether the array has
+to grow or the bound is already there, and it is reported rather than discovered: `symrm remove` now
+says which way a bound would be written for the file it is given.
+
 ## 2026-08-06, where a clip takes you
 
 Root motion is read now, off `hkaAnimation.extractedMotion`. Every offset comes out of the class

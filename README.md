@@ -52,7 +52,12 @@ the game, with the evidence behind it, lives in the
   created unattached, and unattached nodes are drawn in a column of their own rather than vanishing.
   Delete refuses while anything still points at the node, and names what.
 - **Symbols tab**: every variable and event with its index, type, initial value, and what references
-  it. Add, rename, retype the value, or remove. Removing renumbers every reference above it. Expand an
+  it. Add, rename, retype the value, bound it, or remove. **Set bounds** gives a variable a min and a
+  max, extending `variableBounds` to reach it when the array stops short, which it usually does: of
+  the 531 vanilla files it is empty in 224 and shorter than the variable list in 87. The entries
+  written in between are `0` to `0`, which is what the file already means by an unbounded variable
+  inside the array. Saving a bound still goes back through hkxpack, because an array of structs
+  cannot yet be written into the bytes in place. Removing renumbers every reference above it. Expand an
   event to see what the file does with it: raised here, listened for here, or written somewhere with
   no established direction, each naming the class and member. No verdict comes with it, for the reason
   under Validating.
