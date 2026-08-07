@@ -3,6 +3,21 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-06, the mesh can be looked at without opening the window
+
+"Does this look right" kept ending up as a question only a person with the program open could answer,
+and that is a poor place for it, because the answer was in the data the whole time.
+
+`symrm meshpng` draws the posed mesh to a PNG, front and side, with any bones named on the command
+line drawn in their own colour. No display, no window, no GPU: the wireframe goes into a byte buffer
+and out through zlib as four PNG chunks.
+
+It earned itself immediately. The human body drew as an unrecognisable vertical column, which is what
+the placement fix on `fix/one-answer-for-class-names` had been sitting unmerged to fix, and no number
+had made that as obvious as the picture did. With the fix applied the same mesh draws as a standing
+human with both feet on the ground, and the left toe that had been reported as 5.140 units out sits
+on its own foot, mirrored against the right, indistinguishable by eye.
+
 ## 2026-08-06, a variable can be given a bound
 
 `variableBounds` could be inherited from vanilla or lost, never authored, so a variable added by this

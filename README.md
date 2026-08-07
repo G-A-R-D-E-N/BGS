@@ -77,6 +77,12 @@ the game, with the evidence behind it, lives in the
   centres on that node and selects it, which matters because the node that is wrong is usually the
   one off screen. Marks survive edits until the next check, so fixing one thing does not clear the
   rest of the list.
+- **Seeing it without the window**: `symrm meshpng <mesh.nif> <skeleton.hkx> <out.png> [bone...]`
+  draws the posed mesh to a picture, front and side, with any bones named on the command line drawn
+  in their own colour. That exists because "does this look right" kept being a question only a person
+  with the program open could answer, and it is not: the answer is in the data. It is what showed the
+  male body drawing as an unrecognisable column before the placement fix, and what showed both toes
+  sitting correctly on their own feet after it.
 - **The character, not just the bones**: point Playback at a `.nif`, with the Mesh button or by naming
   it on the command line beside the `.hkx`, and the mesh is skinned to the skeleton and posed with the
   clip. Wireframe, drawn on the same 2D surface as the rest of the window, so the tool takes on no
