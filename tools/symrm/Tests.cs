@@ -72,6 +72,7 @@ public static class Tests
         ("AnArrayOfNamesCanGrow", AnArrayOfNamesCanGrow),
         ("AWideFieldIsWrittenWhereItSits", AWideFieldIsWrittenWhereItSits),
         ("AnArrayOfNumbersCanGrow", AnArrayOfNumbersCanGrow),
+        ("AFieldSaysWhatItIsAndOnlySaysWhatItMeansWhenWeKnow", AFieldSaysWhatItIsAndOnlySaysWhatItMeansWhenWeKnow),
         ("TheLastObjectsBlockEndsAtItsOwnClosingTag", TheLastObjectsBlockEndsAtItsOwnClosingTag),
         ("AnEnumFieldOffersItsDeclaredValues", AnEnumFieldOffersItsDeclaredValues),
         ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
@@ -3403,6 +3404,61 @@ public static class Tests
         var objects = new PackfileObjects(image, HavokClasses.Shipped);
         Check("two bytes at the end of a section read as two bytes", 1337, objects.ReadNarrowAt(4, 2));
         Check("and reading them as four still says nothing", null, objects.ReadIntAt(4));
+    }
+
+    /// What the panel can say about a field, and what it must not.
+    ///
+    /// The rule this pins is the one that matters: a description of what a field is comes from the
+    /// class table and is always available, and a sentence about what it means only exists for the
+    /// fields somebody actually established. Inventing the second from the first would produce
+    /// something that reads exactly like a measured finding.
+    private static void AFieldSaysWhatItIsAndOnlySaysWhatItMeansWhenWeKnow()
+    {
+        Console.WriteLine("\na field says what it is, and only says what it means when we know");
+
+        // Shape, from the table. Dull on purpose.
+        // No "declared by" clause: hkbStateMachineStateInfo declares generator itself, and saying so
+        // would be noise on the majority of fields.
+        Check("a pointer says what it points at",
+              "a pointer to a hkbGenerator",
+              FieldNotes.Structure("hkbStateMachineStateInfo", "generator"));
+        Check("a name says it is text",
+              "a name, held as text",
+              FieldNotes.Structure("hkbClipGenerator", "animationName"));
+        Check("an enum says how many values it has",
+              "one of 5 declared values", FieldNotes.Structure("hkbClipGenerator", "mode"));
+        CheckTrue("an array says what it holds",
+                  FieldNotes.Structure("hkbStateMachine", "states")?.StartsWith("an array of pointers",
+                      StringComparison.Ordinal) == true);
+
+        // An inherited field says where it comes from, which is half of knowing what it is for.
+        CheckTrue("an inherited field names the class that declares it",
+                  FieldNotes.Structure("hkbClipGenerator", "userData")?.Contains("declared by hkbNode",
+                      StringComparison.Ordinal) == true);
+
+        // A fixed length C array is one member written out as eight fields. Looking the shown name
+        // up in the member list finds nothing, and 88 fields in the corpus were left undescribed.
+        CheckTrue("one of a run of fields written side by side is still described",
+                  FieldNotes.Structure("hkbFootIkControlData", "enabled3")?.Contains("number 3 of 8",
+                      StringComparison.Ordinal) == true);
+        Check("and a name that merely ends in a digit is not mistaken for one",
+              null, FieldNotes.Structure("hkbClipGenerator", "notAField7"));
+
+        // Meaning, only where it was established, and carrying where from.
+        var mode = FieldNotes.Meaning("hkbClipGenerator", "mode");
+        CheckTrue("a field somebody established has a sentence", mode != null);
+        CheckTrue("and says where it came from", mode?.From.Length > 0);
+
+        Check("a field nobody has checked has none",
+              null, FieldNotes.Meaning("hkbClipGenerator", "cropStartAmountLocalTime"));
+        Check("and neither does one on a class with no findings at all",
+              null, FieldNotes.Meaning("BSLookAtModifier", "lookAtCameraX"));
+
+        // Two classes can both declare a flags and mean different things by it, so a sentence must
+        // not leak from one to the other.
+        CheckTrue("a sentence belongs to the class that declares the field",
+                  FieldNotes.Meaning("hkbStateMachineTransitionInfo", "flags") != null &&
+                  FieldNotes.Meaning("hkbClipGenerator", "flags") == null);
     }
 
     /// The last object in a document ends at its own closing tag, not at the end of the file.

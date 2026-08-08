@@ -50,6 +50,7 @@ public static class Program
             case "savedelete": return SaveDelete(argv);
             case "classcheck": return ClassCheck(argv);
             case "chain": return Chain(argv);
+            case "notes": return Notes(argv);
             case "saveevent": return SaveEvent(argv);
             case "savewide": return SaveWide(argv);
             case "savenumbers": return SaveNumbers(argv);
@@ -231,6 +232,12 @@ public static class Program
               Declares an event the way the window does, all the way to the bytes, and checks the
               file comes back holding it. Adding one lengthens an array of strings, which used to be
               the last edit that forced a save out through hkxpack. Needs no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- notes <file.hkx | folder>
+              How much the properties panel can say about the fields it shows. Every field gets a
+              description of what it is, from the class table. Only the handful this project has
+              established get a sentence about what they mean, and this prints which ones, so the
+              gap is a number rather than an impression.
 
           dotnet run --project tools/symrm/symrm.csproj -- chain <behaviour.hkx>
               The project around a file: its character, its skeleton, the animations it declares and
@@ -4039,6 +4046,78 @@ public static class Program
         Console.WriteLine($"laid out from scratch: {placedWhereExpected}/{placedSeen} " +
                           "object(s) and run(s) land where the walk puts them");
         return oddFiles == 0 && skipped == 0 ? 0 : 1;
+    }
+
+    // What the panel can say about a field when somebody hovers over its name.
+    //
+    // Two numbers, and the gap between them is the point. Every field can be described, because the
+    // class table knows what shape it is. Almost none can be explained, because there is nowhere
+    // honest to get a sentence from: the Havok manual issue #36 names is not on this machine, and
+    // writing plausible sentences from field names would produce something that reads exactly like
+    // the handful that were actually established.
+    //
+    // So this reports the coverage rather than hiding it, and the explained count is meant to go up
+    // one finding at a time.
+    private static int Notes(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        var types = HavokClassTypes.Shipped;
+        long fields = 0, described = 0, explained = 0;
+        int skipped = 0;
+        var explainedBy = new Dictionary<string, int>(StringComparer.Ordinal);
+        var classes = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (string file in files)
+        {
+            PackfileObjects objects;
+            try { objects = new PackfileObjects(PackfileImage.Read(file)); }
+            catch (Exception) { skipped++; continue; }
+
+            foreach (var instance in objects.Instances)
+            {
+                if (!types.Knows(instance.ClassName)) continue;
+                classes.Add(instance.ClassName);
+
+                // The panel's own field list rather than the class's members, so the fields inside
+                // an array element are counted too. Those are most of what a state machine shows,
+                // and counting only an object's own members put the transitions outside the measure
+                // entirely.
+                var shown = ClassFields.Of(objects, instance, types);
+                if (shown == null) continue;
+
+                foreach (var field in shown)
+                {
+                    fields++;
+                    classes.Add(field.Owner);
+
+                    if (FieldNotes.Structure(field.Owner, field.Name) != null) described++;
+
+                    if (FieldNotes.Meaning(field.Owner, field.Name) is { } note)
+                    {
+                        explained++;
+                        string key = $"{field.Owner}.{field.Name}";
+                        explainedBy[key] = explainedBy.GetValueOrDefault(key) + 1;
+                    }
+                }
+            }
+        }
+
+        foreach (var (what, count) in explainedBy.OrderByDescending(e => e.Value))
+            Console.WriteLine($"  {count,7}  {what}");
+
+        Console.WriteLine($"\n{files.Length} file(s), {classes.Count} class(es) seen, {skipped} not read");
+        Console.WriteLine($"{fields} field(s) a panel would show");
+        Console.WriteLine($"described from the class table: {described} ({100.0 * described / Math.Max(1, fields):0.0}%)");
+        Console.WriteLine($"explained by something we established: {explained} " +
+                          $"({100.0 * explained / Math.Max(1, fields):0.0}%)");
+        return described == fields ? 0 : 1;
     }
 
     // The project around a file: which character, which skeleton, which animations it declares.

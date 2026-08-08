@@ -3,6 +3,28 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, a field says what it is
+
+The properties panel was a column of boxes with a name beside each one. Hovering a name now says
+three things: the address the edit will be written to, what the field is, and, for a small number of
+them, what it means. #36.
+
+**What a field is** comes out of the class table and is true by construction: what a pointer points
+at, what an array holds, how many values an enum declares, which class in the chain declares it.
+Every field gets one, 485,793 of 485,793 across the corpus. A fixed length C array needed handling to
+get there, since `hkbFootIkControlData` writes one member out as `enabled1` to `enabled8` and looking
+those names up in the member list finds nothing; 88 fields were undescribed until that was fixed.
+
+**What a field means** is only there for the fields this project has established, and each carries
+where it came from. That is 7.7% of them. The rest say nothing, on purpose. The issue proposed taking
+the rest from Havok's 2018 Animation manual, which is not on this machine, and the alternative is
+writing plausible sentences from field names. One of those reads with exactly the authority of a
+measured finding and there is no way for a reader to tell which is which. `symrm notes` prints both
+numbers so the gap stays a number.
+
+The enum dropdown half of that issue was already done and had never been looked at. It works, and so
+does the flags decoding it was suspected of missing.
+
 ## 2026-08-08, the last two things that asked for Java stop asking
 
 Opening and editing a file stopped needing Java a while ago. The Chain tab and the Check project
