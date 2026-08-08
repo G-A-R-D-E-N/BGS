@@ -44,6 +44,7 @@ public static class Program
             case "pose": return Pose(argv);
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
+            case "layout": return Layout(argv);
             case "model": return Model(argv);
             case "consumers": return Consumers(argv);
             case "symbols": return Symbols(argv);
@@ -201,6 +202,15 @@ public static class Program
               offset in a packfile is derived from the sizes of what precedes it, so a byte for byte
               match means the derivation is right. Exits non zero on any file that differs or cannot
               be read. Needs no game and no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- layout <file.hkx | folder>
+              The next gate after that one. `packfile` keeps the data section's bytes as it found
+              them and only recomputes the offsets around them, which is why removing an object is
+              still refused: removing one moves every object after it. This works out where every
+              object and every run it points at would go if the file were laid out from nothing,
+              and says how many land where they actually are. Also prints where each kind of thing
+              starts within a sixteen byte boundary, which is how the alignment rule was found
+              rather than guessed. Exits non zero on any disagreement. Needs no game and no Java.
 
           dotnet run --project tools/symrm/symrm.csproj -- channels <skeleton.hkx> <animation.hkx | folder>
               How many bone tracks leave each channel undriven, and for the undriven translations,
@@ -3742,6 +3752,344 @@ public static class Program
             _ => raw.ToString(),
         };
     }
+
+    // Whether the data section can be laid out from scratch rather than edited in place.
+    //
+    // Rebuilding a file today keeps the data section's bytes exactly as they were read and
+    // recomputes only the offsets around them, which is why `symrm packfile` matches on all 531
+    // files while removing an object is still refused. Removing one means every later object moves,
+    // and moving them means knowing where the writer would have put everything.
+    //
+    // Two claims decide whether that is knowable, and both are measured here rather than argued
+    // about:
+    //
+    //   Everything a file points at is allocated in walk order, so the walk that already reproduces
+    //   both fixup tables also says what order the bytes were written in.
+    //   An object's runs sit between that object and the next one, rather than after all of them.
+    //
+    // If both hold, laying a file out from scratch is arithmetic over what is already read. If
+    // either does not, the ordering rule is not the one assumed and a writer built on it would
+    // produce a file the game reads wrongly rather than one it refuses.
+    //
+    // The first thing measured here was neither of those. It was that objects are packed back to
+    // back, and they are not: 19 of Dogmeat's 906 land where packing predicts, because what an
+    // object points at is written straight after it rather than after the last object.
+    //
+    // Both claims hold on all 531 vanilla behaviours, so the last thing needed is where each item
+    // starts, and that is the rule this ended up measuring:
+    //
+    //   An object is written at the size the game registers for its class, not at the end of its
+    //   last member. BSRootTwistModifier is 144 bytes registered and 112 to the end of its members,
+    //   and the shorter reading puts the next string 32 bytes early.
+    //   Objects and array runs start on a sixteen byte boundary. No exceptions in 36,340 objects
+    //   and 17,000 runs.
+    //   A string that is an element of an array of strings is packed against the one before it on a
+    //   two byte boundary.
+    //   A string that is a field of its own starts on a sixteen byte boundary, unless it is the
+    //   first thing written after an array run, in which case it starts at that run's last byte.
+    //
+    // That last clause is not a guess dressed up. Three rules were tried before it and each was
+    // measured: aligning strings to two everywhere gets 2,019 of Dogmeat's 2,493 items right,
+    // sixteen everywhere gets 2,064, and treating every record as a fresh block gets 2,296.
+    // The rule above gets all 138,420 items in all 531 files.
+    private static int Layout(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        var types = HavokClassTypes.Shipped;
+        long runsSeen = 0, runsInOrder = 0, runsReused = 0, runsBesideTheirObject = 0;
+        long gapBytes = 0, runBytes = 0;
+        long placedSeen = 0, placedWhereExpected = 0;
+        int cleanFiles = 0, oddFiles = 0, skipped = 0;
+        var notes = new List<string>();
+
+        // Where each kind of thing starts within a sixteen byte boundary. A kind that only ever
+        // starts at nought is written on a sixteen byte boundary; one that starts at nought or eight
+        // is on an eight byte one; one that lands anywhere has no alignment at all.
+        var padding = new Dictionary<string, Dictionary<int, int>>(StringComparer.Ordinal);
+        void Pad(string kind, int amount)
+        {
+            if (!padding.TryGetValue(kind, out var counts))
+                padding[kind] = counts = new Dictionary<int, int>();
+            counts[amount] = counts.GetValueOrDefault(amount) + 1;
+        }
+
+        foreach (string file in files)
+        {
+            PackfileObjects objects;
+            PackfileImage image;
+            try
+            {
+                image = PackfileImage.Read(file);
+                objects = new PackfileObjects(image);
+            }
+            catch (Exception e)
+            {
+                skipped++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {e.Message}");
+                continue;
+            }
+
+            var data = image.Section("__data__");
+            if (data == null || objects.Instances.Any(i => !types.Knows(i.ClassName))) { skipped++; continue; }
+
+            bool odd = false;
+
+            // Objects in the order the virtual table lists them, which is the order they sit in.
+            // The stretch after one object's body and before the next object starts is where that
+            // object's runs have to be if they are written straight after it.
+            var starts = objects.Instances.Select(i => i.Offset).ToList();
+            int Owner(int offset)
+            {
+                int found = -1;
+                for (int k = 0; k < starts.Count && starts[k] <= offset; k++) found = k;
+                return found;
+            }
+
+            foreach (var instance in objects.Instances)
+            {
+                int size = types[instance.ClassName]?.Size ?? 0;
+                int next = starts.FirstOrDefault(s => s > instance.Offset, data.Data.Length);
+                if (size > 0) gapBytes += Math.Max(0, next - (instance.Offset + size));
+            }
+
+            // Everything pointed at, in the order the walk reaches it. A destination seen before is
+            // counted apart: the writer is free to point two fields at one run, and that is a reuse
+            // rather than a step backwards.
+            var order = FixupOrder.Sources(objects, types, data, global: false);
+            var aims = new Dictionary<int, int>();
+            foreach (var (source, destination) in data.Locals()) aims[source] = destination;
+
+            int highest = -1;
+            var seen = new HashSet<int>();
+            foreach (int source in order)
+            {
+                if (!aims.TryGetValue(source, out int destination)) continue;
+                runsSeen++;
+
+                // Whose run it is: the object the pointer sits in, or, for a pointer sitting inside
+                // a run of its own, the object that run belongs to. Both are the last object to
+                // start before it.
+                int owner = Owner(source);
+                int endOfOwner = owner < 0 ? data.Data.Length
+                                 : starts.FirstOrDefault(s => s > starts[owner], data.Data.Length);
+                if (owner >= 0 && destination >= starts[owner] && destination < endOfOwner)
+                    runsBesideTheirObject++;
+                else
+                {
+                    odd = true;
+                    if (notes.Count < 10)
+                        notes.Add($"{Path.GetFileName(file)}: a pointer at 0x{source:x} aims at " +
+                                  $"0x{destination:x}, outside the stretch its own object owns");
+                }
+
+                if (!seen.Add(destination)) { runsReused++; continue; }
+                if (destination >= highest) { runsInOrder++; highest = destination; }
+                else
+                {
+                    odd = true;
+                    if (notes.Count < 10)
+                        notes.Add($"{Path.GetFileName(file)}: 0x{destination:x} was allocated after " +
+                                  $"0x{highest:x}, so the walk is not the write order");
+                }
+            }
+
+            // What the runs occupy, to say whether the gaps between objects are them and not padding.
+            runBytes += seen.Count;
+
+            // The same walk again, this time carrying how long each thing is, so the space the
+            // writer left before it can be read off rather than reasoned about.
+            // Where each thing starts, modulo sixteen. Read off the file rather than from a running
+            // cursor: a cursor carries any mistake about one thing's length into every thing after
+            // it, and the first attempt at this said strings were padded to eight for that reason.
+            //
+            // Then the thing this is all for: every offset predicted from nothing but the walk, the
+            // lengths and the alignment those columns imply. A file whose every offset comes out
+            // right is a file that could have been written rather than edited.
+            int cursor = 0;
+            string lastKind = "";
+            foreach (var placed in Placements(objects, types, data))
+            {
+                Pad(placed.Kind, placed.At % 16);
+
+                cursor = Align(cursor, placed.Kind switch
+                {
+                    "element string" => 2,
+                    "string" when lastKind.EndsWith("array", StringComparison.Ordinal) => 1,
+                    _ => NativeAppend.Alignment,
+                });
+                lastKind = placed.Kind;
+                placedSeen++;
+                if (cursor == placed.At) placedWhereExpected++;
+                else
+                {
+                    odd = true;
+                    if (notes.Count < 10)
+                        notes.Add($"{Path.GetFileName(file)}: a {placed.Kind} sits at 0x{placed.At:x}, " +
+                                  $"the walk put it at 0x{cursor:x}");
+                }
+
+                cursor = placed.At + placed.Length;
+            }
+
+            if (odd) oddFiles++; else cleanFiles++;
+        }
+
+        foreach (string note in notes) Console.WriteLine("  " + note);
+
+        if (padding.Count > 0)
+        {
+            Console.WriteLine("\nwhere each thing starts within a sixteen byte boundary:");
+            foreach (var (kind, counts) in padding.OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                string spread = string.Join(", ", counts.OrderBy(c => c.Key)
+                                                        .Select(c => $"{c.Value} at {c.Key}"));
+                Console.WriteLine($"  {kind}: {spread}");
+            }
+        }
+
+        Console.WriteLine($"\n{files.Length} file(s): {cleanFiles} laid out the way the walk predicts, " +
+                          $"{oddFiles} not, {skipped} not read");
+        Console.WriteLine($"pointed at: {runsSeen} pointer(s), {runsInOrder} allocated in walk order, " +
+                          $"{runsReused} sharing a run with an earlier pointer, " +
+                          $"{runsBesideTheirObject} landing inside their own object's stretch");
+        Console.WriteLine($"{runBytes} distinct run(s) in {gapBytes} byte(s) of space between objects");
+        Console.WriteLine($"laid out from scratch: {placedWhereExpected}/{placedSeen} " +
+                          "object(s) and run(s) land where the walk puts them");
+        return oddFiles == 0 && skipped == 0 ? 0 : 1;
+    }
+
+    /// One thing the writer put down, in the order it put them down. `Kind` is what it is, so the
+    /// space left in front of it can be counted per kind rather than lumped together.
+    private sealed record Placed(string Kind, int At, int Length, bool Fresh);
+
+    /// Every object and every run it points at, in walk order, with how long each one is.
+    ///
+    /// The positions are the file's own, not predicted ones. That is deliberate: predicting them
+    /// needs the alignment rule, which is the thing this is being used to find out, and a prediction
+    /// that drifts one byte early would make every later item look wrong.
+    private static List<Placed> Placements(PackfileObjects objects, HavokClassTypes types,
+                                           PackfileSection data)
+    {
+        var aims = new Dictionary<int, int>();
+        foreach (var (source, destination) in data.Locals()) aims[source] = destination;
+
+        var placed = new List<Placed>();
+        var seen = new HashSet<int>();
+
+        // Whether the next thing written begins a new record's worth of deferred writes. An object
+        // begins one, and so does each element of an array of structs. It matters because a string
+        // is packed against the string before it, but the first string of a record is not.
+        bool fresh = false;
+        void Put(string kind, int at, int length)
+        {
+            placed.Add(new Placed(kind, at, length, fresh));
+            fresh = false;
+        }
+
+        void Walk(int offset, string className, int depth)
+        {
+            if (depth > 8) return;
+
+            foreach (var member in types.Members(className).OrderBy(m => m.Offset))
+            {
+                if (!member.Written) continue;
+                int at = offset + member.Offset;
+
+                if (member.VType is "TYPE_STRINGPTR" or "TYPE_CSTRING")
+                {
+                    if (aims.TryGetValue(at, out int text) && seen.Add(text))
+                        Put("string", text, Zeroed(data.Data, text));
+                    continue;
+                }
+
+                if (member.VType == "TYPE_STRUCT")
+                {
+                    if (member.CType != null && types.Knows(member.CType))
+                        Walk(at, member.CType, depth + 1);
+                    continue;
+                }
+
+                if (member.VType is not ("TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")) continue;
+
+                var array = objects.ArrayAt(at);
+                if (array == null || array.Count == 0) continue;
+                if (!aims.ContainsKey(at)) continue;
+
+                if (member.VSub == "TYPE_STRUCT" && member.CType != null && types.Knows(member.CType))
+                {
+                    int stride = types[member.CType]?.Size ?? 0;
+                    if (stride <= 0) continue;
+
+                    if (seen.Add(array.At))
+                        Put("struct array", array.At, array.Count * stride);
+
+                    for (int i = 0; i < array.Count; i++)
+                    {
+                        fresh = true;
+                        Walk(array.At + i * stride, member.CType, depth + 1);
+                    }
+                    fresh = false;
+                    continue;
+                }
+
+                int width = Stride(member.VSub);
+                if (width <= 0) continue;
+
+                string kind = member.VSub is "TYPE_POINTER" ? "pointer array"
+                            : member.VSub is "TYPE_STRINGPTR" or "TYPE_CSTRING" ? "string array"
+                            : "value array";
+
+                if (seen.Add(array.At)) Put(kind, array.At, array.Count * width);
+
+                if (member.VSub is not ("TYPE_STRINGPTR" or "TYPE_CSTRING")) continue;
+
+                for (int i = 0; i < array.Count; i++)
+                    if (aims.TryGetValue(array.At + i * 8, out int text) && seen.Add(text))
+                        Put("element string", text, Zeroed(data.Data, text));
+            }
+        }
+
+        foreach (var instance in objects.Instances)
+        {
+            int size = types[instance.ClassName]?.Size ?? 0;
+            if (size <= 0) continue;
+
+            fresh = true;
+            Put("object", instance.Offset, size);
+            fresh = true;
+            Walk(instance.Offset, instance.ClassName, 0);
+            fresh = false;
+        }
+
+        return placed;
+    }
+
+    private static int Align(int value, int to) => (value + to - 1) / to * to;
+
+    /// A null terminated string's length in the file, terminator included.
+    private static int Zeroed(byte[] data, int at)
+    {
+        int end = Array.IndexOf(data, (byte)0, at);
+        return end < 0 ? data.Length - at : end - at + 1;
+    }
+
+    private static int Stride(string vsub) => vsub switch
+    {
+        "TYPE_BOOL" or "TYPE_CHAR" or "TYPE_INT8" or "TYPE_UINT8" => 1,
+        "TYPE_INT16" or "TYPE_UINT16" or "TYPE_HALF" => 2,
+        "TYPE_INT32" or "TYPE_UINT32" or "TYPE_REAL" or "TYPE_ENUM" or "TYPE_FLAGS" => 4,
+        "TYPE_INT64" or "TYPE_UINT64" or "TYPE_ULONG" or "TYPE_POINTER"
+            or "TYPE_STRINGPTR" or "TYPE_CSTRING" => 8,
+        "TYPE_VECTOR4" or "TYPE_QUATERNION" or "TYPE_QSTRANSFORM" => 16,
+        _ => 0,
+    };
 
     // The gate on writing .hkx bytes ourselves. Reading a file apart and putting it back has to
     // produce the same file: every offset in a packfile is derived from the sizes of what came
