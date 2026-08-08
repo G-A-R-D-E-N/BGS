@@ -30,7 +30,7 @@ public sealed class StateRoutes
     /// is the state inside the entered state that the transition also selects, empty for the usual
     /// case.
     public sealed record Route(string MachineId, string FromId, string ToId, string Event,
-                               int EventId, bool Wildcard, string IntoId)
+                               int EventId, bool Wildcard, string IntoId, bool Global = false)
     {
         public override string ToString() =>
             $"{(Wildcard ? "any" : "#" + FromId)} -{Event}-> #{ToId}" +
@@ -46,6 +46,40 @@ public sealed class StateRoutes
     public readonly Dictionary<string, List<Route>> Out = new(StringComparer.Ordinal);
     public readonly Dictionary<string, List<Route>> In = new(StringComparer.Ordinal);
 
+    /// The machine a state belongs to, so a wildcard can be drawn leaving that state.
+    ///
+    /// A wildcard is a rule of the machine rather than of any one state, but it fires from every
+    /// state the machine holds, so from a given state it is a real way out of that state and belongs
+    /// on a line between two states like any other.
+    public readonly Dictionary<string, string> MachineOfState = new(StringComparer.Ordinal);
+
+    /// The states of a machine, in the order the machine lists them.
+    public readonly Dictionary<string, List<string>> StatesOf = new(StringComparer.Ordinal);
+
+    /// Every way out of one state: the transitions it declares itself, and the wildcards its machine
+    /// declares on behalf of all of them, rewritten to leave this state.
+    ///
+    /// This is the shape a person asks for. Standing in a state, what can happen and where does it
+    /// take me, which is its own transitions and its machine's wildcards together and no distinction
+    /// between them at the point of use.
+    public IEnumerable<Route> LeavingState(string stateId)
+    {
+        if (Out.TryGetValue(stateId, out var own))
+            foreach (var route in own.Where(r => !r.Wildcard)) yield return route;
+
+        if (!MachineOfState.TryGetValue(stateId, out var machineId)) yield break;
+        if (!Out.TryGetValue(machineId, out var wildcards)) yield break;
+
+        foreach (var route in wildcards.Where(r => r.Wildcard))
+        {
+            // A wildcard into the state you are already standing in is a self transition, and only
+            // fires at all when it says so. Drawing a loop from a state to itself for every one of a
+            // machine's wildcards is noise on every state of the machine.
+            if (route.ToId == stateId) continue;
+            yield return route with { FromId = stateId };
+        }
+    }
+
     /// Everything a node is joined to by a transition, either way round, which is what the canvas
     /// needs to keep lit when one node is picked out.
     public IEnumerable<string> Touching(string id)
@@ -59,6 +93,14 @@ public sealed class StateRoutes
 
         if (In.TryGetValue(id, out var arriving))
             foreach (var route in arriving) yield return route.FromId;
+
+        // A state is joined to everywhere its machine's wildcards go, because they leave from it as
+        // much as from any other state.
+        foreach (var route in LeavingState(id))
+        {
+            yield return route.ToId;
+            if (route.IntoId.Length > 0) yield return route.IntoId;
+        }
     }
 
     public static StateRoutes Of(BehaviourGraphModel model)
@@ -75,6 +117,9 @@ public sealed class StateRoutes
             // rebuilt per machine rather than shared.
             var byStateId = new Dictionary<int, string>();
             foreach (var state in states) byStateId.TryAdd(state.StateId, state.Id);
+
+            routes.StatesOf[machine.Id] = states.Select(s => s.Id).ToList();
+            foreach (var state in states) routes.MachineOfState[state.Id] = machine.Id;
 
             int start = machine.Int("startStateId");
             if (byStateId.TryGetValue(start, out var startId)) routes.StartStates.Add(startId);

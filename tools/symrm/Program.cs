@@ -1691,6 +1691,11 @@ public static class Program
         long machines = 0, statesTotal = 0, nestedMachines = 0;
         long nestedResolves = 0, nestedUnresolved = 0, nestedNotAMachine = 0;
         long naiveWildcardLines = 0, fromMachineLines = 0;
+        var flagCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var declaredFlags = HavokClassTypes.Shipped
+            .Enum("hkbStateMachineTransitionInfo", "TransitionFlags")
+            ?.OrderBy(v => v.Value).ToList()
+            ?? new List<KeyValuePair<string, long>>();
         var nestedHolds = new Dictionary<string, int>(StringComparer.Ordinal);
         var perMachine = new List<int>();
         int filesRead = 0, filesFailed = 0;
@@ -1782,16 +1787,45 @@ public static class Program
                 }
 
                 // fromNestedStateId sits on the same struct and the reader does not surface it, so
-                // it is read here directly rather than assumed to be zero.
+                // it is read here directly rather than assumed to be zero. The flags come off the
+                // same pass: a wildcard declares whether it is local to this machine or global, and
+                // that is the difference between "any state in here" and "any state at all".
                 foreach (var array in model.Objects)
                 {
                     if (array.Class != "hkbStateMachineTransitionInfoArray") continue;
-                    if (ElementSummary.MachineOwning(model, array.Id) != id) continue;
+                    string owner = ElementSummary.MachineOwning(model, array.Id);
+                    if (owner != id) continue;
                     if (!array.StructLists.TryGetValue("transitions", out var elements)) continue;
 
+                    bool wild = model.Get(id)?.Ref("wildcardTransitions") == array.Id;
+
                     foreach (var element in elements)
+                    {
                         if (element.TryGetValue("fromNestedStateId", out var from) &&
                             int.TryParse(from, out int value) && value != 0) nestedFrom++;
+
+                        // Decoded a bit at a time rather than by the text, because the text is
+                        // hkxpack's spelling: it prints a name when the value is exactly one
+                        // declared flag and the bare number when it is a combination, and a
+                        // combination is the common case here. Counting the strings counts 1536 and
+                        // 2560 as two unrelated things when they share a bit.
+                        element.TryGetValue("flags", out var flags);
+                        long bits = FlagBits(flags ?? "", declaredFlags);
+                        string side = wild ? "wildcard  " : "direct    ";
+
+                        if (bits == 0)
+                        {
+                            flagCounts[side + "(none)"] = flagCounts.GetValueOrDefault(side + "(none)") + 1;
+                            continue;
+                        }
+
+                        foreach (var (flagName, flagValue) in declaredFlags)
+                        {
+                            if ((bits & flagValue) != flagValue) continue;
+                            string key = side + flagName;
+                            flagCounts[key] = flagCounts.GetValueOrDefault(key) + 1;
+                        }
+                    }
                 }
             }
         }
@@ -1800,6 +1834,7 @@ public static class Program
         // measurement above and then does not come back from StateRoutes is a route the picture
         // silently drops, which is the failure this is here to catch.
         long drawable = 0, drawableNested = 0, startStates = 0;
+        long waysOut = 0, rewriteWrong = 0, notAState = 0, selfDirect = 0;
         foreach (string file in files)
         {
             try
@@ -1809,6 +1844,28 @@ public static class Program
                 drawable += routes.Routes.Count;
                 drawableNested += routes.Routes.Count(r => r.IntoId.Length > 0);
                 startStates += routes.StartStates.Count;
+
+                // Every way out of every state, which is what the canvas draws once a state is
+                // picked out. A wildcard is rewritten to leave the state being asked about rather
+                // than the machine, so this checks the rewrite keeps every route between two real
+                // states and drops only self transitions.
+                foreach (string stateId in routes.MachineOfState.Keys)
+                {
+                    var leaving = routes.LeavingState(stateId).ToList();
+                    waysOut += leaving.Count;
+
+                    // A route that does not leave the state it was asked for, or lands somewhere
+                    // that is not a state, is the rewrite being wrong.
+                    if (leaving.Any(r => r.FromId != stateId)) rewriteWrong++;
+                    if (leaving.Any(r => !routes.MachineOfState.ContainsKey(r.ToId))) notAState++;
+
+                    // A state transitioning to itself is real and is counted rather than faulted. A
+                    // wildcard into the state you are standing in is dropped, since it is a self
+                    // transition the machine declares for everybody; one a state writes on itself is
+                    // that state saying so, and belongs on screen.
+                    selfDirect += leaving.Count(r => r.ToId == stateId && !r.Wildcard);
+                    if (leaving.Any(r => r.ToId == stateId && r.Wildcard)) rewriteWrong++;
+                }
             }
             catch
             {
@@ -1835,6 +1892,10 @@ public static class Program
         Console.WriteLine($"  {nestedFrom,7} with a fromNestedStateId ({Percent(nestedFrom, transitions)})");
         Console.WriteLine($"  {danglingTarget,7} whose toStateId is not a state of the machine ({Percent(danglingTarget, transitions)})");
         Console.WriteLine($"  transitions per machine: median {median}, 90th percentile {p90}, busiest {busiest}");
+        Console.WriteLine($"\n  flags on transitions, as the file declares them:");
+        foreach (var (key, count) in flagCounts.OrderBy(p => p.Key, StringComparer.Ordinal))
+            Console.WriteLine($"  {count,7}  {key}");
+
         Console.WriteLine($"\n  wildcards, drawn from each state they could fire from:");
         Console.WriteLine($"  {naiveWildcardLines,7} line(s), which is the drawing nobody wants");
         Console.WriteLine($"  {fromMachineLines,7} line(s) drawn from the machine instead, " +
@@ -1842,11 +1903,18 @@ public static class Program
         Console.WriteLine($"\n  what the canvas draws from the same files:");
         Console.WriteLine($"  {drawable,7} route(s), {drawableNested,7} of them with a second hop into a nested state");
         Console.WriteLine($"  {startStates,7} start state(s) to badge, one per machine that has its own");
+        Console.WriteLine($"  {waysOut,7} way(s) out across every state, being its own transitions " +
+                          $"plus its machine's wildcards");
+        Console.WriteLine($"  {selfDirect,7} of those are a state's own transition back to itself, " +
+                          $"which is real");
+        Console.WriteLine($"  {notAState,7} state(s) with a route landing somewhere that is not a state");
+        Console.WriteLine($"  {rewriteWrong,7} state(s) where rewriting a wildcard to leave that " +
+                          $"state went wrong");
 
         if (drawable != transitions)
             Console.WriteLine($"  MISMATCH: {transitions - drawable} transition(s) would not be drawn");
 
-        return drawable == transitions ? 0 : 1;
+        return drawable == transitions && rewriteWrong == 0 && notAState == 0 ? 0 : 1;
     }
 
     /// The state machine a state's generator leads to, through whatever wraps it. A machine is often
@@ -1921,6 +1989,25 @@ public static class Program
         Console.WriteLine($"{Path.GetFileName(target),-34} {arrays,4} transition array(s), " +
                           $"{summarised,5} element(s) summarised, {unnamed,3} array(s) with no owner");
         return 0;
+    }
+
+    /// A flags value from the text, however hkxpack chose to spell it: a bare number for a
+    /// combination, a single declared name when the value is exactly one flag, and names joined by
+    /// bars when something has already decoded it.
+    private static long FlagBits(string text, List<KeyValuePair<string, long>> declared)
+    {
+        text = text.Trim();
+        if (text.Length == 0) return 0;
+        if (long.TryParse(text, out long number)) return number;
+
+        long bits = 0;
+        foreach (string part in text.Split('|', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string name = part.Trim();
+            foreach (var (declaredName, value) in declared)
+                if (declaredName == name) bits |= value;
+        }
+        return bits;
     }
 
     private static int ElementNumber(string group)

@@ -69,6 +69,24 @@ public static class Smoke
 
         if (focus.Length > 0)
         {
+            // A name rather than an id, when what was asked for is not a number. Ids are assigned by
+            // position in the file and mean nothing to anyone reading a picture; a state is known by
+            // what it is called.
+            if (!focus.All(char.IsDigit))
+            {
+                var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
+                string found = model.Objects
+                    .FirstOrDefault(o => string.Equals(o.Str("name"), focus, StringComparison.OrdinalIgnoreCase))
+                    ?.Id ?? "";
+                if (found.Length == 0)
+                {
+                    Console.WriteLine($"no object named {focus}");
+                    return 1;
+                }
+                Console.WriteLine($"{focus} is #{found} {model.Get(found)!.Class}");
+                focus = found;
+            }
+
             canvas.FocusOn(focus);
             canvas.Highlight(focus);
         }
@@ -151,7 +169,8 @@ public static class Smoke
             var said = Find<TextBlock>(window.Legend).Select(t => t.Text ?? "").ToList();
             foreach (string mark in new[]
                      { "State machine", "State", "Transitions", "Clip", "Blend", "Modifier",
-                       "Solid: holds", "Dashed: transition", "Dashed orange: from anywhere",
+                       "Solid: holds", "Dashed: transition", "Dashed orange: from this state",
+                       "any: an event",
                        "Start", "Red outline", "Amber outline" })
                 CheckTrue($"the legend explains {mark}", said.Contains(mark));
 
@@ -321,6 +340,66 @@ public static class Smoke
                     CheckTrue($"{name}: a start state is marked", canvas.StartStateIds.Count > 0);
                     CheckTrue($"{name}: and the node itself knows it is one",
                               canvas.StartStateIds.All(id => !canvas.DrawnIds.Contains(id) || canvas.IsStart(id)));
+
+                    // Every transition in a machine runs between two of its states. A wildcard is
+                    // written on the machine rather than on a state, but it fires from every state
+                    // the machine holds, so highlighting a state has to show it leaving that state
+                    // rather than leaving the machine.
+                    var withWildcards = routes.MachineOfState.Keys
+                        .Where(s => canvas.DrawnIds.Contains(s))
+                        .FirstOrDefault(s => routes.LeavingState(s).Any(r => r.Wildcard)) ?? "";
+
+                    // A wildcard is not a line. With nothing picked out the canvas draws direct
+                    // transitions only, and every state a wildcard can enter says so on itself.
+                    {
+                        canvas.ClearHighlight();
+                        int direct = routes.Routes.Count(r => !r.Wildcard &&
+                                                              canvas.DrawnIds.Contains(r.FromId) &&
+                                                              canvas.DrawnIds.Contains(r.ToId));
+                        int marked = canvas.DrawnIds.Count(id => canvas.WildcardsInto(id).Count > 0);
+                        int events = canvas.DrawnIds.Sum(id => canvas.WildcardsInto(id).Count);
+
+                        Console.WriteLine($"        wildcards: {marked} state(s) marked, {events} event(s) " +
+                                          $"written on them, {canvas.LineCount} line(s) drawn");
+
+                        Check($"{name}: with nothing picked out only direct transitions are lines",
+                              direct, canvas.LineCount);
+                        CheckTrue($"{name}: and the states a wildcard enters say so on themselves",
+                                  marked > 0);
+
+                        // Every wildcard in the file has to reach the state it targets, or the
+                        // canvas has quietly dropped one by not drawing it as a line.
+                        var targets = routes.Routes.Where(r => r.Wildcard && canvas.DrawnIds.Contains(r.ToId))
+                                                   .Select(r => r.ToId).ToHashSet();
+                        CheckTrue($"{name}: every state a wildcard targets is marked",
+                                  targets.All(id => canvas.WildcardsInto(id).Count > 0));
+                    }
+
+                    if (withWildcards.Length > 0)
+                    {
+                        var leaving = routes.LeavingState(withWildcards).ToList();
+                        int wild = leaving.Count(r => r.Wildcard);
+
+                        Console.WriteLine($"        #{withWildcards}: {leaving.Count} way(s) out, " +
+                                          $"{wild} of them the machine's wildcards");
+
+                        CheckTrue($"{name}: a state's ways out include its machine's wildcards", wild > 0);
+                        CheckTrue($"{name}: and every one of them leaves that state, not the machine",
+                                  leaving.All(r => r.FromId == withWildcards));
+
+                        // A wildcard into the state you are already in is a self transition and is
+                        // not a way out of it.
+                        CheckTrue($"{name}: none of them points back at the state itself",
+                                  leaving.All(r => r.ToId != withWildcards));
+
+                        // The machine's own wildcard count is unchanged by any of this: the routes
+                        // are rewritten for drawing, not invented.
+                        string machineId = routes.MachineOfState[withWildcards];
+                        int onMachine = routes.Out.TryGetValue(machineId, out var fromMachine)
+                            ? fromMachine.Count(r => r.Wildcard) : 0;
+                        CheckTrue($"{name}: rewriting them adds none and drops none",
+                                  wild == onMachine || wild == onMachine - 1);
+                    }
 
                     // Picking a state out has to bring what it routes to with it. Ownership alone
                     // answers what a state contains and says nothing about what enters or leaves it.
