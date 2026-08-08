@@ -866,12 +866,13 @@ public class MainWindow : Window
         DockPanel.SetDock(tools, Dock.Top);
         panel.Children.Add(tools);
 
-        // Changing a frame. Nothing here re-encodes a compressed animation, so a saved clip is
-        // written out uncompressed, which is a much larger file holding exactly the frames that went
-        // into it. That is said on the button rather than discovered afterwards.
+        // Changing a frame. A spline compressed clip is written back spline compressed and comes out
+        // smaller than it went in; only a lossless clip, which nothing here re-encodes, falls back to
+        // uncompressed and grows. Which of the two happened, and by how much, is said on the answer
+        // line after a save rather than promised on the button.
         var apply = Ux.Secondary("Set frame");
         apply.Click += (_, _) => SetFrame();
-        var write = Ux.Primary("Save uncompressed");
+        var write = Ux.Primary("Save changes");
         write.Click += (_, _) => SaveAnimation();
 
         foreach (var box in new[] { _framePosition, _frameRotation, _frameScale })

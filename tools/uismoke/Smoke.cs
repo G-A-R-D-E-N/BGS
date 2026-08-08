@@ -391,7 +391,15 @@ public static class Smoke
 
             // The fields have to be reachable from the canvas, not only from the tree. A node's
             // properties are useless in a tab that is not showing the node.
-            if (window.LoadedXml.Length > 0)
+            //
+            // Guarded on the file being a behaviour rather than only on it having a text form, because
+            // an animation clip opened with Java has a text form too and no states, transitions or
+            // clip generators in it, so these checks would fail on a file they were never about. An
+            // animation is exercised by the frame editing section below instead.
+            bool isBehaviour = window.LoadedXml.Length > 0 &&
+                OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml)
+                    .Objects.Any(o => o.Class == "hkbStateMachine");
+            if (isBehaviour)
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -1045,18 +1053,28 @@ public static class Smoke
 
         // Read off the disk rather than out of the window, because the window reloads itself after a
         // save and would report its own memory either way.
+        var before = new OpenCommonwealth.Services.Hkx.HkxBinaryReader().ReadAnimation(path);
         var written = new OpenCommonwealth.Services.Hkx.HkxBinaryReader().ReadAnimation(copy);
-        Check($"{name}: the saved file is uncompressed", "hkaInterleavedUncompressedAnimation",
+
+        // A spline clip is written back spline compressed, which is the win of the encoder and comes
+        // out smaller than the file it replaced. Only a lossless clip, which nothing re-encodes,
+        // falls back to uncompressed. So the class the save produces, and the tolerances the checks
+        // hold it to, follow the class it went in as: an exact hundredth for the exact path, and the
+        // codec's own quantisation for the spline one.
+        bool wasSpline = before.AnimationClass == "hkaSplineCompressedAnimation";
+        Check($"{name}: the saved file keeps its kind where it can be re-encoded",
+              wasSpline ? "hkaSplineCompressedAnimation" : "hkaInterleavedUncompressedAnimation",
               written.AnimationClass);
 
+        float editLimit = wasSpline ? 0.05f : 0.001f;
+        float elsewhereLimit = wasSpline ? 0.05f : 0.001f;
+
         var landed = written.Tracks[0].Translations[0];
-        CheckTrue($"{name}: and holds the frame that was typed",
-                  Math.Abs(landed.X - 7.25f) < 0.001f && Math.Abs(landed.Y + 8.5f) < 0.001f &&
-                  Math.Abs(landed.Z - 9.75f) < 0.001f);
+        float editDrift = (landed - new System.Numerics.Vector3(7.25f, -8.5f, 9.75f)).Length();
+        CheckTrue($"{name}: and holds the frame that was typed ({editDrift:F4})", editDrift < editLimit);
 
         // The clip is not only correct where it was edited. Every other frame has to survive the
         // round trip through the writer, or a save would quietly flatten the rest of the animation.
-        var before = new OpenCommonwealth.Services.Hkx.HkxBinaryReader().ReadAnimation(path);
         float worst = 0;
         for (int t = 0; t < before.NumTracks; t++)
             for (int f = 0; f < before.NumFrames; f++)
@@ -1066,8 +1084,8 @@ public static class Smoke
                     (before.Tracks[t].Translations[f] - written.Tracks[t].Translations[f]).Length());
             }
 
-        Console.WriteLine($"        every other frame moved at most {worst:E2}");
-        CheckTrue($"{name}: leaving every other frame where it was", worst < 0.001f);
+        Console.WriteLine($"        saved {written.AnimationClass}, every other frame moved at most {worst:E2}");
+        CheckTrue($"{name}: leaving every other frame where it was ({worst:F4})", worst < elsewhereLimit);
     }
 
     private static void ArchiveBrowserBuilds()
