@@ -195,6 +195,58 @@ public static class Smoke
                     Check($"{name}: and clearing it releases the canvas", "", canvas.HighlightId);
                 }
 
+                // A transition array is the object the flat panel was worst at: every element
+                // carries the same field names, so five transitions arrived as eighty boxes with
+                // nothing saying where one ended and the next began. Each element is now behind a
+                // line naming its event and its target, and the boxes only exist once opened.
+                // The busiest array that is on the canvas, not the first: an array holding one
+                // transition proves nothing about a panel whose problem only appears when the same
+                // field names repeat.
+                var full = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
+                string array = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                    .IdsOfClass(window.LoadedXml, "hkbStateMachineTransitionInfoArray")
+                    .Where(id => canvas.DrawnIds.Contains(id))
+                    .OrderByDescending(id => full.Get(id)?.StructLists.GetValueOrDefault("transitions")?.Count ?? 0)
+                    .FirstOrDefault() ?? "";
+
+                if (array.Length > 0)
+                {
+                    var model = full;
+                    var summaries = OpenCommonwealth.Services.Hkx.ElementSummary.For(model, array);
+                    int flat = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                        .ReadParams(window.LoadedXml, array).Count;
+
+                    window.SelectNode(array);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    var blocks = Find<Expander>(window.GraphProperties);
+                    int collapsed = Find<TextBox>(window.GraphProperties).Count;
+
+                    Console.WriteLine($"        #{array}: {flat} fields flat, {blocks.Count} element(s), " +
+                                      $"{collapsed} box(es) while collapsed");
+
+                    Check($"{name}: one block per element of the array", summaries.Count, blocks.Count);
+                    CheckTrue($"{name}: which is fewer things to read than the flat list",
+                              blocks.Count < flat);
+                    CheckTrue($"{name}: and the boxes stay out of the way until asked for",
+                              collapsed < flat);
+                    CheckTrue($"{name}: every block starts closed", blocks.All(b => !b.IsExpanded));
+
+                    // The line is the whole point: it has to name the event, not the element index.
+                    CheckTrue($"{name}: each block says which event it fires on",
+                              blocks.Count == 0 || summaries.Values.All(s => s.Contains("->")));
+
+                    // Opening one has to produce the fields, or the grouping has hidden them rather
+                    // than tidied them.
+                    if (blocks.Count > 0)
+                    {
+                        blocks[0].IsExpanded = true;
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                        CheckTrue($"{name}: opening a block shows that element's fields",
+                                  Find<TextBox>(window.GraphProperties).Count > collapsed);
+                    }
+                }
+
                 // The filter box sits above the tabs, so it has to work on whichever one is showing.
                 // Driving only the tree meant typing in it on the Graph tab did nothing at all.
                 int drawn = canvas.DrawnCount;

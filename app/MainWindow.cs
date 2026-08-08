@@ -2243,56 +2243,112 @@ public class MainWindow : Window
         heading.TextWrapping = TextWrapping.Wrap;
         panel.Add(heading);
 
-        foreach (var p in parameters)
-        {
-            string address = p.Address;
-            string original = p.Value;
-            string owner = objectId;
+        // An array of structs is shown one element at a time rather than as one flat run of boxes.
+        // The file writes an element's fields together, so the fields sharing a group arrive
+        // together and a run of them is an element. A transition array with five transitions in it
+        // is eighty boxes laid out flat, with every name repeated once per element and nothing
+        // saying where one transition ends and the next begins.
+        var summaries = ElementSummary.For(model, objectId);
 
-            // An enum whose values the class table declares becomes a list rather than a box. The
-            // names are the ones the game registers, not ours, and PanelFields only offers them when
-            // the value already in the file is one of them, so picking from the list can never be the
-            // only way to keep what is there.
-            if (p.Options.Count > 0)
+        for (int i = 0; i < parameters.Count;)
+        {
+            string group = parameters[i].Group;
+            if (group.Length == 0)
             {
-                panel.Add(EnumRow(p, owner));
+                panel.Add(FieldRow(parameters[i], objectId));
+                i++;
                 continue;
             }
 
-            var field = Ux.Field();
-            field.Text = p.Value;
-            // Committing is driven by what the box holds, not by which box has focus. Focus is the
-            // usual trigger, but a window closing has no focus change to hang off, and asking every
-            // field whether it differs is both simpler and safe: one that has not been touched
-            // commits nothing, and one already committed commits nothing twice.
-            void Commit()
-            {
-                if (field.Text == original) return;
-                Apply(owner, address, field, original);
-                original = field.Text ?? original;
-            }
+            int end = i;
+            while (end < parameters.Count && parameters[end].Group == group) end++;
 
-            _fieldCommits.Add(Commit);
-            field.LostFocus += (_, _) => Commit();
-            field.KeyDown += (_, e) =>
-            {
-                if (e.Key == Avalonia.Input.Key.Enter) Commit();
-            };
+            var inside = new StackPanel { Spacing = 6, Margin = new Thickness(8, 4, 0, 4) };
+            for (int f = i; f < end; f++) inside.Children.Add(FieldRow(parameters[f], objectId));
 
-            var label = Ux.Label(p.Name);
-            label.Width = 128;
-            label.TextTrimming = TextTrimming.CharacterEllipsis;
-            ToolTip.SetTip(label, p.Name);
-
-            var row = new DockPanel();
-            DockPanel.SetDock(label, Dock.Left);
-            row.Children.Add(label);
-            row.Children.Add(field);
-            panel.Add(row);
+            panel.Add(ElementBlock(group, summaries.GetValueOrDefault(group, ""), inside));
+            i = end;
         }
 
         AddSymbolSection(panel, objectId, model);
         AddBindingSection(panel, objectId, model);
+    }
+
+    /// One element of an array of structs, behind a line saying what it is.
+    ///
+    /// Collapsed to start with, because the point is that five transitions read as five lines. The
+    /// summary is what the element means rather than what it is called, and an element with no
+    /// summary shows its index alone: a made up description would read as a fact about the file.
+    private static Control ElementBlock(string group, string summary, Control inside)
+    {
+        var header = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8 };
+
+        var index = Ux.Label(group);
+        index.Foreground = Ux.MutedBrush;
+        header.Children.Add(index);
+
+        if (summary.Length > 0)
+        {
+            var said = Ux.Label(summary);
+            said.Foreground = Ux.CodeBrush;
+            said.TextTrimming = TextTrimming.CharacterEllipsis;
+            ToolTip.SetTip(said, summary);
+            header.Children.Add(said);
+        }
+
+        return new Expander
+        {
+            Header = header,
+            Content = inside,
+            IsExpanded = false,
+            Padding = new Thickness(0),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+        };
+    }
+
+    private Control FieldRow(PanelFields.Field p, string owner)
+    {
+        // An enum whose values the class table declares becomes a list rather than a box. The names
+        // are the ones the game registers, not ours, and PanelFields only offers them when the value
+        // already in the file is one of them, so picking from the list can never be the only way to
+        // keep what is there.
+        if (p.Options.Count > 0) return EnumRow(p, owner);
+
+        string address = p.Address;
+        string original = p.Value;
+
+        var field = Ux.Field();
+        field.Text = p.Value;
+        // Committing is driven by what the box holds, not by which box has focus. Focus is the
+        // usual trigger, but a window closing has no focus change to hang off, and asking every
+        // field whether it differs is both simpler and safe: one that has not been touched
+        // commits nothing, and one already committed commits nothing twice.
+        void Commit()
+        {
+            if (field.Text == original) return;
+            Apply(owner, address, field, original);
+            original = field.Text ?? original;
+        }
+
+        _fieldCommits.Add(Commit);
+        field.LostFocus += (_, _) => Commit();
+        field.KeyDown += (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter) Commit();
+        };
+
+        var label = Ux.Label(p.Name);
+        label.Width = 128;
+        label.TextTrimming = TextTrimming.CharacterEllipsis;
+        // The name alone does not say which of them this is, and inside an element there are several
+        // with the same name, so the tip carries the address the edit will be written to.
+        ToolTip.SetTip(label, address);
+
+        var row = new DockPanel();
+        DockPanel.SetDock(label, Dock.Left);
+        row.Children.Add(label);
+        row.Children.Add(field);
+        return row;
     }
 
     // The other direction of the usages question: not who touches this symbol, but which symbols this

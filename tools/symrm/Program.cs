@@ -55,6 +55,7 @@ public static class Program
             case "signatures": return Signatures(argv);
             case "panel": return Panel(argv);
             case "paths": return Paths(argv);
+            case "elements": return Elements(argv);
             case "objects": return Objects(argv);
             case "capacity": return Capacity(argv);
             case "grow": return Grow(argv);
@@ -1650,6 +1651,66 @@ public static class Program
     ///
     /// It calls the same `PanelFields.For` the window calls, so what it reports is what is on
     /// screen rather than a second implementation of it.
+    /// What the panel puts at the head of each element of an array of structs, printed.
+    ///
+    /// The panel collapses an element behind this line, so a wrong line hides a wrong element rather
+    /// than showing one. Printing them for a whole file is how they get read against the file's own
+    /// XML, which is what people were reading before the panel could group anything.
+    ///
+    /// Needs no Java.
+    private static int Elements(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        if (Directory.Exists(target))
+        {
+            int worst = 0;
+            foreach (string each in Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                                             .OrderBy(f => f, StringComparer.Ordinal))
+                worst = Math.Max(worst, Elements(new[] { argv[0], each }.Concat(argv.Skip(2)).ToArray()));
+            return worst;
+        }
+
+        string xml = NativeXml.From(File.ReadAllBytes(target));
+        var model = BehaviourGraphModel.Parse(xml);
+
+        int arrays = 0, summarised = 0, unnamed = 0;
+        foreach (var obj in model.Objects)
+        {
+            if (obj.Class != "hkbStateMachineTransitionInfoArray") continue;
+            arrays++;
+
+            var lines = ElementSummary.For(model, obj.Id);
+            if (lines.Count == 0)
+            {
+                // An array nothing points at. Its numbers cannot be resolved, because a toStateId
+                // only means something inside the machine that owns the array.
+                unnamed++;
+                Console.WriteLine($"  #{obj.Id}  no state machine points at this array");
+                continue;
+            }
+
+            summarised += lines.Count;
+            string machine = ElementSummary.MachineOwning(model, obj.Id);
+            Console.WriteLine($"  #{obj.Id}  on #{machine} {model.Get(machine)?.Str("name")}");
+            // By element number, not by the text of the key: sorting `transitions[10]` as a string
+            // puts it before `transitions[2]`, which reads as a file whose transitions are shuffled.
+            foreach (var key in lines.Keys.OrderBy(ElementNumber))
+                Console.WriteLine($"      {key,-16} {lines[key]}");
+        }
+
+        Console.WriteLine($"{Path.GetFileName(target),-34} {arrays,4} transition array(s), " +
+                          $"{summarised,5} element(s) summarised, {unnamed,3} array(s) with no owner");
+        return 0;
+    }
+
+    private static int ElementNumber(string group)
+    {
+        int bracket = group.IndexOf('[');
+        return bracket >= 0 && int.TryParse(group[(bracket + 1)..].TrimEnd(']'), out int n) ? n : 0;
+    }
+
     /// Every field on the panel, written by its path, checked to have moved that field and nothing
     /// else.
     ///
