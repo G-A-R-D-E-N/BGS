@@ -237,6 +237,44 @@ public static class HkxTextEdit
         return outHkx;
     }
 
+    /// The editable text for a file, written from its own bytes when that is possible and unpacked
+    /// with hkxpack when it is not.
+    ///
+    /// One front door for every caller that needs a file's text, rather than each of them deciding.
+    /// The window went native first and the two callers that read *other* files, the project chain
+    /// and the project check, did not, which is why opening a file needed no Java and checking the
+    /// project around it still did.
+    ///
+    /// The test for whether our own text can be trusted is the one the window already used: the ids
+    /// in the text have to account for every object in the bytes. A class the table cannot describe
+    /// comes out short, and a short document read as the whole file is worse than no document.
+    ///
+    /// Returns an empty string when neither route is open, which a caller has to tell apart from a
+    /// file with nothing in it.
+    public static string TextOf(string hkxPath, string? java, string? jar)
+    {
+        try
+        {
+            var bytes = File.ReadAllBytes(hkxPath);
+            string ours = NativeXml.From(bytes);
+            int objects = new PackfileObjects(PackfileImage.Read(bytes)).Instances.Count;
+
+            if (ours.Length > 0 && ObjectIds(ours).Count == objects) return ours;
+        }
+        catch (Exception)
+        {
+            // Falls through to hkxpack, which reads the file's own class definitions rather than
+            // this build's and so can answer for files this cannot.
+        }
+
+        if (java == null || jar == null) return "";
+
+        string work = Path.Combine(Path.GetTempPath(), "bgs_text",
+                                   Path.GetFileNameWithoutExtension(hkxPath));
+        ResetDirectory(work);
+        return ReadXml(Unpack(java, jar, hkxPath, work));
+    }
+
     public static List<string> ObjectIds(string xmlText)
     {
         var ids = new List<string>();

@@ -2229,14 +2229,15 @@ public class MainWindow : Window
         _graph.FrameAll();
         BuildSymbols(model);
         BuildClipList(model);
-        if (text) BuildChain(java!, jar!);
+        BuildChain(java, jar);
         FindMeshForFile();
 
         string source = reading != null ? "read from the file itself" : "read through hkxpack";
         SetStatus(_xmlText.Length > 0
             ? $"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, {source}."
             : $"{_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, {source}. " +
-              "Editing and saving still need Java and hkxpack-cli.jar.",
+              "This file holds a class this build cannot describe, so editing it needs Java and " +
+              "hkxpack-cli.jar. Every other file edits and saves without either.",
             _xmlText.Length > 0 ? Ux.MetaBrush : Ux.WarnBrush);
     }
 
@@ -2846,7 +2847,7 @@ public class MainWindow : Window
             .Select(g => g.Count() > 1 ? $"{g.Key} x{g.Count()}" : g.Key).Take(4));
     }
 
-    private void BuildChain(string java, string jar)
+    private void BuildChain(string? java, string? jar)
     {
         _chain.Clear();
         var chain = ProjectChain.Resolve(_hkxPath, java, jar);
@@ -3356,13 +3357,12 @@ public class MainWindow : Window
             return;
         }
 
+        // Java is not asked for. The files around this one are read the same way this one is, from
+        // their own bytes, and hkxpack is only reached for when a file holds a class this build
+        // cannot describe. A file that cannot be read either way is reported as one unread file
+        // rather than stopping the whole check.
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-        if (java == null || jar == null)
-        {
-            SetStatus("Checking the project needs Java and hkxpack, the same as saving does.", Ux.BadBrush);
-            return;
-        }
 
         _problems.Clear();
         _problems.IsVisible = _problemBar.IsVisible = true;

@@ -31,7 +31,7 @@ public sealed class ProjectChain
     public HkxSkeleton? Skeleton;
     public string SkeletonPath = "";
 
-    public static ProjectChain Resolve(string anyHkxPath, string java, string jar)
+    public static ProjectChain Resolve(string anyHkxPath, string? java = null, string? jar = null)
     {
         var chain = new ProjectChain();
         string dir = Path.GetDirectoryName(Path.GetFullPath(anyHkxPath)) ?? "";
@@ -184,14 +184,19 @@ public sealed class ProjectChain
         return link;
     }
 
-    private static BehaviourGraphModel? Read(string hkxPath, string java, string jar, ProjectChain chain)
+    private static BehaviourGraphModel? Read(string hkxPath, string? java, string? jar, ProjectChain chain)
     {
         try
         {
-            string work = Path.Combine(Path.GetTempPath(), "oc_chain", Path.GetFileNameWithoutExtension(hkxPath));
-            HkxTextEdit.ResetDirectory(work);
-            string xml = HkxTextEdit.Unpack(java, jar, hkxPath, work);
-            return BehaviourGraphModel.Parse(HkxTextEdit.ReadXml(xml));
+            string xml = HkxTextEdit.TextOf(hkxPath, java, jar);
+            if (xml.Length == 0)
+            {
+                chain.Problems.Add($"could not read {Path.GetFileName(hkxPath)}: it holds a class this " +
+                                   "build cannot describe, and there is no hkxpack to fall back on");
+                return null;
+            }
+
+            return BehaviourGraphModel.Parse(xml);
         }
         catch (Exception ex)
         {
