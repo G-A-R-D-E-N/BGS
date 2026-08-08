@@ -124,6 +124,17 @@ public class MainWindow : Window
           Margin = new Thickness(2, 4, 2, 2) };
     private Button _step = Ux.Secondary("Step 0.1s");
 
+    /// The subtree waiting to be pasted. Static so it survives opening the file it is going into,
+    /// which is what makes copying between two files a thing a person can actually do: there is one
+    /// window, so the second file is the same window with something else open in it.
+    private static NativePaste.Clip? _clip;
+    private readonly ComboBox _pasteInto = new()
+        { MinWidth = 210, MaxWidth = 300, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private readonly TextBlock _pasteSummary = new()
+        { Foreground = Ux.MetaBrush, FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
+          TextWrapping = TextWrapping.Wrap, Margin = new Thickness(10, 0, 0, 0) };
+    private Button _pasteButton = Ux.Primary("Paste subtree");
+
     private readonly Dictionary<int, int> _offsetToIndex = new();
     private HashSet<string> _emptyStates = new();
     private List<string> _objectIds = new();
@@ -348,10 +359,12 @@ public class MainWindow : Window
         top.Children.Add(new Panel());
 
         var runBar = BuildRunControls();
+        var pasteBar = BuildPasteControls();
 
         var panel = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(top, Dock.Top);
         DockPanel.SetDock(runBar, Dock.Top);
+        DockPanel.SetDock(pasteBar, Dock.Top);
         DockPanel.SetDock(_problemBar, Dock.Bottom);
         DockPanel.SetDock(_problems, Dock.Bottom);
         DockPanel.SetDock(_runStops, Dock.Bottom);
@@ -361,6 +374,7 @@ public class MainWindow : Window
         DockPanel.SetDock(_legend, Dock.Left);
         panel.Children.Add(top);
         panel.Children.Add(runBar);
+        panel.Children.Add(pasteBar);
         panel.Children.Add(_problemBar);
         panel.Children.Add(_problems);
         panel.Children.Add(_runStops);
@@ -435,6 +449,194 @@ public class MainWindow : Window
         SetRunSummary("Open a behaviour, then send it an event to watch which state goes active.",
             Ux.MutedBrush);
         return bar;
+    }
+
+    /// Copy and paste of a whole subtree, which is the thing that turns building the same generator
+    /// shape once per idle into one action.
+    ///
+    /// Copy takes the selected node and everything it owns. Paste puts a fresh set of objects into
+    /// whatever file is open now, with every reference inside them aimed at the copies rather than at
+    /// the originals, and hangs the new root off the slot chosen in the box beside the button.
+    ///
+    /// Paste writes the file there and then, the same way saving an edited clip does, rather than
+    /// waiting for Save. It is not an edit to the text form the rest of the editor works on, so
+    /// there is nothing for Save to write, and a file is kept as .bak before it is replaced.
+    private Control BuildPasteControls()
+    {
+        var copy = Ux.Secondary("Copy subtree");
+        ToolTip.SetTip(copy, "Take the selected node and everything it owns, ready to paste.");
+        copy.Click += (_, _) => CopySubtree();
+
+        _pasteButton = Ux.Primary("Paste subtree");
+        ToolTip.SetTip(_pasteButton,
+            "Put a fresh copy into this file and save it. The file is kept as .bak first.");
+        _pasteButton.Click += (_, _) => PasteSubtree();
+        _pasteButton.IsEnabled = false;
+
+        var label = new TextBlock
+        {
+            Text = "Attach to",
+            Foreground = Ux.MetaBrush,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+
+        var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        foreach (var control in new Control[] { copy, label, _pasteInto, _pasteButton })
+            left.Children.Add(control);
+
+        var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 6), LastChildFill = true };
+        DockPanel.SetDock(left, Dock.Left);
+        bar.Children.Add(left);
+        bar.Children.Add(_pasteSummary);
+
+        RefreshPasteSlots();
+        return bar;
+    }
+
+    /// Where a pasted root could hang, which is every field of the selected node that holds a pointer
+    /// or an array of them, plus the option of leaving it loose.
+    ///
+    /// Loose is offered rather than being the fallback because the useful shape to copy is often not
+    /// one the selected node has a slot for, and a node nothing reaches is a state the checker already
+    /// reports and the canvas already draws. It is a step in the work rather than a broken file.
+    private void RefreshPasteSlots()
+    {
+        var slots = new List<string> { Unattached };
+
+        if (_bytes != null && _selectedId.Length > 0
+            && int.TryParse(_selectedId, out int id)
+            && id - NativeGraphModel.FirstId >= 0
+            && id - NativeGraphModel.FirstId < _bytes.Instances.Count)
+        {
+            var instance = _bytes.Instances[id - NativeGraphModel.FirstId];
+            foreach (var member in HavokClassTypes.Shipped.Members(instance.ClassName))
+            {
+                if (!member.Written) continue;
+                bool one = member.VType == "TYPE_POINTER";
+                bool many = member.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY"
+                            && member.VSub == "TYPE_POINTER";
+                if (one || many) slots.Add($"#{_selectedId}.{member.Name}" + (many ? "[]" : ""));
+            }
+        }
+
+        string chosen = _pasteInto.SelectedItem as string ?? Unattached;
+        _pasteInto.ItemsSource = slots;
+        _pasteInto.SelectedItem = slots.Contains(chosen) ? chosen : Unattached;
+
+        _pasteButton.IsEnabled = _clip != null && !_readOnly && _hkxPath.Length > 0;
+        if (_clip != null && _pasteSummary.Text?.Length == 0) SetPasteSummary(Held(_clip), Ux.MetaBrush);
+    }
+
+    private const string Unattached = "(leave it unattached)";
+
+    private static string Held(NativePaste.Clip clip)
+    {
+        var tree = clip.Tree;
+        string what = $"Holding #{tree.RootId} {tree.RootClass} from " +
+                      $"{Path.GetFileName(clip.Path)}: {tree.Ids.Count} object(s)";
+        if (tree.Shared.Count > 0) what += $", {tree.Shared.Count} shared with the rest of that file";
+        if (tree.Events.Count > 0) what += $", {tree.Events.Count} event(s)";
+        if (tree.Variables.Count > 0) what += $", {tree.Variables.Count} variable(s)";
+        return what + ".";
+    }
+
+    private void CopySubtree()
+    {
+        if (_hkxPath.Length == 0 || _selectedId.Length == 0)
+        {
+            SetPasteSummary("Pick a node on the canvas or in the tree first.", Ux.MutedBrush);
+            return;
+        }
+
+        if (!int.TryParse(_selectedId, out int id))
+        {
+            SetPasteSummary($"#{_selectedId} is not an object this file numbers, so there is nothing " +
+                            "to copy.", Ux.BadBrush);
+            return;
+        }
+
+        try
+        {
+            _clip = NativePaste.Copy(_hkxPath, id);
+            SetPasteSummary(Held(_clip) + " Open the file to paste it into, or paste it here.",
+                            Ux.MetaBrush);
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("Nothing copied: " + e.Message, Ux.BadBrush);
+        }
+
+        RefreshPasteSlots();
+    }
+
+    private void PasteSubtree()
+    {
+        if (_clip == null) { SetPasteSummary("Nothing has been copied yet.", Ux.MutedBrush); return; }
+        if (_readOnly) { SetPasteSummary("Not pasted: " + _readOnlyWhy, Ux.BadBrush); return; }
+
+        // The paste goes into the file rather than into the text form the rest of the editor edits,
+        // so anything typed and not yet saved would be thrown away by the reload that follows.
+        if (_dirty)
+        {
+            SetPasteSummary("Save your other changes first. Pasting writes the file and reads it " +
+                            "back, which would lose them.", Ux.BadBrush);
+            return;
+        }
+
+        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
+        if (blocked != null) { SetPasteSummary("Cannot paste: " + blocked, Ux.BadBrush); return; }
+
+        int attachTo = -1;
+        string field = "";
+        if (_pasteInto.SelectedItem as string is { } slot && slot != Unattached)
+        {
+            int dot = slot.IndexOf('.');
+            attachTo = int.Parse(slot[1..dot]);
+            field = slot[(dot + 1)..].TrimEnd('[', ']');
+        }
+
+        try
+        {
+            var written = NativePaste.Paste(_hkxPath, _clip, attachTo, field);
+
+            string backup = _hkxPath + ".bak";
+            if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
+            ReplaceFile(_hkxPath, written.Bytes);
+
+            string said = written.Note + $" The file before this is kept as {Path.GetFileName(backup)}.";
+
+            // Reloaded first and told afterwards, because opening a file clears this line and saying
+            // it beforehand would put the message up and wipe it in the same breath.
+            Load();
+            SelectObjectId(written.RootId.ToString());
+            SetPasteSummary(said, Ux.MetaBrush);
+            SetStatus(said, Ux.MetaBrush);
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("Nothing pasted, and the file is untouched: " + e.Message, Ux.BadBrush);
+        }
+    }
+
+    private void SetPasteSummary(string text, IBrush brush)
+    {
+        _pasteSummary.Text = text;
+        _pasteSummary.Foreground = brush;
+    }
+
+    /// Test hooks, so the headless smoke test can walk the copy and paste path.
+    public string ClipSummary => _clip == null ? "" : Held(_clip);
+    public IReadOnlyList<string> PasteSlots =>
+        (_pasteInto.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
+    public string PasteAnswer => _pasteSummary.Text ?? "";
+    public bool CanPaste => _pasteButton.IsEnabled;
+    public void CopyForTest() => CopySubtree();
+    public void PasteForTest(string slot)
+    {
+        if (PasteSlots.Contains(slot)) _pasteInto.SelectedItem = slot;
+        PasteSubtree();
     }
 
     /// Puts the graph in its starting configuration and lists what is running.
@@ -2599,6 +2801,10 @@ public class MainWindow : Window
         // Selecting a clip is what asks what it plays, so it is what answers it. Quiet when the
         // selection plays nothing, which is most nodes in a graph.
         LoadPoseFromSelection(announce: false);
+
+        // Which slots a paste could hang off depends on what is selected, so the list follows the
+        // selection rather than being filled once when the file opens.
+        RefreshPasteSlots();
     }
 
     private string Describe(string id) => Describe(Model(), id);

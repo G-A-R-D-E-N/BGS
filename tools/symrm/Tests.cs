@@ -81,6 +81,7 @@ public static class Tests
         ("APointerChangeIsPlannedAsOne", APointerChangeIsPlannedAsOne),
         ("ThePointerTableKeepsTheOrderItWasWrittenIn", ThePointerTableKeepsTheOrderItWasWrittenIn),
         ("AnAddedObjectHasToLandWhereItsIdSays", AnAddedObjectHasToLandWhereItsIdSays),
+        ("APastedSubtreePointsAtItself", APastedSubtreePointsAtItself),
         ("TheReadingFromTheBytesRefusesWhatItCannotDescribe", TheReadingFromTheBytesRefusesWhatItCannotDescribe),
         ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
@@ -3175,6 +3176,62 @@ public static class Tests
     /// whatever fell out of the implementation. Two of these are meant to keep failing until #19
     /// comes back from the game: full removal renumbers every object after the hole, and there is no
     /// way to check a renumber against the engine from here.
+    /// Copy and paste of a subtree.
+    ///
+    /// The corpus proof is `symrm paste`, over all 531 behaviours, and it is the one that matters:
+    /// it copies a real subtree out of each and checks that no pointer inside the copy still names
+    /// the original. These are the two things a corpus run reads past rather than reports, because a
+    /// vanilla file has neither of them: a shared object shows up as a count and the refusal for one
+    /// crossing files never fires when both halves are the same file.
+    private static void APastedSubtreePointsAtItself()
+    {
+        Console.WriteLine("\na pasted subtree points at itself");
+
+        // Two clips, the first pointing at the second, so the first owns the second.
+        var image = TwoClipsOnePointingAtTheOther(out int child);
+        int root = NativeGraphModel.FirstId;
+
+        var tree = NativePaste.Of(image, root);
+        Check("the root owns the object only it points at", 2, tree.Ids.Count);
+        Check("and shares nothing", 0, tree.Shared.Count);
+
+        int before = new PackfileObjects(image).Instances.Count;
+        var done = NativePaste.Into(image, image, tree, sameFile: true);
+        var after = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+
+        Check("both objects are copied", before + 2, after.Instances.Count);
+        Check("and the paste says which id the copied root got", NativeGraphModel.FirstId + before,
+              done.RootId);
+
+        // The check the whole feature is about. The copy has to point at its own child, not at the
+        // child of the thing it was copied from, and the two are indistinguishable in the tree.
+        var copiedRoot = after.Instances[done.RootId - NativeGraphModel.FirstId];
+        var aimedAt = after.ReadRef(copiedRoot, "variableBindingSet", out _);
+        Check("the copy points at its own child rather than the original's",
+              after.Instances[^1].Offset, aimedAt?.Offset ?? -1);
+        CheckTrue("which is not where the original's child sits",
+                  aimedAt?.Offset != after.Instances[child - NativeGraphModel.FirstId].Offset);
+
+        // A subtree that shares something cannot go into another file, because the other file has no
+        // such object to aim at. Refusing and naming it is the answer, not aiming at whatever
+        // happens to sit at the same offset.
+        var shared = TwoClipsOnePointingAtTheOther(out int held);
+        var borrower = NativePaste.Of(shared, held);
+        Check("a leaf owns only itself", 1, borrower.Ids.Count);
+
+        var elsewhere = TwoClipsOnePointingAtTheOther(out _);
+        var borrowed = NativePaste.Of(shared, root) with { Shared = new[] { held } };
+
+        string refused = "";
+        try { NativePaste.Into(elsewhere, shared, borrowed, sameFile: false); }
+        catch (InvalidOperationException e) { refused = e.Message; }
+
+        CheckTrue("a subtree that shares an object is refused across files",
+                  refused.Contains("shares", StringComparison.Ordinal));
+        CheckTrue("and the refusal names what it shares",
+                  refused.Contains("#" + held, StringComparison.Ordinal));
+    }
+
     private static void RemovingAnObjectIsRefusedAndOrphaningIsNot()
     {
         Console.WriteLine("\nremoving an object is refused and orphaning is not");

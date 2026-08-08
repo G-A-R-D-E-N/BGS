@@ -47,6 +47,7 @@ public static class Program
             case "layout": return Layout(argv);
             case "relayout": return Relayout(argv);
             case "delete": return DeleteObject(argv);
+            case "paste": return Paste(argv);
             case "savedelete": return SaveDelete(argv);
             case "classcheck": return ClassCheck(argv);
             case "chain": return Chain(argv);
@@ -255,6 +256,15 @@ public static class Program
               reads back with exactly that object gone, fully accounted for, and no pointer left
               aiming into the hole. Defaults to the last object in the file, orphaned first so
               nothing points at it. Changes nothing on disk. Needs no game and no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- paste <file.hkx | folder>
+              Copies a subtree out of each file and pastes it back, then reads the result and checks
+              that no pointer inside the copy still names the object it was copied from, that every
+              one lands on a real object, that the copy is the same shape as the original, that
+              deleting exactly what was pasted gives the file back, and that a state pasted into a
+              machine gets a number nothing else in that machine has. Then pastes each file's subtree
+              into the next file along, where a missing event or a shared object is refused by name.
+              Changes nothing on disk. Needs no game and no Java.
 
           dotnet run --project tools/symrm/symrm.csproj -- savenumbers <file.hkx | folder>
               Gives an array of plain numbers one more element than it had and checks it reads back
@@ -6081,6 +6091,502 @@ public static class Program
             if (!Lands(source)) return $"an object is listed at 0x{source:x}, which is not written";
 
         return "";
+    }
+
+    /// The gate on copying a subtree and pasting it.
+    ///
+    /// The fault this exists to catch does not announce itself. A paste that leaves one pointer
+    /// naming an object of the original draws the same tree, passes the checker, reads back with the
+    /// right number of objects of the right classes, and plays the original's child. So the headline
+    /// check is not "did it come back" but "does anything inside the copy still name an original",
+    /// asked of every pointer in the pasted stretch of the section rather than of the fields anybody
+    /// thought to look at.
+    ///
+    /// Two passes. Within a file, over every behaviour that has a subtree worth copying. Between
+    /// files, the same subtree into the next file along, which is where symbols and shared objects
+    /// decide whether it is taken or refused.
+    private static int Paste(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        int pasted = 0, wrong = 0, nothing = 0, copiedObjects = 0, rewritten = 0, sharedKept = 0;
+        int across = 0, acrossRefused = 0, withinRefused = 0, undone = 0, attached = 0;
+        var notes = new List<string>();
+        var refusals = new Dictionary<string, int>(StringComparer.Ordinal);
+        var chosen = new Dictionary<string, (int Root, int Size)>(StringComparer.Ordinal);
+
+        foreach (string file in files)
+        {
+            NativePaste.Subtree? tree;
+            PackfileImage image;
+            try
+            {
+                image = PackfileImage.Read(file);
+                tree = BiggestSubtree(image);
+            }
+            catch (Exception e)
+            {
+                withinRefused++;
+                refusals[Kind(e.Message)] = refusals.GetValueOrDefault(Kind(e.Message)) + 1;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {e.Message}");
+                continue;
+            }
+
+            if (tree == null) { nothing++; continue; }
+            chosen[file] = (tree.RootId, tree.Ids.Count);
+
+            var before = new PackfileObjects(image);
+            var wasClasses = before.Instances.Select(i => i.ClassName).ToList();
+            var ownedOffsets = tree.Ids.Select(id => before.Instances[id - NativeGraphModel.FirstId].Offset)
+                                       .ToHashSet();
+            var sharedOffsets = tree.Shared.Select(id => before.Instances[id - NativeGraphModel.FirstId].Offset)
+                                           .ToHashSet();
+            string was = Shape(image, before, tree.RootId);
+
+            byte[] after;
+            NativePaste.Result result;
+            try
+            {
+                result = NativePaste.Into(image, image, tree, sameFile: true);
+                after = image.Rebuild();
+            }
+            catch (Exception e)
+            {
+                withinRefused++;
+                refusals[Kind(e.Message)] = refusals.GetValueOrDefault(Kind(e.Message)) + 1;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {e.Message}");
+                continue;
+            }
+
+            var copiedClasses = tree.Ids
+                .Select(id => wasClasses[id - NativeGraphModel.FirstId]).ToList();
+
+            string why = PasteWrong(after, wasClasses, copiedClasses, tree, ownedOffsets,
+                                    sharedOffsets, was, result);
+            if (why.Length > 0)
+            {
+                wrong++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {why}");
+                continue;
+            }
+
+            pasted++;
+            copiedObjects += tree.Ids.Count;
+            rewritten += result.Pointers;
+            sharedKept += tree.Shared.Count;
+
+            // A paste that turns out to be the wrong thing has to be undoable, or trying one is a one
+            // way door on the file. Deleting exactly what the paste added has to give the file back.
+            try
+            {
+                var undo = PackfileImage.Read(after);
+                var added = Enumerable.Range(0, tree.Ids.Count)
+                                      .Select(k => NativeGraphModel.FirstId + wasClasses.Count + k)
+                                      .ToList();
+                NativeRemove.Delete(undo, added);
+                var left = new PackfileObjects(PackfileImage.Read(undo.Rebuild()))
+                           .Instances.Select(o => o.ClassName).ToList();
+
+                if (left.SequenceEqual(wasClasses)) undone++;
+                else
+                {
+                    wrong++;
+                    if (notes.Count < 10)
+                        notes.Add($"{Path.GetFileName(file)}: undoing the paste did not give the file back");
+                }
+            }
+            catch (Exception e)
+            {
+                wrong++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: cannot undo the paste: {e.Message}");
+            }
+
+            // The other half of the ticket's last line: a pasted root that is given somewhere to hang.
+            // A state carries a number unique inside its machine, so the one case worth checking is a
+            // state going into a machine that already has states.
+            if (tree.RootClass != "hkbStateMachineStateInfo") continue;
+
+            try
+            {
+                var again = PackfileImage.Read(file);
+                var holders = new PackfileObjects(again);
+                var machine = holders.OfClass("hkbStateMachine")
+                    .FirstOrDefault(m => holders.ReadRefArray(m, "states")?
+                                                .Any(st => st != null && st.Offset ==
+                                                     holders.Instances[tree.RootId - NativeGraphModel.FirstId].Offset)
+                                         == true);
+                if (machine == null) continue;
+
+                int machineId = holders.IndexOf(machine) + NativeGraphModel.FirstId;
+                int held = holders.ReadArray(machine, "states")?.Count ?? 0;
+                var stateIdsWere = StateIds(holders, machine);
+
+                NativePaste.Into(again, again, NativePaste.Of(again, tree.RootId), sameFile: true,
+                                 machineId, "states");
+                var back = PackfileImage.Read(again.Rebuild());
+                var now = new PackfileObjects(back);
+                var grown = now.Instances[machineId - NativeGraphModel.FirstId];
+
+                int count = now.ReadArray(grown, "states")?.Count ?? 0;
+                var stateIdsNow = StateIds(now, grown);
+
+                if (count != held + 1)
+                    { wrong++; if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: attaching left {count} state(s) where {held + 1} were expected"); }
+                else if (stateIdsNow.Distinct().Count() != stateIdsNow.Count)
+                    { wrong++; if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: the attached state kept a number another state in the machine already has"); }
+                else if (!stateIdsWere.All(stateIdsNow.Contains))
+                    { wrong++; if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: attaching changed the number of a state that was already there"); }
+                else attached++;
+            }
+            catch (Exception e)
+            {
+                wrong++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: cannot attach: {e.Message}");
+            }
+        }
+
+        // The other half of the ticket. A subtree only goes into another file when everything it
+        // needs is there, so the interesting number here is not how many were taken but that the ones
+        // turned away were turned away for a reason that names what is missing.
+        for (int i = 0; i < files.Length && files.Length > 1; i++)
+        {
+            if (!chosen.TryGetValue(files[i], out var pick)) continue;
+
+            string other = files[(i + 1) % files.Length];
+            if (!chosen.ContainsKey(other)) continue;
+
+            try
+            {
+                var into = PackfileImage.Read(other);
+                var from = PackfileImage.Read(files[i]);
+                var tree = NativePaste.Of(from, pick.Root);
+                var fromObjects = new PackfileObjects(from);
+                var copiedClasses = tree.Ids
+                    .Select(id => fromObjects.Instances[id - NativeGraphModel.FirstId].ClassName).ToList();
+                string was = Shape(from, fromObjects, tree.RootId);
+
+                var wasClasses = new PackfileObjects(into).Instances.Select(o => o.ClassName).ToList();
+                var result = NativePaste.Into(into, from, tree, sameFile: false);
+                byte[] bytes = into.Rebuild();
+
+                string why = PasteWrong(bytes, wasClasses, copiedClasses, tree, new HashSet<int>(),
+                                        new HashSet<int>(), was, result);
+                if (why.Length > 0)
+                {
+                    wrong++;
+                    if (notes.Count < 10) notes.Add($"{Path.GetFileName(files[i])} into {Path.GetFileName(other)}: {why}");
+                    continue;
+                }
+                across++;
+            }
+            catch (Exception e)
+            {
+                acrossRefused++;
+                refusals[Kind(e.Message)] = refusals.GetValueOrDefault(Kind(e.Message)) + 1;
+            }
+        }
+
+        foreach (string note in notes) Console.WriteLine("  " + note);
+
+        Console.WriteLine($"\nwithin a file: {files.Length} file(s), {pasted} pasted and read back " +
+                          $"correctly, {wrong} came back wrong, {withinRefused} refused, " +
+                          $"{nothing} hold nothing worth copying");
+        Console.WriteLine($"{copiedObjects} object(s) copied, {rewritten} reference(s) rewritten, " +
+                          $"{sharedKept} shared object(s) left pointing at the original");
+        Console.WriteLine($"{undone} undone by deleting exactly what was pasted, " +
+                          $"{attached} attached to a state machine with a number of its own");
+        Console.WriteLine($"between files: {across} taken, {acrossRefused} refused");
+        foreach (var (kind, count) in refusals.OrderByDescending(r => r.Value))
+            Console.WriteLine($"  {count} refused for {kind}");
+
+        return wrong == 0 ? 0 : 1;
+    }
+
+    /// The numbers the states of a machine carry, which are unique inside that machine and nowhere
+    /// else, so a pasted state cannot keep the one it was copied with.
+    private static List<int> StateIds(PackfileObjects objects, PackfileObjects.Instance machine)
+    {
+        var ids = new List<int>();
+        foreach (var state in objects.ReadRefArray(machine, "states") ?? new List<PackfileObjects.Instance?>())
+            if (state != null && objects.ReadInt(state, "stateId") is int held) ids.Add(held);
+        return ids;
+    }
+
+    /// A refusal grouped by what it was about, so a new reason shows up rather than being lost among
+    /// one line per file.
+    private static string Kind(string message) =>
+        message.Contains("does not declare", StringComparison.Ordinal)
+            ? "an event or variable the other file does not declare"
+        : message.Contains("shares", StringComparison.Ordinal)
+            ? "an object shared with the rest of the file it came from"
+        : message.Contains("there is no name to copy it across by", StringComparison.Ordinal)
+            ? "an index pointing past the end of the file's own symbol list"
+        : message;
+
+    /// The subtree worth copying out of a file: the largest owned by one of the shapes a person
+    /// actually duplicates. Deterministic, so a run of this gate compares against the last one.
+    private static NativePaste.Subtree? BiggestSubtree(PackfileImage image)
+    {
+        string[] wanted =
+        {
+            "hkbStateMachineStateInfo", "hkbBlenderGenerator", "hkbManualSelectorGenerator",
+            "hkbModifierGenerator", "hkbStateMachine", "hkbClipGenerator",
+        };
+
+        var objects = new PackfileObjects(image);
+        NativePaste.Subtree? best = null;
+
+        foreach (string className in wanted)
+        {
+            var instance = objects.OfClass(className).FirstOrDefault();
+            if (instance == null) continue;
+
+            var tree = NativePaste.Of(image, objects.IndexOf(instance) + NativeGraphModel.FirstId);
+            if (best == null || tree.Ids.Count > best.Ids.Count) best = tree;
+            if (best.Ids.Count >= 4) break;
+        }
+
+        return best is { Ids.Count: > 1 } ? best : null;
+    }
+
+    /// What is wrong with a file a subtree was just pasted into, or nothing.
+    private static string PasteWrong(byte[] bytes, List<string> wasClasses, List<string> copiedClasses,
+                                     NativePaste.Subtree tree, HashSet<int> ownedWas,
+                                     HashSet<int> sharedWas, string was, NativePaste.Result result)
+    {
+        PackfileImage image;
+        PackfileObjects objects;
+        try
+        {
+            image = PackfileImage.Read(bytes);
+            objects = new PackfileObjects(image);
+        }
+        catch (Exception e) { return "will not read back: " + e.Message; }
+
+        int expected = wasClasses.Count + tree.Ids.Count;
+        if (objects.Instances.Count != expected)
+            return $"holds {objects.Instances.Count} object(s), expected {expected}";
+
+        // Nothing below the paste may have moved in the list, because a renumber there would aim
+        // every id anybody already holds one object early.
+        for (int i = 0; i < wasClasses.Count; i++)
+            if (objects.Instances[i].ClassName != wasClasses[i])
+                return $"object {i} was a {wasClasses[i]} and is now a {objects.Instances[i].ClassName}";
+
+        for (int k = 0; k < tree.Ids.Count; k++)
+        {
+            string mine = objects.Instances[wasClasses.Count + k].ClassName;
+            if (mine != copiedClasses[k])
+                return $"the copy holds a {mine} where the original holds a {copiedClasses[k]}";
+        }
+
+        var data = image.Section("__data__")!;
+        var items = PackfileLayout.Of(image);
+        if (items == null) return "the walk cannot account for the result";
+
+        int section = image.Sections.IndexOf(data);
+        if (!PackfileLayout.Reaches(items, data, section))
+            return "something in the result points at bytes the walk cannot place";
+
+        var runs = PackfileLayout.ByObject(items);
+        if (runs.Count != objects.Instances.Count) return "the walk found a different number of objects";
+
+        var pastedAt = new HashSet<int>();
+        var mineSpans = new List<(int At, int End)>();
+        for (int k = 0; k < tree.Ids.Count; k++)
+        {
+            int index = wasClasses.Count + k;
+            pastedAt.Add(objects.Instances[index].Offset);
+            foreach (var item in runs[index]) mineSpans.Add((item.At, item.At + item.Length));
+        }
+
+        bool InCopy(int offset) => mineSpans.Exists(s => offset >= s.At && offset < s.End);
+
+        // The check this whole gate exists for. Every pointer stored anywhere inside the pasted
+        // stretch has to land on one of the pasted objects, or on one of the objects the subtree
+        // shares with the rest of the file. Landing on an object the copy was made from is the fault
+        // that looks exactly like success.
+        foreach (var (source, which, destination) in data.Globals())
+        {
+            if (which != section || !InCopy(source)) continue;
+            if (pastedAt.Contains(destination) || sharedWas.Contains(destination)) continue;
+
+            if (ownedWas.Contains(destination))
+                return $"a pointer at 0x{source:x} inside the copy still names the original object " +
+                       "it was copied from";
+
+            return $"a pointer at 0x{source:x} inside the copy names 0x{destination:x}, which is " +
+                   "neither part of the copy nor one of the objects the subtree shares";
+        }
+
+        if (was.Length > 0)
+        {
+            string now = Shape(image, objects, result.RootId);
+            if (now != was)
+                return "the copy is not the same shape as the subtree it was made from";
+        }
+
+        return "";
+    }
+
+    /// A subtree written out as text, so two of them can be compared without comparing offsets.
+    ///
+    /// Everything that is a value goes in as it stands, every string goes in as its text, every array
+    /// as its length, and a pointer goes in as the position of whatever it names within this walk, so
+    /// an original and its copy read the same while naming different objects.
+    private static string Shape(PackfileImage image, PackfileObjects objects, int rootId)
+    {
+        var types = HavokClassTypes.Shipped;
+        var data = image.Section("__data__")!;
+        int section = image.Sections.IndexOf(data);
+
+        // An event or a variable is stored as a number and the number is the one thing a paste into
+        // another file deliberately changes, so comparing the bytes would report every correct
+        // remap as a difference. The name is what has to survive, so the name is what goes in.
+        var symbols = new Dictionary<int, string>();
+        foreach (bool events in new[] { true, false })
+        {
+            var names = SymbolNames(objects, events ? "eventNames" : "variableNames");
+            foreach (var site in SymbolIndexFixup.IndexSites(objects, events))
+                symbols[site.At] = site.Value >= 0 && site.Value < names.Count
+                                   ? (events ? "event " : "variable ") + names[site.Value]
+                                   : (events ? "event " : "variable ") + site.Value;
+        }
+
+        var aims = new Dictionary<int, int>();
+        foreach (var (source, destination) in data.Locals()) aims[source] = destination;
+        var points = new Dictionary<int, int>();
+        foreach (var (source, which, destination) in data.Globals())
+            if (which == section) points[source] = destination;
+
+        var startsAt = new Dictionary<int, int>();
+        for (int i = 0; i < objects.Instances.Count; i++) startsAt[objects.Instances[i].Offset] = i;
+
+        var seen = new Dictionary<int, int>();
+        var text = new System.Text.StringBuilder();
+
+        void Walk(int index, int offset, string className, int depth)
+        {
+            if (depth > 12) return;
+
+            foreach (var member in types.Members(className))
+            {
+                if (!member.Written) continue;
+                int at = offset + member.Offset;
+                text.Append(member.Name).Append('=');
+
+                if (member.VType is "TYPE_STRINGPTR" or "TYPE_CSTRING")
+                {
+                    text.Append(aims.TryGetValue(at, out int t) ? Text(data.Data, t) : "-").Append(';');
+                    continue;
+                }
+
+                if (member.VType == "TYPE_POINTER")
+                {
+                    text.Append(points.TryGetValue(at, out int d) ? Visit(d).ToString() : "-").Append(';');
+                    continue;
+                }
+
+                if (member.VType == "TYPE_STRUCT")
+                {
+                    if (member.CType != null && types.Knows(member.CType))
+                    {
+                        text.Append('{');
+                        Walk(index, at, member.CType, depth + 1);
+                        text.Append('}');
+                    }
+                    continue;
+                }
+
+                if (member.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")
+                {
+                    var array = objects.ArrayAt(at);
+                    int count = array?.Count ?? 0;
+                    text.Append('[').Append(count);
+
+                    if (array != null && count > 0)
+                    {
+                        if (member.VSub == "TYPE_STRUCT" && member.CType != null && types.Knows(member.CType))
+                        {
+                            int stride = types[member.CType]?.Size ?? 0;
+                            for (int e = 0; e < count && stride > 0; e++)
+                                Walk(index, array.At + e * stride, member.CType, depth + 1);
+                        }
+                        else if (member.VSub is "TYPE_STRINGPTR" or "TYPE_CSTRING")
+                        {
+                            for (int e = 0; e < count; e++)
+                                text.Append(aims.TryGetValue(array.At + e * 8, out int t)
+                                            ? Text(data.Data, t) : "-").Append(',');
+                        }
+                        else if (member.VSub == "TYPE_POINTER")
+                        {
+                            for (int e = 0; e < count; e++)
+                                text.Append(points.TryGetValue(array.At + e * 8, out int d)
+                                            ? Visit(d).ToString() : "-").Append(',');
+                        }
+                        else
+                        {
+                            int width = HavokClassTypes.Width(member.VSub);
+                            for (int e = 0; e < count * width && width > 0; e++)
+                                text.Append(data.Data[array.At + e].ToString("x2"));
+                        }
+                    }
+
+                    text.Append("];");
+                    continue;
+                }
+
+                int span = Math.Max(1, HavokClassTypes.Width(member.VType));
+                for (int e = 0; e < Math.Max(1, member.ArrSize); e++)
+                {
+                    int elementAt = at + e * span;
+                    if (symbols.TryGetValue(elementAt, out string? name)) { text.Append(name); continue; }
+
+                    for (int b = 0; b < span && elementAt + b < data.Data.Length; b++)
+                        text.Append(data.Data[elementAt + b].ToString("x2"));
+                }
+                text.Append(';');
+            }
+        }
+
+        int Visit(int destination)
+        {
+            if (!startsAt.TryGetValue(destination, out int which)) return -1;
+            if (seen.TryGetValue(which, out int already)) return already;
+
+            int position = seen.Count;
+            seen[which] = position;
+            text.Append('<').Append(position).Append(':').Append(objects.Instances[which].ClassName);
+            Walk(which, objects.Instances[which].Offset, objects.Instances[which].ClassName, 0);
+            text.Append('>');
+            return position;
+        }
+
+        int root = rootId - NativeGraphModel.FirstId;
+        if (root < 0 || root >= objects.Instances.Count) return "";
+        Visit(objects.Instances[root].Offset);
+        return text.ToString();
+    }
+
+    private static string Text(byte[] data, int at)
+    {
+        int end = Array.IndexOf(data, (byte)0, at);
+        return end < 0 ? "" : System.Text.Encoding.UTF8.GetString(data, at, end - at);
+    }
+
+    private static List<string> SymbolNames(PackfileObjects objects, string field)
+    {
+        var strings = objects.OfClass("hkbBehaviorGraphStringData").FirstOrDefault();
+        if (strings == null) return new List<string>();
+
+        var names = objects.ReadStringArray(strings, field);
+        return names == null ? new List<string>() : names.Select(n => n ?? "").ToList();
     }
 
     // The gate on removing an object, and on anything else that moves one.

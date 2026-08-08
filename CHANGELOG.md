@@ -3,6 +3,34 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, copy and paste a subtree
+
+Building the same generator shape once per idle was the main thing anybody did with this tool by
+hand. **Copy subtree** on the Graph tab takes the selected node and everything it owns, and **Paste
+subtree** puts a fresh set of objects into whatever file is open, either hung off a slot chosen in the
+box beside the button or left loose to be wired on the canvas. It works within one file and between
+two, since the copy survives opening the file it is going into.
+
+The part that had to be exactly right is the references. A copy that leaves one pointer naming an
+object of the original draws the same tree, passes the checker, and plays the original's child. So a
+copy carries the objects the root **owns**, meaning every pointer into them comes from inside the
+copy; anything the rest of the file also points at is shared rather than duplicated, and keeps naming
+the original. Events and variables come across by **name** rather than by number, because index four
+means different things in two files.
+
+Two things are refused rather than guessed at, and both name what is wrong. A subtree that shares an
+object cannot go into another file, since that file has no such object to point at. A subtree using an
+event or a variable the other file does not declare is turned away listing them, so the answer is
+"declare these two and paste again".
+
+**Proved against the corpus, not asserted.** `symrm paste` copies a real subtree out of every vanilla
+behaviour, pastes it, and reads the file back: 326 of the 531 hold a subtree worth copying and all 326
+come back with 17,263 objects copied and 20,770 references rewritten, none of which still names the
+object it was copied from. All 326 can be undone by deleting exactly what the paste added, 208 attach
+into a state machine and get a state number nothing else in that machine has, and 47 go into a
+different file with 186 turned away for a reason that names what is missing. The check was itself
+checked: aiming the copies' pointers back at the originals on purpose turns 326 files red.
+
 ## 2026-08-08, a clip's frames can be edited and saved
 
 The Animation tab could pick a frame and change a bone, and until the spline encoder landed a save

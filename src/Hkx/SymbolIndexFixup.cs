@@ -68,6 +68,13 @@ public static class SymbolIndexFixup
     {
         public int Start;
         public int Length;
+
+        /// Where the number sits in the file's own bytes, and how wide it is. Only the walk over the
+        /// bytes fills these in; the walk over the text has no offsets to give, which is why `Start`
+        /// and `Length` exist separately and mean a position in the document.
+        public int ByteAt = -1;
+        public int ByteWidth;
+
         public int Value;
         public string Param = "";
         public string OwnerClass = "";
@@ -282,6 +289,8 @@ public static class SymbolIndexFixup
                 found.Add(new Site
                 {
                     OwnerId = ownerId,
+                    ByteAt = at + e * Math.Max(1, HavokClassTypes.Width(member.VType)),
+                    ByteWidth = HavokClassTypes.Width(member.VType),
                     Value = value,
                     Param = name,
                     OwnerClass = owner,
@@ -308,6 +317,33 @@ public static class SymbolIndexFixup
         foreach (var site in Sites(objects, types ?? HavokClassTypes.Shipped, events, out _))
             if (site.Value >= 0)
                 found.Add(new EventReference(site.Value, site.HolderClass, site.HolderParam));
+        return found;
+    }
+
+    /// One index, and where its bytes are.
+    ///
+    /// Everything else here answers "which symbol does this file use", which a renumber can act on
+    /// because a renumber edits the text. Copying a subtree between files cannot: the numbers have to
+    /// be rewritten in the bytes of the objects that were just copied, and only the offset says which
+    /// of two identical numbers belongs to the copy rather than to the original it came from.
+    public readonly record struct IndexSite(int At, int Width, int Value, string Owner, string Member)
+    {
+        public override string ToString() => $"{Owner}.{Member} = {Value} at 0x{At:x}";
+    }
+
+    /// Every place in a file's bytes that stores an event or variable index, with its offset.
+    ///
+    /// The same walk and the same recognition rules as everything else here, on purpose. A second
+    /// list of which fields carry an index would go out of date against this one, and the field that
+    /// fell out of it would be the one nothing renumbered and nothing remapped.
+    public static List<IndexSite> IndexSites(PackfileObjects objects, bool events,
+                                             HavokClassTypes? types = null)
+    {
+        var found = new List<IndexSite>();
+        foreach (var site in Sites(objects, types ?? HavokClassTypes.Shipped, events, out _))
+            if (site.ByteAt >= 0 && site.ByteWidth > 0)
+                found.Add(new IndexSite(site.ByteAt, site.ByteWidth, site.Value,
+                                        site.HolderClass, site.HolderParam));
         return found;
     }
 
