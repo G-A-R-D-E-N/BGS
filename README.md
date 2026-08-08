@@ -157,6 +157,7 @@ hkxpack merely accepting the file.
 | Create a node and attach it in one step | `GraphAuthor` | Picks the right slot for the parent's class, and lists nodes nothing points at |
 | Variable values, add and rename variables and events | `SymbolEditor` | Renames preserve indices; values are 32 bit words |
 | Remove a variable or an event | `SymbolEditor`, `SymbolIndexFixup` | Renumbers every reference above it; refuses while anything points at the exact index |
+| Read a transition's condition | `Expression`, `GraphRun` | Parses the expression language the corpus uses and answers True, False or Unknown. Unknown always means the transition still fires |
 | Copy and paste a subtree | `NativePaste` | Takes what the root owns, gives every copied object a fresh id and aims every reference inside the copy at the copies. Works between two files, and refuses naming what is missing |
 | Check a graph before repacking | `GraphValidator` | See Validating below |
 

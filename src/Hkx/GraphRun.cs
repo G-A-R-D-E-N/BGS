@@ -70,9 +70,40 @@ public sealed class GraphRun
             (Conditional ? $" if {Condition}" : "");
     }
 
+    /// A transition that did not fire because its condition came out false.
+    ///
+    /// Recorded rather than skipped in silence. "I sent the event and nothing happened" is the
+    /// question this whole feature exists to answer, and an answer that is absent from the screen is
+    /// the same as no answer at all.
+    public sealed record Blocked(string MachineId, string FromStateId, string ToStateId,
+                                 string ToStateName, string Event, string Condition)
+    {
+        public override string ToString() =>
+            $"#{FromStateId} -{Event}-> #{ToStateId} '{ToStateName}' held back by {Condition}";
+    }
+
     private readonly BehaviourGraphModel _model;
     private readonly StateRoutes _routes;
     private readonly List<string> _events;
+
+    /// What every variable the graph declares currently holds, as a number.
+    ///
+    /// A word value is thirty two bits whose meaning is the variable's declared type, so a real is
+    /// stored as the bit pattern of its float. Read as a whole number, 1.0 comes out as 1065353216
+    /// and every comparison against it is nonsense, so the type decides how the word is read.
+    private readonly Dictionary<string, double> _variables = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, SymbolEditor.VariableType> _variableTypes =
+        new(StringComparer.Ordinal);
+
+    /// Conditions parsed once. A weapon behaviour is asked the same question on every send, and
+    /// parsing is the expensive half.
+    private readonly Dictionary<string, Expression.Parsed> _parsed = new(StringComparer.Ordinal);
+
+    private readonly List<Blocked> _blocked = new();
+
+    /// How many candidate transitions carrying a condition this run has weighed up. The denominator
+    /// for the number it held back, without which that number says nothing.
+    public int ConditionsWeighed { get; private set; }
 
     /// The active state of every machine the walk reaches, keyed by machine.
     private readonly Dictionary<string, string> _in = new(StringComparer.Ordinal);
@@ -123,6 +154,89 @@ public sealed class GraphRun
         _model = model;
         _routes = StateRoutes.Of(model);
         _events = SymbolEditor.EventNames(model);
+
+        var names = SymbolEditor.VariableNames(model);
+        var values = SymbolEditor.VariableValues(model);
+        var types = SymbolEditor.VariableTypes(model);
+
+        for (int i = 0; i < names.Count; i++)
+        {
+            if (names[i].Length == 0) continue;
+
+            var type = i < types.Count ? types[i] : SymbolEditor.VariableType.Int32;
+            _variableTypes[names[i]] = type;
+
+            if (i >= values.Count || !int.TryParse(values[i], out int word)) continue;
+            _variables[names[i]] = type == SymbolEditor.VariableType.Real
+                                   ? BitConverter.Int32BitsToSingle(word)
+                                   : word;
+        }
+    }
+
+    /// The variables the graph declares, in the order it declares them.
+    public IReadOnlyList<string> Variables => _variables.Keys.ToList();
+
+    /// What a variable holds, or null when the graph does not declare it. Null rather than zero on
+    /// purpose: zero is a value a variable really can hold, and reporting it for one that does not
+    /// exist would make `iIsInSneak == 0` come out true on a file with no such variable.
+    public double? ValueOf(string name) =>
+        _variables.TryGetValue(name, out double value) ? value : null;
+
+    public SymbolEditor.VariableType TypeOf(string name) =>
+        _variableTypes.TryGetValue(name, out var type) ? type : SymbolEditor.VariableType.Int32;
+
+    /// Sets a variable, which is what makes a conditional transition testable rather than only
+    /// reported. Refuses a name the graph does not declare rather than inventing one, because a
+    /// variable the graph never declared can never be read by anything in it.
+    public void Set(string name, double value)
+    {
+        if (!_variableTypes.ContainsKey(name))
+            throw new ArgumentException(
+                $"this graph declares no variable called '{name}', so setting it would change " +
+                "nothing. A variable nothing reads and a variable that does not exist are different " +
+                "answers.");
+
+        _variables[name] = value;
+
+        // What was held back was held back by the values as they were. Leaving that list up after a
+        // variable changes would show a reason that may no longer be the reason, which is worse than
+        // showing nothing, so it goes and the next send fills it in again.
+        _blocked.Clear();
+    }
+
+    /// The transitions the last send held back because their condition was false.
+    public IReadOnlyList<Blocked> HeldBack => _blocked;
+
+    /// Every transition in the graph that carries a condition, with what that condition says right
+    /// now. Answers the question "which of these is actually stopping something", which a count of
+    /// 107 conditions across a corpus cannot.
+    public IReadOnlyList<(StateRoutes.Route Route, string Condition, Expression.Verdict Verdict)> Conditions()
+    {
+        var found = new List<(StateRoutes.Route, string, Expression.Verdict)>();
+
+        foreach (var route in _routes.Routes)
+        {
+            string condition = Detail(route).Condition;
+            if (condition.Length > 0) found.Add((route, condition, Test(condition)));
+        }
+
+        return found;
+    }
+
+    /// What a condition comes to right now, given what the variables hold.
+    ///
+    /// Unknown is the answer that matters and it always means "let it fire". Reading a condition can
+    /// only ever hold back a transition this can prove will not fire; it can never add one, and it
+    /// can never hide one it did not understand. A build whose parser stopped working would behave
+    /// exactly like the build before conditions were read at all.
+    public Expression.Verdict Test(string condition)
+    {
+        if (condition.Length == 0) return Expression.Verdict.True;
+
+        if (!_parsed.TryGetValue(condition, out var parsed))
+            _parsed[condition] = parsed = Expression.Parse(condition);
+
+        return Expression.Evaluate(parsed, name => ValueOf(name));
     }
 
     /// Puts the graph in the state it starts in.
@@ -343,17 +457,37 @@ public sealed class GraphRun
     {
         var fired = new List<Fired>();
         var moved = new Dictionary<string, string>(StringComparer.Ordinal);
+        _blocked.Clear();
 
         // Snapshotted first. A machine that moves must not then be re-examined with its new state in
         // the same send, or one event walks a chain of transitions in a single step.
         foreach (var (machineId, stateId) in _in.ToList())
         {
-            var pick = _routes.LeavingState(stateId)
+            var candidates = _routes.LeavingState(stateId)
                 .Where(r => r.EventId == eventId && r.MachineId == machineId)
                 .Select(r => (Route: r, Detail: Detail(r)))
                 .OrderByDescending(x => x.Detail.Priority)
                 .ThenBy(x => x.Detail.Order)
-                .FirstOrDefault();
+                .ToList();
+
+            // The highest priority transition whose condition is not provably false. A condition
+            // this cannot decide counts as passing, so the only thing this skips is a transition the
+            // variables say cannot fire, and the next candidate down then gets its turn, which is
+            // what a condition is for in the first place.
+            // Every candidate whose condition the variables say cannot fire, not only the ones ahead
+            // of the winner. A transition held back behind a lower priority one that did fire is
+            // still the answer to "why did it go there and not there", and recording only the ones
+            // in front of the winner reported nothing at all across the whole corpus.
+            foreach (var held in candidates)
+            {
+                if (held.Detail.Condition.Length > 0) ConditionsWeighed++;
+                if (Test(held.Detail.Condition) != Expression.Verdict.False) continue;
+                var to = _model.Get(held.Route.ToId);
+                _blocked.Add(new Blocked(machineId, stateId, held.Route.ToId, to?.Str("name") ?? "",
+                                         held.Route.Event, held.Detail.Condition));
+            }
+
+            var pick = candidates.FirstOrDefault(x => Test(x.Detail.Condition) != Expression.Verdict.False);
 
             if (pick.Route == null) continue;
 

@@ -363,6 +363,44 @@ public static class Smoke
                         }
                     }
 
+                    // The variables a condition reads, and setting one.
+                    //
+                    // A transition gated on a variable can only be tried both ways if the variable can
+                    // be changed, so this walks the same controls a person uses: choose the variable,
+                    // type a value, press Set, and confirm the run holds the number afterwards.
+                    Console.WriteLine($"        run: {window.RunVariables.Count} variable(s) to set");
+                    if (window.RunVariables.Count > 0)
+                    {
+                        string variable = window.RunVariables[0];
+                        window.SetVariableForTest(variable, "7");
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                        CheckTrue($"{name}: setting a variable through the box changes what the run holds",
+                                  window.RunValueOf(variable) == 7);
+
+                        // A value that is not a number is refused and says so, rather than being read
+                        // as zero, which would silently change the variable to something it was not.
+                        window.SetVariableForTest(variable, "not a number");
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                        CheckTrue($"{name}: nonsense is refused rather than read as zero",
+                                  window.RunValueOf(variable) == 7);
+                        CheckTrue($"{name}: and the refusal says which variable was left alone",
+                                  window.RunSummary.Contains(variable, StringComparison.Ordinal) &&
+                                  window.RunSummary.Contains("not a number", StringComparison.Ordinal));
+
+                        // A variable the graph does not declare cannot be set, because nothing in the
+                        // graph could read it and accepting it would look like it had worked.
+                        window.SetVariableForTest("noSuchVariableAnywhere", "1");
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                        CheckTrue($"{name}: a variable the graph does not declare is not offered",
+                                  !window.RunVariables.Contains("noSuchVariableAnywhere"));
+                    }
+
+                    // The held back line only appears when something is held back, so on a file where
+                    // nothing is, the check is that it stays away rather than sitting there empty.
+                    CheckTrue($"{name}: transitions held back by a condition are reported, or the line is hidden",
+                              window.RunHeldBack > 0 == window.RunHeldBackVisible);
+
                     // A blender node shows its mix on the properties panel beside the canvas. This is
                     // the weapon idle question answered on the node: how much of each child plays.
                     var blenderId = OpenCommonwealth.Services.Hkx.BehaviourGraphModel
