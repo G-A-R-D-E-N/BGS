@@ -76,6 +76,7 @@ public static class Program
             case "spline": return Spline(argv);
             case "savespline": return SaveSpline(argv);
             case "run": return Run(argv);
+            case "weights": return Weights(argv);
             case "crosscheck": return CrossCheck(argv);
             case "savecheck": return SaveCheck(argv);
             case "mesh": return Mesh(argv);
@@ -3413,6 +3414,169 @@ public static class Program
     // Tolerance is not zero on purpose. Both compressed formats decode through floating point, and
     // the written file stores exactly what came out of that, so the two decodes agree exactly on
     // everything except the rotation, which is normalised on the way in the way Havok normalises it.
+    // Blend weights and transition timing, over one file or the corpus.
+    //
+    // This is the part the weapon idle work asks for: how much of each animation a blender is
+    // actually playing, and what a transition looks like part way through rather than only at its
+    // ends. Neither can be read off a static graph.
+    //
+    // What it checks over the corpus is consistency, since there is no runtime to check against. A
+    // plain blender's resolved shares must sum to one, or be all zero when every child is switched
+    // off. A transition blend must start at nothing of the new state and reach all of it, and no
+    // sooner than its own duration. Anything it cannot resolve, a parametric blender driven by a
+    // variable or a child weight bound to one, is reported as driven and counted, not guessed.
+    private static int Weights(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        if (!Directory.Exists(target)) return WeightsOne(target);
+
+        var files = Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToArray();
+
+        int blenders = 0, mix = 0, parametric = 0, driven = 0;
+        int drivenChildren = 0;
+        int badShares = 0;
+        int timed = 0, instant = 0, badBlend = 0;
+        var complaints = new List<string>();
+
+        foreach (string file in files)
+        {
+            BehaviourGraphModel? model;
+            try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)))); }
+            catch (Exception) { continue; }
+            if (model == null) continue;
+
+            foreach (var blend in BlendWeights.All(model))
+            {
+                blenders++;
+                switch (blend.Mode)
+                {
+                    case BlendWeights.Mode.Mix: mix++; break;
+                    case BlendWeights.Mode.Parametric: parametric++; break;
+                    default: driven++; break;
+                }
+                drivenChildren += blend.Children.Count(c => c.WeightDriven);
+
+                // A resolved mix has to add up. The only way out is every child switched off, which
+                // is a real state and sums to zero rather than one.
+                if (blend.Mode == BlendWeights.Mode.Mix)
+                {
+                    float sum = blend.Children.Where(c => !c.WeightDriven).Sum(c => c.Contribution);
+                    bool ok = Math.Abs(sum - 1) < 1e-3f || sum < 1e-6f;
+                    if (!ok)
+                    {
+                        badShares++;
+                        if (complaints.Count < 20)
+                            complaints.Add($"{Path.GetFileName(file)}: blender #{blend.BlenderId} shares sum to {sum:F3}");
+                    }
+                }
+            }
+
+            // Every transition's blend, walked from nothing to all of the new state.
+            var run = GraphRun.Start(model);
+            foreach (var route in StateRoutes.Of(model).Routes)
+            {
+                float d = TransitionSeconds(model, route);
+                if (d <= 0) { instant++; continue; }
+                timed++;
+            }
+        }
+
+        // The blend curve itself, checked on a made up transition so it does not depend on a file: at
+        // the start the new state holds nothing, at the end all of it, and halfway a fraction in
+        // between, never past its ends.
+        if (!BlendRamps(out string why))
+        {
+            badBlend++;
+            complaints.Add("the transition blend ramp is wrong: " + why);
+        }
+
+        Console.WriteLine($"\n{files.Length} file(s)");
+        Console.WriteLine($"{blenders} blender(s): {mix} mix all children, {parametric} parametric on a " +
+                          $"value in the file, {driven} parametric driven by a variable");
+        Console.WriteLine($"{drivenChildren} child weight(s) driven by a variable rather than fixed");
+        Console.WriteLine($"resolved mixes that sum wrong: {badShares}");
+        Console.WriteLine($"transitions: {timed} blend over time, {instant} are instant");
+        Console.WriteLine($"blend ramp: {(badBlend == 0 ? "starts at nothing, reaches all, stays in range" : "WRONG")}");
+        foreach (string line in complaints) Console.WriteLine($"  {line}");
+
+        return badShares + badBlend == 0 ? 0 : 1;
+    }
+
+    private static float TransitionSeconds(BehaviourGraphModel model, StateRoutes.Route route)
+    {
+        // Reads the effect the same way GraphRun does, off the transition row. Kept here as a small
+        // reimplementation rather than exposed from GraphRun, because it is one field lookup and
+        // widening the run's surface for a measurement is the wrong trade.
+        var machine = model.Get(route.MachineId);
+        string arrayId = route.Wildcard
+            ? machine?.Ref("wildcardTransitions") ?? ""
+            : model.Get(route.FromId)?.Ref("transitions") ?? "";
+        var array = model.Get(arrayId);
+        if (array == null || !array.StructLists.TryGetValue("transitions", out var rows)) return 0;
+
+        foreach (var row in rows)
+        {
+            if (!row.TryGetValue("eventId", out var ev) || ev != route.EventId.ToString()) continue;
+            if (!row.TryGetValue("transition", out var effectRef) || effectRef is null or "null") continue;
+            var effect = model.Get(effectRef.TrimStart('#'));
+            if (effect?.Class != "hkbBlendingTransitionEffect") continue;
+            if (float.TryParse(effect.Str("duration"), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float d))
+                return d;
+        }
+        return 0;
+    }
+
+    /// The transition blend, on a two state machine built in memory so it needs no file.
+    private static bool BlendRamps(out string why)
+    {
+        why = "";
+        var model = BehaviourGraphModel.Parse(Tests.TwoStateBlendGraph());
+        var run = GraphRun.Start(model);
+
+        string startState = run.Where().First().StateId;
+        run.Send("Go");
+
+        // At the instant it fires, the new state holds nothing and the old one holds all of it.
+        var atStart = run.Where();
+        var incoming = atStart.FirstOrDefault(a => !a.Fading);
+        var outgoing = atStart.FirstOrDefault(a => a.Fading);
+        if (incoming == null || outgoing == null) { why = "a transition with a duration did not blend two states"; return false; }
+        if (incoming.Weight > 0.01f) { why = $"the new state started at {incoming.Weight:F2} rather than nothing"; return false; }
+
+        run.Advance(0.25f);   // half of the fixture's 0.5s duration
+        var half = run.Where();
+        float mid = half.First(a => !a.Fading).Weight;
+        if (mid < 0.4f || mid > 0.6f) { why = $"halfway the new state was {mid:F2} rather than about half"; return false; }
+
+        run.Advance(0.5f);    // past the end
+        var done = run.Where();
+        if (done.Count != 1) { why = "the blend did not finish after its duration"; return false; }
+        if (done[0].Weight < 0.999f) { why = $"the settled state held {done[0].Weight:F2} rather than all of it"; return false; }
+
+        return true;
+    }
+
+    private static int WeightsOne(string file)
+    {
+        BehaviourGraphModel? model;
+        try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)))); }
+        catch (Exception e) { Console.WriteLine($"could not read {file}: {e.Message}"); return 1; }
+        if (model == null) { Console.WriteLine("nothing to read"); return 1; }
+
+        var blends = BlendWeights.All(model).ToList();
+        Console.WriteLine($"{Path.GetFileName(file)}: {blends.Count} blender(s)");
+        foreach (var blend in blends)
+        {
+            Console.WriteLine($"  {blend}");
+            foreach (var child in blend.Children)
+                Console.WriteLine($"      {child.GeneratorClass} {child}");
+        }
+        return 0;
+    }
+
     // Stepping the graph, over one file or over the corpus.
     //
     // There is no reference implementation to check this against: Havok never shipped the behaviour
