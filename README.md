@@ -451,10 +451,15 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them**. The other 128
   hold a class hkxpack strides wrongly, so its text is misaligned and there is nothing to match.
   What still needs Java: packing a file back after an edit this cannot express in bytes. That list is
-  now a class that has gained or lost a field, a file whose objects have been renumbered, and a value
-  of a type nothing here can spell yet, which is the wide ones, `vector4`, `qstransform` and the
-  arrays of numbers. Adding an object, deleting one, and declaring an event or a variable all go
-  native. See #32 and #34.
+  now a class that has gained or lost a field, a file whose objects have been renumbered, and an
+  array of numbers that changed length. Adding an object, deleting one, declaring an event or a
+  variable, and writing a vector or a transform all go native. See #32 and #34.
+- **The wide fixed width fields are written where they sit.** A `vector4` is sixteen bytes wherever
+  it is and a `qstransform` forty eight, so writing one over another moves nothing, and they were
+  refused only because nothing read the spelling back. The spelling is the one the panel already
+  shows, floats four to a bracket, `(1.5 -2.25 3.75 0.5)`. Proved by changing a vector in each of the
+  243 vanilla behaviours that carry one and reading it back, with the file exactly as long as it was.
+  A value of the wrong length is refused rather than part written.
 - **The class table is not just self consistent, it agrees with the game.** Every offset written into
   a file comes from `HavokClassTypes.json`, which was built from hkxpack's class data. Fallout 4's
   own startup initializers carry the same information, read out of the binary rather than out of any

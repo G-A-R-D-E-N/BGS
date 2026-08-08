@@ -50,6 +50,7 @@ public static class Program
             case "savedelete": return SaveDelete(argv);
             case "classcheck": return ClassCheck(argv);
             case "saveevent": return SaveEvent(argv);
+            case "savewide": return SaveWide(argv);
             case "model": return Model(argv);
             case "consumers": return Consumers(argv);
             case "symbols": return Symbols(argv);
@@ -213,6 +214,11 @@ public static class Program
               reads back with exactly that object gone, fully accounted for, and no pointer left
               aiming into the hole. Defaults to the last object in the file, orphaned first so
               nothing points at it. Changes nothing on disk. Needs no game and no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- savewide <file.hkx | folder>
+              Changes a vector through the document, the way the window would, and checks it reads
+              back and that the file is exactly as long as it was. These are fixed width and moved
+              nothing, and were refused anyway because nothing parsed the spelling back.
 
           dotnet run --project tools/symrm/symrm.csproj -- saveevent <file.hkx | folder> [out.hkx]
               Declares an event the way the window does, all the way to the bytes, and checks the
@@ -4021,6 +4027,129 @@ public static class Program
         Console.WriteLine($"laid out from scratch: {placedWhereExpected}/{placedSeen} " +
                           "object(s) and run(s) land where the walk puts them");
         return oddFiles == 0 && skipped == 0 ? 0 : 1;
+    }
+
+    // Writing a vector or a transform, which are fixed width and were refused anyway.
+    //
+    // These move nothing: a vector is sixteen bytes wherever it sits and writing one over another
+    // leaves the file exactly as long as it was. They were refused because nothing parsed the
+    // spelling back, so any file with one of these edited went out through hkxpack.
+    //
+    // The edit is made through the document, the way the window makes one, and the result is read
+    // back from the bytes and set against what was asked for. The file must also be the same length
+    // afterwards, since a wide field that grew would mean it was not written where it sits.
+    private static int SaveWide(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        int saved = 0, refused = 0, wrong = 0, none = 0;
+        var refusals = new Dictionary<string, int>(StringComparer.Ordinal);
+        var notes = new List<string>();
+
+        foreach (string file in files)
+        {
+            string xml;
+            long wasLength;
+            try
+            {
+                var image = PackfileImage.Read(file);
+                xml = NativeXml.From(new PackfileObjects(image), image);
+                wasLength = new FileInfo(file).Length;
+            }
+            catch (Exception e)
+            {
+                refused++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {e.Message}");
+                continue;
+            }
+
+            // A vector written as four numbers in brackets, anywhere in the document. Replaced with
+            // one that cannot be there already, so finding it afterwards proves the write and not a
+            // coincidence.
+            var found = System.Text.RegularExpressions.Regex.Match(
+                xml, "<hkparam name=\"(?<field>[A-Za-z0-9_]+)\">\\((?<body>[-0-9.e ]+)\\)</hkparam>");
+            if (!found.Success) { none++; continue; }
+
+            const string Wanted = "(1.5 -2.25 3.75 0.5)";
+            string edited = xml.Remove(found.Index, found.Length)
+                               .Insert(found.Index,
+                                       $"<hkparam name=\"{found.Groups["field"].Value}\">{Wanted}</hkparam>");
+
+            byte[] after;
+            try
+            {
+                var plan = NativeSave.Compare(xml, edited);
+                if (!plan.Possible)
+                {
+                    refused++;
+                    refusals[plan.Refusal!] = refusals.GetValueOrDefault(plan.Refusal!) + 1;
+                    if (notes.Count < 10)
+                        notes.Add($"{Path.GetFileName(file)}: {found.Groups["field"].Value} -> {plan.Refusal}");
+                    continue;
+                }
+
+                after = NativeSave.Apply(file, plan);
+            }
+            catch (Exception e)
+            {
+                refused++;
+                string why = e.Message.Split('\n')[0];
+                refusals[why] = refusals.GetValueOrDefault(why) + 1;
+                continue;
+            }
+
+            if (after.Length != wasLength)
+            {
+                wrong++;
+                if (notes.Count < 10)
+                    notes.Add($"{Path.GetFileName(file)}: {wasLength} bytes in, {after.Length} out, " +
+                              "and a fixed width field should move nothing");
+                continue;
+            }
+
+            string back;
+            try
+            {
+                var image = PackfileImage.Read(after);
+                back = NativeXml.From(new PackfileObjects(image), image);
+            }
+            catch (Exception e)
+            {
+                wrong++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: will not read back, {e.Message}");
+                continue;
+            }
+
+            if (!back.Contains(Wanted, StringComparison.Ordinal))
+            {
+                wrong++;
+                if (notes.Count < 10)
+                    notes.Add($"{Path.GetFileName(file)}: {found.Groups["field"].Value} does not read " +
+                              $"back as {Wanted}");
+                continue;
+            }
+
+            saved++;
+        }
+
+        foreach (string note in notes) Console.WriteLine("  " + note);
+
+        if (refusals.Count > 0)
+        {
+            Console.WriteLine("\nrefused because:");
+            foreach (var (why, count) in refusals.OrderByDescending(r => r.Value))
+                Console.WriteLine($"  {count,5}  {why}");
+        }
+
+        Console.WriteLine($"\n{files.Length} file(s): {saved} saved with a vector changed, " +
+                          $"{wrong} came back wrong, {refused} refused, {none} with no vector in them");
+        return wrong == 0 && refused == 0 ? 0 : 1;
     }
 
     // Declaring an event the way the window does it, all the way through to the bytes.

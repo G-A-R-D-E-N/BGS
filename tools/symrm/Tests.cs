@@ -70,6 +70,7 @@ public static class Tests
         ("RemovingAnObjectIsRefusedAndOrphaningIsNot", RemovingAnObjectIsRefusedAndOrphaningIsNot),
         ("DeletingTakesAnObjectOutOfTheFile", DeletingTakesAnObjectOutOfTheFile),
         ("AnArrayOfNamesCanGrow", AnArrayOfNamesCanGrow),
+        ("AWideFieldIsWrittenWhereItSits", AWideFieldIsWrittenWhereItSits),
         ("TheLastObjectsBlockEndsAtItsOwnClosingTag", TheLastObjectsBlockEndsAtItsOwnClosingTag),
         ("AnEnumFieldOffersItsDeclaredValues", AnEnumFieldOffersItsDeclaredValues),
         ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
@@ -3297,6 +3298,57 @@ public static class Tests
         CheckTrue("an array of pointers is still an array of pointers", repointed.Possible);
         Check("changed as one array", 1, repointed.Changes.Count);
         Check("keeping its ids", "#0092 #0091", repointed.Changes[0].Value);
+    }
+
+    /// A vector, a transform or an eight byte number, written over the one already there.
+    ///
+    /// None of these move anything: a vector is sixteen bytes wherever it sits. They were refused
+    /// anyway, because nothing parsed the spelling back, so every file with one edited went out
+    /// through hkxpack. The corpus proof is `symrm savewide`, 243 files.
+    private static void AWideFieldIsWrittenWhereItSits()
+    {
+        Console.WriteLine("\na wide field is written where it sits");
+
+        const string Doc = """
+            <?xml version="1.0" encoding="ascii"?>
+            <hkpackfile classversion="8"><hksection name="__data__">
+            <hkobject class="BSLookAtModifier" name="#0090" signature="0x9a24e9e7">
+                <hkparam name="lookAtCameraX">VALUE</hkparam>
+            </hkobject>
+            </hksection></hkpackfile>
+            """;
+
+        // The spelling is the one the panel shows, so what a person reads is what they can type.
+        var moved = NativeSave.Compare(Doc.Replace("VALUE", "0.0"), Doc.Replace("VALUE", "0.5"));
+        CheckTrue("a plain real still works", moved.Possible);
+
+        const string Vector = """
+            <?xml version="1.0" encoding="ascii"?>
+            <hkpackfile classversion="8"><hksection name="__data__">
+            <hkobject class="hkbHandIkControlData" name="#0090" signature="0x54b1e50f">
+                <hkparam name="targetPosition">VALUE</hkparam>
+            </hkobject>
+            </hksection></hkpackfile>
+            """;
+
+        var vector = NativeSave.Compare(Vector.Replace("VALUE", "(0 0 0 0)"),
+                                        Vector.Replace("VALUE", "(1.5 -2.25 3.75 0.5)"));
+        CheckTrue("a vector is now writable", vector.Possible);
+        Check("as one change", 1, vector.Changes.Count);
+        CheckTrue("written in place rather than appended", !vector.Changes[0].Text &&
+                                                           !vector.Changes[0].Array);
+
+        // Refused on the shape rather than accepted and written wrong. Three numbers is not a
+        // vector, and writing three of the four would leave the fourth as whatever was there.
+        var short3 = NativeSave.Compare(Vector.Replace("VALUE", "(0 0 0 0)"),
+                                        Vector.Replace("VALUE", "(1 2 3)"));
+        CheckTrue("a vector of the wrong length is refused", !short3.Possible);
+        CheckTrue("and the refusal says how many were wanted",
+                  short3.Refusal?.Contains("4 number(s)", StringComparison.Ordinal) == true);
+
+        var words = NativeSave.Compare(Vector.Replace("VALUE", "(0 0 0 0)"),
+                                       Vector.Replace("VALUE", "(a b c d)"));
+        CheckTrue("and so is one that is not numbers", !words.Possible);
     }
 
     /// The last object in a document ends at its own closing tag, not at the end of the file.
