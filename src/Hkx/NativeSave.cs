@@ -104,6 +104,42 @@ public static class NativeSave
     /// This was the last refusal standing between a person and adding an event without Java. The
     /// array has to grow, and a run cannot grow where it sits, so it goes on the end like every
     /// other run that changes size and the file is compacted the next time it is laid out.
+    /// How many floats a wide fixed width field holds, or nought when it is not one.
+    ///
+    /// These are the last of the fields that do not move anything and were refused anyway. A vector
+    /// is sixteen bytes wherever it sits, a transform forty eight, and writing one over another is
+    /// the same kind of edit as writing a float over a float. They were left out because nothing had
+    /// worked out how to read the spelling back, and the spelling is the one the panel already
+    /// shows: floats in brackets, four to a bracket.
+    private static int WideFloats(string type) => type switch
+    {
+        "vector4" or "quaternion" => 4,
+        "qstransform" or "matrix3" or "rotation" => 12,
+        "transform" or "matrix4" => 16,
+        _ => 0,
+    };
+
+    /// A whole number wider than the four bytes the narrow writer handles.
+    private static bool IsWideInteger(string type) =>
+        type is "uint64" or "int64" or "ulong";
+
+    /// The numbers out of a bracketed spelling, in order. Null when it is not that shape at all,
+    /// which is how a caller tells a value it cannot write from one it can.
+    private static float[]? Bracketed(string value, int wanted)
+    {
+        var numbers = new List<float>();
+        foreach (string token in value.Replace('(', ' ').Replace(')', ' ')
+                                      .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!float.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out float f) ||
+                float.IsNaN(f) || float.IsInfinity(f))
+                return null;
+            numbers.Add(f);
+        }
+
+        return numbers.Count == wanted ? numbers.ToArray() : null;
+    }
+
     private static bool IsTextArray(string type) =>
         type == "array of stringptr" || type == "array of cstring";
 
@@ -201,9 +237,23 @@ public static class NativeSave
 
                     string member = field[(close + 2)..];
 
-                    if (!layout.TryGetValue(arrayField, out string? arrayType) ||
-                        arrayType != "array of struct")
+                    // A struct written inline is keyed the same way an array element is, as element
+                    // nought, because that is what the flattening produces and there is nothing else
+                    // sensible to call it. It is not an array though, and refusing it here meant a
+                    // field inside one could not be written: BSLookAtModifier keeps its root bone
+                    // that way, so `rootBone[0].fwdAxisLS` was refused in four vanilla behaviours.
+                    if (!layout.TryGetValue(arrayField, out string? arrayType))
+                        return $"{className}.{arrayField} has no byte layout";
+
+                    if (arrayType == "struct")
+                    {
+                        if (element != 0)
+                            return $"{className}.{arrayField} is one struct, so it has no element {element}";
+                    }
+                    else if (arrayType != "array of struct")
+                    {
                         return $"{className}.{arrayField} is not an array of structs";
+                    }
 
                     string? why = StructElementWritable(classes, className, arrayField, member, now);
                     if (why != null) return why;
@@ -242,6 +292,25 @@ public static class NativeSave
                                "id nor null";
 
                     changes.Add(new Change(className, i, field, now, Ref: true));
+                    return null;
+                }
+
+                if (WideFloats(type) is int floats and > 0)
+                {
+                    if (Bracketed(now, floats) == null)
+                        return $"{className}.{field} was set to '{now}', which is not {floats} " +
+                               "number(s) in brackets";
+
+                    changes.Add(new Change(className, i, field, now));
+                    return null;
+                }
+
+                if (IsWideInteger(type))
+                {
+                    if (!ulong.TryParse(now.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+                        return $"{className}.{field} was set to '{now}', which is not a {type}";
+
+                    changes.Add(new Change(className, i, field, now));
                     return null;
                 }
 
@@ -583,6 +652,10 @@ public static class NativeSave
             bool written = change.Ref ? Repoint(image, objects, instance, change)
                          : change.Array && change.Text ? ResizeText(image, objects, instance, change)
                          : change.Array ? Resize(image, objects, instance, change)
+                         : WideFloats(member.Type) > 0
+                             ? WriteWide(objects, instance, change, WideFloats(member.Type), image)
+                         : IsWideInteger(member.Type)
+                             ? WriteWideInteger(objects, instance, change, image)
                          : member.Type switch
             {
                 "real" => objects.WriteFloat(instance, change.Field, AsFloat(change.Value)),
@@ -720,6 +793,44 @@ public static class NativeSave
         uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
         BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)elements.Length).CopyTo(data.Data, at + 12);
 
+        return true;
+    }
+
+    /// Writes a vector, a quaternion or a transform over the one already there.
+    ///
+    /// Fixed width, so this is the same kind of write as a float over a float: the field is the same
+    /// size afterwards and nothing in the file moves. The spelling parsed here is the one the panel
+    /// renders, floats four to a bracket, so what a person reads is what they can type back.
+    private static bool WriteWide(PackfileObjects objects, PackfileObjects.Instance instance,
+                                  Change change, int floats, PackfileImage image)
+    {
+        var data = image.Section("__data__");
+        if (data == null) return false;
+
+        if (objects.FieldAt(instance, change.Field) is not int at) return false;
+        if (Bracketed(change.Value, floats) is not float[] values) return false;
+        if (at < 0 || at + floats * 4 > data.Data.Length) return false;
+
+        for (int i = 0; i < floats; i++)
+            BitConverter.GetBytes(values[i]).CopyTo(data.Data, at + i * 4);
+
+        return true;
+    }
+
+    /// Writes an eight byte whole number, which the narrow writer stops short of.
+    private static bool WriteWideInteger(PackfileObjects objects, PackfileObjects.Instance instance,
+                                         Change change, PackfileImage image)
+    {
+        var data = image.Section("__data__");
+        if (data == null) return false;
+
+        if (objects.FieldAt(instance, change.Field) is not int at) return false;
+        if (!ulong.TryParse(change.Value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture,
+                            out ulong value))
+            return false;
+        if (at < 0 || at + 8 > data.Data.Length) return false;
+
+        BitConverter.GetBytes(value).CopyTo(data.Data, at);
         return true;
     }
 
@@ -891,26 +1002,62 @@ public static class NativeSave
 
         if (objects.FieldAt(instance, change.Field) is not int header) return false;
 
-        var array = objects.ArrayAt(header);
-        if (array == null || change.Element < 0 || change.Element >= array.Count) return false;
-
         string? elementClass = ElementClass(change.ClassName, change.Field);
         if (elementClass == null) return false;
-
-        int stride = HavokClassTypes.Shipped[elementClass]?.Size ?? 0;
-        if (stride <= 0) return false;
 
         var found = StructMember(elementClass, change.Member);
         if (found == null) return false;
 
+        // Where the element sits. A struct written inline sits at the field itself; an array element
+        // sits at the run the field points at, a stride in.
+        bool inline = HavokClasses.Shipped.Field(change.ClassName, change.Field)?.Type == "struct";
+        int start;
+        if (inline)
+        {
+            if (change.Element != 0) return false;
+            start = header;
+        }
+        else
+        {
+            var array = objects.ArrayAt(header);
+            if (array == null || change.Element < 0 || change.Element >= array.Count) return false;
+
+            int stride = HavokClassTypes.Shipped[elementClass]?.Size ?? 0;
+            if (stride <= 0) return false;
+
+            start = array.At + change.Element * stride;
+        }
+
+        int where = start + found.Value.Offset;
+
         if (found.Value.VType == "TYPE_POINTER")
-            return RepointAt(image, objects, data,
-                             array.At + change.Element * stride + found.Value.Offset, change.Value);
+            return RepointAt(image, objects, data, where, change.Value);
+
+        int wide = WideFloats(Spelled(found.Value.VType));
+        if (wide > 0)
+        {
+            if (Bracketed(change.Value, wide) is not float[] numbers) return false;
+            if (where < 0 || where + wide * 4 > data.Data.Length) return false;
+
+            for (int i = 0; i < wide; i++)
+                BitConverter.GetBytes(numbers[i]).CopyTo(data.Data, where + i * 4);
+            return true;
+        }
+
+        if (IsWideInteger(Spelled(found.Value.VType)))
+        {
+            if (!ulong.TryParse(change.Value.Trim(), NumberStyles.Integer,
+                                CultureInfo.InvariantCulture, out ulong big)) return false;
+            if (where < 0 || where + 8 > data.Data.Length) return false;
+
+            BitConverter.GetBytes(big).CopyTo(data.Data, where);
+            return true;
+        }
 
         string type = Narrow(found.Value.VType);
         if (type.Length == 0) return false;
 
-        int at = array.At + change.Element * stride + found.Value.Offset;
+        int at = where;
         int width = type switch
         {
             "int8" or "uint8" or "bool" or "enum" => 1,
@@ -1067,6 +1214,20 @@ public static class NativeSave
                 ? null
                 : $"{elementClass}.{member} was set to '{value}', which is neither an object id nor null";
 
+        // The wide fixed width ones, same as on a field of the object itself. A hand's target
+        // position is one of these and lives inside an array element, so leaving it out here left it
+        // refused wherever it actually occurs.
+        int wide = WideFloats(Spelled(found.Value.VType));
+        if (wide > 0)
+            return Bracketed(value, wide) != null
+                ? null
+                : $"{elementClass}.{member} was set to '{value}', which is not {wide} number(s) in brackets";
+
+        if (IsWideInteger(Spelled(found.Value.VType)))
+            return ulong.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out _)
+                ? null
+                : $"{elementClass}.{member} was set to '{value}', which is not a whole number";
+
         string type = Narrow(found.Value.VType);
         if (type.Length == 0)
             return $"{elementClass}.{member} is a {found.Value.VType}, which is not written in " +
@@ -1077,6 +1238,23 @@ public static class NativeSave
 
         return null;
     }
+
+    /// The class table's spelling of a type in the words the dump uses, so the two tables can be
+    /// asked the same question. `TYPE_VECTOR4` and `vector4` are the same thing said twice.
+    private static string Spelled(string vtype) => vtype switch
+    {
+        "TYPE_VECTOR4" => "vector4",
+        "TYPE_QUATERNION" => "quaternion",
+        "TYPE_QSTRANSFORM" => "qstransform",
+        "TYPE_MATRIX3" => "matrix3",
+        "TYPE_ROTATION" => "rotation",
+        "TYPE_TRANSFORM" => "transform",
+        "TYPE_MATRIX4" => "matrix4",
+        "TYPE_UINT64" => "uint64",
+        "TYPE_INT64" => "int64",
+        "TYPE_ULONG" => "ulong",
+        _ => "",
+    };
 
     /// The class table's spelling of a type, in the words the writers here use. Empty for anything
     /// that is not a fixed width number, which is everything that would move what follows it.

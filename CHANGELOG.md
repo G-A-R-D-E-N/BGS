@@ -3,6 +3,21 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, vectors and transforms are written where they sit
+
+A `vector4` is sixteen bytes wherever it sits and a `qstransform` forty eight, so writing one over
+another moves nothing. They were refused anyway, because nothing parsed the spelling back, and every
+file with one edited went out through hkxpack. The spelling parsed is the one the panel already
+renders, floats four to a bracket. Proved by changing a vector in each of the 243 vanilla behaviours
+that carry one, reading it back and checking the file is exactly as long as it was. A value of the
+wrong length is refused rather than part written. #32.
+
+Two things had to be fixed for that to reach the fields it actually occurs on. A struct written
+inline is keyed as element nought of an array that is not there, and was refused for not being an
+array: `BSLookAtModifier` keeps its root bone that way, so `rootBone[0].fwdAxisLS` was unwritable in
+four behaviours. And a wide field inside an array element was refused separately from one on the
+object itself, which is where `hkbHandIkControlsModifierHand.controlData.targetPosition` lives.
+
 ## 2026-08-08, declaring an event stops needing Java, and the class table is checked against the game
 
 Adding an event or a variable lengthens an array of strings. A run cannot grow where it sits, so that
