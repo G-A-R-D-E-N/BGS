@@ -291,20 +291,189 @@ public class MainWindow : Window
 
         var splitter = new GridSplitter { Width = 6, Background = Brushes.Transparent };
 
+        // The canvas draws six node colours, three kinds of line and two badges, and none of them
+        // says what it means. That is a lot to hold in your head on a graph with eight hundred boxes
+        // in it, and the answer is not fewer marks: it is the marks having somewhere to be looked up.
+        _legend = BuildLegend();
+        _legend.IsVisible = false;
+
+        var legendButton = Ux.Secondary("Legend");
+        legendButton.Click += (_, _) =>
+        {
+            _legend.IsVisible = !_legend.IsVisible;
+            legendButton.Content = _legend.IsVisible ? "Hide legend" : "Legend";
+        };
+
+        var top = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        DockPanel.SetDock(legendButton, Dock.Left);
+        top.Children.Add(legendButton);
+        top.Children.Add(new Panel());
+
         var panel = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(top, Dock.Top);
         DockPanel.SetDock(_problemBar, Dock.Bottom);
         DockPanel.SetDock(_problems, Dock.Bottom);
         DockPanel.SetDock(_graphProps, Dock.Right);
         DockPanel.SetDock(splitter, Dock.Right);
+        DockPanel.SetDock(_legend, Dock.Left);
+        panel.Children.Add(top);
         panel.Children.Add(_problemBar);
         panel.Children.Add(_problems);
         panel.Children.Add(_graphProps);
         panel.Children.Add(splitter);
+        panel.Children.Add(_legend);
         panel.Children.Add(Framed(_graph));
 
         _problems.IsVisible = false;
         _problemBar.IsVisible = false;
         return panel;
+    }
+
+    private Control _legend = new Panel();
+
+    /// Read only, for the window checks.
+    public Control Legend => _legend;
+
+    /// What everything on the canvas means, in the words somebody reading a graph would use.
+    ///
+    /// Every colour here is asked for by class name rather than written down again, so the legend
+    /// cannot come to disagree with the picture. A legend that is wrong is worse than none: it is
+    /// read as the answer rather than checked against the thing it describes.
+    private Control BuildLegend()
+    {
+        var body = new StackPanel { Spacing = 4, Width = 260 };
+
+        void Heading(string text)
+        {
+            var title = Ux.SectionTitle(text);
+            title.Margin = new Thickness(0, 10, 0, 2);
+            body.Children.Add(title);
+        }
+
+        void Swatch(Control mark, string name, string what)
+        {
+            // Width given rather than inherited. The row is a DockPanel with the swatch docked left,
+            // and the words filling what is left of a panel that is itself inside a scroll viewer,
+            // which measures its content as though it had all the room in the world. Left to itself
+            // the last word of every explanation sat past the edge of the panel.
+            var words = new StackPanel { Spacing = 1, Width = 212 };
+            var title = Ux.Label(name);
+            title.Foreground = Ux.TitleBrush;
+            words.Children.Add(title);
+
+            var said = Ux.Label(what);
+            said.Foreground = Ux.MutedBrush;
+            said.FontSize = 11;
+            said.TextWrapping = TextWrapping.Wrap;
+            words.Children.Add(said);
+
+            mark.Margin = new Thickness(0, 3, 8, 0);
+            mark.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top;
+
+            var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
+            DockPanel.SetDock(mark, Dock.Left);
+            row.Children.Add(mark);
+            row.Children.Add(words);
+            body.Children.Add(row);
+        }
+
+        Control Box(string className) => new Border
+        {
+            Width = 20,
+            Height = 12,
+            CornerRadius = new CornerRadius(3),
+            Background = new SolidColorBrush(Ux.ForClass(className), 0.35),
+            BorderBrush = new SolidColorBrush(Ux.ForClass(className)),
+            BorderThickness = new Thickness(1.5),
+        };
+
+        Control Wire(Color colour, bool dashed) => new Avalonia.Controls.Shapes.Line
+        {
+            StartPoint = new Point(0, 6),
+            EndPoint = new Point(20, 6),
+            Stroke = new SolidColorBrush(colour),
+            StrokeThickness = 2,
+            StrokeDashArray = dashed ? new Avalonia.Collections.AvaloniaList<double> { 3, 2 } : null,
+            Width = 20,
+            Height = 12,
+        };
+
+        Heading("Boxes");
+        Swatch(Box("hkbStateMachine"), "State machine",
+               "A set of states with one of them active at a time.");
+        Swatch(Box("hkbStateMachineStateInfo"), "State",
+               "One of those. Holds whatever plays while it is the active one.");
+        Swatch(Box("hkbStateMachineTransitionInfoArray"), "Transitions",
+               "The list of ways out of a state. Click it to read them one at a time.");
+        Swatch(Box("hkbClipGenerator"), "Clip",
+               "Plays one animation file.");
+        Swatch(Box("hkbBlenderGenerator"), "Blend",
+               "Mixes several animations together by weight.");
+        Swatch(Box("hkbModifierGenerator"), "Modifier",
+               "Changes the pose after it has been made.");
+
+        Heading("Lines");
+        Swatch(Wire(Ux.ForClass("hkbStateMachine"), false), "Solid: holds",
+               "The box at one end contains the box at the other. This is shape, not behaviour.");
+        Swatch(Wire(Ux.RouteColour, true), "Dashed: transition",
+               "Send the event written on it and the machine moves along the arrow. This is the " +
+               "thing you cannot read anywhere else.");
+        Swatch(Wire(Ux.Warn, true), "Dashed orange: from anywhere",
+               "Fires from any state in that machine, not from one. Kept faint until you highlight " +
+               "the machine, because there are usually a lot of them.");
+
+        Heading("Marks");
+        Swatch(new Border
+        {
+            Height = 12,
+            CornerRadius = new CornerRadius(3),
+            Background = new SolidColorBrush(Ux.Good),
+            Child = new TextBlock
+            {
+                Text = "start",
+                FontSize = 8,
+                Foreground = Ux.BaseBrush,
+                Margin = new Thickness(3, 0),
+            },
+        }, "Start", "The state its machine begins in.");
+
+        Swatch(Wire(Ux.Bad, false), "Red outline",
+               "Check graph found something wrong here. The list under the canvas says what.");
+        Swatch(Wire(Ux.Warn, false), "Amber outline",
+               "Check graph found something worth a look, but not an error.");
+
+        Heading("Getting around");
+        foreach (string tip in new[]
+                 {
+                     "Right click a box, then Highlight the paths of, to dim everything it is not " +
+                     "joined to. Escape clears it.",
+                     "Labels appear where there is room for them. Zoom in with the wheel to see more.",
+                     "Drag with the middle button to move around. Double click a box to edit its fields.",
+                 })
+        {
+            var line = Ux.Label(tip);
+            line.Foreground = Ux.MetaBrush;
+            line.FontSize = 11;
+            line.TextWrapping = TextWrapping.Wrap;
+            line.Width = 240;
+            line.Margin = new Thickness(0, 3, 0, 0);
+            body.Children.Add(line);
+        }
+
+        return new Border
+        {
+            Background = Ux.CardBrush,
+            BorderBrush = Ux.BorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(10, 6, 10, 10),
+            Margin = new Thickness(0, 0, 8, 0),
+            Child = new ScrollViewer
+            {
+                Content = body,
+                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            },
+        };
     }
 
     private void OnProblemSelected()

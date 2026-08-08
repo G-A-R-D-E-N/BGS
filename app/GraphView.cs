@@ -332,9 +332,8 @@ public class GraphView : Control
                         var into = ToScreen(to.InPort);
                         if (OffScreen(from, into)) continue;
 
-                        DrawLink(ctx, from, node.Accent,
-                                 lit && (_highlight.Length > 0 || _needle.Length > 0) ? 2.6 : 1.6,
-                                 lit ? 0.85 : 0.42, into);
+                        DrawLink(ctx, from, node.Accent, 1.6, lit ? 0.9 : 0.42, into,
+                                 cased: lit && focused);
                     }
 
         if (ShowRoutes) DrawRoutes(ctx);
@@ -375,15 +374,19 @@ public class GraphView : Control
             // twenty five, which drew as a sheet of lines over everything else. They stay on screen,
             // because a machine having them is worth seeing, but they sit back until the machine or
             // one of its targets is picked out.
-            double weight = route.Wildcard && !lit ? 0.9 : lit ? 2.0 : 1.2;
-            double alpha = route.Wildcard ? (lit ? 0.85 : 0.10) : lit ? 0.9 : 0.28;
+            // Weight stays the same lit or not. What changes is the outline under it, which is what
+            // separates a picked out route from the ones it runs alongside without widening it into
+            // them.
+            double weight = route.Wildcard && !lit ? 0.9 : 1.4;
+            double alpha = route.Wildcard ? (lit ? 0.95 : 0.10) : lit ? 1.0 : 0.28;
+            bool cased = lit && focused;
 
             var a = ToScreen(RouteExit(from, to));
             var b = ToScreen(RouteEntry(to, from));
             if (OffScreen(a, b)) continue;
 
             var colour = route.Wildcard ? Ux.Warn : Ux.RouteColour;
-            DrawLink(ctx, a, colour, weight, alpha, b, dashed: true);
+            DrawLink(ctx, a, colour, weight, alpha, b, dashed: true, cased: cased);
             DrawArrowHead(ctx, a, b, colour, alpha);
 
             // The second hop of a nested transition, which enters a state and picks a state inside
@@ -393,7 +396,7 @@ public class GraphView : Control
             {
                 var c = ToScreen(RouteExit(to, into));
                 var d = ToScreen(RouteEntry(into, to));
-                DrawLink(ctx, c, colour, weight * 0.8, alpha * 0.8, d, dashed: true);
+                DrawLink(ctx, c, colour, weight * 0.8, alpha * 0.8, d, dashed: true, cased: cased);
                 DrawArrowHead(ctx, c, d, colour, alpha * 0.8);
             }
 
@@ -487,7 +490,7 @@ public class GraphView : Control
     /// the game sends and a wire being one object holding another, and drawing both as solid curves
     /// in different colours left the two reading as one kind of thing.
     private void DrawLink(DrawingContext ctx, Point from, Color colour, double width, double alpha,
-                          Point to, bool dashed = false)
+                          Point to, bool dashed = false, bool cased = false)
     {
         double bend = Math.Max(40, Math.Abs(to.X - from.X) * 0.45);
         var geometry = new StreamGeometry();
@@ -506,6 +509,22 @@ public class GraphView : Control
                 g.CubicBezierTo(from + new Vector(bend, 0), to - new Vector(bend, 0), to);
             }
             g.EndFigure(false);
+        }
+
+        // An outline under the line rather than a thicker line on top of it.
+        //
+        // Picking a route out used to mean drawing it fatter, which fails exactly where it is needed:
+        // routes converge, and two fat lines running together read as one fat line. A casing gives
+        // each its own edge, so lines crossing or running side by side stay countable without any of
+        // them taking more room. Drawn in the opposite of the canvas, which is the one colour
+        // guaranteed to separate from both the background and every wire on it.
+        if (cased)
+        {
+            var casing = new Pen(new SolidColorBrush(Ux.Casing, 0.95), width + 2.6)
+            {
+                LineCap = PenLineCap.Round,
+            };
+            ctx.DrawGeometry(null, casing, geometry);
         }
 
         var pen = new Pen(new SolidColorBrush(colour, alpha), width);

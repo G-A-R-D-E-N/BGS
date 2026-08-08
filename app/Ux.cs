@@ -28,6 +28,15 @@ public static class Ux
     /// ownership wires it is drawn over.
     public static readonly Color RouteColour = Color.Parse("#58D0C0");
 
+    /// The outline drawn under a line that has been picked out, so lines running together stay
+    /// countable instead of merging into one band.
+    ///
+    /// The canvas colour, not the opposite of it. A light casing was tried first and is wrong here
+    /// for the case that needs it most: twenty five wildcard routes converge on one node, and giving
+    /// each a bright edge welds them into a solid block. A casing in the background colour puts a gap
+    /// between neighbours instead, which is what separates them.
+    public static readonly Color Casing = Base;
+
     public static readonly IBrush BaseBrush = new SolidColorBrush(Base);
     public static readonly IBrush CardBrush = new SolidColorBrush(Card);
     public static readonly IBrush BorderBrush = new SolidColorBrush(Border);

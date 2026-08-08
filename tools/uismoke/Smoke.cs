@@ -34,9 +34,10 @@ public static class Smoke
             .SetupWithoutStarting();
 
         string file = args[1];
-        string output = args.Length > 2 ? args[2] : System.IO.Path.ChangeExtension(file, ".png");
-        double zoom = args.Length > 3 && double.TryParse(args[3], out double z) ? z : 0.75;
-        string focus = args.Length > 4 ? args[4] : "";
+        string output = args.Length > 2 && !args[2].StartsWith("--") ? args[2] : System.IO.Path.ChangeExtension(file, ".png");
+        var rest = args.Skip(3).Where(a => !a.StartsWith("--")).ToList();
+        double zoom = rest.Count > 0 && double.TryParse(rest[0], out double z) ? z : 0.75;
+        string focus = rest.Count > 1 ? rest[1] : "";
 
         var window = new MainWindow();
         window.Show();
@@ -50,10 +51,21 @@ public static class Smoke
                                  .FindIndex(t => t.Header?.ToString() == "Graph");
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
+        // The whole window rather than the canvas alone, for anything that is drawn beside it: the
+        // legend explains the canvas and cannot be checked from a picture that leaves it out.
+        bool whole = args.Contains("--window");
+        if (args.Contains("--legend"))
+        {
+            Find<Button>(window).First(b => b.Content?.ToString() == "Legend")
+                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        }
+
         var canvas = Find<GraphView>(window).First();
         var size = new Size(1600, 1000);
-        canvas.Measure(size);
-        canvas.Arrange(new Rect(size));
+        Control drawn = whole ? window : canvas;
+        drawn.Measure(size);
+        drawn.Arrange(new Rect(size));
 
         if (focus.Length > 0)
         {
@@ -65,7 +77,7 @@ public static class Smoke
 
         using var bitmap = new Avalonia.Media.Imaging.RenderTargetBitmap(
             new PixelSize((int)size.Width, (int)size.Height), new Vector(96, 96));
-        bitmap.Render(canvas);
+        bitmap.Render(drawn);
         bitmap.Save(output);
 
         Console.WriteLine($"{output}: {canvas.DrawnCount} node(s), {canvas.DrawableRouteCount} route(s), " +
@@ -118,8 +130,36 @@ public static class Smoke
         foreach (string expected in new[]
                  { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
                    "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
-                   "Play", "From selected node", "Fit" })
+                   "Play", "From selected node", "Fit", "Legend" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
+
+        // The canvas draws six node colours, three kinds of line and two badges. The legend is the
+        // only thing that says what any of them mean, so it has to be closed to start with, open on
+        // asking, and name every mark that is actually drawn.
+        {
+            tabs[0].SelectedIndex = headers.IndexOf("Graph");
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+            var legendButton = Find<Button>(window).First(b => b.Content?.ToString() == "Legend");
+            CheckTrue("the legend stays out of the way until it is asked for", !window.Legend.IsVisible);
+
+            legendButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("clicking Legend opens it", window.Legend.IsVisible);
+            Check("and the button then offers to put it away", "Hide legend", legendButton.Content?.ToString());
+
+            var said = Find<TextBlock>(window.Legend).Select(t => t.Text ?? "").ToList();
+            foreach (string mark in new[]
+                     { "State machine", "State", "Transitions", "Clip", "Blend", "Modifier",
+                       "Solid: holds", "Dashed: transition", "Dashed orange: from anywhere",
+                       "Start", "Red outline", "Amber outline" })
+                CheckTrue($"the legend explains {mark}", said.Contains(mark));
+
+            legendButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("and clicking again puts it away", !window.Legend.IsVisible);
+            tabs[0].SelectedIndex = 0;
+        }
 
         // Nothing loaded, so the viewport must be empty rather than drawing a rig from the last file.
         tabs[0].SelectedIndex = headers.IndexOf("Playback");
