@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
@@ -17,27 +18,79 @@ public static class GraphValidator
         public Level Level;
         public string Where = "";
         public string What = "";
+
+        /// The object this is about, so a view can put the mark on the right node. Taken from the
+        /// leading #id every Where already starts with, rather than threading it through the forty
+        /// odd call sites that build one.
+        public string ObjectId = "";
+
         public override string ToString() => $"{(Level == Level.Error ? "error" : "warning")}  {Where}  {What}";
     }
 
-    public static List<Finding> Check(string xml)
+    // The chain is optional because most of these checks only need the one file. Pass it and the
+    // clip animations are checked against the folder on disk as well, which is the breakage that
+    // cloning a behaviour folder under a new name causes and that nothing else here can see.
+    public static List<Finding> Check(string xml, ProjectChain? chain = null)
     {
         var model = BehaviourGraphModel.Parse(xml);
+        var found = Check(model, chain);
+
+        // The one check that needs the text as well as the model, because it walks the file looking
+        // for indices into the symbol arrays and those sit in places the model does not carry.
+        CheckSymbolIndices(xml, model, found);
+
+        return found;
+    }
+
+    /// Everything that can be decided from the model alone.
+    ///
+    /// Split out so the same checks can be run against a model built from the file's own bytes and
+    /// set beside the ones from hkxpack's text. Comparing the two readings field by field says they
+    /// hold the same values; running the checks on both says the tool behaves the same way on them,
+    /// which is the thing anybody actually cares about.
+    public static List<Finding> Check(BehaviourGraphModel model, ProjectChain? chain = null,
+                                      PackfileObjects? objects = null)
+    {
         var found = new List<Finding>();
+
+        // The symbol index pass needs to see every place an index is written, including nesting the
+        // model does not carry, so it walks the file rather than the model. Given the bytes it walks
+        // those; given nothing it is left out, which is what happens on a reading that has neither.
+        if (objects != null) CheckSymbolIndices(objects, model, found);
 
         CheckSymbolArrays(model, found);
         CheckDanglingReferences(model, found);
-        CheckSymbolIndices(xml, model, found);
         CheckStateMachines(model, found);
+        CheckReachableStates(model, found);
         CheckBlenders(model, found);
         CheckClips(model, found);
+        CheckClipAnimations(model, chain, found);
         CheckUnattached(model, found);
 
         return found;
     }
 
     private static void Add(List<Finding> found, Level level, string where, string what) =>
-        found.Add(new Finding { Level = level, Where = where, What = what });
+        found.Add(new Finding { Level = level, Where = where, What = what, ObjectId = LeadingId(where) });
+
+    private static string LeadingId(string where)
+    {
+        if (where.Length < 2 || where[0] != '#') return "";
+        int i = 1;
+        while (i < where.Length && char.IsAsciiDigit(where[i])) i++;
+        return i > 1 ? where[1..i] : "";
+    }
+
+    /// The worst level reported against each object, for drawing a mark on it. Errors win, so a node
+    /// with one of each is drawn as an error rather than as whatever was found last.
+    public static Dictionary<string, Level> ByObject(IEnumerable<Finding> findings)
+    {
+        var worst = new Dictionary<string, Level>(StringComparer.Ordinal);
+        foreach (var f in findings.Where(f => f.ObjectId.Length > 0))
+            if (!worst.TryGetValue(f.ObjectId, out var had) || (had == Level.Warning && f.Level == Level.Error))
+                worst[f.ObjectId] = f.Level;
+        return worst;
+    }
 
     private static void CheckSymbolArrays(BehaviourGraphModel model, List<Finding> found)
     {
@@ -72,6 +125,22 @@ public static class GraphValidator
         }
     }
 
+    private static void CheckSymbolIndices(PackfileObjects objects, BehaviourGraphModel model,
+                                           List<Finding> found)
+    {
+        foreach (string unknown in SymbolIndexFixup.UnknownIndexFields(objects))
+            Add(found, Level.Warning, unknown,
+                "looks like an event or variable index but is not in the known table, so removing a symbol will refuse");
+
+        int variables = SymbolEditor.VariableNames(model).Count;
+        int events = SymbolEditor.EventNames(model).Count;
+
+        foreach (string user in SymbolIndexFixup.ReferencesAtOrAbove(objects, events: false, variables))
+            Add(found, Level.Error, user, $"but this graph declares only {variables} variables");
+        foreach (string user in SymbolIndexFixup.ReferencesAtOrAbove(objects, events: true, events))
+            Add(found, Level.Error, user, $"but this graph declares only {events} events");
+    }
+
     private static void CheckSymbolIndices(string xml, BehaviourGraphModel model, List<Finding> found)
     {
         foreach (string unknown in SymbolIndexFixup.UnknownIndexFields(xml))
@@ -87,6 +156,96 @@ public static class GraphValidator
             Add(found, Level.Error, user, $"but this graph declares only {events} events");
     }
 
+    /// A state holding nothing. Deleting a generator clears the link that pointed at it rather than
+    /// refusing, which is right, but it leaves the state behind looking ordinary. The views and Save
+    /// ask this rather than each deciding for themselves what empty means, so they cannot drift apart
+    /// from what Check graph reports.
+    ///
+    /// The game never ships this shape: across all 531 vanilla behaviour files, all 5329 states have a
+    /// generator. It only appears after an edit.
+    public static bool HasNoGenerator(StateEditor.StateRow state) =>
+        string.IsNullOrEmpty(state.GeneratorRef) || state.GeneratorRef == "null";
+
+    /// One empty state, named well enough to go and fix it without running anything else.
+    public readonly record struct EmptyState(string Id, string Name, string Machine)
+    {
+        public override string ToString() =>
+            $"'{(Name.Length > 0 ? Name : "#" + Id)}'" +
+            (Machine.Length > 0 ? $" in {Machine}" : "");
+    }
+
+    public static List<EmptyState> EmptyStates(BehaviourGraphModel model)
+    {
+        var found = new List<EmptyState>();
+        foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+            foreach (var state in StateEditor.States(model, machine.Id).Where(HasNoGenerator))
+                found.Add(new EmptyState(state.Id, state.Name ?? "", machine.Str("name")));
+        return found;
+    }
+
+    /// Why Save must not write this file, or null when there is nothing to refuse.
+    ///
+    /// Fallout 4 crashes while loading a graph that contains one, before any state is entered, so
+    /// reachability does not save it. BShkbUtils::GraphTraverser::Next pops every child a node
+    /// reports and reads its vtable pointer without a null check, at Fallout4.exe+0x1705DDF, under
+    /// LoadBehaviorHelper on the background clone thread. Measured 2026-08-04 on the Red Rocket
+    /// garage door with one generator link cleared and nothing else changed.
+    /// Named rather than counted, and with both ways out spelled out, because the refusal is the
+    /// whole message: someone who hits this is stopped, and being stopped without being told which
+    /// state or what to do about it is worse than not checking at all.
+    // Classes hkxpack cannot carry through a repack intact. hkaLosslessCompressedAnimation packs
+    // four fields into a 64 bit word and the XML form keeps only the low 32 bits, so a dump of one
+    // repacks into an animation that is not the one that went in. Nothing routes an animation into
+    // saving today, because a file with no behaviour root never gets a text form at all, so this
+    // guards a door that is currently walled up rather than one standing open. It is here so that
+    // opening that door later cannot quietly corrupt a file.
+    private static readonly string[] LossyOnRepack =
+    {
+        "hkaLosslessCompressedAnimation",
+    };
+
+    /// What a rebuild through hkxpack's XML would lose, or null when it would lose nothing. Only
+    /// applies to that path: writing changed values into the file's own bytes leaves everything it
+    /// did not change alone, so there is no round trip for this to happen in.
+    public static string? RepackWouldLose(string xml)
+    {
+        foreach (string cls in LossyOnRepack)
+            if (xml.Contains($"class=\"{cls}\"", StringComparison.Ordinal))
+                return $"Not saved, and the original is untouched. This edit needs the file rebuilt, " +
+                       $"and this file holds a {cls}, which hkxpack cannot write back without " +
+                       "changing it: the packed words it stores are cut short on the way through, so " +
+                       "the animation that came out would not be the one that went in. Changing " +
+                       "values on their own is written straight into the file and does not hit this.";
+        return null;
+    }
+
+    public static string? RefuseToSave(string xml) => RefuseToSave(xml, includeRepackLosses: true);
+
+    public static string? RefuseToSave(string xml, bool includeRepackLosses)
+    {
+        if (xml.Length == 0) return null;
+
+        if (includeRepackLosses && RepackWouldLose(xml) is { } lossy) return lossy;
+
+        var empty = EmptyStates(BehaviourGraphModel.Parse(xml));
+        if (empty.Count == 0) return null;
+
+        const int Show = 4;
+        string named = string.Join(", ", empty.Take(Show));
+        if (empty.Count > Show) named += $", and {empty.Count - Show} more";
+
+        return $"Not saved, and the original is untouched. {empty.Count} " +
+               $"state{(empty.Count == 1 ? " has" : "s have")} nothing to play: {named}. " +
+               "Fallout 4 crashes on load while it walks the graph, whether or not anything can " +
+               "enter the state. To fix: give each one a generator, by dragging a clip or another " +
+               "generator onto its generator slot in the graph, or delete the state itself if " +
+               "nothing needs it. Check graph lists them all.";
+    }
+
+    /// Object ids of every state in the file that has no generator, for marking them on screen.
+    public static HashSet<string> StatesWithNoGenerator(BehaviourGraphModel model) =>
+        EmptyStates(model).Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
+
     private static void CheckStateMachines(BehaviourGraphModel model, List<Finding> found)
     {
         foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
@@ -98,8 +257,10 @@ public static class GraphValidator
                 Add(found, Level.Error, $"#{machine.Id} {name}",
                     $"stateId {group.Key} is used by {group.Count()} states, so transitions to it are ambiguous");
 
-            foreach (var state in states.Where(s => string.IsNullOrEmpty(s.GeneratorRef) || s.GeneratorRef == "null"))
-                Add(found, Level.Error, $"#{state.Id} state '{state.Name}'", "has no generator, so entering it plays nothing");
+            foreach (var state in states.Where(HasNoGenerator))
+                Add(found, Level.Error, $"#{state.Id} state '{state.Name}'",
+                    "has nothing to play, and Fallout 4 crashes while loading a graph that contains " +
+                    "one; give it a generator or delete the state");
 
             var ids = states.Select(s => s.StateId).ToHashSet();
             foreach (var t in StateEditor.Transitions(model, machine.Id).Where(t => !ids.Contains(t.ToStateId)))
@@ -109,6 +270,63 @@ public static class GraphValidator
             int start = machine.Int("startStateId");
             if (states.Count > 0 && start >= 0 && !ids.Contains(start))
                 Add(found, Level.Error, $"#{machine.Id} {name}", $"startStateId is {start}, which no state in this machine has");
+        }
+    }
+
+    // Being referenced and being reachable are different questions for a state. A state info is
+    // always referenced, because the machine lists it, so the unattached check can never see a state
+    // that no transition can enter. Retargeting a transition is the normal way to change what an
+    // event does, and it silently orphans whatever the transition used to point at.
+    private static void CheckReachableStates(BehaviourGraphModel model, List<Finding> found)
+    {
+        // A transition in one machine can enter a nested machine's state directly, so a state named
+        // anywhere as a nested target is enterable even with nothing pointing at it in its own
+        // machine.
+        var nestedTargets = model.Objects
+            .Where(o => o.Class == "hkbStateMachineTransitionInfoArray")
+            .SelectMany(o => o.StructLists.TryGetValue("transitions", out var rows) ? rows : new())
+            .Select(r => r.TryGetValue("toNestedStateId", out var v) && int.TryParse(v, out int n) ? n : 0)
+            .Where(n => n != 0)
+            .ToHashSet();
+
+        foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+        {
+            var states = StateEditor.States(model, machine.Id);
+            int start = machine.Int("startStateId");
+
+            // A machine whose start state does not exist is already an error above, and treating it
+            // as unreachable here would report every state in the machine on top of that.
+            if (states.Count == 0 || !states.Any(s => s.StateId == start)) continue;
+
+            var transitions = StateEditor.Transitions(model, machine.Id);
+
+            // A machine with no transitions at all is not transition driven: the engine picks the
+            // state. Saying nothing transitions to a state there is true and useless, and it is how
+            // vanilla writes ragdoll and death machines.
+            if (transitions.Count == 0) continue;
+
+            var reachable = new HashSet<int> { start };
+
+            for (bool grew = true; grew;)
+            {
+                grew = false;
+                foreach (var t in transitions)
+                {
+                    if (t.ToStateId < 0 || reachable.Contains(t.ToStateId)) continue;
+                    // A wildcard fires from any state, so its target is live once anything is.
+                    if (!t.Wildcard && !reachable.Contains(t.FromStateId)) continue;
+                    reachable.Add(t.ToStateId);
+                    grew = true;
+                }
+            }
+
+            // A warning, not an error. The ticket assumed an unreachable state is always a mistake;
+            // vanilla disagrees 123 times across 56 files, and every one checked is a state the game
+            // enters from outside the graph rather than through a transition: ragdoll, death
+            // variants, paired animations, the SharedCore wrapper.
+            foreach (var s in states.Where(s => !reachable.Contains(s.StateId) && !nestedTargets.Contains(s.StateId)))
+                Add(found, Level.Warning, $"#{s.Id} state '{s.Name}'",
+                    $"cannot be entered from inside this file: nothing in #{machine.Id} '{machine.Str("name")}' transitions to stateId {s.StateId}, and it is not the start state");
         }
     }
 
@@ -146,6 +364,31 @@ public static class GraphValidator
             if (!driven)
                 Add(found, Level.Warning, $"#{clip.Id} clip '{clip.Str("name")}'",
                     "is MODE_USER_CONTROLLED with nothing bound to userControlledTimeFraction, so it holds frame zero");
+        }
+    }
+
+    private static void CheckClipAnimations(BehaviourGraphModel model, ProjectChain? chain, List<Finding> found)
+    {
+        if (chain == null || chain.Root.Length == 0) return;
+
+        var declared = chain.Animations.Select(ProjectChain.AnimationKey).ToHashSet();
+
+        foreach (var clip in model.Objects.Where(o => o.Class == "hkbClipGenerator"))
+        {
+            string anim = clip.Str("animationName");
+            if (string.IsNullOrWhiteSpace(anim)) continue;
+
+            string where = $"#{clip.Id} clip '{clip.Str("name")}'";
+
+            // A warning rather than an error because Bethesda ships plenty of these: shared
+            // behaviours reference per creature animations that not every creature has, and some
+            // clips point at content that was cut. A file full of them after a folder was renamed
+            // is still the loudest signal there is.
+            if (!File.Exists(ProjectChain.ResolvePath(chain.Root, anim)))
+                Add(found, Level.Warning, where, $"plays '{anim}', which is not on disk under {chain.Root}");
+            else if (declared.Count > 0 && !declared.Contains(ProjectChain.AnimationKey(anim)))
+                Add(found, Level.Warning, where,
+                    $"plays '{anim}', which the character file does not list, so the engine may not load it");
         }
     }
 

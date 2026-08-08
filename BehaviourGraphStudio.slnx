@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/app/">
+    <Project Path="app/BehaviourStudio.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/symrm/symrm.csproj" />
+    <Project Path="tools/uismoke/uismoke.csproj" />
+  </Folder>
+  <Folder Name="/tools/tests/">
+    <Project Path="tools/tests/BehaviourGraph.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -28,7 +28,9 @@ public static class StateEditor
     {
         public string ArrayId = "";
         public int Index;
+        public int FromStateId = -1;
         public int ToStateId = -1;
+        public int ToNestedStateId;
         public int EventId = -1;
         public bool Wildcard;
     }
@@ -61,7 +63,7 @@ public static class StateEditor
         var machine = model.Get(machineId);
         if (machine == null) return rows;
 
-        foreach (var (arrayRef, wildcard) in Arrays(model, machine))
+        foreach (var (arrayRef, wildcard, from) in Arrays(model, machine))
         {
             var array = model.Get(arrayRef);
             if (array == null || !array.StructLists.TryGetValue("transitions", out var elements)) continue;
@@ -69,11 +71,14 @@ public static class StateEditor
             {
                 elements[i].TryGetValue("toStateId", out var to);
                 elements[i].TryGetValue("eventId", out var ev);
+                elements[i].TryGetValue("toNestedStateId", out var nested);
                 rows.Add(new TransitionRow
                 {
                     ArrayId = array.Id,
                     Index = i,
+                    FromStateId = from,
                     ToStateId = int.TryParse(to, out int t) ? t : -1,
+                    ToNestedStateId = int.TryParse(nested, out int n) ? n : 0,
                     EventId = int.TryParse(ev, out int e) ? e : -1,
                     Wildcard = wildcard,
                 });
@@ -82,16 +87,17 @@ public static class StateEditor
         return rows;
     }
 
-    private static IEnumerable<(string Ref, bool Wildcard)> Arrays(BehaviourGraphModel model, HkObject machine)
+    private static IEnumerable<(string Ref, bool Wildcard, int FromStateId)> Arrays(
+        BehaviourGraphModel model, HkObject machine)
     {
         string wild = machine.Ref("wildcardTransitions") ?? "";
-        if (wild.Length > 0) yield return (wild, true);
+        if (wild.Length > 0) yield return (wild, true, -1);
 
         foreach (string id in machine.Refs("states"))
         {
             var info = model.Get(id);
             string own = info?.Ref("transitions") ?? "";
-            if (own.Length > 0) yield return (own, false);
+            if (own.Length > 0) yield return (own, false, info?.Int("stateId") ?? -1);
         }
     }
 

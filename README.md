@@ -8,18 +8,44 @@ events fire. Havok never released the authoring tool for this format, and the ed
 (Skyrim Behavior Editor, Haviour) target `hk_2010.2.0-r1`, which is Skyrim, and will not open a
 Fallout 4 file. This reads the Fallout 4 format directly.
 
+This README covers what the tool is and how to use it. What we have worked out about the format and
+the game, with the evidence behind it, lives in the
+[wiki](https://gitlab.com/opencw1/behaviortoolstandalone/-/wikis/home).
+
 ## What it does
 
 - Opens any FO4 behaviour, character or project `.hkx` and shows the object graph.
+- **Straight out of a `.ba2`**: "From archive..." reads a Bethesda archive's index and lists what is
+  in it, so a vanilla behaviour can be opened without unpacking the archive around it. Every
+  behaviour in the game is inside `Fallout4 - Animations.ba2`, which holds 29,716 entries; reading
+  the index takes about a second and touches none of the file data. Type words in any order to
+  narrow the list, since the useful query is "dogmeat behavior" and the archive stores that as
+  `meshes/actors/dogmeat/behaviors/...`. A file opened this way is **read only**: it is a copy in a
+  temporary folder, Save is greyed out, and the window says where the copy went so it can be put
+  somewhere of your own if you want to edit it.
 - **Tree view**: nesting, Havok class per row, the animation each clip points at, file offset.
 - **Graph view**: a node canvas laid out in columns by depth from the root, edges drawn from the real
   reference fields and labelled with the field that owns each link, so an edge says why it exists.
   Nodes are coloured by class family. Clip nodes show their animation path and any non-default
   playback speed inline.
-- **Editable nodes**: the common fields (`mode`, `playbackSpeed`, `userControlledTimeFraction`,
-  crop times, `startTime`, `enable`, `weight`, ids) are text boxes on the node itself. Type, tab out,
-  and the change is staged. Every other field is editable from the properties panel in the tree view.
-  Save writes back to `.hkx` and keeps the original as `.bak`.
+- **Editable nodes**: click a node and every field it has appears in the properties panel beside the
+  canvas, one text box each: `animationName`, `mode`, `playbackSpeed`, `userControlledTimeFraction`,
+  the crop times, `startTime`, `flags`, `weight`, ids, all of them. Double click a node to jump
+  straight into the first box. Type, tab out, and the change is staged. A field the file leaves empty,
+  such as `animationBundleName`, is offered as an empty box rather than hidden, so it can be given a
+  value. The same panel sits beside the tree view.
+  Save writes back to `.hkx` and keeps the original as `.bak`. A changed value goes straight into the
+  file's own bytes; a changed name goes on the end of the file and its pointer is aimed at it, which
+  is how a longer name is written without moving anything already there. An array at a new length is
+  written the same way, whether it holds pointers or structs: a run of the new length goes on the end
+  and the array is aimed at it, so nothing already in the file moves. Only an edit that changes the
+  number of objects, or the length of an array of text, is rebuilt through hkxpack, and before that
+  overwrites anything it reads the file hkxpack just produced back out and counts it; if objects went
+  missing on the way through, nothing is written and it says what was lost.
+- **Highlight one state's paths**: right click a node and pick "Highlight the paths of ...". Every
+  wire that does not touch that node drops to half opacity and every unrelated node dims, so a single
+  state's routes are readable in a graph that draws a few hundred wires over each other. Escape, or
+  right click again, clears it.
 - **Variable bindings on the node**: a node bound to a graph variable says so, in the form
   `userControlledTimeFraction driven by fRadLevel`, with the variable resolved to its name.
 - **Adding nodes**: select a node in the graph, type a name, and press one of the add buttons. The
@@ -28,11 +54,93 @@ Fallout 4 file. This reads the Fallout 4 format directly.
   created unattached, and unattached nodes are drawn in a column of their own rather than vanishing.
   Delete refuses while anything still points at the node, and names what.
 - **Symbols tab**: every variable and event with its index, type, initial value, and what references
-  it. Add, rename, retype the value, or remove. Removing renumbers every reference above it.
+  it. Add, rename, retype the value, bound it, or remove. Declaring one no longer needs Java: the
+  array of names is written by appending a longer run, proved by declaring an event in each of the
+  328 vanilla behaviours that have somewhere to put one and reading every name back from the bytes. **Set bounds** gives a variable a min and a
+  max, extending `variableBounds` to reach it when the array stops short, which it usually does: of
+  the 531 vanilla files it is empty in 224 and shorter than the variable list in 87. The entries
+  written in between are `0` to `0`, which is what the file already means by an unbounded variable
+  inside the array. Both go straight into the file's own bytes, whether the bound is one the array
+  already holds or one it has to be lengthened to reach, so neither needs a Java runtime.
+  Removing renumbers every reference above it. Expand an
+  event to see what the file does with it: raised here, listened for here, or written somewhere with
+  no established direction, each naming the class and member. No verdict comes with it, for the reason
+  under Validating.
 - **Chain tab**: project to character to behaviour, skeleton and animations, what is missing, and the
   skeleton's bone list.
-- **Check graph**: looks for the mistakes hkxpack cannot, listed under Validating below.
-- Filter by name, class or animation.
+- **Animation tab**: for an animation file, its class, duration, frame count, annotations, and a row
+  per bone with each frame's position, rotation and scale, named from a sibling skeleton. Frames page
+  in blocks of 300. Filter to a bone by name, because a character animation has 95 tracks and reading
+  one bone's motion means seeing only that bone. Type a `userControlledTimeFraction` and it says which
+  frame that is, jumps the page to it and marks the row, which is the question a variable driven clip
+  asks. Scale prints only on the tracks that carry one, because almost every track in the game is a
+  flat 1,1,1 and printing all of them hides the ones that are not. A clip's frames can also be
+  **written back**, which is what `NativeAnimation` does: the clip is decoded, whatever changed in it
+  is kept, and it is written out as `hkaInterleavedUncompressedAnimation`, every frame of every track
+  stored as it is. Nothing here re-encodes a compressed animation, so this is the way out of "reads a
+  clip and cannot change one". The file gets much larger, which is the honest cost of not having an
+  encoder, and the clip is exact. Fallout 4 registers the class at startup, so the engine has the code
+  to read one; it has not been loaded in game, which is #19's question and not this one's.
+- **Check graph**: looks for the mistakes hkxpack cannot, listed under Validating below. With a real
+  project folder around the file it also checks every clip's animation against the folder on disk.
+  Findings do not just print: the node each one is about is **outlined red for an error and amber for
+  a warning** on the canvas, and the problem list under it names them all. Click a row and the canvas
+  centres on that node and selects it, which matters because the node that is wrong is usually the
+  one off screen. Marks survive edits until the next check, so fixing one thing does not clear the
+  rest of the list.
+- **Seeing it without the window**: `symrm meshpng <mesh.nif> <skeleton.hkx> <out.png> [bone...]`
+  draws the posed mesh to a picture, front and side, with any bones named on the command line drawn
+  in their own colour. That exists because "does this look right" kept being a question only a person
+  with the program open could answer, and it is not: the answer is in the data. It is what showed the
+  male body drawing as an unrecognisable column before the placement fix, and what showed both toes
+  sitting correctly on their own feet after it.
+- **The character, not just the bones**: point Playback at a `.nif`, with the Mesh button or by naming
+  it on the command line beside the `.hkx`, and the mesh is skinned to the skeleton and posed with the
+  clip. Wireframe, drawn on the same 2D surface as the rest of the window, so the tool takes on no
+  new dependency. Bones are matched to the skeleton by name; any that do not match are named rather
+  than dropped, and vertices weighted only to those stay at their rest position. Nothing names a mesh
+  from inside a behaviour, a character or a skeleton, so it has to be pointed at one; the race record
+  lookup that would find it automatically is a later job.
+- **Where a clip takes you**: motion is extracted in this format, so a walk plays on the spot and
+  carries its displacement in a separate track that never reaches a bone. Measured: a Dogmeat walk
+  that travels 1,060 units moves its root bone 0.000 and its centre of mass 0.312. That makes travel
+  invisible in a viewport, so Playback says it in words on every clip, as `travels 187 units` or
+  `stays on the spot`, and **Follow travel** puts the two back together and walks the character along
+  its own path. Of 619 vanilla walk animations, 608 carry motion and 11 stay put; a clip named
+  `TurnLeft90` reads back as exactly 90 degrees.
+- **Playback tab**: select a clip generator and the animation it names is drawn on its own skeleton,
+  as lines between joints, with play, pause, step and a scrub bar. The rig comes off the project
+  chain, because a behaviour file names no skeleton and the character does. Drag to orbit, right
+  drag to pan, wheel to zoom, hover a joint for its bone name, and tick Reference pose to draw the
+  rest pose behind the animated one. Opening an animation file on its own plays it directly. Nothing
+  here writes to the file: scrubbing is a view, so it takes no undo step and cannot arm Save. An
+  animation authored against a different rig says which bone it wanted and shows the rest pose rather
+  than drawing a wrong one.
+- **Undo and redo**: Ctrl+Z and Ctrl+Y, or the buttons beside Save, back to a hundred steps. Every
+  editing path goes through one place, so nothing can change the document behind the stack's back.
+  Creating a node and wiring it up is one step, not two. The unsaved marker is measured against what
+  was last written rather than latched on, so undoing back past a save says the file matches disk.
+- **Where a symbol is used**: expand a variable or an event in the Symbols tab and every place the
+  file names it is listed, each one naming the object it sits in. Click a row and the canvas centres
+  on that node, the same jump the check results use. The other direction is on the node: a selected
+  node's panel lists the symbols it reads, writes or fires, resolved to their declared names.
+- **Which scripts send an event**: point "Scripts folder..." at a folder of Papyrus `.psc` sources and
+  each event says which scripts name it. Reported as information, never as a verdict, because the
+  engine sends plenty of events itself; a name no script sends is not evidence of anything. Silent
+  when no folder is set.
+- **Compare tab**: pick another copy of the open behaviour and read what differs, which is how a mod
+  conflict gets answered without unpacking both by hand. Added objects, removed objects, and changed
+  values with both sides shown. Ids are meaningless across files, so matching is on class and
+  contents, and hkxpack's renumbering reads as no difference at all.
+- **Check project**: the same checks run over every behaviour in the project, reported grouped by
+  file. Most real problems only exist between files: a clip that plays an animation no file in the
+  chain provides reads as fine one file at a time.
+- **Find Java**: when autodetection misses a Java install the tool goes read only, and the button next
+  to the message is how to fix it without leaving the window. The pick is checked by running
+  `-version` rather than taken on its name.
+- **Filter by name, class or animation**, on whichever view is showing. The tree narrows to the
+  matches; on the canvas the matches stay lit, everything else dims, and a wire touching a match stays
+  lit so you can see where it connects. Enter goes to the first match.
 
 ## Structural editing
 
@@ -57,10 +165,17 @@ Things the format makes easy to get wrong, all handled here:
   element per name in `hkbBehaviorGraphData`, one value per variable in `hkbVariableValueSet`, and
   sometimes a `variableBounds` element as well. Add a name without the others and the engine reads a
   variable with no declared type. `SymbolEditor.Audit` reports every length.
-- **`variableBounds` is not reliably parallel.** It is empty in some files, the same length as the
-  variable list in others, and in `MTBehavior` it is 19 entries against 67 variables that do not line
-  up by position. Nothing here edits a partial bounds array, because a positional edit would be a
-  guess.
+- **`variableBounds` is positional but often stops short.** Across the 531 vanilla files it is empty
+  in 224, the same length as the variable list in 17, and shorter in 87, at its most extreme 19
+  entries against `MTBehavior`'s 67 variables. Short does not mean differently keyed: `hkbVariableBounds`
+  is 8 bytes holding `min` and `max` and nothing else, read out of the class the engine registers for
+  it, so the struct has no field that could name a variable and position is the only key there can
+  be. A short array means the variables past its end have no bound, and an unbounded variable inside
+  it is written `0..0`. Removing a variable inside the array takes its bound with it; removing one
+  past the end leaves the array alone. Lengthening it to reach a variable is written into the file's
+  own bytes: `symrm grow` does it on every vanilla behaviour that has a variable the bounds do not
+  reach, **180 files, every one written, hkxpack agreeing about every value in the file afterwards
+  and nothing moved that was not asked to move**, and the same 180 with Java hidden.
 - **Event ids hide under a member called `id`.** Every scalar named `*EventId` carries one, but so
   does the plain `id` member of an `hkbEventProperty` or `hkbEvent`, and that accounts for roughly a
   third of the event references in a typical graph. The field table in `SymbolIndexFixup` was read
@@ -82,30 +197,16 @@ the same name it did before.
 
 ## Forcing an animation frame from a variable
 
-The pattern for driving an animation by hand (a gauge needle, a watch hand, a dial) rather than
-letting it play, taken from Fallout 4's own Pip-Boy graph:
+A clip can be sampled by a graph variable rather than played, which is how a gauge needle or a dial is
+driven. Set `mode = MODE_USER_CONTROLLED` and bind `userControlledTimeFraction` to a float variable;
+0.25 puts the clip a quarter of the way in and holds it there.
 
-```
-hkbClipGenerator  mode = MODE_USER_CONTROLLED
-                  variableBindingSet -> memberPath "userControlledTimeFraction"
-                                        variableIndex <your float variable>
-                                        bindingType BINDING_TYPE_VARIABLE
-```
+Bindings can be created from the properties panel, and the variable is declared for you if it does not
+exist yet. Open `Meshes\Pipboy\Behaviors\PipboyBehavior.hkx` in the Symbols tab to see the vanilla
+example.
 
-`userControlledTimeFraction` is 0 to 1 across the whole clip, so setting the variable to 0.25 puts the
-clip at a quarter of its length and holds it there. The animation needs no special frame data and is
-never "played", it is sampled.
-
-Verified in `Meshes\Pipboy\Behaviors\PipboyBehavior.hkx`, which declares four variables
-(`iTabSync`, `iCatSync`, `fRadioTune`, `fRadLevel`) and uses exactly this on two clips:
-
-| clip | mode | bound member | variable |
-|---|---|---|---|
-| `RadMeterTurning` | `MODE_USER_CONTROLLED` | `userControlledTimeFraction` | `fRadLevel` |
-| `TuneRadio` | `MODE_USER_CONTROLLED` | `userControlledTimeFraction` | `fRadioTune` |
-
-Open that file in the Symbols tab to see it. Bindings can be created from the properties panel, and
-the variable is declared for you if it does not exist yet.
+The full write up, including which of the Pip-Boy's four variables are actually used and how that was
+established, is in the wiki: **[Pip-Boy Variables](https://gitlab.com/opencw1/behaviortoolstandalone/-/wikis/Pip-Boy-Variables)**.
 
 ## Doors, lifts and switches are driven by events, not variables
 
@@ -136,39 +237,71 @@ So an unbound `MODE_USER_CONTROLLED` clip in a graph with no variables is a held
 normal. Check graph only mentions one when the graph does declare variables, where it might really
 have meant to bind one.
 
-## Running
+## Using it
+
+Download the release for your platform, unzip it, and run `BehaviourGraphStudio` (or
+`BehaviourGraphStudio.exe`). **Nothing to install.** It is one file with the .NET runtime inside it,
+and it does not need a game, a game engine, or an SDK. Keep the `tools/` folder next to it.
+
+Opening, reading, editing and comparing a file need nothing else at all. **A Java runtime is only
+needed for a structural save**, meaning one that adds or removes objects rather than changing what is
+already there, because that still goes back through hkxpack. hkxpack itself ships in the release, in
+`tools/` beside the binary; Java does not. Without it the tool says so in the status line rather than
+pretending.
+
+There is a terminal mode for scripting and for proving a change without a display:
 
 ```
-./run.sh                                  open empty
-./run.sh /path/to/Behavior00.hkx          open a file on start
-./run.sh --headless file.hkx --quit-after 90    parse and print the summary, no window
+BehaviourGraphStudio --version
+BehaviourGraphStudio --headless /path/to/Behavior.hkx    summary, node count, symbols, validator
 ```
 
-`run.sh` uses `engine/godot.linuxbsd.editor.double.x86_64.mono`, the copy that lives inside this
-project. Nothing here reaches outside its own folder at runtime. Set `BGS_GODOT` to override.
+It exits non zero when the validator finds errors, so it can gate a build.
 
-The engine must be a **double-precision mono** build, because the assembly is compiled against the
-`4.7.1-double` packages vendored in `nuget/`, and a stock single-precision editor will refuse to load
-it. `engine/` is 239MB of build output so it is gitignored, not committed. On a fresh clone, drop such
-a build in `engine/` (binary plus its `GodotSharp/` folder alongside it) or point `BGS_GODOT` at one.
+## Building it yourself
+
+```
+dotnet run --project app/BehaviourStudio.csproj                    run from source
+dotnet run --project tools/symrm/symrm.csproj -- test              the format checks
+dotnet run --project tools/uismoke/uismoke.csproj                  build the window headlessly
+dotnet publish app/BehaviourStudio.csproj -c Release -r linux-x64 -o out
+dotnet publish app/BehaviourStudio.csproj -c Release -r win-x64 -o out
+```
+
+A .NET 8 SDK is the only requirement, on any platform. The Windows build cross compiles from Linux,
+because a self contained publish emits the target's own host binary rather than reusing the build
+machine's.
+
+Nobody has to do any of that to get a release. `.gitlab-ci.yml` runs the format checks and the
+window smoke test, publishes both platforms, drops hkxpack in beside each binary, then unzips the
+Linux one on a bare Debian image with no .NET and no build tools to prove it actually starts.
 
 ## Requirements
 
-- A Godot 4.7.1 double-precision mono build, in `engine/` or via `BGS_GODOT`.
-- .NET 8 SDK to build (`dotnet build BehaviourGraphStudio.csproj`).
-- **A Java runtime and `hkxpack-cli.jar`** for anything beyond structure. The tree and the graph come
-  from the native C# reader and work without Java, but field-level editing and saving go through
-  hkxpack. Without it the tool stays read-only and says so in the status line rather than pretending.
+- .NET 8 SDK to build. Nothing to build with, to run a release.
+- **A Java runtime**, only for a structural save. Reading, editing and comparing come from the native
+  C# reader and work without it: the window's checks pass identically with Java present and with Java
+  hidden every way the tool looks for it, 78 checks either way. What still goes through hkxpack is
+  packing a file back after objects have been added or removed. hkxpack itself is
+  bundled at `tools/hkxpack-cli.jar` (MIT, see `THIRD_PARTY_NOTICES.md`) and is found automatically
+  next to the executable, so only Java has to be supplied. If it is installed somewhere the search
+  does not reach, "Find Java..." in the status bar points the tool at it and remembers.
+- **Optional: a folder of Papyrus `.psc` sources**, only for showing which scripts send each animation
+  event. Nothing else needs it and nothing changes when it is not set.
 
 ## Layout
 
 ```
-src/Hkx/     packfile readers, self-contained, no project references out
-src/Ui/      Ux.cs design system, GraphCanvas.cs node canvas, StudioRoot.cs the app itself
-tools/       sync_hkx_readers.sh, optional, re-pulls the readers from an OpenCommonwealth checkout
-nuget/       vendored double-precision Godot packages
-engine/      the Godot binary this tool runs on (gitignored)
+src/Hkx/     packfile readers and editors, self-contained, no project references out
+app/         the application: Ux.cs palette, HkGrid.cs column grid, GraphView.cs node canvas,
+             MainWindow.cs the window itself, Program.cs the terminal mode
+tools/symrm/   format checks and the corpus harness
+tools/uismoke/ builds the window on a headless display and walks it
+tools/         sync_hkx_readers.sh, optional, re-pulls the readers from an OpenCommonwealth checkout
 ```
+
+The window is Avalonia, drawing straight onto a canvas. Nothing about the tool depends on any game
+engine, and it never did anything that needed one.
 
 `src/Hkx` keeps the `OpenCommonwealth.Services.Hkx` namespace on purpose. The same readers exist in
 that project, byte identical, so a fix on either side is a clean diff away from the other. That is a
@@ -187,13 +320,68 @@ inside the game. **Check graph** looks for:
 - the symbol arrays disagreeing with each other
 - two states in one machine sharing a stateId, a transition to a stateId nothing has, a startStateId
   that does not exist
-- a state with no generator
+- a state with no generator, which crashes the game while the graph loads
 - a blender child that is not an `hkbBlenderGeneratorChild` wrapper
 - a clip with no animation
 - nodes nothing points at
+- a state no transition in its machine can reach, which being referenced can never catch, because a
+  machine always lists its own states
 
-It reports nothing at all on 132 vanilla behaviour files, which is the bar a check has to clear
+and, when the file sits in a real project folder rather than on its own:
+
+- a clip whose animation is not on disk, which is what renaming or cloning a behaviour folder
+  breaks and what nothing else here can see
+- a clip playing an animation the character file does not declare
+
+It reports no errors at all on 132 vanilla behaviour files, which is the bar a check has to clear
 before it is worth reading. Passing it is not a promise the game will load the file.
+
+Widening that to all 328 behaviours reachable through a project folder turns up 11 errors on 2 files,
+all of them `hkbVariableBindingSet.variableIndex` pointing past the end of the variable list, in
+`SharedCoreBehavior.hkx` and one `Behavior00.hkx`. That predates the checks described below and is
+not explained yet: either those files really are wrong, or the symbol index check is missing a way a
+graph can reach variables it does not declare itself. Worth knowing before trusting a clean run.
+
+The two animation checks are warnings rather than errors because vanilla trips them: across all 215
+project roots in `Fallout4 - Animations.ba2`, 328 behaviours produce 111 of them. They are real, not
+false alarms. Shared behaviours reference per creature animations that not every creature has, and
+some clips point at content that shipped in neither form, Dogmeat's `Animations\WalkForward_B.hkt`
+among them. A handful is normal. A file suddenly full of them means the folder moved.
+
+127 of those 215 characters declare no animations at all, which is also normal: an empty
+`animationBundleNameData` is how a behaviour that plays no clips of its own is written.
+
+The unreachable state check is a warning for the same reason, and the reason is worth writing down
+because it is not what you would assume. A state is reachable if the machine starts in it, or some
+transition targets it, following normal transitions from their own state and wildcards from
+anywhere. Vanilla still trips it 123 times across 56 of the 328 behaviours. Every case checked is a
+state the engine enters from outside the graph rather than through a transition: `RagdollAndGetUp`
+21 times, the `SharedCore` wrapper state 18, `PairedState` 14, plus death variants and teleport
+landings. None of them is reachable by any mechanism the file describes. `startStateIdSelector` is
+null, `startStateId` is not variable bound, and `returnToPreviousStateEventId`,
+`randomTransitionEventId`, `transitionToNextHigherStateEventId` and `transitionToNextLowerStateEventId`
+are all -1, so Havok's own implicit transitions are not doing it either. The game simply sets those
+states.
+
+Events go one step further and are not a check at all. A transition listening for an event nothing
+sends looks dead, and almost never is: Papyrus sends events by name through
+`ObjectReference.PlayAnimation`, which 177 vanilla base scripts call, and the engine sends more
+itself. Across the 314 behaviour files, 4799 events are used inside their own file and 2912 of those
+are listened for with nothing in the file sending them. A check reporting that would be wrong three
+times in five. So the Symbols tab reports it as information and says nothing about whether it is
+right.
+
+The roles it does report are not guessed either. Those 314 files write an event index in 43 distinct
+class and member pairs, and all 43 are in the table, so the only thing that lands in "referenced" on
+vanilla data is `BSLimbCycleModifier`, whose three event members do not say which way they run.
+Anything the table has never seen reports the same way rather than being assigned a direction.
+`symrm events <xmlDir>` reprints the whole measurement.
+
+Two things follow. A machine with no transitions at all is skipped, because it is not transition
+driven and saying nothing transitions to its states is true and useless; that alone takes the count
+from 477 to 123. And a state named as a `toNestedStateId` target anywhere in the file is exempt,
+because a transition in one machine can enter a nested machine's state directly. What is left is a
+warning worth reading, not an error worth blocking on.
 
 Run that yourself with `tools/symrm`, which pulls the corpus out of the game archive, unpacks it,
 and checks it:
@@ -205,6 +393,15 @@ dotnet run --project tools/symrm/symrm.csproj -- check  /tmp/beh/xml
 dotnet run --project tools/symrm/symrm.csproj -- remove /tmp/beh/Meshes_Actors_Character_Behaviors_MTBehavior.hkx
 ```
 
+The animation and repack checks need whole folders rather than loose files, so they have their own
+commands. Point `anims` at one behaviour, or at a directory to sweep every project root beneath it:
+
+```
+dotnet run --project tools/symrm/symrm.csproj -- anims  <Data>/Meshes/Actors/Dogmeat/Behaviors/DogmeatDefault.hkx
+dotnet run --project tools/symrm/symrm.csproj -- anims  <extracted Data folder>
+dotnet run --project tools/symrm/symrm.csproj -- repack <Data>/Meshes/Actors/Dogmeat/Behaviors/DogmeatDefault.hkx
+```
+
 `corpus` writes 531 files. `unpack 4` takes every fourth, which is the 132 the numbers here come
 from; pass 1 for all of them, and expect it to take a while, because it runs one JVM at a time
 deliberately. `remove` is the round trip that proves a symbol removal renumbered everything it had
@@ -212,13 +409,162 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
 
 ## Known limits
 
-- Reading is proven against all 531 vanilla behaviour files; 5292 of 5323 states resolve to a
-  generator we understand and every transition resolves its event name. Numbers and method are in
-  OpenCommonwealth's `docs/BEHAVIOR_GRAPH_RESEARCH.md`.
-- Every edit here has been round tripped through hkxpack and read back from the binary. **None of it
-  has been loaded by Fallout 4.** hkxpack accepting a file is not the engine accepting it. Keep the
+- The Playback viewport draws a wireframe, not a shaded character. What it is for is seeing which
+  animation a clip actually names and roughly what that animation does, not judging how it looks in
+  game.
+- A mesh only follows the skeleton for the bones the two agree on by name. Creature meshes match
+  cleanly: Dogmeat's 118 bone references and the Mirelurk's 95 across eight shapes all found a
+  skeleton bone. The human body mesh does not, and this is a real limit rather than a fault: it
+  weights 45 of its 58 bones to skin helper bones, `Chest_skin` and the like, which live in the mesh
+  skeleton and not in the Havok one, so those vertices cannot be animated. `symrm mesh` reports the
+  shortfall by name. They are still drawn in the right place: a mesh does not have to be authored at
+  the origin, and the male body is authored with its origin at the neck, so its vertices run from
+  -120 to -6 and the bind lifts the whole thing onto the ground.
+- A mesh's placement is not a fault, and reading it as one is what made the male body report 120 units
+  of drift for a while. What has to hold is that the bones agree with each other on the skeleton's own
+  reference pose, since the mesh is rigid in the space it was authored in. They do: 12 of the male
+  body's 13 matched bones agree to within a fifth of a unit, and Dogmeat's 21 agree to within a
+  thousandth. The thirteenth is `LLeg_Toe1`, 5.140 units from where the rest agree, while its right
+  hand twin is 0.172, so the mesh and the skeleton disagree about that one toe. Reading the stored
+  rotation any of the three wrong ways still fails the check, at 97 percent of bones disagreeing and
+  166 units.
+- The pose itself is checked against known numbers and against real game files: a three bone rig with
+  hand-worked positions in `symrm test`, and the vanilla 95 bone character skeleton posed through
+  `symrm pose`, where the composed frame puts the pelvis at z 65, the head at z 101 and the feet near
+  the floor. What **cannot** be checked without eyes on a window is whether the projection reads
+  correctly: orbit, pan and zoom feel, whether the ground grid helps or clutters, and whether the
+  joint hover radius is comfortable. Those are the parts to look at first.
+- An animation whose class the reader cannot decode has no frames, so it cannot be drawn. That is the
+  same list the Animation tab reports and it is not specific to playback.
+- **The properties panel reads the file, and nothing falls back any more.** The byte reader handles
+  every field type in a behaviour, including a struct written inline, whose class the class dump does
+  not name and the class table does: references between objects, arrays of all kinds, enums and flags
+  by name, strings, and every width of number. Measured against hkxpack over all 533 vanilla
+  behaviours: `symrm crosscheck` compares the reader, **274,107 values and all of them agreeing**;
+  `symrm panel` compares what the panel itself would display, **509,557 values, every one of them read
+  from the file's own bytes with none falling back**, all agreeing. An enum field offers its declared
+  values rather than asking for the name to be typed, which covers 42,733 of those fields.
+- **Hovering a field's name says what it is.** The address the edit will be written to,
+  `transitions[24].flags`, then what the field is, taken from the class table and so true by
+  construction: what a pointer points at, what an array holds, how many values an enum declares,
+  which class in the chain declares it. That covers **485,793 of 485,793 fields** across the vanilla
+  corpus.
+  A sentence about what a field *means* is a different thing and is only there for the fields this
+  project has established, each carrying where it came from. That is **7.7%** of them, and the number
+  is printed by `symrm notes` rather than left as an impression. The rest say nothing: a plausible
+  sentence written from a field's name would read with exactly the authority of a measured one, and
+  nobody could tell them apart. Issue #36 proposed taking the rest from Havok's 2018 Animation
+  manual, which is not on this machine.
+- **Java is no longer needed for anything the window does.** The graph, the tree, the properties,
+  the symbols, what each event is used for, and the whole checker are read from the file's own bytes,
+  and the text form an edit is made through is written from those bytes as well rather than unpacked.
+  That text was set against hkxpack's own line by line over every vanilla behaviour: **of the 370
+  files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them**. The other 128
+  hold a class hkxpack strides wrongly, so its text is misaligned and there is nothing to match.
+  The Chain tab and Check project were the last two that still asked for it, because they read the
+  *other* files in a project and were still unpacking those. They read them the same way now.
+  `symrm chain` runs both halves and prints them, and its output is identical with Java on PATH and
+  with Java and hkxpack both hidden: 4 links, 100 animations, 65 bones, 4 behaviours checked, none
+  unread. The window's own smoke test now runs 129 checks either way, where without Java it used to
+  run 120.
+  What still needs Java: packing a file back after an edit this cannot express in bytes. That list is
+  now a class that has gained or lost a field, or a file whose objects have been renumbered. Neither
+  is something the editor does; both are the guards that catch two documents that are not the same
+  file. Every edit the editor can actually make goes into the bytes: values, wide values, pointers,
+  arrays of children, arrays of struct elements, arrays of names, arrays of numbers, strings, adding
+  an object and deleting one. See #32 and #34.
+- **The wide fixed width fields are written where they sit.** A `vector4` is sixteen bytes wherever
+  it is and a `qstransform` forty eight, so writing one over another moves nothing, and they were
+  refused only because nothing read the spelling back. The spelling is the one the panel already
+  shows, floats four to a bracket, `(1.5 -2.25 3.75 0.5)`. Proved by changing a vector in each of the
+  243 vanilla behaviours that carry one and reading it back, with the file exactly as long as it was.
+  A value of the wrong length is refused rather than part written.
+- **An array of numbers grows the same way**, one run appended and the array aimed at it, proved on
+  the 56 vanilla behaviours that carry one. That run turned up a reading fault worth naming: a field
+  narrower than four bytes was read as four bytes and masked down, which is right everywhere except
+  the last bytes of a section. Nothing in a vanilla file sits there, so it never showed until an
+  appended run ended flush with the section and its final element read as blank while the count
+  beside it said otherwise. Narrow fields are read at their own width now.
+- **The class table is not just self consistent, it agrees with the game.** Every offset written into
+  a file comes from `HavokClassTypes.json`, which was built from hkxpack's class data. Fallout 4's
+  own startup initializers carry the same information, read out of the binary rather than out of any
+  tool, and `symrm classcheck` sets the two against each other: **900 classes in both, every size
+  agreeing, 7,062 of 7,080 members at the same offset and none disagreeing.** The 18 unmatched
+  members and the 8 classes only this build carries are physics and container templates that appear
+  in no vanilla behaviour file, checked rather than assumed.
+- Reading is measured, not assumed, over the whole game rather than a subset. All 531 behaviour files
+  in `Fallout4 - Animations.ba2`, all 5329 states: every one resolves to a generator that exists in
+  its own file, across 15 generator classes, and every transition resolves its event name. Nothing is
+  unresolved. Re-run it with `symrm corpus`, `symrm unpack <dir> 1` and `symrm states`, which walks
+  with the tool's own model rather than a script, so the number is about this reader.
+  An older figure of "5292 of 5323 states resolve to a generator we understand" circulated here and
+  elsewhere. It is real, it is not about this tool, and the shortfall is not a reading failure: it
+  counted how many states OpenCommonwealth's Godot converter could map to an animation node, and the
+  34 it could not are all `BSBehaviorGraphSwapGenerator` with a null `pDefaultGenerator`, a count that
+  reproduces here exactly. This reader parses all 34 of them. See #18.
+- **One edit made with this tool has been loaded by Fallout 4 and worked**: the Red Rocket gas station
+  garage door, which sat permanently half open exactly as the edit asked, with no interaction needed.
+  The edit was three scalar values on one existing object, the `Closed` state's sequence generator:
+  `pSequence` from `Closed` to `Opening`, `eUseTimePercentage` to `USING_TIME_PERCENTAGE`, and
+  `fTimePercent` to `0.5`. The file has vanilla's 30 objects, 7 states and 11 events, and vanilla's
+  byte size. So what the engine has accepted is a **field value edit on an existing object**, written
+  by this tool and repacked by hkxpack. That is the first time anything here has been proven against
+  the engine rather than against hkxpack, and it moves the tool from "the file reads back correctly"
+  to "the game accepted at least one of these".
+  It says nothing about structural editing. Rewiring a pointer, resizing an array of children,
+  appending an object, attaching one and orphaning one are all written into the file's own bytes now,
+  and all of them are proved through hkxpack on real vanilla files. **None of them has been put in
+  front of the game.** Neither has renumbering a symbol, and `symrm door`'s additive edit in
+  particular has not. Everything else has been round tripped through hkxpack and read back from the
+  binary and no further, and hkxpack accepting a file is still not the engine accepting it. Keep the
   `.bak`.
-- Deleting a node leaves whatever pointed at it holding null. Delete refuses while references exist,
-  but detaching by hand first and then deleting can still leave, say, a state with no generator.
-  Check graph finds that.
-- A partial `variableBounds` array is never edited, only reported. See the note in `SymbolEditor`.
+- **Deleting a node now takes it out of the file.** It used to be orphaned instead, its pointers
+  cleared and its bytes left where they were, because taking an object out moves every object after
+  it and nothing knew where they would land. Laying the data section out from nothing settles that,
+  so a deletion drops the object's entry, its bytes, and everything it alone pointed at, and the rest
+  of the file is placed again around the hole. Across all 531 vanilla behaviours an object is taken
+  out and the result reads back with that object gone, every byte accounted for and no pointer aiming
+  into the hole; 439 of them go the whole way through the window's own save path, with no Java
+  anywhere in it. hkxpack agrees, reading Dogmeat's result as 1518 objects against 1519 and one fewer
+  `hkbBlendingTransitionEffect`.
+  An element of a pointer array is still dropped and the array shrunk rather than set to null,
+  because a null child is a crash on load rather than an empty slot. A pointer inside an element of
+  an array of structs, which is where a transition keeps its effect, is cleared to null instead:
+  dropping the element would delete a route between two states rather than the effect on it.
+  **What this does not settle is renumbering.** Every id above the hole shifts, and no check here can
+  say what Fallout 4 makes of that. Orphaning is still there for anyone who would rather not move
+  anything. See #19 and #34.
+- Clearing the last pointer into a node can still leave, say, a state with no generator.
+  **Fallout 4 crashes while loading any graph that contains one**, before a state is entered, so
+  reachability does not save it. The engine's own graph walk pops every child a node reports and
+  reads its vtable pointer with no null check, so the null goes straight into an access violation:
+  `BShkbUtils::GraphTraverser::Next`, `Fallout4.exe+0x1705DDF`, under `LoadBehaviorHelper` on the
+  background clone thread. Measured on the Red Rocket garage door with one link cleared and nothing
+  else changed. The tree and the graph mark such a state, Check graph reports it as an error, and
+  Save refuses to write the file at all. The refusal names the states and the machines they sit in,
+  and says both ways out, because being stopped without being told which state or what to do about it
+  is worse than not checking. Give each one a generator, or delete the state. See #16.
+- A short `variableBounds` array is kept lined up rather than left alone: see the note in
+  `SymbolEditor`. What is still not done is authoring a bound, since nothing in the window sets one.
+- Animation scale is decoded and shown, and for **spline compressed** animations it is checked against
+  real data: 130 of the 13133 vanilla ones carry a scale that is not the identity, none contains a
+  zero, and the static case was confirmed against the raw bytes rather than against the reader. The
+  crow's `PerchedIdle` folds both wings to 0.4599 on all three axes, left and right identical, and
+  those float32s sit at 0x714 and 0x794 in the file.
+- **Scale on lossless compressed animations is confirmed against the engine, but has still never
+  decoded a real value.** No vanilla file exercises it: all 856 leave both scale arrays empty with
+  every scale word clear, so only the "no scale here" case has ever run on real data. Rather than
+  leave it at that, the branch was checked against `hkaLosslessCompressedAnimation::getFrameTransform`
+  in the 1.10.163 unpacked binary, and it agrees on every point: the word array at +0xb8, statics at
+  +0xa8, dynamics at +0x98, stride as the dynamic array's length divided by the frame count at +0xd8,
+  `(offset << 2) | type` packed four to a 64 bit word, and frame major indexing as
+  `offset + frame * stride`. The clear case returns 1,1,1 because the engine prefills the transform
+  with scale 1,1,1,1 before it reads anything, from the constant at 0x143828480. So the decode is not
+  guesswork, but the words it decodes have only ever said "nothing here". `symrm scale <Data folder>`
+  reports every animation whose scale is not the identity, which is how you would find the first file
+  that proves it end to end.
+
+## Licence
+
+MIT, in `LICENSE`. Software written by others and shipped with it is listed separately in
+`THIRD_PARTY_NOTICES.md`, hkxpack among them.
