@@ -719,6 +719,12 @@ public static class Smoke
 
                     Click(undo);
 
+                    PasteOnACopy(window, path, name);
+
+                    // Back to the file the run was given, since the paste walk opens a copy.
+                    window.Open(path);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
                     // A file compared with itself is the one answer that cannot be wrong, and it
                     // proves the unpack, the census and the walk all ran.
                     string said = window.CompareLoadedWith(path);
@@ -1023,6 +1029,66 @@ public static class Smoke
     /// driven here rather than assumed from the harness that proves the converter: a copy is opened,
     /// a frame is moved, the button is pressed, and the file on disk is read back and asked whether
     /// the frame moved. The copy is used so the sample this run was pointed at is left alone.
+    /// Copy a subtree and paste it back, through the window's own buttons rather than through the
+    /// class behind them.
+    ///
+    /// Done on a copy of the file, because pasting writes the file there and then. What this is for
+    /// is the wiring: that the button is offered only once something has been copied, that the slot
+    /// list follows the selection, and that the file on disk afterwards really holds more objects
+    /// than it did. Whether the references inside the copy are right is `symrm paste`, over all 531
+    /// behaviours rather than over this one.
+    private static void PasteOnACopy(MainWindow window, string path, string name)
+    {
+        string copy = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "uismoke-paste-" + System.IO.Path.GetFileName(path));
+
+        try
+        {
+            System.IO.File.Copy(path, copy, true);
+            System.IO.File.Delete(copy + ".bak");
+        }
+        catch (System.IO.IOException) { return; }
+
+        window.Open(copy);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string state = OpenCommonwealth.Services.Hkx.HkxTextEdit
+            .IdsOfClass(window.LoadedXml, "hkbStateMachineStateInfo").FirstOrDefault() ?? "";
+        if (state.Length == 0) return;
+
+        CheckTrue($"{name}: paste is not offered until something has been copied", !window.CanPaste);
+
+        window.SelectNode(state);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        CheckTrue($"{name}: the slot list offers leaving a paste unattached",
+                  window.PasteSlots.Contains("(leave it unattached)"));
+        CheckTrue($"{name}: and a slot on the selected node to hang it off",
+                  window.PasteSlots.Count > 1);
+
+        int was = new OpenCommonwealth.Services.Hkx.PackfileObjects(
+            OpenCommonwealth.Services.Hkx.PackfileImage.Read(copy)).Instances.Count;
+
+        window.CopyForTest();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        Console.WriteLine("        " + window.ClipSummary);
+        CheckTrue($"{name}: copying says what it took", window.ClipSummary.StartsWith("Holding #", StringComparison.Ordinal));
+        CheckTrue($"{name}: and paste is offered afterwards", window.CanPaste);
+
+        window.PasteForTest("(leave it unattached)");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        Console.WriteLine("        " + window.PasteAnswer);
+        CheckTrue($"{name}: pasting keeps the file before it as a .bak", System.IO.File.Exists(copy + ".bak"));
+        CheckTrue($"{name}: and says what it pasted",
+                  window.PasteAnswer.Contains("object(s) copied", StringComparison.Ordinal));
+
+        int now = new OpenCommonwealth.Services.Hkx.PackfileObjects(
+            OpenCommonwealth.Services.Hkx.PackfileImage.Read(copy)).Instances.Count;
+        CheckTrue($"{name}: and the file on disk holds more objects than it did ({was} to {now})", now > was);
+    }
+
     private static void SaveOnACopy(MainWindow window, string path, string name)
     {
         string copy = System.IO.Path.Combine(
