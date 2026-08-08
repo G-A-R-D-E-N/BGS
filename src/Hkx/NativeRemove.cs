@@ -4,18 +4,21 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Taking an object out of the graph without taking it out of the file.
+// Taking an object out of the graph, and out of the file.
 //
-// Deleting properly means dropping the object's entry from the virtual fixup table, and that table
-// is the object list, so every object after it renumbers. Every id above the hole moves, the per
-// class index a change names moves with it, and the diff front end that matches objects by position
-// within their class cannot follow a deletion the way it follows an addition. That is the exact
-// hazard #19 is tracking and there is no way to check it against the engine from here, so it waits.
+// Two things here, and they used to be one because only the first could be done. `Orphan` clears
+// every pointer into an object and leaves its entry and its bytes exactly where they are: nothing
+// renumbers, nothing shifts, and the file still holds it. `Delete` takes it out for real.
 //
-// This is the half that can be proved today. Clear every pointer into the object and leave its entry
-// and its bytes where they are. Nothing renumbers, nothing shifts, no offset moves. The graph no
-// longer reaches it; the file still holds it. hkxpack still lists it and so does the object list,
-// and that is the honest cost of not renumbering.
+// Deleting means dropping the object's entry from the virtual fixup table, which is the object list,
+// so every object after it renumbers and every byte after it moves. There was nowhere for the rest
+// to go until a file could be laid out rather than edited, which is what `PackfileLayout` is.
+//
+// What deleting still does not settle is the renumbering hazard #19 is tracking. Every id above the
+// hole shifts, and no check here can say what Fallout 4 makes of that; the file is correct by every
+// measure available without the game. 531 of 531 vanilla behaviours have an object taken out and
+// come back reading correctly, with the object gone, the section fully accounted for and no pointer
+// left aiming into the hole.
 //
 // One thing this must not do is leave a null where a child used to be. Fallout 4 walks a node's
 // children and reads each one's vtable without a null check, at `BShkbUtils::GraphTraverser::Next`,
@@ -36,6 +39,140 @@ public static class NativeRemove
 
     /// Where a run of element pointers lives, and which field owns it.
     private readonly record struct Run(int FieldAt, int At, int Count);
+
+    /// What a deletion took out.
+    public sealed record Deleted(int Objects, int Bytes, int FixupsDropped)
+    {
+        public override string ToString() =>
+            $"{Objects} object(s) taken out, {Bytes} byte(s) shorter, {FixupsDropped} pointer(s) dropped";
+    }
+
+    /// Takes objects out of the file properly, rather than leaving them in it unreferenced.
+    ///
+    /// This is what orphaning could not do. An object's bytes are not the object alone: a state
+    /// machine takes its transition array and its name with it, and those sit wherever the writer
+    /// put them. Removing any of it moves everything after it, so until the file could be laid out
+    /// rather than edited there was nowhere for the rest to go. `PackfileLayout` is that, and this
+    /// is the walk it needs done before the object leaves, because afterwards nothing says which
+    /// runs were its.
+    ///
+    /// What this does not decide is whether deleting is safe to do. Every id above a hole shifts,
+    /// which is the hazard #19 is tracking, and the caller has to have thought about that. What is
+    /// checked here is the part that is checkable: nothing may still point at what is going.
+    ///
+    /// The class name section is left alone. A name nothing uses any more is dead text in a section
+    /// the file already pads, and rewriting it would move every name after it for no gain.
+    public static Deleted Delete(PackfileImage image, IReadOnlyCollection<int> ids,
+                                 HavokClassTypes? types = null)
+    {
+        types ??= HavokClassTypes.Shipped;
+
+        var data = image.Section("__data__")
+                   ?? throw new InvalidOperationException("The file has no __data__ section.");
+
+        var objects = new PackfileObjects(image, HavokClasses.Shipped);
+
+        var items = PackfileLayout.Of(image, types)
+                    ?? throw new InvalidOperationException(
+                        "This file holds a class this build cannot describe, so nothing was deleted: " +
+                        "working out where the rest would go needs every object accounted for.");
+
+        int section = image.Sections.IndexOf(data);
+
+        // The looser of the two checks on purpose. Asking whether the walk covers every byte is
+        // right for an untouched file and wrong here: an edit that appended anything, a longer
+        // string or a resized array, leaves the run it replaced with nothing pointing at it, and
+        // refusing over those would mean a file could never be deleted from after being edited.
+        // Laying it out again drops them, which is a tidy up. What must not be dropped is something
+        // still pointed at, and that is what this asks.
+        if (!PackfileLayout.Reaches(items, data, section))
+            throw new InvalidOperationException(
+                "Something in this file points at bytes the reader cannot place, so nothing was " +
+                "deleted: laying it out again would drop what that pointer names.");
+
+        var runs = PackfileLayout.ByObject(items);
+        if (runs.Count != objects.Instances.Count)
+            throw new InvalidOperationException(
+                $"The walk found {runs.Count} object(s) where the file lists {objects.Instances.Count}, " +
+                "so nothing was deleted.");
+
+        var going = new List<int>();
+        foreach (int id in ids.Distinct())
+        {
+            int index = id - NativeGraphModel.FirstId;
+            if (index < 0 || index >= objects.Instances.Count)
+                throw new InvalidOperationException(
+                    $"#{id} is not in this file, which holds #{NativeGraphModel.FirstId} to " +
+                    $"#{NativeGraphModel.FirstId + objects.Instances.Count - 1}.");
+            going.Add(index);
+        }
+
+        if (going.Count == 0) return new Deleted(0, 0, 0);
+
+        // Every byte that is leaving, so a pointer can be asked whether it is aimed into the hole
+        // or sitting inside one.
+        var leaving = new List<(int At, int End)>();
+        foreach (int index in going)
+            foreach (var item in runs[index])
+                leaving.Add((item.At, item.At + item.Length));
+
+        bool Inside(int offset) => leaving.Exists(r => offset >= r.At && offset < r.End);
+
+        // The check that makes this safe to offer. A pointer left aiming at a deleted object is not
+        // a dangling reference the game shrugs off, it is a vtable read on freed space at
+        // BShkbUtils::GraphTraverser::Next. Detaching first is the caller's job and this refuses
+        // rather than doing it silently, because what to put in a field's place is a graph decision.
+        foreach (var (source, whichSection, destination) in data.Globals())
+        {
+            if (whichSection != section || !Inside(destination) || Inside(source)) continue;
+
+            int at = objects.IndexOf(objects.Instances.First(i => i.Offset == destination));
+            throw new InvalidOperationException(
+                $"Something still points at #{NativeGraphModel.FirstId + at}, from offset " +
+                $"0x{source:x}, so nothing was deleted. Detach it first.");
+        }
+
+        int before = data.Data.Length;
+        int dropped = 0;
+
+        // Fixups first, then the layout, because the layout refuses a table naming a byte it is not
+        // going to write.
+        var locals = new List<(int Source, int Destination)>();
+        foreach (var entry in data.Locals())
+        {
+            if (Inside(entry.Source) || Inside(entry.Destination)) { dropped++; continue; }
+            locals.Add(entry);
+        }
+
+        var globals = new List<(int Source, int Section, int Destination)>();
+        foreach (var entry in data.Globals())
+        {
+            if (Inside(entry.Source)) { dropped++; continue; }
+            globals.Add(entry);
+        }
+
+        // The virtual table is the object list, so this is the line that actually removes them.
+        var virtuals = new List<(int Source, int Section, int Destination)>();
+        foreach (var entry in data.Virtuals())
+        {
+            if (Inside(entry.Source)) { dropped++; continue; }
+            virtuals.Add(entry);
+        }
+
+        data.SetLocals(locals);
+        data.SetGlobals(globals);
+        data.SetVirtuals(virtuals);
+
+        var kept = new List<PackfileLayout.Item>();
+        for (int index = 0; index < runs.Count; index++)
+            if (!going.Contains(index)) kept.AddRange(runs[index]);
+
+        if (!PackfileLayout.RewriteAs(image, kept))
+            throw new InvalidOperationException(
+                "The file could not be laid out again after the deletion, so nothing was written.");
+
+        return new Deleted(going.Count, before - data.Data.Length, dropped);
+    }
 
     public static Orphaned Orphan(PackfileImage image, int id, HavokClassTypes? types = null)
     {

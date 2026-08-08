@@ -68,6 +68,8 @@ public static class Tests
         ("AFloatIsSpelledTheWayHkxPackSpellsIt", AFloatIsSpelledTheWayHkxPackSpellsIt),
         ("AnAppendedObjectLandsWhereItsNumberSaysItWill", AnAppendedObjectLandsWhereItsNumberSaysItWill),
         ("RemovingAnObjectIsRefusedAndOrphaningIsNot", RemovingAnObjectIsRefusedAndOrphaningIsNot),
+        ("DeletingTakesAnObjectOutOfTheFile", DeletingTakesAnObjectOutOfTheFile),
+        ("TheLastObjectsBlockEndsAtItsOwnClosingTag", TheLastObjectsBlockEndsAtItsOwnClosingTag),
         ("AnEnumFieldOffersItsDeclaredValues", AnEnumFieldOffersItsDeclaredValues),
         ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
         ("TheConsumerComparisonCatchesADifferentAnswer", TheConsumerComparisonCatchesADifferentAnswer),
@@ -2341,6 +2343,38 @@ public static class Tests
         return image;
     }
 
+    /// Two clip generators where the first's `variableBindingSet` field is aimed at the second, so
+    /// deleting the second has something still pointing at it. Any pointer field would do; this one
+    /// is a pointer on every class in the corpus, which keeps the fixture small.
+    private static PackfileImage TwoClipsOnePointingAtTheOther(out int pointedAt)
+    {
+        var classes = HavokClasses.Shipped;
+        int size = classes["hkbClipGenerator"]!.Size;
+        int binding = classes.Field("hkbClipGenerator", "variableBindingSet")!.Offset;
+
+        var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
+
+        // Sixteen aligned, which is where the layout walk expects the second object and where every
+        // object in every vanilla file sits.
+        int second = (size + 15) / 16 * 16;
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = new byte[second + size],
+            GlobalFixups = Triple(binding, 1, second),
+            VirtualFixups = Triple(0, 0, 5).Concat(Triple(second, 0, 5)).ToArray(),
+        });
+
+        pointedAt = NativeGraphModel.FirstId + 1;
+        return image;
+    }
+
     private static byte[] MakeTag(string name)
     {
         var tag = new byte[20];
@@ -2920,12 +2954,19 @@ public static class Tests
         Check("and its fields come with it", "userPartitionMask", added.Changes[1].Field);
         Check("as a value on the new object rather than the old one", 1, added.Changes[1].Index);
 
-        // Removing is a different operation and is not written in place yet. Saying so beats
-        // pretending, because the fallback through hkxpack still does it correctly.
+        // Removing used to be refused, because taking an object out moves every object after it and
+        // there was nowhere for them to go. Now it is planned, and carried out last, after every
+        // value has been written at the offset it had.
         var removed = NativeSave.Compare(Extra("0091"), One);
-        CheckTrue("removing one is refused", !removed.Possible);
-        CheckTrue("and the refusal says what it was",
-                  removed.Refusal?.Contains("removed", StringComparison.Ordinal) == true);
+        CheckTrue("removing one is no longer refused", removed.Possible);
+        Check("and is planned as a deletion", 1, removed.Gone.Count);
+        Check("naming the object that went", 91, removed.Gone[0]);
+        CheckTrue("with no value change invented to go with it", removed.Changes.Count == 0);
+
+        // The last object of its class going is not the same as the file changing shape, and telling
+        // the two apart is why the deletion is worked out before the classes are lined up.
+        CheckTrue("and taking the last of a class with it is still a deletion",
+                  NativeSave.Compare(Extra("0091"), One).Possible);
 
         // Renumbering breaks the id to position mapping for every object, not just the new one.
         string renumbered = Extra("0091").Replace("#0090", "#0500");
@@ -3147,6 +3188,85 @@ public static class Tests
         NativeRemove.Orphan(untouched, NativeGraphModel.FirstId);
         CheckTrue("leaving the file exactly as it was",
                   untouched.Rebuild().SequenceEqual(ClipInAPackfile("A.hkx", out _).Rebuild()));
+    }
+
+    /// Taking an object out for real, rather than leaving it in the file unreferenced.
+    ///
+    /// The corpus proof is the one that matters, and it is `symrm delete` and `symrm savedelete`.
+    /// These are the parts a corpus run cannot show: that a pointer left aiming at what is going is
+    /// refused rather than written, and that the object list actually gets shorter.
+    private static void DeletingTakesAnObjectOutOfTheFile()
+    {
+        Console.WriteLine("\ndeleting takes an object out of the file");
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        int only = NativeGraphModel.FirstId;
+
+        int before = new PackfileObjects(image).Instances.Count;
+        var gone = NativeRemove.Delete(image, new[] { only });
+
+        Check("one object taken out", 1, gone.Objects);
+        Check("and the file no longer lists it", before - 1, new PackfileObjects(image).Instances.Count);
+        CheckTrue("and the file still reads", PackfileImage.Read(image.Rebuild()).Section("__data__") != null);
+
+        // The check that makes this safe to offer at all. A pointer left aiming at a deleted object
+        // is a vtable read on space nothing wrote, so it is refused rather than nulled behind the
+        // caller's back: what to put in a field's place is a graph decision, not a byte one.
+        var two = TwoClipsOnePointingAtTheOther(out int pointedAt);
+        string refused = "";
+        try { NativeRemove.Delete(two, new[] { pointedAt }); }
+        catch (InvalidOperationException e) { refused = e.Message; }
+
+        CheckTrue("deleting something still pointed at is refused",
+                  refused.Contains("still points at", StringComparison.Ordinal));
+        CheckTrue("and the refusal says to detach it first",
+                  refused.Contains("Detach", StringComparison.Ordinal));
+        Check("and nothing was taken out", 2, new PackfileObjects(two).Instances.Count);
+    }
+
+    /// The last object in a document ends at its own closing tag, not at the end of the file.
+    ///
+    /// This was wrong and the damage was invisible until something deleted the last object: the
+    /// block ran to the end of the text, so removing it took `</hksection></hkpackfile>` with it and
+    /// left a document no parser would read. 111 of the 531 vanilla behaviours hit it.
+    private static void TheLastObjectsBlockEndsAtItsOwnClosingTag()
+    {
+        Console.WriteLine("\nthe last object's block ends at its own closing tag");
+
+        const string Two = """
+            <?xml version="1.0" encoding="ascii"?>
+            <hkpackfile classversion="8"><hksection name="__data__">
+            <hkobject class="hkbClipGenerator" name="#0090" signature="0x333b85b9">
+                <hkparam name="userPartitionMask">1</hkparam>
+            </hkobject>
+            <hkobject class="hkbClipGenerator" name="#0091" signature="0x333b85b9">
+                <hkparam name="userPartitionMask">2</hkparam>
+            </hkobject>
+            </hksection></hkpackfile>
+            """;
+
+        var (start, length) = HkxTextEdit.ObjectBlock(Two, "0091");
+        CheckTrue("the block is found", start >= 0);
+
+        string block = Two.Substring(start, length);
+        CheckTrue("and stops at its own closing tag",
+                  !block.Contains("</hksection>", StringComparison.Ordinal));
+
+        string without = Two.Remove(start, length);
+        CheckTrue("so removing it leaves the section closed",
+                  without.Contains("</hksection></hkpackfile>", StringComparison.Ordinal));
+        CheckTrue("and leaves a document that parses",
+                  Parses(without));
+        CheckTrue("with the other object still in it",
+                  without.Contains("#0090", StringComparison.Ordinal));
+        CheckTrue("and the deleted one gone",
+                  !without.Contains("#0091", StringComparison.Ordinal));
+    }
+
+    private static bool Parses(string xml)
+    {
+        try { System.Xml.Linq.XDocument.Parse(xml); return true; }
+        catch (System.Xml.XmlException) { return false; }
     }
 
     /// Putting a new object into a file without moving anything already in it.

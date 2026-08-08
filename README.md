@@ -448,7 +448,9 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   That text was set against hkxpack's own line by line over every vanilla behaviour: **of the 370
   files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them**. The other 128
   hold a class hkxpack strides wrongly, so its text is misaligned and there is nothing to match.
-  What still needs Java: packing a file back after objects have been added or removed. See #32 and #34.
+  What still needs Java: packing a file back after an edit this cannot express in bytes, which is now
+  a class that has gained or lost a field, a file whose objects have been renumbered, or a value of a
+  type nothing here can spell. Adding an object and deleting one both go native. See #32 and #34.
 - Reading is measured, not assumed, over the whole game rather than a subset. All 531 behaviour files
   in `Fallout4 - Animations.ba2`, all 5329 states: every one resolves to a generator that exists in
   its own file, across 15 generator classes, and every transition resolves its event name. Nothing is
@@ -475,12 +477,22 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   particular has not. Everything else has been round tripped through hkxpack and read back from the
   binary and no further, and hkxpack accepting a file is still not the engine accepting it. Keep the
   `.bak`.
-- Deleting a node does not remove it from the file. It is orphaned instead: every pointer into it is
-  cleared and its own entry and bytes are left where they are, so nothing renumbers. The file keeps a
-  node nothing reaches, which is the honest cost of not renumbering, and hkxpack still lists it. An
-  element of a pointer array is dropped and the array shrinks rather than being set to null, because
-  a null child is a crash on load rather than an empty slot. Full removal, which would drop the entry
-  and renumber everything after it, is refused. See #19 and #34.
+- **Deleting a node now takes it out of the file.** It used to be orphaned instead, its pointers
+  cleared and its bytes left where they were, because taking an object out moves every object after
+  it and nothing knew where they would land. Laying the data section out from nothing settles that,
+  so a deletion drops the object's entry, its bytes, and everything it alone pointed at, and the rest
+  of the file is placed again around the hole. Across all 531 vanilla behaviours an object is taken
+  out and the result reads back with that object gone, every byte accounted for and no pointer aiming
+  into the hole; 439 of them go the whole way through the window's own save path, with no Java
+  anywhere in it. hkxpack agrees, reading Dogmeat's result as 1518 objects against 1519 and one fewer
+  `hkbBlendingTransitionEffect`.
+  An element of a pointer array is still dropped and the array shrunk rather than set to null,
+  because a null child is a crash on load rather than an empty slot. A pointer inside an element of
+  an array of structs, which is where a transition keeps its effect, is cleared to null instead:
+  dropping the element would delete a route between two states rather than the effect on it.
+  **What this does not settle is renumbering.** Every id above the hole shifts, and no check here can
+  say what Fallout 4 makes of that. Orphaning is still there for anyone who would rather not move
+  anything. See #19 and #34.
 - Clearing the last pointer into a node can still leave, say, a state with no generator.
   **Fallout 4 crashes while loading any graph that contains one**, before a state is entered, so
   reachability does not save it. The engine's own graph walk pops every child a node reports and

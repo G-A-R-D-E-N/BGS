@@ -19,16 +19,25 @@ namespace OpenCommonwealth.Services.Hkx;
 // which also moves nothing: every offset in the file is derived from the sizes of what precedes it,
 // and appending has nothing after it. The text that was there is left where it is, unreferenced.
 //
-// The limit is honest and checked rather than assumed: anything that changes the number of objects
-// or the length of an array is still refused, because those move what follows them. When an edit is
-// not expressible this way it says so and the caller falls back to the old path, which is still
-// correct, just lossier.
+// A third kind goes a different way. Taking an object out moves everything after it, so it cannot be
+// written in place at all; it is carried out last, after every value has been written at the offset
+// it had, by laying the data section out again without it. That is still not a rebuild through XML,
+// so it still loses nothing.
+//
+// The limit is honest and checked rather than assumed. What is still refused is a file whose objects
+// have been renumbered, or a class that has gained or lost a field, or a value of a type nothing here
+// can spell. When an edit is not expressible this way it says so and the caller falls back to the old
+// path, which is still correct, just lossier.
 public static class NativeSave
 {
-    public sealed record Plan(List<Change> Changes, string? Refusal)
+    public sealed record Plan(List<Change> Changes, string? Refusal, List<int>? Removed = null)
     {
         public bool Possible => Refusal == null;
-        public bool Empty => Changes.Count == 0;
+        public bool Empty => Changes.Count == 0 && Gone.Count == 0;
+
+        /// Objects the edit takes out of the file, by id. Deleting one moves every object after it,
+        /// so this is carried out last, after every value has been written at the offsets it had.
+        public List<int> Gone => Removed ?? new List<int>();
 
         /// Whether carrying this out makes the file longer. Text, arrays and new objects are all
         /// appended rather than overwritten, so a caller comparing the result to the original byte
@@ -105,11 +114,19 @@ public static class NativeSave
     {
         classes ??= HavokClasses.Shipped;
 
-        var before = ByClass(originalXml);
+        // What the edit took out. Ids are positions in the file, and the editor deletes an object by
+        // removing its block rather than by renumbering what is left, so the ids that survive are
+        // still the ids they were and a straight set difference says what went.
+        var deleted = Deleted(originalXml, editedXml);
+
+        var before = ByClass(originalXml, deleted.Text);
         var after = ByClass(editedXml);
         var changes = new List<Change>();
 
-        if (before.Count != after.Count || before.Keys.Any(k => !after.ContainsKey(k)))
+        // A class the file no longer holds any of. That used to be refused outright, and now it is
+        // only a refusal when it happened without a deletion to explain it, which would mean the two
+        // documents are not the same file.
+        if (before.Keys.Any(k => !after.ContainsKey(k)) || after.Keys.Any(k => !before.ContainsKey(k)))
             return new Plan(changes, "the set of object types in the file changed");
 
         foreach (var (className, originals) in before)
@@ -118,8 +135,8 @@ public static class NativeSave
 
             if (edited.Count < originals.Count)
                 return new Plan(changes,
-                    $"{originals.Count - edited.Count} {className} object(s) were removed, which is " +
-                    "not written in place yet");
+                    $"{originals.Count - edited.Count} {className} object(s) went missing without " +
+                    "being deleted, so nothing can be matched up");
 
             if (edited.Count > originals.Count)
             {
@@ -273,8 +290,31 @@ public static class NativeSave
                 }
         }
 
-        return new Plan(changes, null);
+        return new Plan(changes, null, deleted.Ids);
     }
+
+    /// The objects in the first document that are not in the second, by id.
+    private static (List<int> Ids, HashSet<string> Text) Deleted(string originalXml, string editedXml)
+    {
+        var ids = new List<int>();
+        var text = new HashSet<string>(StringComparer.Ordinal);
+        if (originalXml.Length == 0 || editedXml.Length == 0) return (ids, text);
+
+        var kept = new HashSet<string>(Ids(editedXml), StringComparer.Ordinal);
+        foreach (string id in Ids(originalXml))
+        {
+            if (kept.Contains(id)) continue;
+            text.Add(id);
+            ids.Add(int.Parse(id[1..], CultureInfo.InvariantCulture));
+        }
+
+        return (ids, text);
+    }
+
+    private static IEnumerable<string> Ids(string xml) =>
+        XDocument.Parse(xml).Descendants("hkobject")
+                 .Select(e => e.Attribute("name")?.Value ?? "")
+                 .Where(id => id.Length > 1 && id[0] == '#' && id[1..].All(char.IsAsciiDigit));
 
     /// Which array a flattened key belongs to, or an empty string when it belongs to none.
     /// `variableBounds[2].min.value` and `variableBounds#count` both belong to `variableBounds`.
@@ -522,6 +562,11 @@ public static class NativeSave
         // that is the check that proves this reorder is the file's own order and not our idea of it.
         FixupOrder.Reorder(image);
 
+        // Last, because everything above names an object by its position among its class and writes
+        // at the offset it has today. Taking one out moves every object after it and renumbers every
+        // id above the hole, so doing it any earlier would send the rest of the plan somewhere else.
+        if (plan.Gone.Count > 0) NativeRemove.Delete(image, plan.Gone);
+
         return image.Rebuild();
     }
 
@@ -548,10 +593,25 @@ public static class NativeSave
             return true;
         }
 
-        int index = int.Parse(change.Value[1..]) - NativeGraphModel.FirstId;
+        return RepointAt(image, objects, data, at, change.Value);
+    }
+
+    /// Aims one pointer, wherever it sits. The offset is worked out by the caller, which is the only
+    /// difference between a field of an object and a member of an element inside one: both are eight
+    /// bytes named by a fixup, and neither moves anything when it is changed.
+    private static bool RepointAt(PackfileImage image, PackfileObjects objects,
+                                  PackfileSection data, int at, string value)
+    {
+        if (value == "null")
+        {
+            data.SetGlobal(at, 0, -1);
+            return true;
+        }
+
+        int index = int.Parse(value[1..], CultureInfo.InvariantCulture) - NativeGraphModel.FirstId;
         if (index < 0 || index >= objects.Instances.Count)
             throw new InvalidOperationException(
-                $"{change} names an object this file does not have, so nothing was written.");
+                $"#{value[1..]} is not an object this file has, so nothing was written.");
 
         data.SetGlobal(at, image.Sections.IndexOf(data), objects.Instances[index].Offset);
         return true;
@@ -728,6 +788,10 @@ public static class NativeSave
         var found = StructMember(elementClass, change.Member);
         if (found == null) return false;
 
+        if (found.Value.VType == "TYPE_POINTER")
+            return RepointAt(image, objects, data,
+                             array.At + change.Element * stride + found.Value.Offset, change.Value);
+
         string type = Narrow(found.Value.VType);
         if (type.Length == 0) return false;
 
@@ -879,6 +943,15 @@ public static class NativeSave
         if (found == null)
             return $"{elementClass}.{member} is not a member this build can place";
 
+        // A pointer inside an element is a fixup, not a value, so it is written by moving the entry
+        // that names it rather than by putting bytes anywhere. This is where a transition keeps the
+        // effect it plays, and leaving it out meant a blending transition effect could not be
+        // detached, which meant it could not be deleted.
+        if (found.Value.VType == "TYPE_POINTER")
+            return IsReferenceValue(value)
+                ? null
+                : $"{elementClass}.{member} was set to '{value}', which is neither an object id nor null";
+
         string type = Narrow(found.Value.VType);
         if (type.Length == 0)
             return $"{elementClass}.{member} is a {found.Value.VType}, which is not written in " +
@@ -940,7 +1013,8 @@ public static class NativeSave
     /// This never showed before because a change inside an inline struct was refused before anything
     /// tried to write it. Now that those changes are written, counting them would send a value at an
     /// object that does not exist.
-    private static Dictionary<string, List<Dictionary<string, string>>> ByClass(string xml)
+    private static Dictionary<string, List<Dictionary<string, string>>> ByClass(
+        string xml, ISet<string>? skipping = null)
     {
         var byClass = new Dictionary<string, List<Dictionary<string, string>>>(StringComparer.Ordinal);
         if (xml.Length == 0) return byClass;
@@ -953,6 +1027,11 @@ public static class NativeSave
             string? id = element.Attribute("name")?.Value;
             if (id == null || id.Length < 2 || id[0] != '#' || !id[1..].All(char.IsAsciiDigit))
                 continue;
+
+            // Objects the edit deleted are left out of the before picture, so what remains lines up
+            // with the after picture object for object. Without this a deletion reads as every
+            // object of that class after the hole having changed into its neighbour.
+            if (skipping != null && skipping.Contains(id)) continue;
 
             var fields = new Dictionary<string, string>(StringComparer.Ordinal);
 

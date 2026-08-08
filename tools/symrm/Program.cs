@@ -46,6 +46,8 @@ public static class Program
             case "packfile": return Packfile(argv);
             case "layout": return Layout(argv);
             case "relayout": return Relayout(argv);
+            case "delete": return DeleteObject(argv);
+            case "savedelete": return SaveDelete(argv);
             case "model": return Model(argv);
             case "consumers": return Consumers(argv);
             case "symbols": return Symbols(argv);
@@ -203,6 +205,20 @@ public static class Program
               offset in a packfile is derived from the sizes of what precedes it, so a byte for byte
               match means the derivation is right. Exits non zero on any file that differs or cannot
               be read. Needs no game and no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- delete <file.hkx | folder> [id]
+              Takes one object out of each file for real, not by orphaning it, and checks the result
+              reads back with exactly that object gone, fully accounted for, and no pointer left
+              aiming into the hole. Defaults to the last object in the file, orphaned first so
+              nothing points at it. Changes nothing on disk. Needs no game and no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- savedelete <file.hkx | folder> [out.hkx]
+              (out.hkx only when pointed at a single file, and the only time anything is written)
+              Deletes a node the way the window does, all the way to the bytes: text written from
+              the file's own bytes, the node taken out and everything pointing at it detached, the
+              change worked out and written. Checks the result reads back with the right objects in
+              it and no pointer aiming at nothing. Writes nothing to disk, and needs no Java, which
+              is half the point.
 
           dotnet run --project tools/symrm/symrm.csproj -- relayout <file.hkx | folder>
               Throws the data section away and writes it again from nothing, then checks the result
@@ -3975,6 +3991,284 @@ public static class Program
         Console.WriteLine($"laid out from scratch: {placedWhereExpected}/{placedSeen} " +
                           "object(s) and run(s) land where the walk puts them");
         return oddFiles == 0 && skipped == 0 ? 0 : 1;
+    }
+
+    // Deleting a node the way the window does it, all the way through to the bytes.
+    //
+    // `delete` proves the library call. This proves the path a person actually takes: the editable
+    // text is written from the file's own bytes, GraphAuthor takes the node out of it and detaches
+    // everything pointing at it, NativeSave works out what changed, and NativeSave.Apply writes it.
+    // No Java anywhere in that, which is the other thing being checked.
+    //
+    // The node chosen is the last one the author will agree to delete, so the same file gives the
+    // same answer every run.
+    private static int SaveDelete(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        int saved = 0, refused = 0, wrong = 0, nothingToDelete = 0;
+        long objectsGone = 0;
+        var refusals = new Dictionary<string, int>(StringComparer.Ordinal);
+        var notes = new List<string>();
+
+        foreach (string file in files)
+        {
+            string xml;
+            PackfileObjects objects;
+            try
+            {
+                var image = PackfileImage.Read(file);
+                objects = new PackfileObjects(image);
+                xml = NativeXml.From(objects, image);
+            }
+            catch (Exception e)
+            {
+                refused++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {e.Message}");
+                continue;
+            }
+
+            int wasCount = objects.Instances.Count;
+            int last = -1;
+            for (int k = objects.Instances.Count - 1; k >= 0; k--)
+                if (GraphAuthor.CanDelete(objects.Instances[k].ClassName)) { last = k; break; }
+
+            if (last < 0) { nothingToDelete++; continue; }
+
+            string id = (NativeGraphModel.FirstId + last).ToString();
+
+            string edited;
+            NativeSave.Plan plan;
+            byte[] after;
+            try
+            {
+                edited = GraphAuthor.DeleteNode(xml, id, out _);
+                plan = NativeSave.Compare(xml, edited);
+
+                if (!plan.Possible)
+                {
+                    refused++;
+                    refusals[plan.Refusal!] = refusals.GetValueOrDefault(plan.Refusal!) + 1;
+                    continue;
+                }
+
+                after = NativeSave.Apply(file, plan);
+            }
+            catch (Exception e)
+            {
+                refused++;
+                string why = e.Message.Split('\n')[0];
+                refusals[why] = refusals.GetValueOrDefault(why) + 1;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {why}");
+                continue;
+            }
+
+            string trouble = Sound(after, wasCount - plan.Gone.Count);
+            if (trouble.Length > 0)
+            {
+                wrong++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {trouble}");
+                continue;
+            }
+
+            saved++;
+            objectsGone += plan.Gone.Count;
+
+            // Written only when asked, so the sweep stays a read only measurement. One file and a
+            // path is the case where somebody wants the result to put in front of another reader.
+            if (files.Length == 1 && argv.Length > 2)
+            {
+                File.WriteAllBytes(argv[2], after);
+                Console.WriteLine($"  wrote {argv[2]}, {plan.Gone.Count} object(s) fewer");
+            }
+        }
+
+        foreach (string note in notes) Console.WriteLine("  " + note);
+
+        if (refusals.Count > 0)
+        {
+            Console.WriteLine("\nrefused because:");
+            foreach (var (why, count) in refusals.OrderByDescending(r => r.Value))
+                Console.WriteLine($"  {count,5}  {why}");
+        }
+
+        Console.WriteLine($"\n{files.Length} file(s): {saved} saved with a node deleted, " +
+                          $"{wrong} came back wrong, {refused} refused, " +
+                          $"{nothingToDelete} with nothing the author will delete");
+        Console.WriteLine($"{objectsGone} object(s) taken out across them");
+        return wrong == 0 ? 0 : 1;
+    }
+
+    /// Whether a saved file is sound: it reads, it holds the objects expected, every byte in it is
+    /// accounted for, and no pointer aims anywhere that is not written.
+    private static string Sound(byte[] after, int expected)
+    {
+        PackfileImage image;
+        PackfileObjects objects;
+        try
+        {
+            image = PackfileImage.Read(after);
+            objects = new PackfileObjects(image);
+        }
+        catch (Exception e) { return "will not read back: " + e.Message; }
+
+        if (objects.Instances.Count != expected)
+            return $"holds {objects.Instances.Count} object(s), expected {expected}";
+
+        var data = image.Section("__data__")!;
+        var items = PackfileLayout.Of(image);
+        if (items == null) return "the walk cannot account for the result";
+
+        if (!PackfileLayout.Accounted(items, data.Data.Length))
+            return "the result has bytes in it nothing accounts for";
+
+        if (!PackfileLayout.Reaches(items, data, image.Sections.IndexOf(data)))
+            return "the result has a pointer aiming outside everything written";
+
+        return "";
+    }
+
+    // The gate on deleting an object for real, rather than leaving it in the file unreferenced.
+    //
+    // Deleting takes the object out of the virtual fixup table, which is the object list, so every
+    // object after it renumbers and every byte after it moves. This does one to each file and then
+    // asks the result the questions that would catch a bad write: does it read back, does it hold
+    // exactly one object fewer, is that object's class the one that went, is the section still fully
+    // accounted for, and does every pointer in it still land inside something.
+    //
+    // The object chosen is the last one in the file, orphaned first so nothing points at it. Last
+    // because it is the case where the fewest things move, which makes a failure easier to read, and
+    // orphaned first because deleting something still pointed at is refused on purpose.
+    private static int DeleteObject(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        int deleted = 0, refused = 0, wrong = 0;
+        long bytesSaved = 0;
+        var notes = new List<string>();
+
+        foreach (string file in files)
+        {
+            PackfileImage image;
+            PackfileObjects objects;
+            try
+            {
+                image = PackfileImage.Read(file);
+                objects = new PackfileObjects(image);
+            }
+            catch (Exception e)
+            {
+                refused++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {e.Message}");
+                continue;
+            }
+
+            if (objects.Instances.Count < 2) { refused++; continue; }
+
+            int id = argv.Length > 2 && int.TryParse(argv[2], out int asked)
+                     ? asked
+                     : NativeGraphModel.FirstId + objects.Instances.Count - 1;
+
+            int index = id - NativeGraphModel.FirstId;
+            if (index < 0 || index >= objects.Instances.Count) { refused++; continue; }
+
+            string className = objects.Instances[index].ClassName;
+            int wasCount = objects.Instances.Count;
+            var wasClasses = objects.Instances.Select(i => i.ClassName).ToList();
+            int wasLength = image.Section("__data__")!.Data.Length;
+
+            byte[] after;
+            try
+            {
+                NativeRemove.Orphan(image, id);
+                NativeRemove.Delete(image, new[] { id });
+                after = image.Rebuild();
+            }
+            catch (Exception e)
+            {
+                refused++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {e.Message}");
+                continue;
+            }
+
+            string why = Wrong(after, wasCount, wasClasses, className);
+            if (why.Length > 0)
+            {
+                wrong++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {why}");
+                continue;
+            }
+
+            deleted++;
+            bytesSaved += wasLength - PackfileImage.Read(after).Section("__data__")!.Data.Length;
+        }
+
+        foreach (string note in notes) Console.WriteLine("  " + note);
+
+        Console.WriteLine($"\n{files.Length} file(s): {deleted} had an object taken out cleanly, " +
+                          $"{wrong} came back wrong, {refused} refused");
+        if (deleted > 0) Console.WriteLine($"{bytesSaved} byte(s) of data section reclaimed across them");
+        return wrong == 0 ? 0 : 1;
+    }
+
+    /// What is wrong with a file an object was just deleted from, or nothing.
+    private static string Wrong(byte[] after, int wasCount, List<string> wasClasses, string className)
+    {
+        PackfileImage image;
+        PackfileObjects objects;
+        try
+        {
+            image = PackfileImage.Read(after);
+            objects = new PackfileObjects(image);
+        }
+        catch (Exception e) { return "will not read back: " + e.Message; }
+
+        if (objects.Instances.Count != wasCount - 1)
+            return $"holds {objects.Instances.Count} object(s), expected {wasCount - 1}";
+
+        var left = objects.Instances.Select(i => i.ClassName).ToList();
+        var expected = new List<string>(wasClasses);
+        expected.Remove(className);
+        if (!left.SequenceEqual(expected))
+            return "the objects left are not the objects that were there minus the one deleted";
+
+        var data = image.Section("__data__")!;
+        var items = PackfileLayout.Of(image);
+        if (items == null) return "the walk cannot account for the result";
+        if (!PackfileLayout.Accounted(items, data.Data.Length))
+            return "the result has bytes in it nothing accounts for";
+
+        // Every pointer has to land inside something. A fixup left aiming into the hole is the
+        // failure this whole check exists for, and it does not announce itself: the file reads, it
+        // just crashes the game.
+        var spans = items.Select(i => (i.At, End: i.At + i.Length)).OrderBy(x => x.At).ToList();
+        bool Lands(int offset) => spans.Exists(sp => offset >= sp.At && offset < sp.End);
+
+        int section = image.Sections.IndexOf(data);
+        foreach (var (source, destination) in data.Locals())
+            if (!Lands(source) || !Lands(destination))
+                return $"a local pointer at 0x{source:x} aims at 0x{destination:x}, outside everything";
+
+        foreach (var (source, which, destination) in data.Globals())
+            if (!Lands(source) || (which == section && !Lands(destination)))
+                return $"a pointer at 0x{source:x} aims at 0x{destination:x}, outside everything";
+
+        foreach (var (source, _, _) in data.Virtuals())
+            if (!Lands(source)) return $"an object is listed at 0x{source:x}, which is not written";
+
+        return "";
     }
 
     // The gate on removing an object, and on anything else that moves one.

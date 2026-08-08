@@ -183,6 +183,20 @@ public static class GraphAuthor
                 xml = HkxTextEdit.ArrayRemoveAt(xml, holder.Id, field, index);
         }
 
+        // A pointer inside an element of an array of structs, which is where a transition keeps the
+        // effect it plays. These were found by the search for holders and then never cleared, so
+        // deleting a blending transition effect took the object out of the document and left every
+        // transition still naming it. Nothing said so: the save went out through hkxpack, which was
+        // handed a file naming an object that was not in it.
+        //
+        // Cleared to null rather than by dropping the element. A transition with no effect is a
+        // transition that snaps, which is a thing the format allows and vanilla files do; dropping
+        // the element would silently delete a route between two states instead.
+        foreach (var (field, rows) in holder.StructLists)
+            for (int row = 0; row < rows.Count; row++)
+                foreach (var (member, value) in rows[row].Where(p => p.Value == token).ToList())
+                    xml = HkxTextEdit.SetParamAt(xml, holder.Id, $"{field}[{row}].{member}", "null");
+
         return xml;
     }
 

@@ -3,6 +3,41 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, a file can be written rather than edited
+
+Every save either wrote values into the bytes that were already there or rebuilt the whole file
+through hkxpack's XML. Neither can move an object, so deleting one was refused and the tool orphaned
+it instead: pointers cleared, bytes left where they were, a node in the file that nothing reaches.
+#32, #19.
+
+**Where an object would go is now worked out rather than kept.** `PackfileLayout` walks a file the
+way its two pointer tables are already reproduced from, and places every object and every run it
+points at. Over the 531 vanilla behaviours all 138,420 of them land exactly where the file has them,
+and a file whose data section is thrown away and written again from nothing comes back byte for byte
+identical. So does every one of 472 Dogmeat animations. The alignment rule was measured and three
+readings of it were wrong first, which is in the comment at the top of that file.
+
+**Deleting a node takes it out of the file.** The object, its bytes, its name and its arrays, with
+the rest of the file laid out again around the hole and all three fixup tables moved to match. It is
+carried out last, after every value has been written at the offset it had, because taking one out
+moves everything after it. Deleting something still pointed at is refused and says what points at it,
+rather than leaving a pointer aiming at freed space, which is a crash and not a dangling reference.
+
+**Two bugs were found by running it rather than by reading it.**
+
+A reference inside an element of an array of structs was found when looking for what pointed at a
+node, and then never cleared. Deleting a blending transition effect took it out of the document and
+left every transition still naming it, and nothing said so: the save went out through hkxpack, which
+was handed a file naming an object that was not in it.
+
+An object's block ran to the end of the document rather than to its own closing tag, so deleting the
+last object in a file took `</hksection></hkpackfile>` with it and left text no parser would read.
+111 of the 531 vanilla behaviours hit it.
+
+Both are fixed, and a pointer inside an element is now written, which is what made detaching those
+references possible at all. New gates: `symrm layout`, `symrm relayout`, `symrm delete`,
+`symrm savedelete`.
+
 ## 2026-08-07, a state machine can be read
 
 Which event moves which state to which state is the most important thing a behaviour holds, and the
