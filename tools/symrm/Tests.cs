@@ -102,6 +102,11 @@ public static class Tests
         ("EveryRunningMachineHearsAnEvent", EveryRunningMachineHearsAnEvent),
         ("TheRunRefusesToGuessPastAnotherFile", TheRunRefusesToGuessPastAnotherFile),
         ("SteppingAgreesWithTheReachabilityItReports", SteppingAgreesWithTheReachabilityItReports),
+        ("ATransitionBlendsFromOneStateToTheNext", ATransitionBlendsFromOneStateToTheNext),
+        ("AnInstantTransitionDoesNotBlend", AnInstantTransitionDoesNotBlend),
+        ("APlainBlenderSharesByWeight", APlainBlenderSharesByWeight),
+        ("AParametricBlenderIsPickedNotMixed", AParametricBlenderIsPickedNotMixed),
+        ("ADrivenBlendIsReportedNotGuessed", ADrivenBlendIsReportedNotGuessed),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -4222,5 +4227,258 @@ public static class Tests
             analysis.Reachable.Except(landed).Count());
         Check("and lands nowhere the analysis ruled out", 0,
             landed.Except(analysis.Reachable).Count());
+    }
+
+    // A minimal two state machine whose transition carries a blending effect with a duration, so the
+    // pose blend can be watched rather than only its endpoints. Public because symrm's weights check
+    // ramps it as well, and a fixture proved in one place and used in two does not drift.
+    public static string TwoStateBlendGraph() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraph" name="#91" signature="0xb1218f86">
+                    <hkparam name="name">Blend</hkparam>
+                    <hkparam name="rootGenerator">#92</hkparam>
+                    <hkparam name="data">#80</hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphData" name="#80" signature="0x95aca5d">
+                    <hkparam name="stringData">#81</hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphStringData" name="#81" signature="0xc713064e">
+                    <hkparam name="eventNames" numelements="1">
+                        <hkcstring>Go</hkcstring>
+                    </hkparam>
+                    <hkparam name="variableNames" numelements="0"></hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachine" name="#92" signature="0xa5896bcf">
+                    <hkparam name="name">M</hkparam>
+                    <hkparam name="startStateId">0</hkparam>
+                    <hkparam name="wildcardTransitions">null</hkparam>
+                    <hkparam name="states" numelements="2">#93 #95</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#93" signature="0x39d76713">
+                    <hkparam name="name">A</hkparam>
+                    <hkparam name="stateId">0</hkparam>
+                    <hkparam name="generator">#94</hkparam>
+                    <hkparam name="transitions">#101</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#94" signature="0xd4cc9f6">
+                    <hkparam name="name">ClipA</hkparam>
+                    <hkparam name="animationName">a.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#95" signature="0x39d76713">
+                    <hkparam name="name">B</hkparam>
+                    <hkparam name="stateId">1</hkparam>
+                    <hkparam name="generator">#96</hkparam>
+                    <hkparam name="transitions">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#96" signature="0xd4cc9f6">
+                    <hkparam name="name">ClipB</hkparam>
+                    <hkparam name="animationName">b.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineTransitionInfoArray" name="#101" signature="0xe397b11e">
+                    <hkparam name="transitions" numelements="1">
+                        <hkobject>
+                            <hkparam name="eventId">0</hkparam>
+                            <hkparam name="toStateId">1</hkparam>
+                            <hkparam name="toNestedStateId">0</hkparam>
+                            <hkparam name="priority">0</hkparam>
+                            <hkparam name="flags">0</hkparam>
+                            <hkparam name="transition">#102</hkparam>
+                            <hkparam name="condition">null</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbBlendingTransitionEffect" name="#102" signature="0xa5f8b5b">
+                    <hkparam name="name">Blend</hkparam>
+                    <hkparam name="duration">0.5</hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
+
+    // The pose blend of a transition, watched from nothing to all of the new state.
+    private static void ATransitionBlendsFromOneStateToTheNext()
+    {
+        Console.WriteLine("\na transition blends from one state to the next over its duration");
+
+        var model = BehaviourGraphModel.Parse(TwoStateBlendGraph());
+        var run = GraphRun.Start(model);
+
+        Check("it starts in A alone", 1, run.Where().Count);
+        Check("at full weight", 1f, run.Where()[0].Weight);
+
+        run.Send("Go");
+        var atStart = run.Where();
+        Check("firing the transition leaves two states blending", 2, atStart.Count);
+        CheckTrue("the graph reports a blend in progress", run.Blending);
+
+        var incoming = atStart.First(a => !a.Fading);
+        var outgoing = atStart.First(a => a.Fading);
+        Check("the one being entered is B", "B", incoming.StateName);
+        Check("the one being left is A", "A", outgoing.StateName);
+        CheckTrue($"B holds nothing at the instant it fires ({incoming.Weight:F3})", incoming.Weight < 0.01f);
+        CheckTrue($"and A still holds all of it ({outgoing.Weight:F3})", outgoing.Weight > 0.99f);
+
+        run.Advance(0.25f);
+        float mid = run.Where().First(a => !a.Fading).Weight;
+        CheckTrue($"halfway through, B holds about half ({mid:F3})", mid > 0.4f && mid < 0.6f);
+
+        run.Advance(0.5f);
+        var done = run.Where();
+        Check("past the duration only B is left", 1, done.Count);
+        Check("and it is B", "B", done[0].StateName);
+        CheckTrue("holding all of the pose", done[0].Weight > 0.999f);
+        CheckTrue("with no blend still running", !run.Blending);
+    }
+
+    // An instant transition, which is a third of the transitions in the corpus, must snap rather than
+    // blend, or the clock would have a phantom blend to advance forever.
+    private static void AnInstantTransitionDoesNotBlend()
+    {
+        Console.WriteLine("\nan instant transition does not blend");
+
+        // The same fixture with the duration set to zero.
+        var model = BehaviourGraphModel.Parse(TwoStateBlendGraph()
+            .Replace("<hkparam name=\"duration\">0.5</hkparam>", "<hkparam name=\"duration\">0.0</hkparam>"));
+        var run = GraphRun.Start(model);
+
+        run.Send("Go");
+        Check("it moves straight to B", 1, run.Where().Count);
+        Check("with no second state fading", "B", run.Where()[0].StateName);
+        CheckTrue("and nothing left blending", !run.Blending);
+        CheckTrue("advancing the clock changes nothing", run.Where().Count == 1);
+    }
+
+    // A blender with two children built in memory, so the mix is a number this test chose.
+    private static string BlenderGraph(int flags, float blendParameter, float w1, float w2,
+                                       string binding = "") => $"""
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraph" name="#91" signature="0xb1218f86">
+                    <hkparam name="name">B</hkparam>
+                    <hkparam name="rootGenerator">#110</hkparam>
+                    <hkparam name="data">#80</hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphData" name="#80" signature="0x95aca5d">
+                    <hkparam name="stringData">#81</hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphStringData" name="#81" signature="0xc713064e">
+                    <hkparam name="eventNames" numelements="0"></hkparam>
+                    <hkparam name="variableNames" numelements="1">
+                        <hkcstring>Speed</hkcstring>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbBlenderGenerator" name="#110" signature="0x22df7147">
+                    <hkparam name="name">Mix</hkparam>
+                    <hkparam name="flags">{flags}</hkparam>
+                    <hkparam name="blendParameter">{blendParameter.ToString(System.Globalization.CultureInfo.InvariantCulture)}</hkparam>
+                    <hkparam name="variableBindingSet">{(binding == "blendParameter" ? "#130" : "null")}</hkparam>
+                    <hkparam name="children" numelements="2">#111 #112</hkparam>
+                </hkobject>
+                <hkobject class="hkbBlenderGeneratorChild" name="#111" signature="0xe2b384b7">
+                    <hkparam name="generator">#121</hkparam>
+                    <hkparam name="weight">{w1.ToString(System.Globalization.CultureInfo.InvariantCulture)}</hkparam>
+                    <hkparam name="variableBindingSet">{(binding == "weight" ? "#130" : "null")}</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#121" signature="0xd4cc9f6">
+                    <hkparam name="name">Walk</hkparam>
+                    <hkparam name="animationName">walk.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbBlenderGeneratorChild" name="#112" signature="0xe2b384b7">
+                    <hkparam name="generator">#122</hkparam>
+                    <hkparam name="weight">{w2.ToString(System.Globalization.CultureInfo.InvariantCulture)}</hkparam>
+                    <hkparam name="variableBindingSet">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#122" signature="0xd4cc9f6">
+                    <hkparam name="name">Run</hkparam>
+                    <hkparam name="animationName">run.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbVariableBindingSet" name="#130" signature="0x338ad4ff">
+                    <hkparam name="bindings" numelements="1">
+                        <hkobject>
+                            <hkparam name="memberPath">{(binding == "weight" ? "weight" : "blendParameter")}</hkparam>
+                            <hkparam name="variableIndex">0</hkparam>
+                            <hkparam name="bitIndex">-1</hkparam>
+                            <hkparam name="bindingType">BINDING_TYPE_VARIABLE</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
+
+    // A plain blender mixes every child at once, in proportion to its weight.
+    private static void APlainBlenderSharesByWeight()
+    {
+        Console.WriteLine("\na plain blender shares the pose by weight");
+
+        var model = BehaviourGraphModel.Parse(BlenderGraph(flags: 0, blendParameter: 0, w1: 3, w2: 1));
+        var blend = BlendWeights.Of(model, "110");
+
+        Check("it is read as a mix", BlendWeights.Mode.Mix, blend.Mode);
+        Check("with two children", 2, blend.Children.Count);
+        CheckTrue("the mix is a fact of the file, not driven", blend.Resolved);
+
+        var walk = blend.Children.First(c => c.GeneratorName == "Walk");
+        var runc = blend.Children.First(c => c.GeneratorName == "Run");
+        CheckTrue($"weight 3 against 1 gives Walk three quarters ({walk.Contribution:F3})",
+            Math.Abs(walk.Contribution - 0.75f) < 1e-3f);
+        CheckTrue($"and Run a quarter ({runc.Contribution:F3})",
+            Math.Abs(runc.Contribution - 0.25f) < 1e-3f);
+
+        // A child switched off with weight zero takes no share, and the other takes all of it.
+        var off = BlendWeights.Of(BehaviourGraphModel.Parse(BlenderGraph(0, 0, 1, 0)), "110");
+        CheckTrue("a child weighted zero contributes nothing",
+            off.Children.First(c => c.GeneratorName == "Run").Contribution < 1e-6f);
+        CheckTrue("and the other takes the whole pose",
+            Math.Abs(off.Children.First(c => c.GeneratorName == "Walk").Contribution - 1f) < 1e-3f);
+    }
+
+    // A parametric blender lines its children along an axis and a parameter picks between them, so
+    // its weights are positions and must not be read as shares.
+    private static void AParametricBlenderIsPickedNotMixed()
+    {
+        Console.WriteLine("\na parametric blender is picked along an axis, not mixed by weight");
+
+        // Children at positions 0 and 1, parameter three quarters of the way to the second.
+        var model = BehaviourGraphModel.Parse(BlenderGraph(flags: BlendWeights.Parametric,
+            blendParameter: 0.75f, w1: 0, w2: 1));
+        var blend = BlendWeights.Of(model, "110");
+
+        Check("it is read as parametric", BlendWeights.Mode.Parametric, blend.Mode);
+        var walk = blend.Children.First(c => c.GeneratorName == "Walk");
+        var runc = blend.Children.First(c => c.GeneratorName == "Run");
+        CheckTrue($"three quarters along, Run holds three quarters ({runc.Contribution:F3})",
+            Math.Abs(runc.Contribution - 0.75f) < 1e-3f);
+        CheckTrue($"and Walk a quarter ({walk.Contribution:F3})",
+            Math.Abs(walk.Contribution - 0.25f) < 1e-3f);
+
+        // Read as a plain mix instead, weight 0 and 1 would have given Run the whole pose, which is
+        // the wrong answer this distinction exists to avoid.
+        CheckTrue("which is not what mixing the weights would say", Math.Abs(runc.Contribution - 1f) > 0.1f);
+    }
+
+    // A blend the file leaves to a variable is named and counted, never invented.
+    private static void ADrivenBlendIsReportedNotGuessed()
+    {
+        Console.WriteLine("\na blend driven by a variable is reported rather than guessed");
+
+        var byParam = BlendWeights.Of(
+            BehaviourGraphModel.Parse(BlenderGraph(BlendWeights.Parametric, 0, 0, 1, binding: "blendParameter")), "110");
+        Check("a parametric blender on a variable is marked driven", BlendWeights.Mode.ParametricDriven, byParam.Mode);
+        CheckTrue("it is not treated as resolved", !byParam.Resolved);
+        Check("and names the variable", "Speed", byParam.Parameter);
+
+        var byWeight = BlendWeights.Of(
+            BehaviourGraphModel.Parse(BlenderGraph(0, 0, 1, 1, binding: "weight")), "110");
+        var driven = byWeight.Children.First(c => c.WeightDriven);
+        Check("a child weight on a variable is marked driven and named", "Speed", driven.WeightDriver);
+        CheckTrue("so the blender is not resolved", !byWeight.Resolved);
     }
 }

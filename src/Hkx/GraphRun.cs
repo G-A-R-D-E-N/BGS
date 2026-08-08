@@ -39,9 +39,21 @@ public sealed class GraphRun
         "BSBehaviorGraphSwapGenerator",
     };
 
-    public sealed record Active(string MachineId, string MachineName, string StateId, int Number, string StateName)
+    public sealed record Active(string MachineId, string MachineName, string StateId, int Number,
+                                string StateName, float Weight = 1f, bool Fading = false)
     {
-        public override string ToString() => $"#{MachineId} '{MachineName}' is in #{StateId} '{StateName}'";
+        public override string ToString() =>
+            $"#{MachineId} '{MachineName}' is in #{StateId} '{StateName}'" +
+            (Weight < 0.999f ? $" at {Weight * 100:F0}%" : "");
+    }
+
+    /// A transition part way through, blending the pose of the state it is leaving into the one it is
+    /// entering. The engine switches the active state to the target at once and blends the pose over
+    /// the effect's duration, so the target is what the machine is "in" while both are still drawn.
+    private sealed record Blend(string MachineId, string FromStateId, string ToStateId,
+                                float Duration, float Elapsed)
+    {
+        public float Fraction => Duration <= 0 ? 1f : Math.Clamp(Elapsed / Duration, 0f, 1f);
     }
 
     /// Somewhere the walk would have had to guess, recorded instead.
@@ -66,15 +78,45 @@ public sealed class GraphRun
     private readonly Dictionary<string, string> _in = new(StringComparer.Ordinal);
     private readonly List<Stop> _stops = new();
 
+    /// Transitions still blending. Keyed by machine, because a machine blends one transition at a
+    /// time: a second event mid-blend replaces the blend rather than stacking on it, which is what
+    /// the engine does.
+    private readonly Dictionary<string, Blend> _blending = new(StringComparer.Ordinal);
+
     public IReadOnlyList<Stop> Stops => _stops;
     public string RootId { get; private set; } = "";
 
-    /// Which state each running machine is in, in the order the walk reached them.
-    public IReadOnlyList<Active> Where() => _in
-        .Select(pair => Describe(pair.Key, pair.Value))
-        .Where(a => a != null)
-        .Select(a => a!)
-        .ToList();
+    /// Whether any transition is still part way through, so a caller knows there is a reason to keep
+    /// advancing the clock.
+    public bool Blending => _blending.Count > 0;
+
+    /// Which state each running machine is in, and how much of the pose it holds.
+    ///
+    /// A settled machine holds its one state at full weight. A machine part way through a transition
+    /// holds two: the one it is entering at the blend's fraction, and the one it is leaving at the
+    /// rest. Both are returned so the mix reads on the canvas, which is the thing a static graph
+    /// cannot show and the whole point of stepping time.
+    public IReadOnlyList<Active> Where()
+    {
+        var into = new List<Active>();
+        foreach (var (machineId, stateId) in _in)
+        {
+            var settled = Describe(machineId, stateId);
+            if (settled == null) continue;
+
+            if (_blending.TryGetValue(machineId, out var blend) && blend.ToStateId == stateId)
+            {
+                float t = blend.Fraction;
+                into.Add(settled with { Weight = t });
+
+                var fading = Describe(machineId, blend.FromStateId);
+                if (fading != null && blend.FromStateId != stateId)
+                    into.Add(fading with { Weight = 1 - t, Fading = true });
+            }
+            else into.Add(settled);
+        }
+        return into;
+    }
 
     private GraphRun(BehaviourGraphModel model)
     {
@@ -321,6 +363,15 @@ public sealed class GraphRun
 
             moved[machineId] = pick.Route.ToId;
 
+            // A transition with a duration blends its pose over that time rather than snapping, and a
+            // machine blends one at a time, so a new one replaces whatever was still fading. An
+            // instant transition, which is 443 of the 1,310 in the corpus, leaves nothing to blend and
+            // is dropped from the map rather than recorded as a zero length blend.
+            if (pick.Detail.Duration > 0 && pick.Route.ToId != stateId)
+                _blending[machineId] = new Blend(machineId, stateId, pick.Route.ToId, pick.Detail.Duration, 0);
+            else
+                _blending.Remove(machineId);
+
             // A transition can name a state inside the machine the entered state holds, which puts
             // that inner machine somewhere other than its own start state.
             if (pick.Route.IntoId.Length > 0)
@@ -333,6 +384,30 @@ public sealed class GraphRun
         if (moved.Count > 0) Rebuild(moved);
         return fired;
     }
+
+    /// Advances the clock, which for now means moving every in-progress transition blend along.
+    ///
+    /// This is the whole of the timing model and it is deliberately narrow. What it does not advance
+    /// is a clip's own playback, because a clip's length lives in the animation file rather than in
+    /// the behaviour, and that file is not open here. So a state does not leave on its own when its
+    /// clip ends; it leaves when an event moves it. What this does answer is what a transition looks
+    /// like part way through, which is the thing that could not be read at all before and the thing a
+    /// blend is.
+    public void Advance(float seconds)
+    {
+        if (seconds <= 0 || _blending.Count == 0) return;
+
+        foreach (string machineId in _blending.Keys.ToList())
+        {
+            var blend = _blending[machineId] with { Elapsed = _blending[machineId].Elapsed + seconds };
+            if (blend.Elapsed >= blend.Duration) _blending.Remove(machineId);
+            else _blending[machineId] = blend;
+        }
+    }
+
+    /// Finishes every blend at once, for a caller that wants the settled result rather than a frame
+    /// part way through it.
+    public void Settle() => _blending.Clear();
 
     /// Works out which machines are running now, after some of them have moved.
     ///
@@ -363,17 +438,17 @@ public sealed class GraphRun
     ///
     /// StateRoutes deliberately does not carry these: it exists to draw lines and a line has no
     /// priority. Rather than widen it for one caller, the row is read again here.
-    private (int Priority, int Order, string Condition) Detail(StateRoutes.Route route)
+    private (int Priority, int Order, string Condition, float Duration) Detail(StateRoutes.Route route)
     {
         var machine = _model.Get(route.MachineId);
-        if (machine == null) return (0, 0, "");
+        if (machine == null) return (0, 0, "", 0);
 
         string arrayId = route.Wildcard
             ? machine.Ref("wildcardTransitions") ?? ""
             : _model.Get(route.FromId)?.Ref("transitions") ?? "";
 
         var array = _model.Get(arrayId);
-        if (array == null || !array.StructLists.TryGetValue("transitions", out var rows)) return (0, 0, "");
+        if (array == null || !array.StructLists.TryGetValue("transitions", out var rows)) return (0, 0, "", 0);
 
         for (int i = 0; i < rows.Count; i++)
         {
@@ -394,10 +469,37 @@ public sealed class GraphRun
                 condition = held?.Str("expression") ?? held?.Class ?? cond;
             }
 
-            return (int.TryParse(pr, out int p) ? p : 0, i, condition);
+            rows[i].TryGetValue("transition", out var effect);
+            float duration = TransitionDuration(effect);
+
+            return (int.TryParse(pr, out int p) ? p : 0, i, condition, duration);
         }
 
-        return (0, 0, "");
+        return (0, 0, "", 0);
+    }
+
+    /// How long a transition's blend lasts, read off the effect it points at.
+    ///
+    /// Two effect classes carry a duration and they name it differently: a blending effect calls it
+    /// `duration`, and a generator transition effect, which plays a whole generator across the gap,
+    /// blends in over `blendInDuration`. Anything else, or a null effect, is an instant switch.
+    private float TransitionDuration(string? effectRef)
+    {
+        if (string.IsNullOrEmpty(effectRef) || effectRef == "null") return 0;
+
+        var effect = _model.Get(effectRef.TrimStart('#'));
+        if (effect == null) return 0;
+
+        string field = effect.Class switch
+        {
+            "hkbBlendingTransitionEffect" => "duration",
+            "hkbGeneratorTransitionEffect" => "blendInDuration",
+            _ => "",
+        };
+        if (field.Length == 0) return 0;
+
+        return float.TryParse(effect.Str(field), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float d) && d > 0 ? d : 0;
     }
 
     /// Everywhere the graph can get to, and what it takes to get there.

@@ -349,6 +349,36 @@ public static class Smoke
                         }
                         CheckTrue($"{name}: the canvas stays lit after sending events", canvas.ActiveIds.Count > 0);
                         Console.WriteLine($"        run: sending events {(moved ? "moved a state" : "moved nothing, which some graphs do")}");
+
+                        // If any send left a transition blending, stepping the clock has to move it
+                        // along and, given enough steps, finish it. A blend that never settles would
+                        // leave two states lit forever.
+                        if (window.RunBlending)
+                        {
+                            int steps = 0;
+                            while (window.RunBlending && steps < 50) { window.StepForTest(0.1f); steps++; }
+                            CheckTrue($"{name}: a transition blend settles as the clock advances", !window.RunBlending);
+                            CheckTrue($"{name}: and the canvas is still lit after it settles", canvas.ActiveIds.Count > 0);
+                            Console.WriteLine($"        run: a blend settled after {steps} step(s)");
+                        }
+                    }
+
+                    // A blender node shows its mix on the properties panel beside the canvas. This is
+                    // the weapon idle question answered on the node: how much of each child plays.
+                    var blenderId = OpenCommonwealth.Services.Hkx.BehaviourGraphModel
+                        .Parse(window.LoadedXml.Length > 0 ? window.LoadedXml : "")
+                        .Objects.FirstOrDefault(o => o.Class == "hkbBlenderGenerator")?.Id;
+                    if (window.LoadedXml.Length > 0 && blenderId != null && canvas.DrawnIds.Contains(blenderId))
+                    {
+                        window.SelectNode(blenderId);
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                        var said = Find<TextBlock>(window.GraphProperties).Select(t => t.Text ?? "").ToList();
+                        CheckTrue($"{name}: a blender says what it blends",
+                                  said.Any(t => t.Contains("what it blends", StringComparison.OrdinalIgnoreCase)));
+                        CheckTrue($"{name}: and names its mix",
+                                  said.Any(t => t.Contains("Mixes", StringComparison.Ordinal)
+                                             || t.Contains("Parametric", StringComparison.Ordinal)));
+                        Console.WriteLine($"        run: blender #{blenderId} shows its mix on the panel");
                     }
                 }
                 else

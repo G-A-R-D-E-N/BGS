@@ -118,10 +118,11 @@ public class MainWindow : Window
     private readonly TextBlock _runSummary = new()
         { Foreground = Ux.MetaBrush, FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
           TextWrapping = TextWrapping.Wrap, Margin = new Thickness(10, 0, 0, 0) };
-    private readonly HkGrid _running = new(("Machine", -4), ("Is in state", -4)) { Height = 130 };
+    private readonly HkGrid _running = new(("Machine", -4), ("Is in state", -4), ("Weight", 70)) { Height = 130 };
     private readonly TextBlock _runStops = new()
         { Foreground = Ux.WarnBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
           Margin = new Thickness(2, 4, 2, 2) };
+    private Button _step = Ux.Secondary("Step 0.1s");
 
     private readonly Dictionary<int, int> _offsetToIndex = new();
     private HashSet<string> _emptyStates = new();
@@ -392,6 +393,18 @@ public class MainWindow : Window
         ToolTip.SetTip(restart, "Put the graph back in the state it starts in.");
         restart.Click += (_, _) => StartRun("Back at the start.");
 
+        // Advances the clock a tenth of a second, which moves any transition still blending along.
+        // A tenth because a blend is a fifth to a half of a second in the corpus, so this is a few
+        // steps across one, enough to watch the weights move without a slider nobody asked for.
+        _step = Ux.Secondary("Step 0.1s");
+        ToolTip.SetTip(_step, "Advance time so a transition in progress blends further.");
+        _step.Click += (_, _) =>
+        {
+            if (_run == null) return;
+            _run.Advance(0.1f);
+            RefreshRun(_run.Blending ? "Stepped 0.1s, still blending." : "Stepped 0.1s, blend finished.");
+        };
+
         // Clicking a running machine jumps the canvas to the state it is in, which is the point of
         // the list: on a real character a dozen machines are live at once and finding them by eye on
         // the canvas is the thing this is meant to save.
@@ -411,7 +424,7 @@ public class MainWindow : Window
         };
 
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        foreach (var control in new Control[] { label, _runEvents, send, restart })
+        foreach (var control in new Control[] { label, _runEvents, send, _step, restart })
             left.Children.Add(control);
 
         var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 6), LastChildFill = true };
@@ -431,6 +444,7 @@ public class MainWindow : Window
         _running.Clear();
         _running.IsVisible = false;
         _runStops.IsVisible = false;
+        _step.IsEnabled = false;
 
         var model = Model();
         if (model.Objects.Count == 0)
@@ -486,11 +500,24 @@ public class MainWindow : Window
 
         _running.Clear();
         foreach (var active in here)
-            _running.Add(null,
-                active.MachineName.Length > 0 ? active.MachineName : "#" + active.MachineId,
-                active.StateName.Length > 0 ? active.StateName : "#" + active.StateId)
+        {
+            string machine = active.MachineName.Length > 0 ? active.MachineName : "#" + active.MachineId;
+            if (active.Fading) machine = "leaving " + machine;
+            var row = _running.Add(null,
+                machine,
+                active.StateName.Length > 0 ? active.StateName : "#" + active.StateId,
+                $"{active.Weight * 100:F0}%")
                 .Tag(active.StateId);
+
+            // A state mid-blend is dimmed so the settled ones read as where the graph is and the
+            // fading one as where it was.
+            if (active.Fading) row.Colour(0, Ux.MutedBrush).Colour(1, Ux.MutedBrush).Colour(2, Ux.MutedBrush);
+        }
         _running.IsVisible = true;
+
+        // Step only matters while a transition is still blending; otherwise it is a button that does
+        // nothing, which reads as broken.
+        _step.IsEnabled = _run.Blending;
 
         if (_run.Stops.Count > 0)
         {
@@ -499,7 +526,9 @@ public class MainWindow : Window
         }
         else _runStops.IsVisible = false;
 
-        SetRunSummary($"{here.Count} machine(s) running.  {note}", Ux.MetaBrush);
+        int machines = here.Count(a => !a.Fading);
+        string blending = _run.Blending ? "  A transition is blending; Step to move it along." : "";
+        SetRunSummary($"{machines} machine(s) running.  {note}{blending}", Ux.MetaBrush);
     }
 
     private void SetRunSummary(string text, IBrush brush)
@@ -735,8 +764,12 @@ public class MainWindow : Window
 
     /// Read-only hooks for the window checks, so the run panel can be exercised headless.
     public bool RunReady => _run != null;
+    public bool RunBlending => _run?.Blending ?? false;
     public int RunEventCount => _run?.Events.Count ?? 0;
     public IReadOnlyList<string> RunEvents => _run?.Events ?? Array.Empty<string>();
+
+    /// Advances the clock, the way the Step button does.
+    public void StepForTest(float seconds) { _run?.Advance(seconds); RefreshRun("stepped"); }
     public int RunningCount => _running.RowCount;
     public bool RunningVisible => _running.IsVisible;
 
@@ -2675,6 +2708,52 @@ public class MainWindow : Window
 
         AddSymbolSection(panel, objectId, model);
         AddBindingSection(panel, objectId, model);
+        AddBlendSection(panel, objectId, model, className);
+    }
+
+    /// When the selected node is a blender, the mix it plays: which child, and how much of it.
+    ///
+    /// This is the weapon idle question answered on the node itself. A plain blender shows a share
+    /// per child that adds to a hundred. A parametric one shows the axis position each child sits at
+    /// and, if the parameter is a number in the file, which of them is picked; if the parameter is a
+    /// variable, the variable is named and no share is invented.
+    private void AddBlendSection(Inspector panel, string objectId, BehaviourGraphModel model, string className)
+    {
+        if (className != "hkbBlenderGenerator") return;
+
+        BlendWeights.Result blend;
+        try { blend = BlendWeights.Of(model, objectId); }
+        catch (Exception) { return; }
+
+        panel.Add(Ux.SectionTitle("what it blends"));
+
+        string head = blend.Mode switch
+        {
+            BlendWeights.Mode.Mix => "Mixes every child by weight.",
+            BlendWeights.Mode.Parametric => $"Parametric on {blend.Parameter} = {blend.ParameterValue:F3}.",
+            _ => $"Parametric, driven by the variable {blend.Parameter}, so the mix is set at runtime.",
+        };
+        var headLabel = Ux.Label(head);
+        headLabel.TextWrapping = TextWrapping.Wrap;
+        headLabel.Foreground = blend.Resolved ? Ux.MetaBrush : Ux.WarnBrush;
+        panel.Add(headLabel);
+
+        foreach (var child in blend.Children)
+        {
+            string who = child.GeneratorName.Length > 0 ? child.GeneratorName : "#" + child.GeneratorId;
+            string share = child.WeightDriven
+                ? $"driven by {child.WeightDriver}"
+                : blend.Mode == BlendWeights.Mode.Mix
+                    ? $"{child.Contribution * 100:F0}%"
+                    : blend.Mode == BlendWeights.Mode.Parametric
+                        ? $"at {child.Weight:F2}, {child.Contribution * 100:F0}% now"
+                        : $"at {child.Weight:F2}";
+
+            var text = Ux.Label($"{who}   {share}");
+            text.TextWrapping = TextWrapping.Wrap;
+            if (child.WeightDriven) text.Foreground = Ux.WarnBrush;
+            panel.Add(text);
+        }
     }
 
     /// One element of an array of structs, behind a line saying what it is.

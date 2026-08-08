@@ -3,6 +3,38 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, time and blend weights
+
+The graph ran but could not answer two things a static picture never could: how much of each animation
+a blender is actually playing, and what a transition looks like part way through rather than only at
+its ends. Both are what the weapon idle work needs. Part two of #37.
+
+**Blend weights.** A blender mixes several animations and the mix is the whole point of it. Two kinds
+of blender read the same child weight to mean opposite things, which is the trap: a plain blender
+mixes every child at once in proportion to its weight, and a parametric one lines its children along
+an axis and a single parameter picks between them, so there the weights are positions and not shares.
+Reading one as the other reports a walk cycle mixed evenly into an idle when only one is playing. They
+are told apart by a flag checked against the shipped data, not assumed: bit 0x10 is set on every one
+of the 208 parametric blenders whose parameter is driven by a variable, the 74 whose parameter is a
+constant, and none of the 499 plain ones. Selecting a blender now shows its mix on the panel: a share
+per child for a plain one, an axis position and the picked child for a parametric one, and the driving
+variable named for the 208 the file leaves to a variable. Nothing invented: 26 child weights across
+the corpus are bound to a variable and are reported as driven, not guessed.
+
+**Time.** A transition blends its pose over a duration and now the run does too. Sending an event that
+fires a timed transition lights both states, the one being entered rising from nothing and the one
+being left fading, and a Step button moves the blend along so the weights change. 867 of the 1,310
+transitions blend over a real duration; the other 443 are instant and snap. What time still does not
+advance is a clip's own playback, because a clip's length lives in the animation file rather than the
+behaviour, so a state leaves on an event and not on its clip ending. That limit is stated rather than
+papered over.
+
+**Measured.** `symrm weights` resolves every blender in the corpus: 499 plain mixes all sum to one or
+to zero when every child is switched off, the 282 parametric ones are split into 74 on a constant and
+208 on a variable, and a transition blend built in memory starts at nothing, reaches all, and never
+leaves its range. `symrm test` went 718 to 751, `dotnet test` 82 to 87, `uismoke` 138 to 142 with and
+without Java. `symrm run` still steps nowhere the analysis calls unreachable across all 531 files.
+
 ## 2026-08-08, the graph runs in the window
 
 The stepper landed as `symrm run` and nowhere a person could see it. Now it is on the Graph tab.
