@@ -780,12 +780,13 @@ public class MainWindow : Window
         return true;
     }
 
-    /// Writes the clip back, uncompressed.
+    /// Writes the clip back, as the kind of animation it was where that is possible.
     ///
-    /// Nothing here re-encodes a compressed animation, so what goes back is
-    /// `hkaInterleavedUncompressedAnimation`: every frame of every track stored as it is. The file
-    /// gets much larger and the frames are exact. The clip that was there is left in the file
-    /// unreferenced, so nothing already in it moves.
+    /// A spline compressed clip is written back spline compressed, and the file comes out smaller
+    /// than the one it replaced. Anything else still goes back as
+    /// `hkaInterleavedUncompressedAnimation`, every frame of every track stored as it is, which is
+    /// exact and several times the size. That is the only option for a lossless compressed clip,
+    /// since nothing here re-encodes one.
     private void SaveAnimation()
     {
         var anim = _animationData;
@@ -813,16 +814,25 @@ public class MainWindow : Window
 
         try
         {
-            var written = NativeAnimation.Interleave(_hkxPath, anim);
+            bool asSpline = anim.AnimationClass == NativeAnimation.SplineClass;
+            var written = asSpline
+                ? NativeAnimation.Recompress(_hkxPath, anim)
+                : NativeAnimation.Interleave(_hkxPath, anim);
 
             string backup = _hkxPath + ".bak";
             if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
             ReplaceFile(_hkxPath, written.Bytes);
 
             _animationEdited = false;
+
+            // The size is worth saying either way round, because the two paths differ by about a
+            // factor of six and somebody who saves a clip and finds the file has grown should be able
+            // to see from this line why.
+            string size = written.Grew >= 0 ? $"{written.Grew} bytes larger" : $"{-written.Grew} bytes smaller";
             string said =
-                $"Saved {written.Frames} frame(s) of {written.Tracks} track(s) uncompressed, " +
-                $"{written.Grew} bytes larger. The original is kept as {Path.GetFileName(backup)}.";
+                $"Saved {written.Frames} frame(s) of {written.Tracks} track(s) " +
+                (asSpline ? "spline compressed" : "uncompressed") +
+                $", {size}. The original is kept as {Path.GetFileName(backup)}.";
 
             // Reloaded first and told afterwards. Opening a file clears these boxes, which is right
             // when a different file is opened and wrong here: saying it before the reload put the

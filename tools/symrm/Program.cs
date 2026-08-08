@@ -72,6 +72,9 @@ public static class Program
             case "grow": return Grow(argv);
             case "qstransform": return QsTransform(argv);
             case "interleave": return Interleave(argv);
+            case "splinestats": return SplineStats(argv);
+            case "spline": return Spline(argv);
+            case "savespline": return SaveSpline(argv);
             case "crosscheck": return CrossCheck(argv);
             case "savecheck": return SaveCheck(argv);
             case "mesh": return Mesh(argv);
@@ -88,8 +91,25 @@ public static class Program
     private static void Usage() => Console.WriteLine("""
         symrm, the verification harness for Behaviour Graph Studio.
 
-          dotnet run --project tools/symrm/symrm.csproj -- corpus <Fallout4 - Animations.ba2> <outDir>
-              Pull every vanilla behaviour .hkx out of the archive. 531 of them.
+          dotnet run --project tools/symrm/symrm.csproj -- corpus <Fallout4 - Animations.ba2> <outDir> [pathFilter]
+              Pull every vanilla behaviour .hkx out of the archive. 531 of them. The filter is a
+              path substring and defaults to "behavior"; pass "" to pull the animation clips as
+              well, which is what the spline gate measures against.
+
+          dotnet run --project tools/symrm/symrm.csproj -- splinestats <animDir | file.hkx>
+              What the game's own compressor chose, counted across the animations it shipped:
+              quantisation formats, channel flags, curve degree, frames per block. This is where
+              the encoder's fixed choices come from, so it is what to rerun before changing one.
+
+          dotnet run --project tools/symrm/symrm.csproj -- spline <animDir | file.hkx> [everyNth]
+              The spline codec on its own. Decode a vanilla clip, encode those frames again, decode
+              the result, and compare. Reports the worst bone in the corpus rather than an average,
+              and the size against what the game shipped.
+
+          dotnet run --project tools/symrm/symrm.csproj -- savespline <animDir | file.hkx> [everyNth]
+              The same trip through a real file: written into the packfile, rebuilt, and read back
+              with the ordinary reader. Covers the header fields, the four arrays and the pointer
+              retargeting that the codec check cannot see.
 
           dotnet run --project tools/symrm/symrm.csproj -- unpack <hkxDir> [everyNth] [outDir]
               Run hkxpack over them, writing to <hkxDir>/xml unless told otherwise. One JVM at a
@@ -339,8 +359,14 @@ public static class Program
     private static int Corpus(string[] argv)
     {
         if (argv.Length < 3) { Usage(); return 1; }
-        int written = OpenCommonwealth.Services.Archive.Ba2.ExtractMatching(argv[1], "behavior", argv[2], ".hkx", Console.WriteLine);
-        Console.WriteLine($"wrote {written} behaviour files to {argv[2]}");
+
+        // The filter is a path substring and defaults to the behaviours, because that is what every
+        // existing gate is measured against and the numbers in the readme are counts of those 531.
+        // Passing an empty one pulls the animations out too, which is what the spline gate needs and
+        // what the behaviour corpus deliberately does not contain.
+        string filter = argv.Length > 3 ? argv[3] : "behavior";
+        int written = OpenCommonwealth.Services.Archive.Ba2.ExtractMatching(argv[1], filter, argv[2], ".hkx", Console.WriteLine);
+        Console.WriteLine($"wrote {written} file(s) matching \"{filter}\" to {argv[2]}");
         return 0;
     }
 
@@ -3375,6 +3401,501 @@ public static class Program
     // Tolerance is not zero on purpose. Both compressed formats decode through floating point, and
     // the written file stores exactly what came out of that, so the two decodes agree exactly on
     // everything except the rotation, which is normalised on the way in the way Havok normalises it.
+    // The same trip as `spline`, but through a real file rather than a blob held in memory.
+    //
+    // `spline` proves the codec. This proves the file: the animation is written into the packfile as
+    // a new object, the file is rebuilt, and it is read back with the ordinary reader that knows
+    // nothing about any of this. Everything between the two is the part `spline` cannot see, which is
+    // the object's header fields, its four arrays, the blob's own run, and every pointer in the file
+    // that named the animation being aimed at the new one.
+    //
+    // A file that comes back with the right frames but the wrong duration still plays wrongly, so the
+    // header is compared too rather than only the motion.
+    private static int SaveSpline(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToArray()
+            : new[] { target };
+
+        int everyNth = argv.Length > 2 && int.TryParse(argv[2], out int n) && n > 0 ? n : 1;
+        if (everyNth > 1) Console.WriteLine($"every {everyNth}th file");
+
+        const float positionLimit = 0.05f;
+        const float rotationLimit = 0.01f;
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm-savespline");
+        Directory.CreateDirectory(work);
+
+        var reader = new HkxBinaryReader();
+        int done = 0, clean = 0, bad = 0, refused = 0, skipped = 0;
+        long before = 0, after = 0;
+        float worstPos = 0, worstRot = 0;
+        string worstPosFile = "", worstRotFile = "";
+        var failures = new List<string>();
+
+        for (int i = 0; i < files.Length; i++)
+        {
+            if (i % everyNth != 0) continue;
+            string file = files[i];
+
+            HkxAnimationData was;
+            try
+            {
+                if (!reader.TryReadAnimation(file, out was)) { skipped++; continue; }
+                if (was.AnimationClass != "hkaSplineCompressedAnimation") { skipped++; continue; }
+                if (was.NumFrames <= 0 || was.Tracks.Count == 0) { skipped++; continue; }
+            }
+            catch (Exception) { skipped++; continue; }
+
+            done++;
+
+            NativeAnimation.Result written;
+            try { written = NativeAnimation.Recompress(file, was); }
+            catch (InvalidOperationException e)
+            {
+                refused++;
+                failures.Add($"{Path.GetFileName(file)}: refused, {e.Message}");
+                continue;
+            }
+            catch (Exception e)
+            {
+                bad++;
+                failures.Add($"{Path.GetFileName(file)}: threw, {e.Message}");
+                continue;
+            }
+
+            string saved = Path.Combine(work, Path.GetFileNameWithoutExtension(file) + "-spline.hkx");
+            File.WriteAllBytes(saved, written.Bytes);
+
+            HkxAnimationData now;
+            try { now = reader.ReadAnimation(saved); }
+            catch (Exception e)
+            {
+                bad++;
+                failures.Add($"{Path.GetFileName(file)}: could not be read back, {e.Message}");
+                continue;
+            }
+
+            if (now.AnimationClass != NativeAnimation.SplineClass)
+            {
+                bad++;
+                failures.Add($"{Path.GetFileName(file)}: came back as {now.AnimationClass}");
+                continue;
+            }
+
+            var wrong = new List<string>();
+            if (now.NumFrames != was.NumFrames) wrong.Add($"{now.NumFrames} frames against {was.NumFrames}");
+            if (now.Tracks.Count != was.Tracks.Count) wrong.Add($"{now.Tracks.Count} tracks against {was.Tracks.Count}");
+            if (MathF.Abs(now.Duration - was.Duration) > 1e-4f) wrong.Add($"duration {now.Duration} against {was.Duration}");
+            if (MathF.Abs(now.FrameDuration - was.FrameDuration) > 1e-5f)
+                wrong.Add($"frame duration {now.FrameDuration} against {was.FrameDuration}");
+            if (now.Annotations.Count != was.Annotations.Count)
+                wrong.Add($"{now.Annotations.Count} annotations against {was.Annotations.Count}");
+
+            if (wrong.Count > 0)
+            {
+                bad++;
+                failures.Add($"{Path.GetFileName(file)}: {string.Join(", ", wrong)}");
+                continue;
+            }
+
+            float filePos = 0, fileRot = 0;
+            for (int t = 0; t < was.Tracks.Count; t++)
+                for (int f = 0; f < was.NumFrames; f++)
+                {
+                    var a = was.Tracks[t];
+                    var b = now.Tracks[t];
+                    if (f < a.Translations.Count && f < b.Translations.Count)
+                        filePos = MathF.Max(filePos, (a.Translations[f] - b.Translations[f]).Length());
+                    if (f < a.Rotations.Count && f < b.Rotations.Count)
+                        fileRot = MathF.Max(fileRot, SplineQuat.AngleBetween(a.Rotations[f], b.Rotations[f]));
+                }
+
+            if (filePos > worstPos) { worstPos = filePos; worstPosFile = Path.GetFileName(file); }
+            if (fileRot > worstRot) { worstRot = fileRot; worstRotFile = Path.GetFileName(file); }
+
+            before += new FileInfo(file).Length;
+            after += written.Bytes.Length;
+
+            if (filePos > positionLimit || fileRot > rotationLimit)
+            {
+                bad++;
+                failures.Add($"{Path.GetFileName(file)}: drifted {filePos:F4} unit(s), {fileRot:F5} radian(s)");
+            }
+            else clean++;
+
+            try { File.Delete(saved); } catch (Exception) { }
+        }
+
+        Console.WriteLine($"\n{done} spline animation(s): {clean} saved and read back within the limits, " +
+                          $"{bad} did not, {refused} refused, {skipped} not spline compressed");
+        Console.WriteLine($"worst position  {worstPos:F5} unit(s)   {worstPosFile}");
+        Console.WriteLine($"worst rotation  {worstRot:F6} radian(s) {worstRotFile}");
+        if (before > 0)
+            Console.WriteLine($"file size: {after} byte(s) against {before} shipped, {100.0 * after / before:F1}%");
+
+        foreach (string line in failures.Take(20)) Console.WriteLine($"  {line}");
+        if (failures.Count > 20) Console.WriteLine($"  and {failures.Count - 20} more");
+
+        return bad + refused == 0 ? 0 : 1;
+    }
+
+    // The spline codec, measured on every animation the game ships.
+    //
+    // Take a vanilla clip, decode it, encode those frames again, decode the result, and compare the
+    // two sets of frames. That is the whole gate, and what it proves is bounded: it says the encoder
+    // and the decoder agree about a format, and that the motion survives the trip within a stated
+    // distance. It does not say the engine will accept the file, which is #19 and needs a Windows
+    // machine.
+    //
+    // What it does rule out is the failure that matters most here, which is a blob that decodes to
+    // something plausible rather than to what went in. A wrong stride or a missed pad does not throw;
+    // it shifts a run and comes back as a different pose, and only comparing values catches that.
+    //
+    // The comparison is per bone rather than averaged. A mean over a hundred bones hides one bone
+    // being wrong, and one bone being wrong is a broken animation.
+    private static int Spline(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToArray()
+            : new[] { target };
+
+        int everyNth = argv.Length > 2 && int.TryParse(argv[2], out int n) && n > 0 ? n : 1;
+        if (everyNth > 1) Console.WriteLine($"every {everyNth}th file");
+
+        // The limits the gate holds the codec to. Position is in Havok units, where a human is about
+        // 115 tall, and rotation is in radians. Both are far below anything that could be seen, and
+        // they are stated here rather than buried in the encoder so a run that loosens them is a
+        // visible change to the gate rather than a quiet change to a default.
+        const float positionLimit = 0.05f;
+        const float rotationLimit = 0.01f;
+        const float scaleLimit = 0.01f;
+
+        var reader = new HkxBinaryReader();
+        int checkedFiles = 0, clean = 0, bad = 0, refused = 0, skipped = 0;
+        long originalBytes = 0, writtenBytes = 0;
+        float worstPos = 0, worstRot = 0, worstScale = 0;
+        string worstPosFile = "", worstRotFile = "", worstScaleFile = "";
+        var failures = new List<string>();
+
+        for (int i = 0; i < files.Length; i++)
+        {
+            if (i % everyNth != 0) continue;
+            string file = files[i];
+
+            HkxAnimationData before;
+            try
+            {
+                if (!reader.TryReadAnimation(file, out before)) { skipped++; continue; }
+                if (before.AnimationClass != "hkaSplineCompressedAnimation") { skipped++; continue; }
+                if (before.NumFrames <= 0 || before.Tracks.Count == 0) { skipped++; continue; }
+            }
+            catch (Exception) { skipped++; continue; }
+
+            checkedFiles++;
+
+            SplineEncoder.Blob blob;
+            try { blob = SplineEncoder.Encode(before); }
+            catch (InvalidOperationException e)
+            {
+                refused++;
+                failures.Add($"{Path.GetFileName(file)}: refused, {e.Message}");
+                continue;
+            }
+
+            var after = new HkxAnimationData { NumFrames = before.NumFrames };
+            try
+            {
+                SplineEncoder.Decode(blob.Data, blob.BlockOffsets, before.Tracks.Count, before.NumFrames,
+                    blob.MaskAndQuantizationSize, blob.MaxFramesPerBlock, after);
+            }
+            catch (Exception e)
+            {
+                bad++;
+                failures.Add($"{Path.GetFileName(file)}: the blob could not be read back, {e.Message}");
+                continue;
+            }
+
+            float filePos = 0, fileRot = 0, fileScale = 0;
+            bool shapeWrong = false;
+
+            for (int t = 0; t < before.Tracks.Count && !shapeWrong; t++)
+            {
+                var was = before.Tracks[t];
+                var now = after.Tracks[t];
+
+                if (now.Translations.Count != before.NumFrames || now.Rotations.Count != before.NumFrames ||
+                    now.Scales.Count != before.NumFrames)
+                {
+                    shapeWrong = true;
+                    failures.Add($"{Path.GetFileName(file)}: track {t} came back with " +
+                                 $"{now.Translations.Count}/{now.Rotations.Count}/{now.Scales.Count} " +
+                                 $"frame(s) instead of {before.NumFrames}");
+                    break;
+                }
+
+                for (int f = 0; f < before.NumFrames; f++)
+                {
+                    if (f < was.Translations.Count)
+                        filePos = MathF.Max(filePos, (was.Translations[f] - now.Translations[f]).Length());
+                    if (f < was.Rotations.Count)
+                        fileRot = MathF.Max(fileRot, SplineQuat.AngleBetween(was.Rotations[f], now.Rotations[f]));
+                    if (f < was.Scales.Count)
+                        fileScale = MathF.Max(fileScale, (was.Scales[f] - now.Scales[f]).Length());
+                }
+            }
+
+            if (shapeWrong) { bad++; continue; }
+
+            if (filePos > worstPos) { worstPos = filePos; worstPosFile = Path.GetFileName(file); }
+            if (fileRot > worstRot) { worstRot = fileRot; worstRotFile = Path.GetFileName(file); }
+            if (fileScale > worstScale) { worstScale = fileScale; worstScaleFile = Path.GetFileName(file); }
+
+            // The size comparison is the point of the whole issue, so it is measured rather than
+            // claimed. The original is the blob the game shipped, not the file around it, because
+            // everything else in the file is unchanged by this.
+            originalBytes += OriginalBlobSize(file);
+            writtenBytes += blob.Data.Length;
+
+            if (filePos > positionLimit || fileRot > rotationLimit || fileScale > scaleLimit)
+            {
+                bad++;
+                failures.Add($"{Path.GetFileName(file)}: drifted {filePos:F4} unit(s), " +
+                             $"{fileRot:F5} radian(s), {fileScale:F5} of scale");
+            }
+            else clean++;
+        }
+
+        Console.WriteLine($"\n{checkedFiles} spline animation(s): {clean} came back within the limits, " +
+                          $"{bad} did not, {refused} refused, {skipped} not spline compressed");
+        Console.WriteLine($"limits: {positionLimit} unit(s), {rotationLimit} radian(s), {scaleLimit} of scale");
+        Console.WriteLine($"worst position  {worstPos:F5} unit(s)   {worstPosFile}");
+        Console.WriteLine($"worst rotation  {worstRot:F6} radian(s) {worstRotFile}");
+        Console.WriteLine($"worst scale     {worstScale:F6}         {worstScaleFile}");
+
+        if (originalBytes > 0)
+            Console.WriteLine($"size: {writtenBytes} byte(s) written against {originalBytes} shipped, " +
+                              $"{100.0 * writtenBytes / originalBytes:F1}%");
+
+        foreach (string line in failures.Take(20)) Console.WriteLine($"  {line}");
+        if (failures.Count > 20) Console.WriteLine($"  and {failures.Count - 20} more");
+
+        return bad + refused == 0 ? 0 : 1;
+    }
+
+    /// The size of the blob a file already carries, for comparing against what the encoder produces.
+    private static long OriginalBlobSize(string file)
+    {
+        try
+        {
+            var image = PackfileImage.Read(File.ReadAllBytes(file));
+            var objects = new PackfileObjects(image);
+            foreach (var anim in objects.OfClass("hkaSplineCompressedAnimation"))
+            {
+                var blob = objects.ReadArray(anim, "data");
+                if (blob != null) return blob.Count;
+            }
+        }
+        catch (Exception) { }
+        return 0;
+    }
+
+    // What the game's own compressor chose, counted across every animation it shipped.
+    //
+    // An encoder has a lot of free choices: how many frames go in a block, how finely to quantise,
+    // what degree of curve to fit. Every one of them is a guess unless the shipped files are counted,
+    // and the shipped files are the only statement available about what the engine is known to
+    // accept, since nothing here can ask the engine directly.
+    //
+    // The masks are read straight off the front of each block, where they need no walk. The degree is
+    // read only where it can be located without one, which is a block whose first track opens with a
+    // position spline: that puts the degree byte immediately after the masks. That is a subset of
+    // blocks rather than all of them, and it is reported as a count so it cannot be mistaken for all.
+    private static int SplineStats(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToArray()
+            : new[] { target };
+
+        var posQuant = new SortedDictionary<int, long>();
+        var rotQuant = new SortedDictionary<int, long>();
+        var scaleQuant = new SortedDictionary<int, long>();
+        var posFlags = new SortedDictionary<byte, long>();
+        var rotFlags = new SortedDictionary<byte, long>();
+        var scaleFlags = new SortedDictionary<byte, long>();
+        var degrees = new SortedDictionary<byte, long>();
+        var blockSizes = new SortedDictionary<int, long>();
+        var maskSizes = new SortedDictionary<string, long>();
+
+        int spline = 0, skipped = 0, tracksSeen = 0;
+        long framesTotal = 0;
+
+        foreach (string file in files)
+        {
+            byte[] bytes;
+            PackfileImage image;
+            PackfileObjects objects;
+            try
+            {
+                bytes = File.ReadAllBytes(file);
+                image = PackfileImage.Read(bytes);
+                objects = new PackfileObjects(image);
+            }
+            catch (Exception) { skipped++; continue; }
+
+            var data = image.Sections.FirstOrDefault(s => s.Tag == "__data__");
+            if (data == null) { skipped++; continue; }
+
+            foreach (var anim in objects.OfClass("hkaSplineCompressedAnimation").ToList())
+            {
+                int numTracks = objects.ReadInt(anim, "numberOfTransformTracks") ?? 0;
+                int numFrames = objects.ReadInt(anim, "numFrames") ?? 0;
+                int numBlocks = objects.ReadInt(anim, "numBlocks") ?? 0;
+                int perBlock  = objects.ReadInt(anim, "maxFramesPerBlock") ?? 0;
+                int maskSize  = objects.ReadInt(anim, "maskAndQuantizationSize") ?? 0;
+                if (numTracks <= 0 || numFrames <= 0 || numBlocks <= 0 || perBlock <= 0) continue;
+
+                var offsets = objects.ReadValueArray(anim, "blockOffsets", 4,
+                    (b, at) => BitConverter.ToInt32(b, at));
+                var blob = objects.ReadArray(anim, "data");
+                if (offsets == null || blob == null) continue;
+
+                spline++;
+                framesTotal += numFrames;
+                blockSizes[perBlock] = blockSizes.GetValueOrDefault(perBlock) + 1;
+
+                // Stated as a formula rather than a number: the interesting thing is whether it is
+                // ever anything other than four bytes a track, not what it comes to on one file.
+                string shape = maskSize == 4 * numTracks ? "4 per track"
+                             : maskSize == SplineFormat.Align(4 * numTracks, 16) ? "4 per track, rounded to 16"
+                             : $"other ({maskSize} for {numTracks})";
+                maskSizes[shape] = maskSizes.GetValueOrDefault(shape) + 1;
+
+                for (int b = 0; b < numBlocks && b < offsets.Count; b++)
+                {
+                    int blockStart = blob.At + offsets[b];
+                    if (blockStart < 0 || blockStart + 4 * numTracks > data.Data.Length) continue;
+
+                    for (int t = 0; t < numTracks; t++)
+                    {
+                        int m = blockStart + t * 4;
+                        byte q = data.Data[m], p = data.Data[m + 1];
+                        byte r = data.Data[m + 2], s = data.Data[m + 3];
+                        tracksSeen++;
+
+                        posQuant[q & 3] = posQuant.GetValueOrDefault(q & 3) + 1;
+                        rotQuant[(q >> 2) & 0x0F] = rotQuant.GetValueOrDefault((q >> 2) & 0x0F) + 1;
+                        scaleQuant[(q >> 6) & 3] = scaleQuant.GetValueOrDefault((q >> 6) & 3) + 1;
+                        posFlags[p] = posFlags.GetValueOrDefault(p) + 1;
+                        rotFlags[r] = rotFlags.GetValueOrDefault(r) + 1;
+                        scaleFlags[s] = scaleFlags.GetValueOrDefault(s) + 1;
+                    }
+
+                    // Only where it needs no walk to find, which is a block opening on a position
+                    // spline: the count and degree sit right after the last mask.
+                    byte first = data.Data[blockStart + 1];
+                    bool opensOnPosSpline = (first & 0x70) != 0;
+                    int degreeAt = blockStart + maskSize + 2;
+                    if (opensOnPosSpline && degreeAt < data.Data.Length)
+                    {
+                        byte d = data.Data[degreeAt];
+                        degrees[d] = degrees.GetValueOrDefault(d) + 1;
+                    }
+                }
+            }
+        }
+
+        static void Report(string what, IEnumerable<KeyValuePair<int, long>> counts)
+        {
+            Console.WriteLine($"  {what,-22} " + string.Join("  ", counts.Select(c => $"{c.Key}: {c.Value}")));
+        }
+        static void ReportBytes(string what, IEnumerable<KeyValuePair<byte, long>> counts)
+        {
+            Console.WriteLine($"  {what,-22} " + string.Join("  ", counts.Select(c => $"0x{c.Key:x2}: {c.Value}")));
+        }
+
+        Console.WriteLine($"\n{files.Length} file(s): {spline} carry a spline compressed animation, " +
+                          $"{skipped} could not be read");
+        Console.WriteLine($"{tracksSeen} track block(s) across {framesTotal} frame(s)");
+        Console.WriteLine("\nquantisation formats, by how many track blocks chose each:");
+        Report("position", posQuant);
+        Report("rotation", rotQuant);
+        Report("scale", scaleQuant);
+        Console.WriteLine("\nchannel flag bytes:");
+        ReportBytes("position", posFlags);
+        ReportBytes("rotation", rotFlags);
+        ReportBytes("scale", scaleFlags);
+        Console.WriteLine("\ncurve degree, where it can be found without walking the block:");
+        ReportBytes("degree", degrees);
+        Console.WriteLine("\nframes per block:");
+        Report("maxFramesPerBlock", blockSizes);
+        Console.WriteLine("\nmaskAndQuantizationSize:");
+        foreach (var kv in maskSizes) Console.WriteLine($"  {kv.Key,-30} {kv.Value}");
+
+        Console.WriteLine("\ndecoded fingerprint:");
+        Console.WriteLine("  " + DecodeFingerprint(files));
+        return 0;
+    }
+
+    // One number for what the whole corpus decodes to.
+    //
+    // The evaluator that turns control points into frames is shared by the reader and the encoder, so
+    // a change meant for one silently reaches the other. Nothing else here would notice: an encoder
+    // fitted with a changed curve and read back with the same changed curve agrees with itself
+    // perfectly while every vanilla file quietly decodes to something new. This is the number that
+    // does notice, and it is meant to be compared across a change rather than read on its own.
+    private static string DecodeFingerprint(IEnumerable<string> files)
+    {
+        var reader = new HkxBinaryReader();
+        ulong hash = 1469598103934665603UL;
+        int decoded = 0;
+        long values = 0;
+
+        void Feed(float v)
+        {
+            // Rounded before hashing, because the last bit of a float moves with the order the
+            // compiler happens to fold a sum in and the question here is whether the frames moved,
+            // not whether the arithmetic is bit for bit the same.
+            int q = (int)MathF.Round(v * 4096f);
+            for (int b = 0; b < 4; b++)
+            {
+                hash ^= (byte)(q >> (b * 8));
+                hash *= 1099511628211UL;
+            }
+            values++;
+        }
+
+        foreach (string file in files.OrderBy(f => f))
+        {
+            HkxAnimationData animation;
+            try
+            {
+                if (!reader.TryReadAnimation(file, out animation)) continue;
+                if (animation.AnimationClass != "hkaSplineCompressedAnimation") continue;
+            }
+            catch (Exception) { continue; }
+
+            decoded++;
+            foreach (var track in animation.Tracks)
+            {
+                foreach (var t in track.Translations) { Feed(t.X); Feed(t.Y); Feed(t.Z); }
+                foreach (var r in track.Rotations) { Feed(r.X); Feed(r.Y); Feed(r.Z); Feed(r.W); }
+                foreach (var s in track.Scales) { Feed(s.X); Feed(s.Y); Feed(s.Z); }
+            }
+        }
+
+        return $"{decoded} file(s), {values} value(s), {hash:x16}";
+    }
+
     private static int Interleave(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
