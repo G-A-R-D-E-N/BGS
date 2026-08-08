@@ -69,6 +69,7 @@ public static class Tests
         ("AnAppendedObjectLandsWhereItsNumberSaysItWill", AnAppendedObjectLandsWhereItsNumberSaysItWill),
         ("RemovingAnObjectIsRefusedAndOrphaningIsNot", RemovingAnObjectIsRefusedAndOrphaningIsNot),
         ("DeletingTakesAnObjectOutOfTheFile", DeletingTakesAnObjectOutOfTheFile),
+        ("AnArrayOfNamesCanGrow", AnArrayOfNamesCanGrow),
         ("TheLastObjectsBlockEndsAtItsOwnClosingTag", TheLastObjectsBlockEndsAtItsOwnClosingTag),
         ("AnEnumFieldOffersItsDeclaredValues", AnEnumFieldOffersItsDeclaredValues),
         ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
@@ -3222,6 +3223,80 @@ public static class Tests
         CheckTrue("and the refusal says to detach it first",
                   refused.Contains("Detach", StringComparison.Ordinal));
         Check("and nothing was taken out", 2, new PackfileObjects(two).Instances.Count);
+    }
+
+    /// Declaring an event, which lengthens an array of strings.
+    ///
+    /// The corpus proof is `symrm saveevent`, 328 files. This covers the part a corpus run cannot
+    /// show on its own: that a name carrying a newline survives the round trip. Two vanilla events
+    /// do, and the first attempt at this held the array together with newlines and split those two
+    /// names into four, writing an array two elements too long in ten behaviours.
+    private static void AnArrayOfNamesCanGrow()
+    {
+        Console.WriteLine("\nan array of names can grow");
+
+        const string Head = """
+            <?xml version="1.0" encoding="ascii"?>
+            <hkpackfile classversion="8"><hksection name="__data__">
+            <hkobject class="hkbBehaviorGraphStringData" name="#0090" signature="0xc713064e">
+                <hkparam name="eventNames" numelements="COUNT">NAMES</hkparam>
+            </hkobject>
+            </hksection></hkpackfile>
+            """;
+
+        string Doc(params string[] names) =>
+            Head.Replace("COUNT", names.Length.ToString())
+                .Replace("NAMES", string.Concat(names.Select(n => $"<hkcstring>{n}</hkcstring>")));
+
+        var grown = NativeSave.Compare(Doc("Walk", "Run"), Doc("Walk", "Run", "Sprint"));
+        CheckTrue("growing it is no longer refused", grown.Possible);
+        Check("planned as one change", 1, grown.Changes.Count);
+        CheckTrue("written as text", grown.Changes[0].Text);
+        CheckTrue("and as an array", grown.Changes[0].Array);
+
+        // The whole array travels, not just the new name, because the run moves and every element
+        // pointer in it has to be written again.
+        Check("carrying every name", 3, grown.Changes[0].Value.Split('\0').Length);
+        Check("with the new one last", "Sprint", grown.Changes[0].Value.Split('\0')[^1]);
+
+        // The finding this test exists for. WeaponBehavior declares SyncRight\r\nFootRight as one
+        // event, and hkxpack reads it as one too. Held together by newlines it becomes two.
+        //
+        // Written the way the document writes it, as a character reference. That is not incidental:
+        // a literal line break in XML is normalised to a single newline when it is parsed, and a
+        // carriage return only survives a round trip because it is escaped. Spelling it literally
+        // here tested the parser rather than the writer, and passed while proving nothing.
+        const string Odd = "SyncRight\r\nFootRight";
+        var withNewline = NativeSave.Compare(Doc("SyncRight&#13;\nFootRight"),
+                                             Doc("SyncRight&#13;\nFootRight", "Sprint"));
+        CheckTrue("a name carrying a newline is still writable", withNewline.Possible);
+
+        var parts = withNewline.Changes[0].Value.Split('\0');
+        Check("and is still one name", 2, parts.Length);
+        Check("with its carriage return intact", Odd, parts[0]);
+
+        // Shrinking, which the same writer has to do: the run is rewritten at the new length rather
+        // than the old one being trimmed.
+        var shrunk = NativeSave.Compare(Doc("Walk", "Run", "Sprint"), Doc("Walk"));
+        CheckTrue("shrinking it is writable too", shrunk.Possible);
+        Check("down to one name", 1, shrunk.Changes[0].Value.Split('\0').Length);
+
+        // And an array of pointers must not be mistaken for one of names. Both carry a numelements
+        // attribute, and testing for that instead of for the elements themselves emptied every
+        // pointer array in the file.
+        const string Pointers = """
+            <?xml version="1.0" encoding="ascii"?>
+            <hkpackfile classversion="8"><hksection name="__data__">
+            <hkobject class="hkbStateMachine" name="#0090" signature="0x816c1dcb">
+                <hkparam name="states" numelements="2">#0091 #0092</hkparam>
+            </hkobject>
+            </hksection></hkpackfile>
+            """;
+
+        var repointed = NativeSave.Compare(Pointers, Pointers.Replace("#0091 #0092", "#0092 #0091"));
+        CheckTrue("an array of pointers is still an array of pointers", repointed.Possible);
+        Check("changed as one array", 1, repointed.Changes.Count);
+        Check("keeping its ids", "#0092 #0091", repointed.Changes[0].Value);
     }
 
     /// The last object in a document ends at its own closing tag, not at the end of the file.

@@ -48,6 +48,8 @@ public static class Program
             case "relayout": return Relayout(argv);
             case "delete": return DeleteObject(argv);
             case "savedelete": return SaveDelete(argv);
+            case "classcheck": return ClassCheck(argv);
+            case "saveevent": return SaveEvent(argv);
             case "model": return Model(argv);
             case "consumers": return Consumers(argv);
             case "symbols": return Symbols(argv);
@@ -211,6 +213,17 @@ public static class Program
               reads back with exactly that object gone, fully accounted for, and no pointer left
               aiming into the hole. Defaults to the last object in the file, orphaned first so
               nothing points at it. Changes nothing on disk. Needs no game and no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- saveevent <file.hkx | folder> [out.hkx]
+              Declares an event the way the window does, all the way to the bytes, and checks the
+              file comes back holding it. Adding one lengthens an array of strings, which used to be
+              the last edit that forced a save out through hkxpack. Needs no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- classcheck <hkclass-field-layouts.txt>
+              Sets this build's class table against Fallout 4's own account of itself, read out of
+              the startup initializers rather than out of any tool. Every offset written into a file
+              comes from that table, so this is the check that it is right rather than merely
+              self consistent. Exits non zero on any size or offset that disagrees.
 
           dotnet run --project tools/symrm/symrm.csproj -- savedelete <file.hkx | folder> [out.hkx]
               (out.hkx only when pointed at a single file, and the only time anything is written)
@@ -1050,7 +1063,7 @@ public static class Program
         string original = HkxTextEdit.ReadXml(xmlFile);
 
         if (!NullSaveIsByteIdentical(file, original)) return 1;
-        if (!ResizeIsRefused(file, original)) return 1;
+        if (!GrowingAnArrayOfStringsWorks(file, original)) return 1;
 
         var edits = Invent(original);
         if (edits.Count == 0)
@@ -1326,13 +1339,16 @@ public static class Program
         return true;
     }
 
-    private static bool ResizeIsRefused(string file, string originalXml)
+    /// Growing an array of strings, which is what declaring an event or a variable is.
+    ///
+    /// This guard used to assert the opposite, that the edit was refused, and it was right to: an
+    /// array cannot grow where it sits and there was nowhere for the rest of the file to go. The run
+    /// is appended now, so the guard asserts the write instead, and that the file comes back holding
+    /// the longer array.
+    private static bool GrowingAnArrayOfStringsWorks(string file, string originalXml)
     {
-        // A string is now written by appending, so the guard has to stand somewhere that still moves
-        // what follows it. An array of strings is the nearest thing: changing one name inside it
-        // changes the array, and an array cannot grow without shifting every object after it.
         var match = System.Text.RegularExpressions.Regex.Match(
-            originalXml, "<hkparam name=\"(eventNames|variableNames)\" numelements=\"[1-9][0-9]*\">.{3,}?</hkparam>",
+            originalXml, "<hkparam name=\"(?<field>eventNames|variableNames)\" numelements=\"[1-9][0-9]*\">.{3,}?</hkparam>",
             System.Text.RegularExpressions.RegexOptions.Singleline);
         if (!match.Success)
         {
@@ -1340,34 +1356,48 @@ public static class Program
             return true;
         }
 
-        string longer = match.Value.Replace("</hkparam>", "\n\t\t\t\tan_added_name\n</hkparam>");
-        var plan = NativeSave.Compare(originalXml, ReplaceFirst(originalXml, match.Value, longer));
+        string field = match.Groups["field"].Value;
+        string longer = match.Value.Replace("</hkparam>",
+                                            "<hkcstring>an_added_name</hkcstring></hkparam>");
+        string edited = ReplaceFirst(originalXml, match.Value, longer);
+        var plan = NativeSave.Compare(originalXml, edited);
 
-        if (plan.Possible)
+        if (!plan.Possible)
         {
-            Console.WriteLine("  resize guard: FAILED, growing an array was accepted as writable");
+            Console.WriteLine($"  resize guard: FAILED, growing an array was refused, {plan.Refusal}");
             return false;
         }
 
-        try
+        byte[] after;
+        try { after = NativeSave.Apply(file, plan); }
+        catch (Exception e)
         {
-            NativeSave.Apply(file, plan);
-            Console.WriteLine("  resize guard: FAILED, applying a refused plan wrote bytes anyway");
+            Console.WriteLine($"  resize guard: FAILED, applying it threw, {e.Message.Split('\n')[0]}");
             return false;
         }
-        catch (InvalidOperationException)
-        {
-            // The reason matters as much as the refusal. A refusal that arrives for some other
-            // reason leaves the array rule itself untested.
-            if (plan.Refusal?.Contains("array", StringComparison.Ordinal) != true)
-            {
-                Console.WriteLine($"  resize guard: FAILED, refused for the wrong reason, {plan.Refusal}");
-                return false;
-            }
 
-            Console.WriteLine($"  resize guard: refused as it should, {plan.Refusal}");
-            return true;
+        // Read back from the bytes rather than from the plan, since the plan saying it wrote
+        // something is exactly what is in question.
+        var objects = new PackfileObjects(PackfileImage.Read(after));
+        var holder = objects.Instances.FirstOrDefault(i => i.ClassName == "hkbBehaviorGraphStringData");
+        var names = holder == null ? null : objects.ReadStringArray(holder, field);
+
+        int had = System.Text.RegularExpressions.Regex.Matches(match.Value, "<hkcstring").Count;
+        if (names == null || names.Count != had + 1)
+        {
+            Console.WriteLine($"  resize guard: FAILED, {field} came back " +
+                              $"{(names == null ? "unreadable" : names.Count + " long")}, expected {had + 1}");
+            return false;
         }
+
+        if (names[^1] != "an_added_name")
+        {
+            Console.WriteLine($"  resize guard: FAILED, the last name is '{names[^1]}'");
+            return false;
+        }
+
+        Console.WriteLine($"  resize guard: {field} grew from {had} to {names.Count} and reads back");
+        return true;
     }
 
     private static List<(string Was, string Now)> Invent(string xml)
@@ -3993,6 +4023,316 @@ public static class Program
         return oddFiles == 0 && skipped == 0 ? 0 : 1;
     }
 
+    // Declaring an event the way the window does it, all the way through to the bytes.
+    //
+    // This was the last refusal standing between a person and authoring without Java. Adding an
+    // event lengthens an array of strings, a run cannot grow where it sits, and every save that hit
+    // it went out through hkxpack instead. `symrm savecheck`'s resize guard asserted that refusal on
+    // purpose, which is how it was known to still be there.
+    //
+    // The result is asked the questions that would catch a bad write: does it read back, is the name
+    // in it, is it the last one, is the array one longer, and does every pointer still land inside
+    // something written.
+    private static int SaveEvent(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        const string Added = "symrm_added_event";
+        int saved = 0, refused = 0, wrong = 0, noStringData = 0;
+        var refusals = new Dictionary<string, int>(StringComparer.Ordinal);
+        var notes = new List<string>();
+
+        foreach (string file in files)
+        {
+            string xml;
+            List<string?> was;
+            try
+            {
+                var image = PackfileImage.Read(file);
+                var objects = new PackfileObjects(image);
+                xml = NativeXml.From(objects, image);
+
+                // The names as the file itself holds them, read from the bytes. Both sides of a
+                // comparison against the document are line ending normalised by the XML parser, so
+                // a name losing its carriage return would agree with itself and prove nothing. Two
+                // vanilla events carry one.
+                var holder = objects.Instances.FirstOrDefault(i => i.ClassName == "hkbBehaviorGraphStringData");
+                was = holder == null ? new List<string?>()
+                                     : (objects.ReadStringArray(holder, "eventNames") ?? new List<string?>()).ToList();
+            }
+            catch (Exception e)
+            {
+                refused++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {e.Message}");
+                continue;
+            }
+
+            if (HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphStringData").Count == 0) { noStringData++; continue; }
+
+            byte[] after;
+            string edited = "";
+            try
+            {
+                edited = SymbolEditor.AddEvent(xml, Added, out _);
+                var plan = NativeSave.Compare(xml, edited);
+
+                if (!plan.Possible)
+                {
+                    refused++;
+                    refusals[plan.Refusal!] = refusals.GetValueOrDefault(plan.Refusal!) + 1;
+                    continue;
+                }
+
+                after = NativeSave.Apply(file, plan);
+            }
+            catch (Exception e)
+            {
+                refused++;
+                string why = e.Message.Split('\n')[0];
+                refusals[why] = refusals.GetValueOrDefault(why) + 1;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {why}");
+                continue;
+            }
+
+            string trouble = Named(after, edited, was, Added);
+            if (trouble.Length > 0)
+            {
+                wrong++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {trouble}");
+                continue;
+            }
+
+            saved++;
+            if (files.Length == 1 && argv.Length > 2)
+            {
+                File.WriteAllBytes(argv[2], after);
+                Console.WriteLine($"  wrote {argv[2]}");
+            }
+        }
+
+        foreach (string note in notes) Console.WriteLine("  " + note);
+
+        if (refusals.Count > 0)
+        {
+            Console.WriteLine("\nrefused because:");
+            foreach (var (why, count) in refusals.OrderByDescending(r => r.Value))
+                Console.WriteLine($"  {count,5}  {why}");
+        }
+
+        Console.WriteLine($"\n{files.Length} file(s): {saved} saved with an event declared, " +
+                          $"{wrong} came back wrong, {refused} refused, " +
+                          $"{noStringData} with nowhere to declare one");
+        return wrong == 0 && refused == 0 ? 0 : 1;
+    }
+
+    /// Whether a file that just had an event declared really carries it, read back from its bytes.
+    ///
+    /// Set against the edited document element for element rather than by counting. Counting with a
+    /// regex was the first attempt and it was wrong: an empty name is written as a self closing tag,
+    /// so `<hkcstring>` misses it and thirteen files reported an array two longer than expected when
+    /// the array was right and the count was not.
+    private static string Named(byte[] after, string edited, List<string?> was, string added)
+    {
+        PackfileImage image;
+        PackfileObjects objects;
+        try
+        {
+            image = PackfileImage.Read(after);
+            objects = new PackfileObjects(image);
+        }
+        catch (Exception e) { return "will not read back: " + e.Message; }
+
+        var holder = objects.Instances.FirstOrDefault(i => i.ClassName == "hkbBehaviorGraphStringData");
+        if (holder == null) return "the string data object is gone";
+
+        var names = objects.ReadStringArray(holder, "eventNames");
+        if (names == null) return "eventNames cannot be read back";
+
+        var wanted = System.Xml.Linq.XDocument.Parse(edited).Descendants("hkobject")
+            .Where(o => o.Attribute("class")?.Value == "hkbBehaviorGraphStringData")
+            .SelectMany(o => o.Elements("hkparam")
+                              .Where(p => p.Attribute("name")?.Value == "eventNames")
+                              .SelectMany(p => p.Elements("hkcstring")))
+            .Select(t => t.Value).ToList();
+
+        if (names.Count != wanted.Count)
+            return $"eventNames is {names.Count} long, the document says {wanted.Count}";
+
+        for (int e = 0; e < wanted.Count; e++)
+            if (names[e] != wanted[e])
+                return $"eventNames[{e}] reads '{names[e]}', the document says '{wanted[e]}'";
+
+        if (names.Count == 0 || names[^1] != added)
+            return "the name added is not the last one in the array";
+
+        // Bytes against bytes. Everything above went through a parser that normalises line endings,
+        // so this is the only check here that would notice a name coming back subtly different.
+        for (int e = 0; e < was.Count; e++)
+            if (names[e] != was[e])
+                return $"eventNames[{e}] was '{was[e]}' in the file and reads '{names[e]}' now";
+
+        var data = image.Section("__data__")!;
+        var items = PackfileLayout.Of(image);
+        if (items == null) return "the walk cannot account for the result";
+        if (!PackfileLayout.Reaches(items, data, image.Sections.IndexOf(data)))
+            return "the result has a pointer aiming outside everything written";
+
+        return "";
+    }
+
+    // The class table set against the game's own account of itself.
+    //
+    // Every offset this tool writes comes from HavokClassTypes.json, which was built from hkxpack's
+    // class data. That is one source, and the whole write path rests on it. Fallout 4's startup
+    // initializers carry the same information, read straight out of the binary rather than out of
+    // anybody's tool, so the two can be set against each other and neither has to be trusted.
+    //
+    // What a disagreement means depends which way it goes. A different offset for a field is a bug
+    // in one of them and would put a value in somebody else's field. A class one has and the other
+    // does not is usually coverage rather than error, since the dump has every class the game
+    // registers and this tool only needs the ones that appear in files.
+    private static int ClassCheck(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string path = Path.GetFullPath(argv[1]);
+        if (!File.Exists(path)) { Console.WriteLine($"no dump at {path}"); return 1; }
+
+        var types = HavokClassTypes.Shipped;
+
+        var head = new System.Text.RegularExpressions.Regex(@"^class (?<name>\S+) : (?<parent>\S+)\s+size=(?<size>\d+)\s+members=(?<count>\d+)");
+        var member = new System.Text.RegularExpressions.Regex(@"^\s+\+(?<at>\d+)\s+(?<name>\S+)\s+(?<type>.*?)\s*$");
+
+        string current = "";
+        var fromGame = new Dictionary<string, List<(int At, string Name, string Type)>>(StringComparer.Ordinal);
+        var sizes = new Dictionary<string, int>(StringComparer.Ordinal);
+        var parents = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (string line in File.ReadLines(path))
+        {
+            var isHead = head.Match(line);
+            if (isHead.Success)
+            {
+                current = isHead.Groups["name"].Value;
+                sizes[current] = int.Parse(isHead.Groups["size"].Value, System.Globalization.CultureInfo.InvariantCulture);
+                fromGame[current] = new List<(int, string, string)>();
+
+                // The dump names a parent the way the binary does, by its class object:
+                // `hkbGeneratorClass` for `hkbGenerator`. A dash means there is no parent.
+                string parent = isHead.Groups["parent"].Value;
+                if (parent != "-")
+                    parents[current] = parent.EndsWith("Class", StringComparison.Ordinal)
+                                       ? parent[..^"Class".Length] : parent;
+                continue;
+            }
+
+            var isMember = member.Match(line);
+            if (!isMember.Success || current.Length == 0) continue;
+
+            fromGame[current].Add((int.Parse(isMember.Groups["at"].Value, System.Globalization.CultureInfo.InvariantCulture),
+                                   isMember.Groups["name"].Value, isMember.Groups["type"].Value));
+        }
+
+        // The dump lists what a class declares itself and names its parent. This table flattens the
+        // chain, so the comparison has to flatten the dump the same way or every inherited member
+        // reads as one the game does not have. That was the first answer this gave and it was an
+        // artefact: 3,185 members supposedly undeclared, every one of them inherited.
+        // Parent first, then each class's own, which is the order this table flattens a chain in and
+        // the order the file is written in. Building it the other way round matched an inherited
+        // member against a class's own member of the same name: hkbRadialSelectorGenerator declares
+        // a `pad` and so does hkbNode above it, and comparing those two reads as a wrong offset.
+        List<(int At, string Name, string Type)> Whole(string className)
+        {
+            var chain = new List<string>();
+            for (string? at = className; at != null && fromGame.ContainsKey(at);
+                 at = parents.TryGetValue(at, out string? up) ? up : null)
+                chain.Add(at);
+            chain.Reverse();
+
+            var all = new List<(int, string, string)>();
+            foreach (string link in chain) all.AddRange(fromGame[link]);
+            return all;
+        }
+
+        int shared = 0, sizeAgreed = 0, sizeDiffered = 0;
+        int membersChecked = 0, offsetAgreed = 0, offsetDiffered = 0, missingFromGame = 0;
+        int onlyInDump = 0, onlyHere = 0;
+        var notes = new List<string>();
+
+        foreach (string name in types.Names.OrderBy(n => n, StringComparer.Ordinal))
+        {
+            if (!fromGame.ContainsKey(name)) { onlyHere++; continue; }
+            var theirs = Whole(name);
+            shared++;
+
+            if (types[name]?.Size is int size)
+            {
+                if (size == sizes[name]) sizeAgreed++;
+                else
+                {
+                    sizeDiffered++;
+                    if (notes.Count < 20)
+                        notes.Add($"{name} is {size} bytes here and {sizes[name]} in the game");
+                }
+            }
+
+            // Walked in step rather than looked up by name, so the order is checked as well as the
+            // offsets. A member this table does not carry is skipped over rather than desyncing the
+            // rest, which matters because there are a few the game declares and no file writes.
+            int at = 0;
+            foreach (var mine in types.Members(name))
+            {
+                membersChecked++;
+
+                int found = -1;
+                for (int k = at; k < theirs.Count; k++)
+                    if (theirs[k].Name == mine.Name) { found = k; break; }
+
+                if (found < 0)
+                {
+                    missingFromGame++;
+                    if (notes.Count < 20)
+                        notes.Add($"{name}.{mine.Name} is not a member the game declares after this point");
+                    continue;
+                }
+
+                at = found + 1;
+
+                if (theirs[found].At == mine.Offset) offsetAgreed++;
+                else
+                {
+                    offsetDiffered++;
+                    if (notes.Count < 20)
+                        notes.Add($"{name}.{mine.Name} is at +{mine.Offset} here and " +
+                                  $"+{theirs[found].At} in the game");
+                }
+            }
+        }
+
+        onlyInDump = fromGame.Keys.Count(k => !types.Knows(k));
+
+        foreach (string note in notes) Console.WriteLine("  " + note);
+
+        Console.WriteLine($"\n{fromGame.Count} class(es) in the game's dump, {types.Names.Count()} in this " +
+                          $"build's table, {shared} in both");
+        Console.WriteLine($"size: {sizeAgreed} agree, {sizeDiffered} do not");
+        Console.WriteLine($"members: {membersChecked} checked, {offsetAgreed} at the same offset, " +
+                          $"{offsetDiffered} not, {missingFromGame} the game does not declare");
+        Console.WriteLine($"coverage: {onlyInDump} class(es) only the game has, {onlyHere} only this build has");
+
+        var unvalidated = types.Names.Where(n => !fromGame.ContainsKey(n))
+                               .OrderBy(n => n, StringComparer.Ordinal).ToList();
+        if (unvalidated.Count > 0)
+            Console.WriteLine("only this build has: " + string.Join(", ", unvalidated));
+        return sizeDiffered == 0 && offsetDiffered == 0 && missingFromGame == 0 ? 0 : 1;
+    }
+
     // Deleting a node the way the window does it, all the way through to the bytes.
     //
     // `delete` proves the library call. This proves the path a person actually takes: the editable
@@ -4056,6 +4396,16 @@ public static class Program
                     refused++;
                     refusals[plan.Refusal!] = refusals.GetValueOrDefault(plan.Refusal!) + 1;
                     continue;
+                }
+
+                if (Environment.GetEnvironmentVariable("SYMRM_EVENT_DUMP") == "1")
+                {
+                    foreach (var c in plan.Changes.Where(c => c.Array && c.Text))
+                        Console.WriteLine($"  change {c.ClassName}[{c.Index}].{c.Field} -> " +
+                                          $"{c.Value.Split('\0').Length} element(s)");
+                    Console.WriteLine($"  string data objects: " +
+                        System.Xml.Linq.XDocument.Parse(edited).Descendants("hkobject")
+                          .Count(o => o.Attribute("class")?.Value == "hkbBehaviorGraphStringData"));
                 }
 
                 after = NativeSave.Apply(file, plan);

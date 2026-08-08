@@ -54,7 +54,9 @@ the game, with the evidence behind it, lives in the
   created unattached, and unattached nodes are drawn in a column of their own rather than vanishing.
   Delete refuses while anything still points at the node, and names what.
 - **Symbols tab**: every variable and event with its index, type, initial value, and what references
-  it. Add, rename, retype the value, bound it, or remove. **Set bounds** gives a variable a min and a
+  it. Add, rename, retype the value, bound it, or remove. Declaring one no longer needs Java: the
+  array of names is written by appending a longer run, proved by declaring an event in each of the
+  328 vanilla behaviours that have somewhere to put one and reading every name back from the bytes. **Set bounds** gives a variable a min and a
   max, extending `variableBounds` to reach it when the array stops short, which it usually does: of
   the 531 vanilla files it is empty in 224 and shorter than the variable list in 87. The entries
   written in between are `0` to `0`, which is what the file already means by an unbounded variable
@@ -448,9 +450,18 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   That text was set against hkxpack's own line by line over every vanilla behaviour: **of the 370
   files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them**. The other 128
   hold a class hkxpack strides wrongly, so its text is misaligned and there is nothing to match.
-  What still needs Java: packing a file back after an edit this cannot express in bytes, which is now
-  a class that has gained or lost a field, a file whose objects have been renumbered, or a value of a
-  type nothing here can spell. Adding an object and deleting one both go native. See #32 and #34.
+  What still needs Java: packing a file back after an edit this cannot express in bytes. That list is
+  now a class that has gained or lost a field, a file whose objects have been renumbered, and a value
+  of a type nothing here can spell yet, which is the wide ones, `vector4`, `qstransform` and the
+  arrays of numbers. Adding an object, deleting one, and declaring an event or a variable all go
+  native. See #32 and #34.
+- **The class table is not just self consistent, it agrees with the game.** Every offset written into
+  a file comes from `HavokClassTypes.json`, which was built from hkxpack's class data. Fallout 4's
+  own startup initializers carry the same information, read out of the binary rather than out of any
+  tool, and `symrm classcheck` sets the two against each other: **900 classes in both, every size
+  agreeing, 7,062 of 7,080 members at the same offset and none disagreeing.** The 18 unmatched
+  members and the 8 classes only this build carries are physics and container templates that appear
+  in no vanilla behaviour file, checked rather than assumed.
 - Reading is measured, not assumed, over the whole game rather than a subset. All 531 behaviour files
   in `Fallout4 - Animations.ba2`, all 5329 states: every one resolves to a generator that exists in
   its own file, across 15 generator classes, and every transition resolves its event name. Nothing is
