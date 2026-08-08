@@ -308,6 +308,21 @@ public class GraphView : Control
         _routes.Routes.Count(r => _nodes.ContainsKey(r.FromId) && _nodes.ContainsKey(r.ToId));
     public int NestedRouteCount => _routes.Routes.Count(r => r.IntoId.Length > 0);
 
+    /// Read only, for the window checks. How far the laid out graph runs across and down, which is
+    /// the measurement behind folding a tall depth into lanes: a graph that is far taller than it is
+    /// wide is a strip somebody has to scroll rather than a picture they can look at.
+    /// The slab of the graph the viewport is currently showing, in the graph's own units. What a
+    /// fit button claims to have done is only checkable against this.
+    public Rect VisibleWorld() =>
+        new(ToWorld(new Point(0, 0)), ToWorld(new Point(Bounds.Width, Bounds.Height)));
+
+    public (double Wide, double Tall) Extent()
+    {
+        if (_nodes.Count == 0) return (0, 0);
+        return (_nodes.Values.Max(n => n.Bounds.Right) - _nodes.Values.Min(n => n.Bounds.X),
+                _nodes.Values.Max(n => n.Bounds.Bottom) - _nodes.Values.Min(n => n.Bounds.Y));
+    }
+
     /// The events written on a node saying it can be entered from any state of its machine.
     public IReadOnlyList<string> WildcardsInto(string id) =>
         _nodes.TryGetValue(id, out var node) ? node.Wildcards : Array.Empty<string>();
@@ -451,7 +466,7 @@ public class GraphView : Control
             var b = ToScreen(RouteEntry(to, from));
             if (OffScreen(a, b)) continue;
 
-            var colour = route.Wildcard ? Ux.Warn : Ux.RouteColour;
+            var colour = route.Wildcard ? Ux.Wildcard : Ux.RouteColour;
             DrawLink(ctx, a, colour, weight, alpha, b, dashed: true, cased: cased);
             DrawArrowHead(ctx, a, b, colour, alpha);
 
@@ -691,7 +706,7 @@ public class GraphView : Control
                 : "any: " + node.Wildcards[i];
 
             Draw(ctx, text, r.X + 6 * scale, top + RowHeight * i * scale, 9 * scale,
-                 new SolidColorBrush(Ux.Warn), r.Width - 12 * scale);
+                 new SolidColorBrush(Ux.Wildcard), r.Width - 12 * scale);
         }
     }
 
@@ -842,12 +857,42 @@ public class GraphView : Control
         InvalidateVisual();
     }
 
-    public void FrameAll()
+    /// Fit the whole graph in the viewport.
+    ///
+    /// This used to set a fixed zoom of 0.7 and move the corner into view, which is not fitting
+    /// anything: Dogmeat's default behaviour lays out 8,890 by 5,589, so at 0.7 the button put you
+    /// in the top left corner of something seven screens across and said it had framed it. The zoom
+    /// is worked out from what there is to show.
+    public void FrameAll() => Frame(_nodes.Values.Select(n => n.Bounds));
+
+    /// Fit one node and everything it is joined to, which is what somebody asking about a machine
+    /// wants: that machine and its states filling the view instead of being a tenth of it.
+    public void FrameRelated()
     {
-        if (_nodes.Count == 0) return;
-        double minX = _nodes.Values.Min(n => n.Bounds.X), minY = _nodes.Values.Min(n => n.Bounds.Y);
-        _zoom = 0.7;
-        _pan = new Point(40 - minX * _zoom, 40 - minY * _zoom);
+        if (_highlight.Length == 0) { FrameAll(); return; }
+
+        var of = _related.Count > 0 ? _related : new HashSet<string> { _highlight };
+        Frame(of.Where(_nodes.ContainsKey).Select(id => _nodes[id].Bounds));
+    }
+
+    private void Frame(IEnumerable<Rect> what)
+    {
+        var boxes = what.ToList();
+        if (boxes.Count == 0 || Bounds.Width < 1 || Bounds.Height < 1) return;
+
+        double minX = boxes.Min(b => b.X), minY = boxes.Min(b => b.Y);
+        double maxX = boxes.Max(b => b.Right), maxY = boxes.Max(b => b.Bottom);
+
+        const double Margin = 40;
+        double wide = Math.Max(1, maxX - minX), tall = Math.Max(1, maxY - minY);
+
+        _zoom = Math.Clamp(Math.Min((Bounds.Width - Margin * 2) / wide,
+                                    (Bounds.Height - Margin * 2) / tall), 0.02, 1.5);
+
+        // Centred rather than corner aligned. A graph wider than it is tall leaves a band of empty
+        // canvas otherwise, and the thing being looked at sits against one edge of it.
+        _pan = new Point(Bounds.Width / 2 - (minX + wide / 2) * _zoom,
+                         Bounds.Height / 2 - (minY + tall / 2) * _zoom);
         InvalidateVisual();
     }
 }

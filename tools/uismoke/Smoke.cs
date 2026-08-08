@@ -90,7 +90,16 @@ public static class Smoke
             canvas.FocusOn(focus);
             canvas.Highlight(focus);
         }
-        canvas.SetZoom(zoom);
+        // --fit leaves the zoom to the canvas, which is the whole point when what is being checked
+        // is whether the fit button fits.
+        if (args.Contains("--fit"))
+        {
+            if (focus.Length > 0) canvas.FrameRelated(); else canvas.FrameAll();
+        }
+        else
+        {
+            canvas.SetZoom(zoom);
+        }
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
         using var bitmap = new Avalonia.Media.Imaging.RenderTargetBitmap(
@@ -98,6 +107,8 @@ public static class Smoke
         bitmap.Render(drawn);
         bitmap.Save(output);
 
+        var extent = canvas.Extent();
+        Console.WriteLine($"        laid out {extent.Wide:0} wide by {extent.Tall:0} tall");
         Console.WriteLine($"{output}: {canvas.DrawnCount} node(s), {canvas.DrawableRouteCount} route(s), " +
                           $"{canvas.StartStateIds.Count} start state(s), zoom {zoom}" +
                           (focus.Length > 0 ? $", focused on #{focus}" : ""));
@@ -148,7 +159,7 @@ public static class Smoke
         foreach (string expected in new[]
                  { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
                    "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
-                   "Play", "From selected node", "Fit", "Legend" })
+                   "Play", "From selected node", "Fit", "Legend", "Fit all", "Fit selection" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
 
         // The canvas draws six node colours, three kinds of line and two badges. The legend is the
@@ -169,7 +180,7 @@ public static class Smoke
             var said = Find<TextBlock>(window.Legend).Select(t => t.Text ?? "").ToList();
             foreach (string mark in new[]
                      { "State machine", "State", "Transitions", "Clip", "Blend", "Modifier",
-                       "Solid: holds", "Dashed: transition", "Dashed orange: from this state",
+                       "Solid: holds", "Dashed: transition", "Dashed pink: from this state",
                        "any: an event",
                        "Start", "Red outline", "Amber outline" })
                 CheckTrue($"the legend explains {mark}", said.Contains(mark));
@@ -399,6 +410,36 @@ public static class Smoke
                             ? fromMachine.Count(r => r.Wildcard) : 0;
                         CheckTrue($"{name}: rewriting them adds none and drops none",
                                   wild == onMachine || wild == onMachine - 1);
+                    }
+
+                    // Fitting has to actually fit. This used to set a fixed zoom and move the corner
+                    // into view, so on a graph nine thousand units across the button put you in the
+                    // top left of it and reported success.
+                    {
+                        var extent = canvas.Extent();
+                        canvas.ClearHighlight();
+                        canvas.FrameAll();
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                        var seen = canvas.VisibleWorld();
+                        Console.WriteLine($"        fit all: graph {extent.Wide:0}x{extent.Tall:0}, " +
+                                          $"viewport shows {seen.Width:0}x{seen.Height:0}");
+
+                        CheckTrue($"{name}: fit all shows the whole graph across",
+                                  seen.Width >= extent.Wide - 1);
+                        CheckTrue($"{name}: and the whole of it down",
+                                  seen.Height >= extent.Tall - 1);
+
+                        // And fitting one node's neighbourhood has to show less than everything, or
+                        // it is the same button twice.
+                        canvas.Highlight(node);
+                        canvas.FrameRelated();
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                        var near = canvas.VisibleWorld();
+                        CheckTrue($"{name}: fit selection shows less than the whole graph",
+                                  near.Width < seen.Width);
+                        canvas.ClearHighlight();
                     }
 
                     // Picking a state out has to bring what it routes to with it. Ownership alone
