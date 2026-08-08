@@ -3,6 +3,31 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, declaring an event stops needing Java, and the class table is checked against the game
+
+Adding an event or a variable lengthens an array of strings. A run cannot grow where it sits, so that
+edit was refused and the save went out through hkxpack instead; `symrm savecheck` carried a guard
+asserting the refusal on purpose. The run is appended now, the same way a longer string and a longer
+array of children already were, and the guard asserts the write instead. Proved by declaring an event
+in each of the 328 vanilla behaviours that have somewhere to put one, reading every name back from
+the bytes. #32.
+
+**Two vanilla events have a carriage return inside their names.** `WeaponBehavior` declares
+`SyncRight\r\nFootRight` and `SyncLeft\r\nFootLeft`, and hkxpack reads them as one name each, as
+this does. The first version of this held an array of names together with newlines, which split those
+two into four and wrote an array two elements too long in ten behaviours. Names are held apart by a
+zero byte now, which a name in this format cannot contain. The corpus check was also changed to
+compare the names in the saved bytes against the names in the original bytes, because both sides of a
+comparison against the document are line ending normalised by the XML parser and would have agreed
+with each other while the file lost a character.
+
+**The class table now has a second opinion.** Every offset written into a file comes from
+`HavokClassTypes.json`, built from hkxpack's class data, and nothing had ever checked it against
+anything else. Fallout 4's startup initializers carry the same information, dumped straight out of
+the binary, and `symrm classcheck` compares them: 900 classes in both, every size agreeing, 7,062 of
+7,080 members at the same offset and none disagreeing. The 18 unmatched members and 8 extra classes
+are physics and container templates that appear in no vanilla behaviour file.
+
 ## 2026-08-08, a file can be written rather than edited
 
 Every save either wrote values into the bytes that were already there or rebuilt the whole file

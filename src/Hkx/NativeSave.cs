@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 using System.Linq;
 using System.Xml.Linq;
 
@@ -97,6 +98,24 @@ public static class NativeSave
     /// the writer walked the objects, and moving a run of entries to the end of it makes hkxpack
     /// read every element of that array as null.
     private static bool IsPointerArray(string type) => type == "array of pointer";
+
+    /// An array of strings, which is how a behaviour lists its event and variable names.
+    ///
+    /// This was the last refusal standing between a person and adding an event without Java. The
+    /// array has to grow, and a run cannot grow where it sits, so it goes on the end like every
+    /// other run that changes size and the file is compacted the next time it is laid out.
+    private static bool IsTextArray(string type) =>
+        type == "array of stringptr" || type == "array of cstring";
+
+    /// What holds an array of names together while it is one value.
+    ///
+    /// A zero byte, because a name in this format ends at the first one and so cannot contain one.
+    /// A newline was the obvious choice and it is wrong: `WeaponBehavior` declares two events whose
+    /// names carry a literal carriage return and newline, `SyncRight\r\nFootRight` and
+    /// `SyncLeft\r\nFootLeft`. Both hkxpack and this reader agree they are one name each, and
+    /// splitting on newlines turned them into four and wrote an array two elements too long in ten
+    /// of the vanilla behaviours.
+    private const char TextSeparator = '\0';
 
     /// Where the object's own id is kept in a field bag. Not a field name any file can have.
     private const string IdKey = "#id";
@@ -196,6 +215,15 @@ public static class NativeSave
 
                 if (!layout.TryGetValue(field, out string? type))
                     return $"{className}.{field} changed, and we have no byte layout for it";
+
+                // An array of strings that changed. Written by appending, the same way a longer
+                // string is: a new run of pointers on the end of the section, one appended string
+                // per element, and the array aimed at the run. Nothing already in the file moves.
+                if (IsTextArray(type))
+                {
+                    changes.Add(new Change(className, i, field, now, Text: true, Array: true));
+                    return null;
+                }
 
                 if (IsPointerArray(type))
                 {
@@ -349,7 +377,19 @@ public static class NativeSave
                                    Dictionary<string, string> before, Dictionary<string, string> after,
                                    string arrayField)
     {
-        if (!layout.TryGetValue(arrayField, out string? arrayType) || arrayType != "array of struct")
+        layout.TryGetValue(arrayField, out string? arrayType);
+
+        // An array of strings at a new length, which is what declaring an event or a variable is.
+        // Nothing element by element to work out: the whole run is rewritten from the names the
+        // edited document holds, so the change carries all of them and the writer does the rest.
+        if (arrayType != null && IsTextArray(arrayType))
+        {
+            changes.Add(new Change(className, index, arrayField,
+                                   after.GetValueOrDefault(arrayField, ""), Text: true, Array: true));
+            return null;
+        }
+
+        if (arrayType != "array of struct")
             return $"{className}.{arrayField} changed length, and it is not an array of structs";
 
         string? elementClass = ElementClass(className, arrayField);
@@ -541,6 +581,7 @@ public static class NativeSave
                 ?? throw new InvalidOperationException($"No layout for {change.ClassName}.{change.Field}.");
 
             bool written = change.Ref ? Repoint(image, objects, instance, change)
+                         : change.Array && change.Text ? ResizeText(image, objects, instance, change)
                          : change.Array ? Resize(image, objects, instance, change)
                          : member.Type switch
             {
@@ -679,6 +720,80 @@ public static class NativeSave
         uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
         BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)elements.Length).CopyTo(data.Data, at + 12);
 
+        return true;
+    }
+
+    /// Writes an array of strings at whatever length the edit left it.
+    ///
+    /// The same three moves the other resizes make, and one more. A run of eight byte pointers goes
+    /// on the end of the section, the array's own pointer is aimed at it and the count beside it is
+    /// rewritten. The extra move is that each element is itself a pointer at text, so every name is
+    /// appended too and gets its own local fixup.
+    ///
+    /// Every name is written out again rather than only the new ones. The run has moved, so the old
+    /// element fixups name bytes nothing points at any more, and carrying a string over would mean
+    /// working out which of the old runs it sat in. Appending them is a few hundred bytes on a file
+    /// that gets compacted the next time it is laid out, and it cannot get an element wrong.
+    ///
+    /// An empty name is still a pointer, at a single zero byte. It is not the same as no pointer:
+    /// hkxpack writes an empty element and the file has to have one, or the array comes back short.
+    private static bool ResizeText(PackfileImage image, PackfileObjects objects,
+                                   PackfileObjects.Instance instance, Change change)
+    {
+        var data = image.Section("__data__");
+        if (data == null) return false;
+
+        if (objects.FieldAt(instance, change.Field) is not int at) return false;
+
+        var names = change.Value.Length == 0
+                    ? new List<string>()
+                    : change.Value.Split(TextSeparator).ToList();
+
+        // The run this array points at today, so its element fixups can go with it. Each element is
+        // a pointer with a fixup of its own, and leaving those behind aims them at a run nothing
+        // refers to any more. Our own reader looks entries up by source and would never notice; the
+        // game fixes up every entry in the table on load, so it would be writing into space that has
+        // been reused by whatever the file is compacted into next.
+        var old = objects.ArrayAt(at);
+        if (old != null && old.Count > 0)
+        {
+            var keep = data.Locals()
+                           .Where(l => l.Source < old.At || l.Source >= old.At + old.Count * 8)
+                           .ToList();
+            data.SetLocals(keep);
+        }
+
+        // A run of zero elements has no run at all, the same as an empty array of pointers: a fixup
+        // aiming at offset zero would point the array at the start of the section.
+        if (names.Count == 0)
+        {
+            data.SetLocal(at, -1);
+            BitConverter.GetBytes(0).CopyTo(data.Data, at + 8);
+            uint was = BitConverter.ToUInt32(data.Data, at + 12);
+            BitConverter.GetBytes(was & 0xC0000000u).CopyTo(data.Data, at + 12);
+            return true;
+        }
+
+        // The text first, so the run can be pointed straight at it. Aligned the way every run is,
+        // since the run of pointers is a run like any other.
+        var wrote = new List<int>(names.Count);
+        foreach (string name in names)
+        {
+            var bytes = Encoding.UTF8.GetBytes(name);
+            var withEnd = new byte[bytes.Length + 1];
+            bytes.CopyTo(withEnd, 0);
+            wrote.Add(data.AppendData(withEnd));
+        }
+
+        data.AlignData(NativeAppend.Alignment);
+        int run = data.AppendData(new byte[names.Count * 8]);
+
+        data.SetLocal(at, run);
+        for (int e = 0; e < names.Count; e++) data.SetLocal(run + e * 8, wrote[e]);
+
+        BitConverter.GetBytes(names.Count).CopyTo(data.Data, at + 8);
+        uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
+        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)names.Count).CopyTo(data.Data, at + 12);
         return true;
     }
 
@@ -1057,6 +1172,26 @@ public static class NativeSave
                     fields[name + CountKey] = elements.Count.ToString();
                     for (int e = 0; e < elements.Count; e++)
                         Flatten(fields, $"{name}[{e}]", elements[e]);
+                    continue;
+                }
+
+                // An array of strings, which is how a file lists its events and its variables. Kept
+                // as its joined text it cannot be told from one long string, and the count is what
+                // says whether a name was added rather than renamed. The elements are their own tags
+                // so they are read as tags: splitting the text would guess wrongly about a name with
+                // a space in it, and six values in the corpus carry one.
+                // Only when there are real elements. Testing for a numelements attribute instead
+                // caught every array written as inline text, which is every array of pointers, and
+                // quietly reduced `states` to an empty list of names.
+                //
+                // An array of strings that is empty needs nothing here: it reads as the empty value
+                // it already was, and growing it from nothing is a value change rather than a length
+                // change, which the comparison already routes to the same writer.
+                var strings = p.Elements("hkcstring").ToList();
+                if (strings.Count > 0)
+                {
+                    fields[name + CountKey] = strings.Count.ToString();
+                    fields[name] = string.Join(TextSeparator, strings.Select(t => t.Value));
                     continue;
                 }
 
