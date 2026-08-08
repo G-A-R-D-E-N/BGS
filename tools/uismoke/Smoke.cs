@@ -507,6 +507,37 @@ public static class Smoke
                     var blocks = Find<Expander>(window.GraphProperties);
                     int collapsed = Find<TextBox>(window.GraphProperties).Count;
 
+                    // What hovering a field name actually says, read off the built controls rather
+                    // than worked out from the code that builds them. Issue #36 sat open for a
+                    // session because nobody looked at a box, and the same applies to a tip.
+                    //
+                    // Opened first, because a collapsed element has built no field rows and there is
+                    // nothing to hover. Reading the tips without this found the summary lines on the
+                    // element headers and reported that no field said anything.
+                    foreach (var block in blocks) block.IsExpanded = true;
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    var tips = Find<TextBlock>(window.GraphProperties)
+                        .Select(t => Avalonia.Controls.ToolTip.GetTip(t) as string)
+                        .Where(t => t != null).Select(t => t!).ToList();
+
+                    CheckTrue("a field name carries a tip", tips.Count > 0);
+                    CheckTrue("saying where the edit would be written",
+                              tips.Any(t => t.StartsWith("transitions[", StringComparison.Ordinal)));
+                    CheckTrue("and what the field is",
+                              tips.Any(t => t.Contains("a whole number", StringComparison.Ordinal)));
+
+                    var explained = tips.FirstOrDefault(t => t.Contains("Established by:", StringComparison.Ordinal));
+                    CheckTrue("a field somebody established says so, and says by what", explained != null);
+
+                    if (explained != null)
+                        Console.WriteLine("        a tip reads: " + explained.Replace("\n", " | "));
+
+                    // Put back, because a later check asserts every block starts closed and this is
+                    // the only thing that opened them.
+                    foreach (var block in blocks) block.IsExpanded = false;
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
                     Console.WriteLine($"        #{array}: {flat} fields flat, {blocks.Count} element(s), " +
                                       $"{collapsed} box(es) while collapsed");
 

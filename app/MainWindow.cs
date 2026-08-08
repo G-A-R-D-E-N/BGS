@@ -2550,9 +2550,7 @@ public class MainWindow : Window
         var label = Ux.Label(p.Name);
         label.Width = 128;
         label.TextTrimming = TextTrimming.CharacterEllipsis;
-        // The name alone does not say which of them this is, and inside an element there are several
-        // with the same name, so the tip carries the address the edit will be written to.
-        ToolTip.SetTip(label, address);
+        ToolTip.SetTip(label, Tip(p));
 
         var row = new DockPanel();
         DockPanel.SetDock(label, Dock.Left);
@@ -2567,6 +2565,33 @@ public class MainWindow : Window
     ///
     /// Committing is driven by what the control holds, the same way a text box is, so a window
     /// closing with a changed selection still writes it.
+    /// What hovering a field's name says.
+    ///
+    /// Three parts, and they are in this order because that is the order they can be relied on. The
+    /// address is always exact: the label is cut off when the name is long, and inside an array
+    /// element there are several fields with the same name, so the first thing the tip has to answer
+    /// is which field this is and where an edit goes. Then what the field is, which the class table
+    /// knows for certain. Then what it means, which is only there for the fields this project has
+    /// actually established, with where that came from.
+    ///
+    /// Nothing is written for a field nobody has checked. A plausible sentence would read with the
+    /// same authority as a measured one and there would be no way to tell them apart.
+    private static string Tip(PanelFields.Field p)
+    {
+        var lines = new List<string> { p.Address };
+
+        if (p.Owner.Length > 0 && FieldNotes.Structure(p.Owner, p.Name) is { } structure)
+            lines.Add(structure);
+
+        if (p.Options.Count > 0)
+            lines.Add("one of: " + string.Join(", ", p.Options));
+
+        if (p.Owner.Length > 0 && FieldNotes.Meaning(p.Owner, p.Name) is { } note)
+            lines.Add("\n" + note.Says + "\n\nEstablished by: " + note.From);
+
+        return string.Join("\n", lines);
+    }
+
     private Control EnumRow(PanelFields.Field p, string owner)
     {
         var choice = new ComboBox
@@ -2596,7 +2621,7 @@ public class MainWindow : Window
         var label = Ux.Label(name);
         label.Width = 128;
         label.TextTrimming = TextTrimming.CharacterEllipsis;
-        ToolTip.SetTip(label, $"{name}: one of {string.Join(", ", p.Options)}");
+        ToolTip.SetTip(label, Tip(p));
 
         var row = new DockPanel();
         DockPanel.SetDock(label, Dock.Left);

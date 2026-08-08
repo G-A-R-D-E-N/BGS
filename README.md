@@ -444,6 +444,17 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   `symrm panel` compares what the panel itself would display, **509,557 values, every one of them read
   from the file's own bytes with none falling back**, all agreeing. An enum field offers its declared
   values rather than asking for the name to be typed, which covers 42,733 of those fields.
+- **Hovering a field's name says what it is.** The address the edit will be written to,
+  `transitions[24].flags`, then what the field is, taken from the class table and so true by
+  construction: what a pointer points at, what an array holds, how many values an enum declares,
+  which class in the chain declares it. That covers **485,793 of 485,793 fields** across the vanilla
+  corpus.
+  A sentence about what a field *means* is a different thing and is only there for the fields this
+  project has established, each carrying where it came from. That is **7.7%** of them, and the number
+  is printed by `symrm notes` rather than left as an impression. The rest say nothing: a plausible
+  sentence written from a field's name would read with exactly the authority of a measured one, and
+  nobody could tell them apart. Issue #36 proposed taking the rest from Havok's 2018 Animation
+  manual, which is not on this machine.
 - **Java is no longer needed for anything the window does.** The graph, the tree, the properties,
   the symbols, what each event is used for, and the whole checker are read from the file's own bytes,
   and the text form an edit is made through is written from those bytes as well rather than unpacked.
