@@ -205,7 +205,11 @@ public sealed class HavokClassTypes
         return size != (end + 7) / 8 * 8 && size == (end + 15) / 16 * 16;
     }
 
-    private static int Width(string vtype) => vtype switch
+    /// How many bytes one value of a type takes. Public because laying a section out again needs
+    /// the stride of an array's elements, and a second copy of this table drifted from it: it had
+    /// TYPE_QSTRANSFORM at sixteen rather than forty eight, which left a skeleton's reference pose
+    /// two thirds unaccounted for.
+    public static int Width(string vtype) => vtype switch
     {
         "TYPE_BOOL" or "TYPE_CHAR" or "TYPE_INT8" or "TYPE_UINT8" => 1,
         "TYPE_INT16" or "TYPE_UINT16" or "TYPE_HALF" => 2,

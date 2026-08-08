@@ -45,6 +45,7 @@ public static class Program
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
             case "layout": return Layout(argv);
+            case "relayout": return Relayout(argv);
             case "model": return Model(argv);
             case "consumers": return Consumers(argv);
             case "symbols": return Symbols(argv);
@@ -202,6 +203,13 @@ public static class Program
               offset in a packfile is derived from the sizes of what precedes it, so a byte for byte
               match means the derivation is right. Exits non zero on any file that differs or cannot
               be read. Needs no game and no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- relayout <file.hkx | folder>
+              Throws the data section away and writes it again from nothing, then checks the result
+              is the file it started as. This is the gate on removing an object: removing one moves
+              every object after it, so nothing can be removed until a file can be laid out rather
+              than edited. Exits non zero on any file that differs or that the walk cannot account
+              for. Needs no game and no Java.
 
           dotnet run --project tools/symrm/symrm.csproj -- layout <file.hkx | folder>
               The next gate after that one. `packfile` keeps the data section's bytes as it found
@@ -3912,30 +3920,34 @@ public static class Program
             // Then the thing this is all for: every offset predicted from nothing but the walk, the
             // lengths and the alignment those columns imply. A file whose every offset comes out
             // right is a file that could have been written rather than edited.
-            int cursor = 0;
-            string lastKind = "";
-            foreach (var placed in Placements(objects, types, data))
-            {
-                Pad(placed.Kind, placed.At % 16);
+            var items = PackfileLayout.Of(image, types);
+            if (items == null) { skipped++; continue; }
 
-                cursor = Align(cursor, placed.Kind switch
-                {
-                    "element string" => 2,
-                    "string" when lastKind.EndsWith("array", StringComparison.Ordinal) => 1,
-                    _ => NativeAppend.Alignment,
-                });
-                lastKind = placed.Kind;
+            // Anything the walk did not reach. This used to pass files it had only half read,
+            // because a stretch nothing accounts for looks the same as padding when all you check
+            // is whether the items you did find are where you predicted.
+            if (!PackfileLayout.Accounted(items, data.Data.Length))
+            {
+                odd = true;
+                if (notes.Count < 10)
+                    notes.Add($"{Path.GetFileName(file)}: the walk does not account for the whole " +
+                              "data section, so laying it out again would lose what it misses");
+            }
+
+            var predicted = PackfileLayout.Where(items);
+            for (int k = 0; k < items.Count; k++)
+            {
+                Pad(items[k].Kind, items[k].At % 16);
+
                 placedSeen++;
-                if (cursor == placed.At) placedWhereExpected++;
+                if (predicted[k] == items[k].At) placedWhereExpected++;
                 else
                 {
                     odd = true;
                     if (notes.Count < 10)
-                        notes.Add($"{Path.GetFileName(file)}: a {placed.Kind} sits at 0x{placed.At:x}, " +
-                                  $"the walk put it at 0x{cursor:x}");
+                        notes.Add($"{Path.GetFileName(file)}: a {items[k].Kind} sits at 0x{items[k].At:x}, " +
+                                  $"laying the file out from nothing put it at 0x{predicted[k]:x}");
                 }
-
-                cursor = placed.At + placed.Length;
             }
 
             if (odd) oddFiles++; else cleanFiles++;
@@ -3965,131 +3977,68 @@ public static class Program
         return oddFiles == 0 && skipped == 0 ? 0 : 1;
     }
 
-    /// One thing the writer put down, in the order it put them down. `Kind` is what it is, so the
-    /// space left in front of it can be counted per kind rather than lumped together.
-    private sealed record Placed(string Kind, int At, int Length, bool Fresh);
-
-    /// Every object and every run it points at, in walk order, with how long each one is.
-    ///
-    /// The positions are the file's own, not predicted ones. That is deliberate: predicting them
-    /// needs the alignment rule, which is the thing this is being used to find out, and a prediction
-    /// that drifts one byte early would make every later item look wrong.
-    private static List<Placed> Placements(PackfileObjects objects, HavokClassTypes types,
-                                           PackfileSection data)
+    // The gate on removing an object, and on anything else that moves one.
+    //
+    // `packfile` proves the arithmetic around the data section while keeping the section itself
+    // exactly as it was read. This throws the section away and writes it again from nothing: every
+    // object and every run placed by the walk, every entry in all three tables moved to match. A
+    // vanilla file laid out this way has to come back as the file it already was, because no offset
+    // in it was carried over from the file it came from.
+    private static int Relayout(string[] argv)
     {
-        var aims = new Dictionary<int, int>();
-        foreach (var (source, destination) in data.Locals()) aims[source] = destination;
+        if (argv.Length < 2) { Usage(); return 1; }
 
-        var placed = new List<Placed>();
-        var seen = new HashSet<int>();
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
 
-        // Whether the next thing written begins a new record's worth of deferred writes. An object
-        // begins one, and so does each element of an array of structs. It matters because a string
-        // is packed against the string before it, but the first string of a record is not.
-        bool fresh = false;
-        void Put(string kind, int at, int length)
+        int same = 0, differed = 0, refused = 0;
+        var notes = new List<string>();
+
+        foreach (string file in files)
         {
-            placed.Add(new Placed(kind, at, length, fresh));
-            fresh = false;
-        }
-
-        void Walk(int offset, string className, int depth)
-        {
-            if (depth > 8) return;
-
-            foreach (var member in types.Members(className).OrderBy(m => m.Offset))
+            byte[] original;
+            PackfileImage image;
+            try
             {
-                if (!member.Written) continue;
-                int at = offset + member.Offset;
-
-                if (member.VType is "TYPE_STRINGPTR" or "TYPE_CSTRING")
-                {
-                    if (aims.TryGetValue(at, out int text) && seen.Add(text))
-                        Put("string", text, Zeroed(data.Data, text));
-                    continue;
-                }
-
-                if (member.VType == "TYPE_STRUCT")
-                {
-                    if (member.CType != null && types.Knows(member.CType))
-                        Walk(at, member.CType, depth + 1);
-                    continue;
-                }
-
-                if (member.VType is not ("TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")) continue;
-
-                var array = objects.ArrayAt(at);
-                if (array == null || array.Count == 0) continue;
-                if (!aims.ContainsKey(at)) continue;
-
-                if (member.VSub == "TYPE_STRUCT" && member.CType != null && types.Knows(member.CType))
-                {
-                    int stride = types[member.CType]?.Size ?? 0;
-                    if (stride <= 0) continue;
-
-                    if (seen.Add(array.At))
-                        Put("struct array", array.At, array.Count * stride);
-
-                    for (int i = 0; i < array.Count; i++)
-                    {
-                        fresh = true;
-                        Walk(array.At + i * stride, member.CType, depth + 1);
-                    }
-                    fresh = false;
-                    continue;
-                }
-
-                int width = Stride(member.VSub);
-                if (width <= 0) continue;
-
-                string kind = member.VSub is "TYPE_POINTER" ? "pointer array"
-                            : member.VSub is "TYPE_STRINGPTR" or "TYPE_CSTRING" ? "string array"
-                            : "value array";
-
-                if (seen.Add(array.At)) Put(kind, array.At, array.Count * width);
-
-                if (member.VSub is not ("TYPE_STRINGPTR" or "TYPE_CSTRING")) continue;
-
-                for (int i = 0; i < array.Count; i++)
-                    if (aims.TryGetValue(array.At + i * 8, out int text) && seen.Add(text))
-                        Put("element string", text, Zeroed(data.Data, text));
+                original = File.ReadAllBytes(file);
+                image = PackfileImage.Read(original);
             }
+            catch (Exception e)
+            {
+                refused++;
+                if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {e.Message}");
+                continue;
+            }
+
+            if (!PackfileLayout.Rewrite(image))
+            {
+                refused++;
+                if (notes.Count < 10)
+                    notes.Add($"{Path.GetFileName(file)}: the walk could not account for this file, " +
+                              "so it was left alone");
+                continue;
+            }
+
+            byte[] rebuilt = image.Rebuild();
+            int firstDifference = FirstDifference(original, rebuilt);
+            if (firstDifference < 0) { same++; continue; }
+
+            differed++;
+            if (notes.Count < 10)
+                notes.Add($"{Path.GetFileName(file)}: {original.Length} bytes in, {rebuilt.Length} out, " +
+                          $"first difference at 0x{firstDifference:x}" +
+                          Around(original, rebuilt, firstDifference));
         }
 
-        foreach (var instance in objects.Instances)
-        {
-            int size = types[instance.ClassName]?.Size ?? 0;
-            if (size <= 0) continue;
+        foreach (string note in notes) Console.WriteLine("  " + note);
 
-            fresh = true;
-            Put("object", instance.Offset, size);
-            fresh = true;
-            Walk(instance.Offset, instance.ClassName, 0);
-            fresh = false;
-        }
-
-        return placed;
+        Console.WriteLine($"\n{files.Length} file(s): {same} came back as the file they were, " +
+                          $"{differed} did not, {refused} left alone");
+        return differed == 0 && refused == 0 ? 0 : 1;
     }
-
-    private static int Align(int value, int to) => (value + to - 1) / to * to;
-
-    /// A null terminated string's length in the file, terminator included.
-    private static int Zeroed(byte[] data, int at)
-    {
-        int end = Array.IndexOf(data, (byte)0, at);
-        return end < 0 ? data.Length - at : end - at + 1;
-    }
-
-    private static int Stride(string vsub) => vsub switch
-    {
-        "TYPE_BOOL" or "TYPE_CHAR" or "TYPE_INT8" or "TYPE_UINT8" => 1,
-        "TYPE_INT16" or "TYPE_UINT16" or "TYPE_HALF" => 2,
-        "TYPE_INT32" or "TYPE_UINT32" or "TYPE_REAL" or "TYPE_ENUM" or "TYPE_FLAGS" => 4,
-        "TYPE_INT64" or "TYPE_UINT64" or "TYPE_ULONG" or "TYPE_POINTER"
-            or "TYPE_STRINGPTR" or "TYPE_CSTRING" => 8,
-        "TYPE_VECTOR4" or "TYPE_QUATERNION" or "TYPE_QSTRANSFORM" => 16,
-        _ => 0,
-    };
 
     // The gate on writing .hkx bytes ourselves. Reading a file apart and putting it back has to
     // produce the same file: every offset in a packfile is derived from the sizes of what came
