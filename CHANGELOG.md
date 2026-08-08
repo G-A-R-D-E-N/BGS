@@ -3,6 +3,48 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, the graph can be run
+
+Everything in this tool was static. The canvas said a transition listens for `StartOpen`, and whether
+sending `StartOpen` actually got you there could only be answered by loading the game. A behaviour
+graph is a small interpreter and this project already parses all of it, so it can be stepped. #37.
+
+**What it is, stated plainly.** This is our reading of the format, not Havok's runtime. Havok never
+shipped the behaviour product's source, so there is no reference implementation to check against and
+nothing here can be proved the way the packfile writer was proved against the game's own writer. What
+it does instead is refuse to guess: a generator that loads another file, or swaps the running graph,
+is recorded as a stop and reported rather than walked through as though it were empty. There are 109
+of those across the corpus.
+
+**The corpus made the job smaller than it looked.** All 6,394 transitions in the 531 vanilla
+behaviours carry an event id, so none fires on time alone, and only 107 carry a condition. An event
+driven reading is therefore exact for 98% of the vanilla data, and the rest is named rather than
+assumed.
+
+**Three faults, every one caught by measuring rather than by reading.** The first walked the generator
+tree by matching class names ending in Generator, which misses `hkbLayer` and
+`hkbBlenderGeneratorChild`, so Dogmeat reported one machine running out of thirty and looked entirely
+plausible doing it. The fix takes the carrying fields from the class table instead. The second was in
+the reachability analysis, which descended into a state's own machines only the first time that state
+was added, so a state arriving by a route that does no descent was never descended from at all; 15 of
+the 531 files stepped into states the analysis called impossible. The third was the stepper keeping
+machines active after the state holding them was left, so the active set only ever grew.
+
+**Two checks, both over the whole corpus.** Inside a machine the run actually entered, it must reach
+at least what the validator's own per machine rule reaches: 531 of 531. And actually stepping must
+never land somewhere the analysis calls unreachable: 0 files. The two questions differ on purpose,
+and both differences are reported as numbers rather than smoothed over: 222 states the validator
+reaches sit in machines nothing ever enters, and 523 states the run reaches the validator cannot,
+because it crosses machine boundaries.
+
+The check the ticket itself names now passes: a door sent the event its own transition listens for
+opens, and closes again. `symrm run <file> Open Opened Close Closed` walks it.
+
+**Not done, and not pretended otherwise.** Time, and therefore blend weights. A transition has a
+duration, a blender mixes children by weight, and a clip has a length; none of that is stepped. This
+answers which state you end up in, not what the character looks like part way there. There is also no
+UI yet: the run is reachable from `symrm run` and not from the window.
+
 ## 2026-08-08, a clip can be saved as the kind of animation it was
 
 Reading a spline compressed animation has worked for a long time, which is why the tool can show a

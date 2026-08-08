@@ -98,6 +98,10 @@ public static class Tests
         ("AnEncodedClipDecodesToWhatWentIn", AnEncodedClipDecodesToWhatWentIn),
         ("AnUndrivenChannelIsNotWrittenAsACurve", AnUndrivenChannelIsNotWrittenAsACurve),
         ("AClipTooLongForOneBlockIsSplit", AClipTooLongForOneBlockIsSplit),
+        ("ADoorOpensWhenSentTheEventItsOwnTransitionNames", ADoorOpensWhenSentTheEventItsOwnTransitionNames),
+        ("EveryRunningMachineHearsAnEvent", EveryRunningMachineHearsAnEvent),
+        ("TheRunRefusesToGuessPastAnotherFile", TheRunRefusesToGuessPastAnotherFile),
+        ("SteppingAgreesWithTheReachabilityItReports", SteppingAgreesWithTheReachabilityItReports),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -3928,5 +3932,295 @@ public static class Tests
         CheckTrue($"the last block decodes as well as the first ({drift.Position:F5} unit(s))",
             drift.Position < 0.05f);
         CheckTrue($"including its rotations ({drift.Rotation:F6} radian(s))", drift.Rotation < 0.01f);
+    }
+
+    /// A door: closed, opening, open, closing, back to closed. Four events, one machine.
+    ///
+    /// Shaped after the vanilla special case door rather than invented, because that is the check the
+    /// ticket itself names: a simulated door that does not open on the event its own script sends is
+    /// wrong. The vanilla one has seven states and this has four, and the sequence is the same.
+    private static string DoorGraph() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraph" name="#91" signature="0xb1218f86">
+                    <hkparam name="name">Door</hkparam>
+                    <hkparam name="rootGenerator">#92</hkparam>
+                    <hkparam name="data">#80</hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphData" name="#80" signature="0x95aca5d">
+                    <hkparam name="stringData">#81</hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphStringData" name="#81" signature="0xc713064e">
+                    <hkparam name="eventNames" numelements="4">
+                        <hkcstring>Open</hkcstring>
+                        <hkcstring>Opened</hkcstring>
+                        <hkcstring>Close</hkcstring>
+                        <hkcstring>Closed</hkcstring>
+                    </hkparam>
+                    <hkparam name="variableNames" numelements="0"></hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachine" name="#92" signature="0xa5896bcf">
+                    <hkparam name="name">DoorMachine</hkparam>
+                    <hkparam name="startStateId">0</hkparam>
+                    <hkparam name="wildcardTransitions">null</hkparam>
+                    <hkparam name="states" numelements="4">
+                        #93 #95 #97 #99
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#93" signature="0x39d76713">
+                    <hkparam name="name">Closed</hkparam>
+                    <hkparam name="stateId">0</hkparam>
+                    <hkparam name="generator">#94</hkparam>
+                    <hkparam name="transitions">#101</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#94" signature="0xd4cc9f6">
+                    <hkparam name="name">ClipClosed</hkparam>
+                    <hkparam name="animationName">closed.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#95" signature="0x39d76713">
+                    <hkparam name="name">Opening</hkparam>
+                    <hkparam name="stateId">1</hkparam>
+                    <hkparam name="generator">#96</hkparam>
+                    <hkparam name="transitions">#102</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#96" signature="0xd4cc9f6">
+                    <hkparam name="name">ClipOpening</hkparam>
+                    <hkparam name="animationName">opening.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#97" signature="0x39d76713">
+                    <hkparam name="name">Opened</hkparam>
+                    <hkparam name="stateId">2</hkparam>
+                    <hkparam name="generator">#98</hkparam>
+                    <hkparam name="transitions">#103</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#98" signature="0xd4cc9f6">
+                    <hkparam name="name">ClipOpened</hkparam>
+                    <hkparam name="animationName">opened.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#99" signature="0x39d76713">
+                    <hkparam name="name">Closing</hkparam>
+                    <hkparam name="stateId">3</hkparam>
+                    <hkparam name="generator">#100</hkparam>
+                    <hkparam name="transitions">#104</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#100" signature="0xd4cc9f6">
+                    <hkparam name="name">ClipClosing</hkparam>
+                    <hkparam name="animationName">closing.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineTransitionInfoArray" name="#101" signature="0xe397b11e">
+                    <hkparam name="transitions" numelements="1">
+                        <hkobject>
+                            <hkparam name="eventId">0</hkparam>
+                            <hkparam name="toStateId">1</hkparam>
+                            <hkparam name="toNestedStateId">0</hkparam>
+                            <hkparam name="priority">0</hkparam>
+                            <hkparam name="flags">0</hkparam>
+                            <hkparam name="condition">null</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineTransitionInfoArray" name="#102" signature="0xe397b11e">
+                    <hkparam name="transitions" numelements="1">
+                        <hkobject>
+                            <hkparam name="eventId">1</hkparam>
+                            <hkparam name="toStateId">2</hkparam>
+                            <hkparam name="toNestedStateId">0</hkparam>
+                            <hkparam name="priority">0</hkparam>
+                            <hkparam name="flags">0</hkparam>
+                            <hkparam name="condition">null</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineTransitionInfoArray" name="#103" signature="0xe397b11e">
+                    <hkparam name="transitions" numelements="1">
+                        <hkobject>
+                            <hkparam name="eventId">2</hkparam>
+                            <hkparam name="toStateId">3</hkparam>
+                            <hkparam name="toNestedStateId">0</hkparam>
+                            <hkparam name="priority">0</hkparam>
+                            <hkparam name="flags">0</hkparam>
+                            <hkparam name="condition">null</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineTransitionInfoArray" name="#104" signature="0xe397b11e">
+                    <hkparam name="transitions" numelements="1">
+                        <hkobject>
+                            <hkparam name="eventId">3</hkparam>
+                            <hkparam name="toStateId">0</hkparam>
+                            <hkparam name="toNestedStateId">0</hkparam>
+                            <hkparam name="priority">0</hkparam>
+                            <hkparam name="flags">0</hkparam>
+                            <hkparam name="condition">null</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
+
+    private static string StateName(BehaviourGraphModel model, GraphRun run) =>
+        run.Where().Count == 0 ? "(nowhere)" : run.Where()[0].StateName;
+
+    // The check the ticket names: send the door the event its own transition listens for and see
+    // whether it opens. It is not a strong check of anything except that the thing runs at all, and
+    // that is exactly why it is worth having, because until now nothing here ran at all.
+    private static void ADoorOpensWhenSentTheEventItsOwnTransitionNames()
+    {
+        Console.WriteLine("\na door opens when sent the event its own transition names");
+
+        var model = BehaviourGraphModel.Parse(DoorGraph());
+        var run = GraphRun.Start(model);
+
+        Check("it starts closed", "Closed", StateName(model, run));
+        Check("with one machine running", 1, run.Where().Count);
+        Check("and nothing it had to guess at", 0, run.Stops.Count);
+
+        Check("Open moves it", 1, run.Send("Open").Count);
+        Check("to opening", "Opening", StateName(model, run));
+
+        run.Send("Opened");
+        Check("then Opened opens it", "Opened", StateName(model, run));
+
+        run.Send("Close");
+        Check("Close starts it shutting", "Closing", StateName(model, run));
+
+        run.Send("Closed");
+        Check("and Closed finishes", "Closed", StateName(model, run));
+
+        // An event the door does not listen for in this state must not move it, and an event the
+        // graph does not declare at all is a different answer from that rather than the same one.
+        Check("an event it is not listening for moves nothing", 0, run.Send("Opened").Count);
+        Check("and it is still closed", "Closed", StateName(model, run));
+        CheckThrows("an event the graph does not declare is refused rather than reported as ignored",
+            () => run.Send("StartOpen"));
+        CheckTrue("which the caller can ask about first", !run.Declares("StartOpen"));
+
+        var reach = run.Reachable();
+        Check("every state is reachable", 4, reach.Reachable.Count);
+        Check("and none is not", 0, reach.Unreachable.Count);
+    }
+
+    // An event is raised on the graph rather than on one machine, so two machines both listening for
+    // it both move. A stepper that stopped at the first match would look right on a door and be
+    // wrong on any real character, where a dozen machines run at once.
+    private static void EveryRunningMachineHearsAnEvent()
+    {
+        Console.WriteLine("\nevery running machine hears an event");
+
+        // The door's Closed state gets a second machine underneath it, listening for the same Open.
+        string nested = DoorGraph()
+            .Replace("""<hkparam name="generator">#94</hkparam>""",
+                     """<hkparam name="generator">#110</hkparam>""")
+            .Replace("</hksection>", """
+                <hkobject class="hkbStateMachine" name="#110" signature="0xa5896bcf">
+                    <hkparam name="name">Inner</hkparam>
+                    <hkparam name="startStateId">0</hkparam>
+                    <hkparam name="wildcardTransitions">null</hkparam>
+                    <hkparam name="states" numelements="2">
+                        #111 #112
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#111" signature="0x39d76713">
+                    <hkparam name="name">InnerA</hkparam>
+                    <hkparam name="stateId">0</hkparam>
+                    <hkparam name="generator">#94</hkparam>
+                    <hkparam name="transitions">#113</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#112" signature="0x39d76713">
+                    <hkparam name="name">InnerB</hkparam>
+                    <hkparam name="stateId">1</hkparam>
+                    <hkparam name="generator">#94</hkparam>
+                    <hkparam name="transitions">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineTransitionInfoArray" name="#113" signature="0xe397b11e">
+                    <hkparam name="transitions" numelements="1">
+                        <hkobject>
+                            <hkparam name="eventId">0</hkparam>
+                            <hkparam name="toStateId">1</hkparam>
+                            <hkparam name="toNestedStateId">0</hkparam>
+                            <hkparam name="priority">0</hkparam>
+                            <hkparam name="flags">0</hkparam>
+                            <hkparam name="condition">null</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+            </hksection>
+        """);
+
+        var model = BehaviourGraphModel.Parse(nested);
+        var run = GraphRun.Start(model);
+
+        Check("both machines are running", 2, run.Where().Count);
+        Check("the inner one starts in its own start state", "InnerA",
+            run.Where().First(w => w.MachineName == "Inner").StateName);
+
+        var fired = run.Send("Open");
+        Check("one event moves both of them", 2, fired.Count);
+        Check("the outer door is opening", "Opening",
+            run.Where().First(w => w.MachineName == "DoorMachine").StateName);
+
+        // The inner machine is no longer running: the door left the state that held it. That it is
+        // gone rather than stale is the point.
+        CheckTrue("and the machine the door left is no longer running",
+            run.Where().All(w => w.MachineName != "Inner"));
+    }
+
+    // The honesty rule from the ticket. A generator that loads another file leads somewhere this file
+    // cannot see, and the run has to say so rather than walk through it as though it were empty.
+    private static void TheRunRefusesToGuessPastAnotherFile()
+    {
+        Console.WriteLine("\nthe run stops rather than guessing past another file");
+
+        string elsewhere = DoorGraph()
+            .Replace("""<hkparam name="generator">#94</hkparam>""",
+                     """<hkparam name="generator">#120</hkparam>""")
+            .Replace("</hksection>", """
+                <hkobject class="hkbBehaviorReferenceGenerator" name="#120" signature="0x5empty">
+                    <hkparam name="name">Elsewhere</hkparam>
+                    <hkparam name="behaviorName">Behaviors\\Other.hkx</hkparam>
+                </hkobject>
+            </hksection>
+        """);
+
+        var model = BehaviourGraphModel.Parse(elsewhere);
+        var run = GraphRun.Start(model);
+
+        Check("the run records a stop", 1, run.Stops.Count);
+        Check("naming the class it stopped at", "hkbBehaviorReferenceGenerator", run.Stops[0].ClassName);
+        CheckTrue("and saying which file it would have had to open",
+            run.Stops[0].Why.Contains("Other.hkx", StringComparison.Ordinal));
+        Check("the door itself still runs", "Closed", StateName(model, run));
+    }
+
+    // Working out where a graph can get to, and actually going there, are separate code. They agreed
+    // on the small graphs here from the first run and disagreed on 15 of the 531 vanilla behaviours,
+    // which is the whole argument for checking them against each other rather than trusting either.
+    private static void SteppingAgreesWithTheReachabilityItReports()
+    {
+        Console.WriteLine("\nstepping agrees with the reachability that is reported");
+
+        var model = BehaviourGraphModel.Parse(DoorGraph());
+        var analysis = GraphRun.Start(model).Reachable();
+
+        var run = GraphRun.Start(model);
+        var landed = new HashSet<string>(run.Where().Select(w => w.StateId), StringComparer.Ordinal);
+
+        for (int sweep = 0; sweep < 4; sweep++)
+            foreach (string name in run.Events)
+            {
+                foreach (var f in run.Send(name)) landed.Add(f.ToStateId);
+                foreach (var w in run.Where()) landed.Add(w.StateId);
+            }
+
+        Check("stepping reaches every state the analysis promised", 0,
+            analysis.Reachable.Except(landed).Count());
+        Check("and lands nowhere the analysis ruled out", 0,
+            landed.Except(analysis.Reachable).Count());
     }
 }
