@@ -16,8 +16,68 @@ public static class Smoke
     private static int _failed;
     private static int _ran;
 
+    /// Draws the canvas to a PNG with no display attached.
+    ///
+    /// The checks above can prove a route was counted and that its ends are on the canvas. They
+    /// cannot say whether the picture is readable, and "is it readable" is the entire point of
+    /// drawing transitions rather than listing them. Rendering it to a file is how that question
+    /// gets answered without asking somebody to open the window and describe what they see.
+    ///
+    /// Usage: uismoke --png &lt;behaviour.hkx&gt; [out.png] [zoom] [focus node id]
+    private static int Png(string[] args)
+    {
+        // Real drawing rather than the headless stub, which records that something was drawn and
+        // produces no pixels.
+        AppBuilder.Configure<HeadlessApp>()
+            .UseSkia()
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            .SetupWithoutStarting();
+
+        string file = args[1];
+        string output = args.Length > 2 ? args[2] : System.IO.Path.ChangeExtension(file, ".png");
+        double zoom = args.Length > 3 && double.TryParse(args[3], out double z) ? z : 0.75;
+        string focus = args.Length > 4 ? args[4] : "";
+
+        var window = new MainWindow();
+        window.Show();
+        window.Open(file);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        // A TabControl builds only the tab that is showing, so the canvas does not exist as a visual
+        // until the Graph tab is the selected one.
+        var tabs = Find<TabControl>(window).First();
+        tabs.SelectedIndex = tabs.Items.OfType<TabItem>().ToList()
+                                 .FindIndex(t => t.Header?.ToString() == "Graph");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        var canvas = Find<GraphView>(window).First();
+        var size = new Size(1600, 1000);
+        canvas.Measure(size);
+        canvas.Arrange(new Rect(size));
+
+        if (focus.Length > 0)
+        {
+            canvas.FocusOn(focus);
+            canvas.Highlight(focus);
+        }
+        canvas.SetZoom(zoom);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        using var bitmap = new Avalonia.Media.Imaging.RenderTargetBitmap(
+            new PixelSize((int)size.Width, (int)size.Height), new Vector(96, 96));
+        bitmap.Render(canvas);
+        bitmap.Save(output);
+
+        Console.WriteLine($"{output}: {canvas.DrawnCount} node(s), {canvas.DrawableRouteCount} route(s), " +
+                          $"{canvas.StartStateIds.Count} start state(s), zoom {zoom}" +
+                          (focus.Length > 0 ? $", focused on #{focus}" : ""));
+        return 0;
+    }
+
     public static int Main(string[] args)
     {
+        if (args.Length >= 2 && args[0] == "--png") return Png(args);
+
         AppBuilder.Configure<HeadlessApp>().UseHeadless(new AvaloniaHeadlessPlatformOptions())
             .SetupWithoutStarting();
 

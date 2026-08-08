@@ -361,6 +361,7 @@ public class GraphView : Control
     private void DrawRoutes(DrawingContext ctx)
     {
         bool focused = _highlight.Length > 0 || _needle.Length > 0;
+        var wanted = new List<(string Text, Point At, Color Colour, bool Lit, bool Wildcard)>();
 
         foreach (var route in _routes.Routes)
         {
@@ -368,13 +369,22 @@ public class GraphView : Control
             if (!_nodes.TryGetValue(route.ToId, out var to)) continue;
 
             bool lit = Lit(route.FromId, route.ToId);
+
+            // A wildcard fires from any state, so every one of a machine's wildcards leaves the same
+            // node and they fan out across the whole graph. Dogmeat's paired animation machine has
+            // twenty five, which drew as a sheet of lines over everything else. They stay on screen,
+            // because a machine having them is worth seeing, but they sit back until the machine or
+            // one of its targets is picked out.
+            double weight = route.Wildcard && !lit ? 0.9 : lit ? 2.0 : 1.2;
+            double alpha = route.Wildcard ? (lit ? 0.85 : 0.10) : lit ? 0.9 : 0.28;
+
             var a = ToScreen(RouteExit(from, to));
             var b = ToScreen(RouteEntry(to, from));
             if (OffScreen(a, b)) continue;
 
             var colour = route.Wildcard ? Ux.Warn : Ux.RouteColour;
-            DrawLink(ctx, a, colour, lit ? 2.0 : 1.2, lit ? 0.9 : 0.22, b, dashed: true);
-            DrawArrowHead(ctx, a, b, colour, lit ? 0.9 : 0.22);
+            DrawLink(ctx, a, colour, weight, alpha, b, dashed: true);
+            DrawArrowHead(ctx, a, b, colour, alpha);
 
             // The second hop of a nested transition, which enters a state and picks a state inside
             // it at the same time. Drawn from the state entered to the state chosen within it, so
@@ -383,15 +393,52 @@ public class GraphView : Control
             {
                 var c = ToScreen(RouteExit(to, into));
                 var d = ToScreen(RouteEntry(into, to));
-                DrawLink(ctx, c, colour, lit ? 1.6 : 1.0, lit ? 0.7 : 0.18, d, dashed: true);
-                DrawArrowHead(ctx, c, d, colour, lit ? 0.7 : 0.18);
+                DrawLink(ctx, c, colour, weight * 0.8, alpha * 0.8, d, dashed: true);
+                DrawArrowHead(ctx, c, d, colour, alpha * 0.8);
             }
 
-            if (!lit || (_zoom < LabelZoom && !focused)) continue;
+            if (!lit || _zoom < LabelZoom) continue;
 
-            var middle = new Point((a.X + b.X) / 2, (a.Y + b.Y) / 2);
-            string label = route.Wildcard ? "any: " + route.Event : route.Event;
-            DrawLabel(ctx, label, middle, colour);
+            // A wildcard's name only appears once something is picked out. Unlit, they are the bulk
+            // of the labels and none of them is the one being looked for.
+            if (route.Wildcard && !focused) continue;
+
+            wanted.Add((route.Wildcard ? "any: " + route.Event : route.Event,
+                        new Point((a.X + b.X) / 2, (a.Y + b.Y) / 2), colour, lit, route.Wildcard));
+        }
+
+        DrawLabels(ctx, wanted);
+    }
+
+    /// The labels that fit, rather than all of them.
+    ///
+    /// Routes converge, so their midpoints do too, and drawing every label put text over text in
+    /// exactly the busy places where reading one matters most. A label that would land on one
+    /// already drawn is dropped instead: the route is still there to follow, and the alternative is
+    /// a pile that names neither of them.
+    ///
+    /// Ordered so the ones worth keeping are placed first. Anything picked out beats anything not,
+    /// and a plain route beats a wildcard, whose name is the same at every one of its ends.
+    private void DrawLabels(DrawingContext ctx,
+                            List<(string Text, Point At, Color Colour, bool Lit, bool Wildcard)> wanted)
+    {
+        var taken = new List<Rect>();
+
+        foreach (var label in wanted.OrderByDescending(l => l.Lit).ThenBy(l => l.Wildcard))
+        {
+            var formatted = new FormattedText(label.Text, CultureInfo.InvariantCulture,
+                                              FlowDirection.LeftToRight, Typeface.Default,
+                                              Math.Max(8, 10 * _zoom), new SolidColorBrush(label.Colour));
+
+            var box = new Rect(label.At.X - formatted.Width / 2 - 3, label.At.Y - formatted.Height / 2 - 1,
+                               formatted.Width + 6, formatted.Height + 2);
+
+            if (box.Right < 0 || box.X > Bounds.Width || box.Bottom < 0 || box.Y > Bounds.Height) continue;
+            if (taken.Any(t => t.Intersects(box))) continue;
+
+            taken.Add(box);
+            ctx.DrawRectangle(new SolidColorBrush(Ux.Base, 0.85), null, box, 3, 3);
+            ctx.DrawText(formatted, new Point(box.X + 3, box.Y + 1));
         }
     }
 
@@ -405,20 +452,6 @@ public class GraphView : Control
                     from.Bounds.Center.Y);
 
     private static Point RouteEntry(Node to, Node from) => RouteExit(to, from);
-
-    private void DrawLabel(DrawingContext ctx, string text, Point at, Color colour)
-    {
-        var formatted = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                                          Typeface.Default, Math.Max(8, 10 * _zoom),
-                                          new SolidColorBrush(colour));
-
-        // A plate under the words, because a route label sits over whatever wires happen to cross
-        // there and unbacked text on a busy graph is unreadable.
-        var box = new Rect(at.X - formatted.Width / 2 - 3, at.Y - formatted.Height / 2 - 1,
-                           formatted.Width + 6, formatted.Height + 2);
-        ctx.DrawRectangle(new SolidColorBrush(Ux.Base, 0.85), null, box, 3, 3);
-        ctx.DrawText(formatted, new Point(box.X + 3, box.Y + 1));
-    }
 
     private void DrawArrowHead(DrawingContext ctx, Point from, Point to, Color colour, double alpha)
     {
@@ -683,6 +716,14 @@ public class GraphView : Control
             ClearHighlight();
             e.Handled = true;
         }
+    }
+
+    /// Read only, for the headless renderer: a picture has to be taken at a chosen zoom rather than
+    /// at whatever the last interaction left behind.
+    public void SetZoom(double zoom)
+    {
+        _zoom = Math.Clamp(zoom, 0.15, 3.0);
+        InvalidateVisual();
     }
 
     public void FrameAll()
