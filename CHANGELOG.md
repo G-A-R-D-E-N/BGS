@@ -3,6 +3,20 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, an array of numbers can grow, and narrow fields read at their own width
+
+The last kind of array that had to go out through a rebuild. Simpler than the array of names before
+it, because nothing inside it points anywhere: one run on the end of the section, the array aimed at
+it, the count beside it rewritten. Proved on the 56 vanilla behaviours that carry one. #32.
+
+**It turned up a reading fault that had nothing to do with writing.** A field narrower than four
+bytes was read as four and masked down, which is right everywhere except the last bytes of a section,
+where the wider read runs off the end and the value comes back as nothing at all. Nothing in a
+vanilla file sits there, so it never showed until a lengthened array was appended flush with the end
+of the section and its final element read as blank while the count beside it said otherwise. Narrow
+fields are read at their own width now, and all 45 files of a spread through the corpus still agree
+with hkxpack value for value.
+
 ## 2026-08-08, vectors and transforms are written where they sit
 
 A `vector4` is sixteen bytes wherever it sits and a `qstransform` forty eight, so writing one over

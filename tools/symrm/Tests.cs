@@ -71,6 +71,7 @@ public static class Tests
         ("DeletingTakesAnObjectOutOfTheFile", DeletingTakesAnObjectOutOfTheFile),
         ("AnArrayOfNamesCanGrow", AnArrayOfNamesCanGrow),
         ("AWideFieldIsWrittenWhereItSits", AWideFieldIsWrittenWhereItSits),
+        ("AnArrayOfNumbersCanGrow", AnArrayOfNumbersCanGrow),
         ("TheLastObjectsBlockEndsAtItsOwnClosingTag", TheLastObjectsBlockEndsAtItsOwnClosingTag),
         ("AnEnumFieldOffersItsDeclaredValues", AnEnumFieldOffersItsDeclaredValues),
         ("WideFloatFieldsAreWrittenInBracketedFours", WideFloatFieldsAreWrittenInBracketedFours),
@@ -3349,6 +3350,59 @@ public static class Tests
         var words = NativeSave.Compare(Vector.Replace("VALUE", "(0 0 0 0)"),
                                        Vector.Replace("VALUE", "(a b c d)"));
         CheckTrue("and so is one that is not numbers", !words.Possible);
+    }
+
+    /// An array of plain numbers at a new length, and reading the last of one at the end of a
+    /// section.
+    ///
+    /// The corpus proof is `symrm savenumbers`, 56 files. What that run turned up, and what this
+    /// pins, is a reader fault it happened to expose: a field narrower than four bytes was read as
+    /// four and masked down, which works everywhere except the last bytes of a section. Nothing in a
+    /// vanilla file sits there, so it never showed until a lengthened array was appended to the end
+    /// and its final element read as blank while the count beside it said otherwise.
+    private static void AnArrayOfNumbersCanGrow()
+    {
+        Console.WriteLine("\nan array of numbers can grow");
+
+        const string Doc = """
+            <?xml version="1.0" encoding="ascii"?>
+            <hkpackfile classversion="8"><hksection name="__data__">
+            <hkobject class="hkbBoneIndexArray" name="#0090" signature="0x8a02c4a1">
+                <hkparam name="boneIndices" numelements="COUNT">NUMBERS</hkparam>
+            </hkobject>
+            </hksection></hkpackfile>
+            """;
+
+        string Doc2(params int[] numbers) =>
+            Doc.Replace("COUNT", numbers.Length.ToString())
+               .Replace("NUMBERS", string.Join(" ", numbers));
+
+        var grown = NativeSave.Compare(Doc2(0, 1, 2), Doc2(0, 1, 2, 7));
+        CheckTrue("growing it is no longer refused", grown.Possible);
+        Check("planned as one change", 1, grown.Changes.Count);
+        CheckTrue("as an array", grown.Changes[0].Array);
+        CheckTrue("and not as text", !grown.Changes[0].Text);
+
+        var shrunk = NativeSave.Compare(Doc2(0, 1, 2), Doc2(0));
+        CheckTrue("shrinking it too", shrunk.Possible);
+
+        // Refused rather than written as a guess. A word is not a bone index, and writing nothing
+        // for it would leave whatever was there in its place.
+        var words = NativeSave.Compare(Doc2(0, 1, 2), Doc2(0, 1, 2).Replace("2", "two"));
+        CheckTrue("a value that is not a number is refused", !words.Possible);
+
+        // The reader fault. Two bytes at the very end of a section have to read as two bytes.
+        var data = new byte[6];
+        data[4] = 0x39;
+        data[5] = 0x05;   // 1337, sitting in the last two bytes of the section
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = new byte[8] });
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__data__"), Data = data });
+
+        var objects = new PackfileObjects(image, HavokClasses.Shipped);
+        Check("two bytes at the end of a section read as two bytes", 1337, objects.ReadNarrowAt(4, 2));
+        Check("and reading them as four still says nothing", null, objects.ReadIntAt(4));
     }
 
     /// The last object in a document ends at its own closing tag, not at the end of the file.
