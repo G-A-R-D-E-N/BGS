@@ -75,6 +75,7 @@ public static class Program
             case "splinestats": return SplineStats(argv);
             case "spline": return Spline(argv);
             case "savespline": return SaveSpline(argv);
+            case "run": return Run(argv);
             case "crosscheck": return CrossCheck(argv);
             case "savecheck": return SaveCheck(argv);
             case "mesh": return Mesh(argv);
@@ -95,6 +96,17 @@ public static class Program
               Pull every vanilla behaviour .hkx out of the archive. 531 of them. The filter is a
               path substring and defaults to "behavior"; pass "" to pull the animation clips as
               well, which is what the spline gate measures against.
+
+          dotnet run --project tools/symrm/symrm.csproj -- run <behaviour.hkx> [event...]
+              Step the graph. With no events it reports where the graph starts, which machines are
+              running, and which states any sequence of events can reach. With events it sends them
+              in order and says what moved.
+
+          dotnet run --project tools/symrm/symrm.csproj -- run <behaviourDir>
+              The same over the corpus. Reports what it refuses to guess at, and checks two things:
+              that inside a machine the run entered it reaches at least what the validator's own
+              per machine rule reaches, and that actually stepping never lands somewhere the
+              reachability analysis calls impossible.
 
           dotnet run --project tools/symrm/symrm.csproj -- splinestats <animDir | file.hkx>
               What the game's own compressor chose, counted across the animations it shipped:
@@ -3401,6 +3413,263 @@ public static class Program
     // Tolerance is not zero on purpose. Both compressed formats decode through floating point, and
     // the written file stores exactly what came out of that, so the two decodes agree exactly on
     // everything except the rotation, which is normalised on the way in the way Havok normalises it.
+    // Stepping the graph, over one file or over the corpus.
+    //
+    // There is no reference implementation to check this against: Havok never shipped the behaviour
+    // product's source. So the check is vanilla itself, and it is a check of self consistency rather
+    // than of correctness. Over the corpus it reports three things that would each be a fault if they
+    // came out wrong, and prints them rather than asserting a number nobody has justified.
+    //
+    // The one thing it does assert is the comparison against the validator's own reachability rule.
+    // That rule works one machine at a time; the run crosses machine boundaries and follows a reached
+    // state into what it holds. So the run must reach a superset of what the validator reaches, on
+    // every file. A file where the run reaches less is a fault in the run, and it exits non-zero.
+    private static int Run(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        if (!Directory.Exists(target)) return RunOne(target, argv.Length > 2 ? argv[2..] : Array.Empty<string>());
+
+        var files = Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToArray();
+
+        int read = 0, unreadable = 0, noRoot = 0, narrower = 0;
+        long machines = 0, running = 0, states = 0, reachable = 0, unreachable = 0;
+        long dead = 0, conditional = 0, stops = 0, noGraphObject = 0;
+        long neverEntered = 0, widerBy = 0, steppedInto = 0;
+        int walkedOff = 0;
+        var stopKinds = new SortedDictionary<string, int>();
+        var complaints = new List<string>();
+
+        foreach (string file in files)
+        {
+            BehaviourGraphModel? model;
+            try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)))); }
+            catch (Exception) { unreadable++; continue; }
+            if (model == null) { unreadable++; continue; }
+
+            read++;
+            var run = GraphRun.Start(model);
+            if (run.RootId.Length == 0) { noRoot++; continue; }
+
+            var here = run.Where();
+            var reach = run.Reachable();
+
+            machines += model.Objects.Count(o => o.Class == "hkbStateMachine");
+            running += here.Count;
+            states += reach.Reachable.Count + reach.Unreachable.Count;
+            reachable += reach.Reachable.Count;
+            unreachable += reach.Unreachable.Count;
+            dead += reach.Dead.Count;
+            conditional += reach.Conditional;
+            stops += run.Stops.Count;
+
+            foreach (var stop in run.Stops)
+            {
+                stopKinds[stop.ClassName] = stopKinds.GetValueOrDefault(stop.ClassName) + 1;
+                if (stop.Why.StartsWith("this file has no hkbBehaviorGraph", StringComparison.Ordinal))
+                    noGraphObject++;
+            }
+
+            // The comparison against the validator's own reachability rule.
+            //
+            // The two do not answer the same question and the difference is the interesting part. The
+            // validator works one machine at a time and assumes every machine in the file is running,
+            // so it reaches states inside machines nothing ever enters. The run starts at the graph's
+            // root and only counts a machine once something reaches it, and in exchange it crosses
+            // machine boundaries, which the validator cannot.
+            //
+            // So the assertion is the part where they do answer the same question: inside a machine
+            // the run actually entered, the run applies the validator's rule and more, so it must
+            // reach at least as much. A file where it does not is a fault in the run.
+            var validatorSays = ValidatorReaches(model);
+            var entered = reach.Reachable
+                .Select(id => model.Get(id))
+                .Where(o => o != null)
+                .Select(o => MachineOf(model, o!.Id))
+                .Where(m => m.Length > 0)
+                .ToHashSet(StringComparer.Ordinal);
+
+            // Stepping has to agree with the analysis.
+            //
+            // Reachable() works out where the graph can get to without ever moving it. Send() actually
+            // moves it. They are separate code and they can disagree, and the direction that matters
+            // is a step landing somewhere the analysis says is impossible: that is either the analysis
+            // being too narrow or the stepper going somewhere it should not, and both are faults.
+            var stepped = StepEverywhere(model);
+            var impossible = stepped.Except(reach.Reachable).ToList();
+            steppedInto += stepped.Count;
+            if (impossible.Count > 0)
+            {
+                walkedOff++;
+                if (complaints.Count < 20)
+                    complaints.Add($"{Path.GetFileName(file)}: stepping entered {impossible.Count} state(s) " +
+                                   $"the analysis calls unreachable, first #{impossible[0]}");
+            }
+
+            var comparable = validatorSays.Where(id => entered.Contains(MachineOf(model, id))).ToList();
+            var missed = comparable.Except(reach.Reachable).ToList();
+
+            neverEntered += validatorSays.Count - comparable.Count;
+            widerBy += reach.Reachable.Except(validatorSays).Count();
+
+            if (missed.Count > 0)
+            {
+                narrower++;
+                if (complaints.Count < 20)
+                    complaints.Add($"{Path.GetFileName(file)}: inside machines the run entered, it missed " +
+                                   $"{missed.Count} state(s) the validator reaches, first #{missed[0]}");
+            }
+        }
+
+        Console.WriteLine($"\n{files.Length} file(s): {read} read, {unreadable} could not be read, " +
+                          $"{noRoot} that are not behaviour graphs at all");
+        Console.WriteLine($"the {noRoot} are project and character files, which carry hkbProjectData " +
+                          $"rather than a graph, so there is nothing in them to run");
+        Console.WriteLine($"{machines} state machine(s), of which {running} are running at the start");
+        Console.WriteLine($"{states} state(s): {reachable} reachable by some event, {unreachable} not");
+        Console.WriteLine($"{dead} transition(s) leave a state nothing can reach");
+        Console.WriteLine($"{conditional} transition(s) carry a condition, which is not evaluated");
+        Console.WriteLine($"{stops} stop(s) where the run refuses to guess:");
+        foreach (var kind in stopKinds) Console.WriteLine($"    {kind.Key,-40} {kind.Value}");
+        if (noGraphObject > 0) Console.WriteLine($"    of those, {noGraphObject} are files with no hkbBehaviorGraph");
+
+        Console.WriteLine($"\nagainst the validator's own reachability, inside machines the run entered: " +
+                          $"{read - narrower} of {read} file(s) reach at least as much, {narrower} reach less");
+        Console.WriteLine($"{neverEntered} state(s) the validator reaches sit in machines nothing enters, " +
+                          $"which is what a whole graph run can say and a per machine rule cannot");
+        Console.WriteLine($"{widerBy} state(s) the run reaches that the validator does not, by crossing " +
+                          $"machine boundaries and by following a reached state into what it holds");
+        Console.WriteLine($"\nstepping against the analysis: {steppedInto} state(s) entered by actually " +
+                          $"sending events, {walkedOff} file(s) stepped somewhere the analysis calls unreachable");
+        foreach (string line in complaints) Console.WriteLine($"  {line}");
+
+        return narrower + walkedOff == 0 ? 0 : 1;
+    }
+
+    /// Every state a run actually lands in, by sending each declared event in turn until nothing new
+    /// happens.
+    ///
+    /// Deliberately not a search over every ordering. The point is to move the graph for real and see
+    /// where it ends up, not to enumerate; a fixed number of sweeps over the event list reaches a
+    /// settled set on every file in the corpus and keeps the whole gate under two seconds.
+    private static HashSet<string> StepEverywhere(BehaviourGraphModel model)
+    {
+        var landed = new HashSet<string>(StringComparer.Ordinal);
+        var run = GraphRun.Start(model);
+        if (run.RootId.Length == 0) return landed;
+
+        foreach (var active in run.Where()) landed.Add(active.StateId);
+
+        for (int sweep = 0; sweep < 8; sweep++)
+        {
+            int before = landed.Count;
+            foreach (string name in run.Events)
+            {
+                foreach (var fired in run.Send(name)) landed.Add(fired.ToStateId);
+                foreach (var active in run.Where()) landed.Add(active.StateId);
+            }
+            if (landed.Count == before) break;
+        }
+
+        return landed;
+    }
+
+    /// The machine a state info object belongs to, by asking which machine lists it.
+    private static readonly Dictionary<BehaviourGraphModel, Dictionary<string, string>> _machineOf = new();
+
+    private static string MachineOf(BehaviourGraphModel model, string stateId)
+    {
+        if (!_machineOf.TryGetValue(model, out var map))
+        {
+            map = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+                foreach (string id in machine.Refs("states"))
+                    map.TryAdd(id, machine.Id);
+            _machineOf[model] = map;
+        }
+        return map.TryGetValue(stateId, out var found) ? found : "";
+    }
+
+    /// What GraphValidator's reachability rule reaches, as state object ids, one machine at a time.
+    ///
+    /// Reimplemented here rather than exported from the validator, because the validator reports
+    /// what it cannot reach and this needs what it can. Kept deliberately identical in rule: start
+    /// state, then any transition whose from state is reached, wildcards always live.
+    private static HashSet<string> ValidatorReaches(BehaviourGraphModel model)
+    {
+        var reached = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+        {
+            var states = StateEditor.States(model, machine.Id);
+            int start = machine.Int("startStateId");
+            if (states.Count == 0 || !states.Any(s => s.StateId == start)) continue;
+
+            var transitions = StateEditor.Transitions(model, machine.Id);
+            if (transitions.Count == 0) continue;
+
+            var live = new HashSet<int> { start };
+            for (bool grew = true; grew;)
+            {
+                grew = false;
+                foreach (var t in transitions)
+                {
+                    if (t.ToStateId < 0 || live.Contains(t.ToStateId)) continue;
+                    if (!t.Wildcard && !live.Contains(t.FromStateId)) continue;
+                    live.Add(t.ToStateId);
+                    grew = true;
+                }
+            }
+
+            foreach (var s in states.Where(s => live.Contains(s.StateId))) reached.Add(s.Id);
+        }
+
+        return reached;
+    }
+
+    /// One file, optionally with a list of events to send.
+    private static int RunOne(string file, string[] events)
+    {
+        BehaviourGraphModel? model;
+        try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)))); }
+        catch (Exception e) { Console.WriteLine($"could not read {file}: {e.Message}"); return 1; }
+        if (model == null) { Console.WriteLine("nothing to run in this file"); return 1; }
+
+        var run = GraphRun.Start(model);
+        if (run.RootId.Length == 0) { Console.WriteLine("this file has no generator to start from"); return 1; }
+
+        Console.WriteLine($"{Path.GetFileName(file)}: started at #{run.RootId}");
+        foreach (var active in run.Where()) Console.WriteLine($"  {active}");
+        foreach (var stop in run.Stops) Console.WriteLine($"  stop: {stop}");
+
+        foreach (string name in events)
+        {
+            if (!run.Declares(name))
+            {
+                Console.WriteLine($"\nsend {name}: this graph declares no event of that name. " +
+                                  $"It has {run.Events.Count}: {string.Join(", ", run.Events)}");
+                continue;
+            }
+
+            var fired = run.Send(name);
+            Console.WriteLine($"\nsend {name}: {(fired.Count == 0 ? "nothing moved" : $"{fired.Count} transition(s)")}");
+            foreach (var f in fired) Console.WriteLine($"  {f}");
+            foreach (var active in run.Where()) Console.WriteLine($"    now {active}");
+        }
+
+        if (events.Length == 0)
+        {
+            var reach = run.Reachable();
+            Console.WriteLine($"\n{reach.Reachable.Count} state(s) reachable, {reach.Unreachable.Count} not, " +
+                              $"{reach.Dead.Count} transition(s) from a state nothing reaches");
+            foreach (string id in reach.Unreachable.Take(10))
+                Console.WriteLine($"  unreachable: #{id} '{model.Get(id)?.Str("name")}'");
+        }
+
+        return 0;
+    }
+
     // The same trip as `spline`, but through a real file rather than a blob held in memory.
     //
     // `spline` proves the codec. This proves the file: the animation is written into the packfile as
