@@ -3,6 +3,28 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, the graph runs in the window
+
+The stepper landed as `symrm run` and nowhere a person could see it. Now it is on the Graph tab.
+
+Under the canvas is a Send event box, a dropdown of the graph's own declared events, a Send button and
+a Restart. Sending an event lights the states that go active with a teal glow, several at once because
+several machines run at the same time, and moves them as events fire. A list beside it names every
+running machine and the state it is in; clicking one jumps the canvas to it. Opening a project or
+character file, which has no graph, says so rather than pretending to run one.
+
+The event is a dropdown of declared events rather than a free text box on purpose. An event the file
+never declares cannot move anything, so offering to send one would only produce "nothing happened" for
+a reason the box hid.
+
+Checked in the window rather than only in `symrm`: opening Dogmeat starts 13 machines running, lights
+13 states, and offers 297 events, and sending events moves a state, with and without Java. The legend
+gained the teal glow so every mark the canvas draws is still named there.
+
+What this still does not do is time. A transition blends over a duration and none of that is stepped
+yet, so the answer is which state you land in, not what the blend looks like part way. That is the
+rest of #37.
+
 ## 2026-08-08, the graph can be run
 
 Everything in this tool was static. The canvas said a transition listens for `StartOpen`, and whether

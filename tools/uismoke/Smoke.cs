@@ -176,11 +176,12 @@ public static class Smoke
 
         Check("the node canvas exists", 1, canvases);
         Check("the skeleton viewport exists", 1, viewports);
-        Check("the tree, problem, symbol, chain, animation, clip and compare grids exist", 7, grids.Count);
+        Check("the tree, problem, running, symbol, chain, animation, clip and compare grids exist", 8, grids.Count);
 
-        // The problem list is the one that starts hidden: an empty box under the canvas before any
-        // check has run would read as a check that found nothing.
-        Check("the problem list is hidden until a check has run", 1, grids.Count(g => !g.IsVisible));
+        // Two grids start hidden: the problem list, and the running list. An empty box under the
+        // canvas before a check or a run would read as one that found nothing.
+        Check("the problem and running lists are hidden until they have something to show", 2,
+            grids.Count(g => !g.IsVisible));
         foreach (string expected in new[]
                  { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
                    "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
@@ -207,7 +208,7 @@ public static class Smoke
                      { "State machine", "State", "Transitions", "Clip", "Blend", "Modifier",
                        "Solid: holds", "Dashed: transition", "Dashed pink: from this state",
                        "any: an event",
-                       "Start", "Red outline", "Amber outline" })
+                       "Start", "Teal glow: running now", "Red outline", "Amber outline" })
                 CheckTrue($"the legend explains {mark}", said.Contains(mark));
 
             legendButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
@@ -312,6 +313,50 @@ public static class Smoke
                 int drawn = Find<GraphView>(window).First().DrawnIds.Count;
                 Console.WriteLine($"        canvas: {drawn} node(s) drawn");
                 CheckTrue($"{name}: the canvas draws the graph", drawn > 0);
+            }
+
+            // The run panel: a graph file starts stepping, lights its active states, and moves them
+            // when sent an event. A project or character file has no graph, so it must not pretend to
+            // run one. This is the window half of #37; the reachability behind it is checked headless
+            // in symrm, so here the question is only whether the panel is wired to it.
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                var canvas = Find<GraphView>(window).First();
+
+                if (window.RunReady)
+                {
+                    CheckTrue($"{name}: opening a graph starts it running", window.RunningCount > 0);
+                    CheckTrue($"{name}: and lights its active states on the canvas", canvas.ActiveIds.Count > 0);
+                    CheckTrue($"{name}: the running list is shown once there is something in it",
+                              window.RunningVisible);
+                    Console.WriteLine($"        run: {window.RunningCount} machine(s) running, " +
+                                      $"{canvas.ActiveIds.Count} state(s) lit, {window.RunEventCount} event(s) to send");
+
+                    // Sending an event either moves something or does not, and both are fine; what is
+                    // checked is that the panel survives it and stays consistent with the canvas. A
+                    // real move is looked for across the declared events so a file whose first event
+                    // happens to be inert still exercises the moving path.
+                    if (window.RunEventCount > 0)
+                    {
+                        var before = canvas.ActiveIds.ToHashSet();
+                        bool moved = false;
+                        foreach (string ev in window.RunEvents)
+                        {
+                            window.SendEventForTest(ev);
+                            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                            if (!before.SetEquals(canvas.ActiveIds)) { moved = true; break; }
+                        }
+                        CheckTrue($"{name}: the canvas stays lit after sending events", canvas.ActiveIds.Count > 0);
+                        Console.WriteLine($"        run: sending events {(moved ? "moved a state" : "moved nothing, which some graphs do")}");
+                    }
+                }
+                else
+                {
+                    CheckTrue($"{name}: a file with no graph does not pretend to run one",
+                              window.RunningCount == 0 && canvas.ActiveIds.Count == 0);
+                    Console.WriteLine("        run: not a runnable graph, nothing lit");
+                }
             }
 
             // The fields have to be reachable from the canvas, not only from the tree. A node's
