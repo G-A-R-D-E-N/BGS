@@ -28,6 +28,13 @@ public static class Ux
     /// ownership wires it is drawn over.
     public static readonly Color RouteColour = Color.Parse("#58D0C0");
 
+    /// An event that enters a state from any state of its machine, written on the state.
+    ///
+    /// Its own colour rather than the warning amber it started as. A modifier's wires are orange and
+    /// there are a great many of them crossing a behaviour graph, so amber text on a node read as
+    /// part of that traffic. Nothing else on the canvas is pink.
+    public static readonly Color Wildcard = Color.Parse("#F778BA");
+
     /// The outline drawn under a line that has been picked out, so lines running together stay
     /// countable instead of merging into one band.
     ///

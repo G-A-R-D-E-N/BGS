@@ -304,9 +304,34 @@ public class MainWindow : Window
             legendButton.Content = _legend.IsVisible ? "Hide legend" : "Legend";
         };
 
+        // A behaviour lays out several screens across. Without a way back to the whole of it, being
+        // anywhere in particular means being lost, and the answer to a graph feeling overwhelming is
+        // usually being able to see all of it rather than there being less of it.
+        var fitAll = Ux.Secondary("Fit all");
+        fitAll.Click += (_, _) =>
+        {
+            _graph.ClearHighlight();
+            _graph.FrameAll();
+        };
+
+        // With a node picked out, its own neighbourhood filling the view. This is the one that makes
+        // a big file workable: a machine and its states are a readable picture, and the rest of the
+        // file being off screen is the point rather than a loss.
+        var fitPicked = Ux.Secondary("Fit selection");
+        fitPicked.Click += (_, _) =>
+        {
+            if (_graph.SelectedId.Length > 0 && _graph.HighlightId.Length == 0)
+                HighlightPaths(_graph.SelectedId);
+            _graph.FrameRelated();
+        };
+
         var top = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-        DockPanel.SetDock(legendButton, Dock.Left);
-        top.Children.Add(legendButton);
+        foreach (var button in new[] { legendButton, fitAll, fitPicked })
+        {
+            button.Margin = new Thickness(0, 0, 8, 0);
+            DockPanel.SetDock(button, Dock.Left);
+            top.Children.Add(button);
+        }
         top.Children.Add(new Panel());
 
         var panel = new DockPanel { LastChildFill = true };
@@ -341,7 +366,7 @@ public class MainWindow : Window
     /// read as the answer rather than checked against the thing it describes.
     private Control BuildLegend()
     {
-        var body = new StackPanel { Spacing = 4, Width = 260 };
+        var body = new StackPanel { Spacing = 4, Width = 284 };
 
         void Heading(string text)
         {
@@ -418,7 +443,7 @@ public class MainWindow : Window
         Swatch(Wire(Ux.RouteColour, true), "Dashed: transition",
                "Send the event written on it and the machine moves along the arrow. This is the " +
                "thing you cannot read anywhere else.");
-        Swatch(Wire(Ux.Warn, true), "Dashed orange: from this state",
+        Swatch(Wire(Ux.Wildcard, true), "Dashed pink: from this state",
                "A wildcard, shown leaving the one state you highlighted. Only appears while a state " +
                "is picked out, because that is the only time it has one place to start.");
 
@@ -426,25 +451,30 @@ public class MainWindow : Window
         Swatch(new TextBlock
         {
             Text = "any:",
-            FontSize = 9,
-            Foreground = new SolidColorBrush(Ux.Warn),
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Ux.Wildcard),
         }, "any: an event", "This state can be entered from any state of its machine, on that event. " +
                             "Written on the state rather than drawn as a line, because a wildcard " +
                             "fires from every state and so has no one place a line could start.");
 
+        // Drawn at the size it is on a node rather than the size the row would like. The first
+        // version squeezed it into a twelve pixel strip with eight point text, which is the one
+        // sample in the legend nobody could read, and the point of a sample is that it is
+        // recognisable when you next meet it.
         Swatch(new Border
         {
-            Height = 12,
             CornerRadius = new CornerRadius(3),
             Background = new SolidColorBrush(Ux.Good),
+            Padding = new Thickness(5, 2),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
             Child = new TextBlock
             {
                 Text = "start",
-                FontSize = 8,
+                FontSize = 11,
+                FontWeight = FontWeight.SemiBold,
                 Foreground = Ux.BaseBrush,
-                Margin = new Thickness(3, 0),
             },
-        }, "Start", "The state its machine begins in.");
+        }, "Start", "The state its machine begins in. One per machine, at the top right of the box.");
 
         Swatch(Wire(Ux.Bad, false), "Red outline",
                "Check graph found something wrong here. The list under the canvas says what.");
