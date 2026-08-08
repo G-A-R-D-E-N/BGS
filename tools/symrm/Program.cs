@@ -56,6 +56,7 @@ public static class Program
             case "panel": return Panel(argv);
             case "paths": return Paths(argv);
             case "elements": return Elements(argv);
+            case "nesting": return Nesting(argv);
             case "objects": return Objects(argv);
             case "capacity": return Capacity(argv);
             case "grow": return Grow(argv);
@@ -173,6 +174,18 @@ public static class Program
               hkxpack's by its own schema, so agreement across a whole file is what says the offsets
               are right rather than plausible. Needs Java and the jar. Exits non zero on any
               disagreement.
+
+          dotnet run --project tools/symrm/symrm.csproj -- elements <file.hkx | folder>
+              The line the panel puts at the head of each transition, so they can be read against
+              the file's own XML. Needs no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- nesting <file.hkx | folder>
+              How much of a machine's routing an arrow from one state to another can carry: how
+              many transitions are wildcard, how many carry a nested state id, how many
+              transitions a machine holds, and whether a nested id resolves to a real state of the
+              machine under the state being entered. This is the measurement behind drawing
+              transitions on the canvas, so the decision can be rechecked rather than taken on
+              trust. Needs no Java.
 
           dotnet run --project tools/symrm/symrm.csproj -- paths <file.hkx | folder>
               Writes a sentinel through every field the panel shows, addressed by where the field
@@ -1651,6 +1664,168 @@ public static class Program
     ///
     /// It calls the same `PanelFields.For` the window calls, so what it reports is what is on
     /// screen rather than a second implementation of it.
+    /// How much of a state machine's routing an arrow from one state to another can actually carry.
+    ///
+    /// Drawing transitions on the canvas is only worth doing if a transition is mostly one state to
+    /// one state. Two things would make it not worth doing, and both are countable rather than
+    /// arguable:
+    ///
+    /// A `toNestedStateId` other than zero means the transition enters a state *and* sets the
+    /// machine inside that state to a particular state of its own. One arrow cannot say that, so
+    /// every such transition is either drawn as a stop or drawn wrongly.
+    ///
+    /// Density is the other. A machine with two hundred transitions in it draws as a hairball
+    /// whether or not each arrow is honest, so the count per machine decides whether labels can ever
+    /// be on screen at once or only ever on selection.
+    private static int Nesting(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        long transitions = 0, nestedTo = 0, nestedFrom = 0, wildcards = 0, danglingTarget = 0;
+        long machines = 0, statesTotal = 0, nestedMachines = 0;
+        long nestedResolves = 0, nestedUnresolved = 0, nestedNotAMachine = 0;
+        var nestedHolds = new Dictionary<string, int>(StringComparer.Ordinal);
+        var perMachine = new List<int>();
+        int filesRead = 0, filesFailed = 0;
+
+        foreach (string file in files)
+        {
+            BehaviourGraphModel model;
+            try
+            {
+                model = BehaviourGraphModel.Parse(NativeXml.From(File.ReadAllBytes(file)));
+            }
+            catch
+            {
+                filesFailed++;
+                continue;
+            }
+            filesRead++;
+
+            // A machine sitting in another machine's state, which is the hierarchy the graph already
+            // draws through ownership. Counted to say how common nesting is at all, separately from
+            // whether a single transition crosses a level.
+            var machineIds = model.Objects.Where(o => o.Class == "hkbStateMachine")
+                                          .Select(o => o.Id).ToList();
+            var nestedInside = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string id in machineIds)
+                foreach (string stateId in model.Get(id)!.Refs("states"))
+                {
+                    string? generator = model.Get(stateId)?.Ref("generator");
+                    if (generator != null && model.Get(generator)?.Class == "hkbStateMachine")
+                        nestedInside.Add(generator);
+                }
+
+            machines += machineIds.Count;
+            nestedMachines += nestedInside.Count;
+
+            foreach (string id in machineIds)
+            {
+                var states = StateEditor.States(model, id);
+                statesTotal += states.Count;
+                var known = states.Select(s => s.StateId).ToHashSet();
+
+                var rows = StateEditor.Transitions(model, id);
+                perMachine.Add(rows.Count);
+
+                foreach (var row in rows)
+                {
+                    transitions++;
+                    if (row.Wildcard) wildcards++;
+                    if (!known.Contains(row.ToStateId)) danglingTarget++;
+                    if (row.ToNestedStateId == 0) continue;
+
+                    nestedTo++;
+
+                    // What a nested id is has to be established rather than assumed. The reading
+                    // being tested is that it names a state of the machine sitting inside the state
+                    // being entered. If that holds for every one of them, the reading is right; if
+                    // it holds for none, it means something else entirely and nothing should be
+                    // drawn for it.
+                    string? entered = states.FirstOrDefault(s => s.StateId == row.ToStateId)?.GeneratorRef;
+                    var inner = model.Get(entered?.TrimStart('#'));
+
+                    // A machine is often not the state's generator directly: a modifier generator or
+                    // a bone switch wraps it, and looking only at the immediate generator counts
+                    // those as unexplained. Walk the wrappers before giving up.
+                    var machine = MachineUnder(model, inner, 0);
+                    if (machine == null)
+                    {
+                        nestedNotAMachine++;
+                        string held = inner?.Class ?? "nothing";
+                        nestedHolds[held] = nestedHolds.GetValueOrDefault(held) + 1;
+                        continue;
+                    }
+
+                    var innerStates = StateEditor.States(model, machine.Id).Select(s => s.StateId).ToHashSet();
+                    if (innerStates.Contains(row.ToNestedStateId)) nestedResolves++;
+                    else nestedUnresolved++;
+                }
+
+                // fromNestedStateId sits on the same struct and the reader does not surface it, so
+                // it is read here directly rather than assumed to be zero.
+                foreach (var array in model.Objects)
+                {
+                    if (array.Class != "hkbStateMachineTransitionInfoArray") continue;
+                    if (ElementSummary.MachineOwning(model, array.Id) != id) continue;
+                    if (!array.StructLists.TryGetValue("transitions", out var elements)) continue;
+
+                    foreach (var element in elements)
+                        if (element.TryGetValue("fromNestedStateId", out var from) &&
+                            int.TryParse(from, out int value) && value != 0) nestedFrom++;
+                }
+            }
+        }
+
+        perMachine.Sort();
+        int median = perMachine.Count == 0 ? 0 : perMachine[perMachine.Count / 2];
+        int busiest = perMachine.Count == 0 ? 0 : perMachine[^1];
+        int p90 = perMachine.Count == 0 ? 0 : perMachine[(int)(perMachine.Count * 0.9)];
+
+        Console.WriteLine($"\n{filesRead} file(s) read, {filesFailed} that would not parse");
+        Console.WriteLine($"  {machines,7} state machine(s), {nestedMachines,7} of them sitting in " +
+                          $"another machine's state ({Percent(nestedMachines, machines)})");
+        Console.WriteLine($"  {statesTotal,7} state(s)");
+        Console.WriteLine($"  {transitions,7} transition(s)");
+        Console.WriteLine($"  {wildcards,7} of them wildcard, fired from any state ({Percent(wildcards, transitions)})");
+        Console.WriteLine($"  {nestedTo,7} with a toNestedStateId, which one arrow cannot say ({Percent(nestedTo, transitions)})");
+        Console.WriteLine($"          {nestedResolves,7} of those name a real state of the machine inside the state entered");
+        Console.WriteLine($"          {nestedUnresolved,7} name a state that machine does not have");
+        Console.WriteLine($"          {nestedNotAMachine,7} where the state entered leads to no machine at all");
+        foreach (var (held, count) in nestedHolds.OrderByDescending(p => p.Value))
+            Console.WriteLine($"                  {count,5}  {held}");
+        Console.WriteLine($"  {nestedFrom,7} with a fromNestedStateId ({Percent(nestedFrom, transitions)})");
+        Console.WriteLine($"  {danglingTarget,7} whose toStateId is not a state of the machine ({Percent(danglingTarget, transitions)})");
+        Console.WriteLine($"  transitions per machine: median {median}, 90th percentile {p90}, busiest {busiest}");
+        return 0;
+    }
+
+    /// The state machine a state's generator leads to, through whatever wraps it. A machine is often
+    /// not the generator itself: a modifier generator or a bone switch holds it, and a behaviour
+    /// reference generator loads another file entirely and leads nowhere this file can see.
+    private static HkObject? MachineUnder(BehaviourGraphModel model, HkObject? generator, int depth)
+    {
+        if (generator == null || depth > 6) return null;
+        if (generator.Class == "hkbStateMachine") return generator;
+
+        foreach (string field in new[] { "generator", "pDefaultGenerator", "pBlenderGenerator" })
+        {
+            var next = model.Get(generator.Ref(field));
+            var found = MachineUnder(model, next, depth + 1);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private static string Percent(long part, long whole) =>
+        whole == 0 ? "n/a" : $"{100.0 * part / whole:0.00}%";
+
     /// What the panel puts at the head of each element of an array of structs, printed.
     ///
     /// The panel collapses an element behind this line, so a wrong line hides a wrong element rather

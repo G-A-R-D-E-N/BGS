@@ -79,12 +79,40 @@ A second edge layer, drawn distinctly from the ownership wires: state info to ta
 labelled with the event name. Wildcard transitions originate at the state machine node, since they
 fire from any state.
 
-Labels are gated by zoom and by selection. A weapon behaviour holds thousands of transitions and
-drawing every label always would be unreadable; selecting a state lights its incoming and outgoing
-routes while the rest dims, which is what the existing highlight already does for structure.
+Labels are gated by zoom and by selection. Selecting a state lights its incoming and outgoing routes
+while the rest dims, which is what the existing highlight already does for structure.
 
-`toNestedStateId` targets are drawn as a marked stop rather than a guessed edge, following the rule
-in #37: what we cannot model honestly, we draw as a stop.
+#### What the corpus says about nesting
+
+The objection to drawing this at all was nesting: a transition can enter a state and set the machine
+inside it at the same time, and one arrow cannot say that. Measured over all 531 vanilla behaviours
+with `symrm nesting`:
+
+| | |
+|---|---|
+| transitions | 6,394 |
+| with a `toNestedStateId` | 230 (3.60%) |
+| with a `fromNestedStateId` | 65 (1.02%) |
+| wildcard, fired from any state | 2,398 (37.50%) |
+| whose `toStateId` is not a state of its machine | 0 |
+| transitions per machine | median 2, 90th percentile 8, busiest 168 |
+
+Two things follow, and both are the opposite of what was feared.
+
+Density is not a problem. Half of all machines hold two transitions or fewer and nine in ten hold
+eight or fewer. One machine holds 168, which is what selection gating is for.
+
+Nesting is not a wall. `toNestedStateId` was confirmed rather than assumed: of the 230, **all 230**
+name a real state of the state machine reachable under the state being entered, and none name a
+state that machine does not have. The walk has to go through wrapper generators to find it, since a
+machine is often held by a modifier generator or a bone switch rather than being the state's
+generator directly. Looking only one level down accounts for 81 of them and makes the other 149 look
+unexplained, which is what a first pass reported.
+
+So a nested transition is fully resolvable and is drawn as a two hop route, entered state then
+nested state, rather than as a stop. Nothing here needs to be guessed, so nothing is drawn as a
+stop. `hkbBehaviorReferenceGenerator`, which loads another file, remains a genuine stop; that is a
+different case and is unaffected by this.
 
 ### 5. Colours and the start state
 
