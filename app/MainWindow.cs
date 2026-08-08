@@ -418,11 +418,20 @@ public class MainWindow : Window
         Swatch(Wire(Ux.RouteColour, true), "Dashed: transition",
                "Send the event written on it and the machine moves along the arrow. This is the " +
                "thing you cannot read anywhere else.");
-        Swatch(Wire(Ux.Warn, true), "Dashed orange: from anywhere",
-               "Fires from any state in that machine, not from one. Kept faint until you highlight " +
-               "the machine, because there are usually a lot of them.");
+        Swatch(Wire(Ux.Warn, true), "Dashed orange: from this state",
+               "A wildcard, shown leaving the one state you highlighted. Only appears while a state " +
+               "is picked out, because that is the only time it has one place to start.");
 
         Heading("Marks");
+        Swatch(new TextBlock
+        {
+            Text = "any:",
+            FontSize = 9,
+            Foreground = new SolidColorBrush(Ux.Warn),
+        }, "any: an event", "This state can be entered from any state of its machine, on that event. " +
+                            "Written on the state rather than drawn as a line, because a wildcard " +
+                            "fires from every state and so has no one place a line could start.");
+
         Swatch(new Border
         {
             Height = 12,
@@ -445,8 +454,9 @@ public class MainWindow : Window
         Heading("Getting around");
         foreach (string tip in new[]
                  {
-                     "Right click a box, then Highlight the paths of, to dim everything it is not " +
-                     "joined to. Escape clears it.",
+                     "Right click a state, then Highlight the paths of, to see every way out of it: " +
+                     "its own transitions and its machine's wildcards, all leaving that state. " +
+                     "Escape clears it.",
                      "Labels appear where there is room for them. Zoom in with the wheel to see more.",
                      "Drag with the middle button to move around. Double click a box to edit its fields.",
                  })

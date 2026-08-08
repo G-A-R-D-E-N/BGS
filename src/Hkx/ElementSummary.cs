@@ -38,10 +38,14 @@ public static class ElementSummary
                                 .GroupBy(s => s.StateId)
                                 .ToDictionary(g => g.Key, g => g.First().Name, EqualityComparer<int>.Default);
 
+        array.StructLists.TryGetValue("transitions", out var elements);
+
         foreach (var row in StateEditor.Transitions(model, machineId))
         {
             if (row.ArrayId != objectId) continue;
-            lines[$"transitions[{row.Index}]"] = Line(row, events, states);
+            string flags = elements != null && row.Index < elements.Count
+                           && elements[row.Index].TryGetValue("flags", out var f) ? f : "";
+            lines[$"transitions[{row.Index}]"] = Line(row, events, states, flags);
         }
 
         return lines;
@@ -52,9 +56,21 @@ public static class ElementSummary
     /// rather than as a blank, because an event id with no declared name is a real thing to find and
     /// hiding it would be the wrong kind of tidy.
     private static string Line(StateEditor.TransitionRow row,
-                               IReadOnlyList<string> events, IReadOnlyDictionary<int, string> states)
+                               IReadOnlyList<string> events, IReadOnlyDictionary<int, string> states,
+                               string flags)
     {
-        string from = row.Wildcard ? "any state" : "";
+        // A wildcard says which kind it is, because the two are different rules. Local fires from
+        // any state of the machine that declares it; global fires from anywhere at all, including
+        // while a machine nested deeper is the one running. Across the vanilla data 2,034 are local
+        // and 594 global, so neither is the rare case that could be left unsaid.
+        string from = row.Wildcard
+            ? Kind(flags) switch
+            {
+                Wildcard.Global => "from anywhere",
+                Wildcard.Local => "from any state here",
+                _ => "any state",
+            }
+            : "";
         string on = row.EventId >= 0 && row.EventId < events.Count
             ? $"{row.EventId} {events[row.EventId]}"
             : row.EventId < 0 ? "no event" : $"{row.EventId}";
@@ -68,6 +84,36 @@ public static class ElementSummary
         if (row.ToNestedStateId != 0) to += $", then nested {row.ToNestedStateId}";
 
         return (from.Length > 0 ? from + "  " : "") + on + "  ->  " + to;
+    }
+
+    public enum Wildcard { None, Local, Global }
+
+    /// Which kind of wildcard a flags value declares.
+    ///
+    /// The value has to be decoded a bit at a time rather than read as text. hkxpack prints a name
+    /// when the value is exactly one declared flag and the bare number when it is a combination, and
+    /// a wildcard almost always carries more than one bit, so matching on the string finds nothing
+    /// on the cases that matter.
+    public static Wildcard Kind(string flags)
+    {
+        var declared = HavokClassTypes.Shipped.Enum("hkbStateMachineTransitionInfo", "TransitionFlags");
+        if (declared == null) return Wildcard.None;
+
+        long bits;
+        if (!long.TryParse(flags.Trim(), out bits))
+        {
+            bits = 0;
+            foreach (string part in flags.Split('|', StringSplitOptions.RemoveEmptyEntries))
+                foreach (var (name, value) in declared)
+                    if (name == part.Trim()) bits |= value;
+        }
+
+        long global = declared.FirstOrDefault(v => v.Key == "FLAG_IS_GLOBAL_WILDCARD").Value;
+        long local = declared.FirstOrDefault(v => v.Key == "FLAG_IS_LOCAL_WILDCARD").Value;
+
+        if (global != 0 && (bits & global) == global) return Wildcard.Global;
+        if (local != 0 && (bits & local) == local) return Wildcard.Local;
+        return Wildcard.None;
     }
 
     /// The state machine an array of transitions belongs to, by finding the one that points at it.

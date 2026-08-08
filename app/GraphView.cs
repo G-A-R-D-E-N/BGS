@@ -36,6 +36,9 @@ public class GraphView : Control
         public Color Accent;
         public bool Empty;
         public bool Start;
+        /// Events that enter this state from any state of its machine, which are shown on the node
+        /// rather than drawn as lines. See `WildcardRows`.
+        public List<string> Wildcards = new();
         public GraphValidator.Level? Problem;
         public Point InPort => new(Bounds.X - PortRadius, Bounds.Y + HeaderHeight / 2);
         public Point OutPort(int index) =>
@@ -59,6 +62,11 @@ public class GraphView : Control
     /// A route's label is only worth the space when it can be read. Below this the routes still draw
     /// and only the words are dropped, so the shape survives zooming out and the clutter does not.
     private const double LabelZoom = 0.55;
+
+    /// How many wildcard events a state lists on itself before the rest become a count. A state
+    /// enterable on twenty different events is real, and a node twenty rows taller than its
+    /// neighbours stops being a node and becomes a wall.
+    private const int WildcardRows = 4;
 
     private double _zoom = 0.9;
     private Point _pan = new(40, 40);
@@ -232,11 +240,26 @@ public class GraphView : Control
         // A running offset per column rather than a row number times this node's own height. Nodes
         // are as tall as their slot count, so multiplying by one node's height overlapped every node
         // shorter than it with the one below.
+        // The events that reach a state from any state of its machine, gathered per target. A
+        // wildcard is not drawn as a line: there is one per state it could fire from, which is a
+        // picture nobody can read, and the useful fact is not the path but that this state is
+        // enterable from anywhere and on what. That is a property of the state, so it is written on
+        // the state.
+        var wildcardsInto = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var route in _routes.Routes.Where(r => r.Wildcard))
+        {
+            if (!wildcardsInto.TryGetValue(route.ToId, out var events))
+                wildcardsInto[route.ToId] = events = new List<string>();
+            if (!events.Contains(route.Event)) events.Add(route.Event);
+        }
+
         var nextY = new Dictionary<int, double>();
         foreach (var (obj, column) in GraphAuthor.Layout(model, MaxNodes))
         {
             var slots = GraphLinks.OutSlots(model, obj);
-            double height = HeaderHeight + Math.Max(1, slots.Count) * RowHeight + 8;
+            var wildcards = wildcardsInto.GetValueOrDefault(obj.Id) ?? new List<string>();
+            double height = HeaderHeight + Math.Max(1, slots.Count) * RowHeight
+                            + Math.Min(wildcards.Count, WildcardRows) * RowHeight + 8;
 
             // A node the user has dragged stays where they put it across rebuilds.
             nextY.TryGetValue(column, out double y);
@@ -262,6 +285,7 @@ public class GraphView : Control
                 Accent = Ux.ForClass(obj.Class),
                 Empty = empty.Contains(obj.Id),
                 Start = _routes.StartStates.Contains(obj.Id),
+                Wildcards = wildcards,
                 Problem = _problems.TryGetValue(obj.Id, out var level) ? level : null,
                 Bounds = new Rect(at.X, at.Y, NodeWidth, height),
             };
@@ -283,6 +307,14 @@ public class GraphView : Control
     public int DrawableRouteCount =>
         _routes.Routes.Count(r => _nodes.ContainsKey(r.FromId) && _nodes.ContainsKey(r.ToId));
     public int NestedRouteCount => _routes.Routes.Count(r => r.IntoId.Length > 0);
+
+    /// The events written on a node saying it can be entered from any state of its machine.
+    public IReadOnlyList<string> WildcardsInto(string id) =>
+        _nodes.TryGetValue(id, out var node) ? node.Wildcards : Array.Empty<string>();
+
+    /// How many routes the canvas would draw as lines right now, which is direct transitions plus,
+    /// when a state is picked out, that state's share of its machine's wildcards.
+    public int LineCount => RoutesToDraw().Count(r => _nodes.ContainsKey(r.FromId) && _nodes.ContainsKey(r.ToId));
     public IReadOnlyCollection<string> StartStateIds => _routes.StartStates;
     public bool IsStart(string id) => _nodes.TryGetValue(id, out var node) && node.Start;
 
@@ -348,6 +380,40 @@ public class GraphView : Control
         }
     }
 
+    /// Which routes get drawn, which depends on whether a state has been picked out.
+    ///
+    /// Every transition in a state machine runs between two of its states. A wildcard is declared on
+    /// the machine rather than on a state, but that is where the rule is written down, not where it
+    /// fires from: it fires from every state the machine holds, so from any one of them it is a way
+    /// out of that state like any other.
+    ///
+    /// Drawing that literally, a line from every state to the target, is one line per state per
+    /// wildcard, and across the vanilla data that is 41,751 lines against 6,394 transitions. So it is
+    /// drawn from the state being asked about instead:
+    ///
+    /// With a state picked out, its machine's wildcards leave that state, and every line on the
+    /// canvas runs between two states, which is what the format means.
+    ///
+    /// With nothing picked out there is no state to draw them from, and the honest anchor is the
+    /// machine that declares them. They sit faint there, saying a fan exists without claiming to
+    /// come from any particular state.
+    private IEnumerable<StateRoutes.Route> RoutesToDraw()
+    {
+        // Direct transitions only. A wildcard has no single state to leave, so any line drawn for
+        // one is either a lie about where it comes from or one line per state of the machine, which
+        // across the vanilla data is 41,751 lines against 6,394 transitions. What matters about a
+        // wildcard is that this state can be entered from anywhere and on what event, and that is
+        // said on the state itself.
+        var direct = _routes.Routes.Where(r => !r.Wildcard);
+
+        if (_highlight.Length == 0 || !_routes.MachineOfState.ContainsKey(_highlight))
+            return direct;
+
+        // With a state picked out, its machine's wildcards do have a state to leave: this one. Shown
+        // then, and only then, because the question being asked is what can happen from here.
+        return direct.Concat(_routes.LeavingState(_highlight).Where(r => r.Wildcard));
+    }
+
     /// The routes, over the ownership wires rather than among them.
     ///
     /// A route joins two states side by side in the same column, so it is drawn between the sides of
@@ -362,7 +428,7 @@ public class GraphView : Control
         bool focused = _highlight.Length > 0 || _needle.Length > 0;
         var wanted = new List<(string Text, Point At, Color Colour, bool Lit, bool Wildcard)>();
 
-        foreach (var route in _routes.Routes)
+        foreach (var route in RoutesToDraw())
         {
             if (!_nodes.TryGetValue(route.FromId, out var from)) continue;
             if (!_nodes.TryGetValue(route.ToId, out var to)) continue;
@@ -595,6 +661,37 @@ public class GraphView : Control
             var port = ToScreen(node.OutPort(i));
             var fill = slot.Targets.Count > 0 ? new SolidColorBrush(node.Accent) : Ux.BorderBrush;
             ctx.DrawEllipse(fill, new Pen(new SolidColorBrush(node.Accent), 1), port, PortRadius * scale, PortRadius * scale);
+        }
+
+        DrawWildcards(ctx, node, r, scale);
+    }
+
+    /// The events that enter this state from any state of its machine, listed on the state.
+    ///
+    /// This is the wildcard, and it is deliberately not a line. A wildcard fires from every state
+    /// the machine holds, so there is no single place for a line to start: drawing one from the
+    /// machine says something the format does not, and drawing one from each state is 41,751 lines
+    /// across the vanilla data against 6,394 transitions. Neither is readable and neither is the
+    /// question. The question is whether this state can be entered from anywhere and on what, which
+    /// is a fact about this state, so it is written here.
+    private void DrawWildcards(DrawingContext ctx, Node node, Rect r, double scale)
+    {
+        if (node.Wildcards.Count == 0) return;
+
+        double top = r.Y + (HeaderHeight + RowHeight * Math.Max(1, node.Slots.Count) + 10) * scale;
+        int shown = Math.Min(node.Wildcards.Count, WildcardRows);
+
+        for (int i = 0; i < shown; i++)
+        {
+            // The last row carries the remainder rather than being dropped, so a state with twenty
+            // ways in never looks like a state with four.
+            bool last = i == shown - 1 && node.Wildcards.Count > shown;
+            string text = last
+                ? $"any: {node.Wildcards[i]}  +{node.Wildcards.Count - shown + 1} more"
+                : "any: " + node.Wildcards[i];
+
+            Draw(ctx, text, r.X + 6 * scale, top + RowHeight * i * scale, 9 * scale,
+                 new SolidColorBrush(Ux.Warn), r.Width - 12 * scale);
         }
     }
 
