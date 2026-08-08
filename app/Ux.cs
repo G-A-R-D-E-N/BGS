@@ -21,6 +21,12 @@ public static class Ux
     public static readonly Color TextCode = Color.Parse("#00A0DA");
     public static readonly Color Bad = Color.Parse("#FF5555");
     public static readonly Color Warn = Color.Parse("#E0A030");
+    public static readonly Color Good = Color.Parse("#3FB950");
+
+    /// A transition on the canvas. Not a class colour: a route is an event the game sends rather
+    /// than one object holding another, so it has to read as a different kind of thing from the
+    /// ownership wires it is drawn over.
+    public static readonly Color RouteColour = Color.Parse("#58D0C0");
 
     public static readonly IBrush BaseBrush = new SolidColorBrush(Base);
     public static readonly IBrush CardBrush = new SolidColorBrush(Card);

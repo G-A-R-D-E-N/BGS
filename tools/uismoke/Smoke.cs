@@ -195,6 +195,46 @@ public static class Smoke
                     Check($"{name}: and clearing it releases the canvas", "", canvas.HighlightId);
                 }
 
+                // Which event moves which state to which state, which is the thing the canvas has
+                // never been able to show: none of it is a reference in the file, so the ownership
+                // wires cannot carry it.
+                {
+                    var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
+                    var routes = OpenCommonwealth.Services.Hkx.StateRoutes.Of(model);
+
+                    Console.WriteLine($"        routes: {canvas.RouteCount} in the file, " +
+                                      $"{canvas.DrawableRouteCount} with both ends on the canvas, " +
+                                      $"{canvas.NestedRouteCount} nested, " +
+                                      $"{canvas.StartStateIds.Count} start state(s)");
+
+                    Check($"{name}: the canvas reads the same routes as the file",
+                          routes.Routes.Count, canvas.RouteCount);
+                    CheckTrue($"{name}: and there are some to draw", canvas.RouteCount > 0);
+
+                    // A route the canvas cannot draw is one whose ends are missing from it, which
+                    // would make the picture quietly incomplete rather than visibly wrong.
+                    Check($"{name}: every route has both ends on the canvas",
+                          canvas.RouteCount, canvas.DrawableRouteCount);
+
+                    // A machine starts somewhere, and which state that is cannot be read off the
+                    // picture without the badge.
+                    CheckTrue($"{name}: a start state is marked", canvas.StartStateIds.Count > 0);
+                    CheckTrue($"{name}: and the node itself knows it is one",
+                              canvas.StartStateIds.All(id => !canvas.DrawnIds.Contains(id) || canvas.IsStart(id)));
+
+                    // Picking a state out has to bring what it routes to with it. Ownership alone
+                    // answers what a state contains and says nothing about what enters or leaves it.
+                    var routed = routes.Routes.FirstOrDefault(r => canvas.DrawnIds.Contains(r.FromId) &&
+                                                                   canvas.DrawnIds.Contains(r.ToId));
+                    if (routed != null)
+                    {
+                        canvas.Highlight(routed.FromId);
+                        CheckTrue($"{name}: highlighting a state keeps what it routes to lit",
+                                  !canvas.IsDimmed(routed.ToId));
+                        canvas.ClearHighlight();
+                    }
+                }
+
                 // A transition array is the object the flat panel was worst at: every element
                 // carries the same field names, so five transitions arrived as eighty boxes with
                 // nothing saying where one ended and the next began. Each element is now behind a
