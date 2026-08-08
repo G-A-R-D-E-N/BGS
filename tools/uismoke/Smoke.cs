@@ -24,6 +24,11 @@ public static class Smoke
     /// gets answered without asking somebody to open the window and describe what they see.
     ///
     /// Usage: uismoke --png &lt;behaviour.hkx&gt; [out.png] [zoom] [focus node id]
+    ///
+    /// `--window` draws everything beside the canvas as well, which is where the properties panel
+    /// is. Focusing on a node also selects it, so that panel is showing the object the picture is
+    /// about rather than nothing. `--expand` opens the array element blocks, which start closed, so
+    /// a question about what one of a transition's boxes says can be answered from the picture.
     private static int Png(string[] args)
     {
         // Real drawing rather than the headless stub, which records that something was drawn and
@@ -89,6 +94,20 @@ public static class Smoke
 
             canvas.FocusOn(focus);
             canvas.Highlight(focus);
+
+            // Selecting as well as focusing. Highlighting says where a node is; it does not put the
+            // object in front of the panel, and a picture of the whole window drawn without this
+            // shows an empty panel beside a highlighted node.
+            window.SelectNode(focus);
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        }
+
+        // Element blocks are collapsed when the panel builds them, which is the point of grouping
+        // them. Opening them is the only way a picture can show what is inside one.
+        if (args.Contains("--expand"))
+        {
+            foreach (var block in Find<Expander>(window)) block.IsExpanded = true;
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         }
         // --fit leaves the zoom to the canvas, which is the whole point when what is being checked
         // is whether the fit button fits.
@@ -100,6 +119,12 @@ public static class Smoke
         {
             canvas.SetZoom(zoom);
         }
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        // Again, because selecting and expanding both add controls after the first pass and a
+        // bitmap is rendered from the last layout rather than from the tree.
+        drawn.Measure(size);
+        drawn.Arrange(new Rect(size));
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
         using var bitmap = new Avalonia.Media.Imaging.RenderTargetBitmap(
