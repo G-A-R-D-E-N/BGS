@@ -1754,7 +1754,11 @@ public static class Program
                     // A machine is often not the state's generator directly: a modifier generator or
                     // a bone switch wraps it, and looking only at the immediate generator counts
                     // those as unexplained. Walk the wrappers before giving up.
-                    var machine = MachineUnder(model, inner, 0);
+                    //
+                    // The canvas's own walk, not a second one written here: a measurement that says
+                    // every route resolves is worth nothing if the thing drawing the routes resolves
+                    // them differently.
+                    var machine = StateRoutes.MachineUnder(model, inner, 0);
                     if (machine == null)
                     {
                         nestedNotAMachine++;
@@ -1783,6 +1787,25 @@ public static class Program
             }
         }
 
+        // What the canvas will actually draw, counted the same way. A route that resolves in the
+        // measurement above and then does not come back from StateRoutes is a route the picture
+        // silently drops, which is the failure this is here to catch.
+        long drawable = 0, drawableNested = 0, startStates = 0;
+        foreach (string file in files)
+        {
+            try
+            {
+                var model = BehaviourGraphModel.Parse(NativeXml.From(File.ReadAllBytes(file)));
+                var routes = StateRoutes.Of(model);
+                drawable += routes.Routes.Count;
+                drawableNested += routes.Routes.Count(r => r.IntoId.Length > 0);
+                startStates += routes.StartStates.Count;
+            }
+            catch
+            {
+            }
+        }
+
         perMachine.Sort();
         int median = perMachine.Count == 0 ? 0 : perMachine[perMachine.Count / 2];
         int busiest = perMachine.Count == 0 ? 0 : perMachine[^1];
@@ -1803,7 +1826,14 @@ public static class Program
         Console.WriteLine($"  {nestedFrom,7} with a fromNestedStateId ({Percent(nestedFrom, transitions)})");
         Console.WriteLine($"  {danglingTarget,7} whose toStateId is not a state of the machine ({Percent(danglingTarget, transitions)})");
         Console.WriteLine($"  transitions per machine: median {median}, 90th percentile {p90}, busiest {busiest}");
-        return 0;
+        Console.WriteLine($"\n  what the canvas draws from the same files:");
+        Console.WriteLine($"  {drawable,7} route(s), {drawableNested,7} of them with a second hop into a nested state");
+        Console.WriteLine($"  {startStates,7} start state(s) to badge, one per machine that has its own");
+
+        if (drawable != transitions)
+            Console.WriteLine($"  MISMATCH: {transitions - drawable} transition(s) would not be drawn");
+
+        return drawable == transitions ? 0 : 1;
     }
 
     /// The state machine a state's generator leads to, through whatever wraps it. A machine is often

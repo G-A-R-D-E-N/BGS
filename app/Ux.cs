@@ -94,15 +94,35 @@ public static class Ux
         };
     }
 
-    // Node colouring by class family, carried over unchanged.
-    public static Color ForClass(string cls)
+    /// The machine itself, a state of one, and a state's list of routes out of it. Three different
+    /// things, and the whole of a behaviour's shape is how they sit together.
+    public static readonly Color Machine = Accent;
+    public static readonly Color StateInfo = Color.Parse("#79C0FF");
+    public static readonly Color Transitions = Color.Parse("#A371F7");
+
+    // Node colouring by class family.
+    //
+    // The state machine family is matched by exact name, before anything is matched by substring.
+    // `hkbStateMachineStateInfo` and `hkbStateMachineTransitionInfoArray` both contain
+    // "StateMachine", so the first rule caught all three and the Transition rule below never fired
+    // for any of them: a machine, its states and their routes all drew in the same colour, which is
+    // the one distinction a state machine most needs on screen.
+    public static Color ForClass(string cls) => cls switch
     {
-        if (cls.Contains("StateMachine")) return Accent;
+        "hkbStateMachine" => Machine,
+        "hkbStateMachineStateInfo" => StateInfo,
+        "hkbStateMachineTransitionInfoArray" => Transitions,
+        _ => ByFamily(cls),
+    };
+
+    private static Color ByFamily(string cls)
+    {
+        if (cls.Contains("StateMachine")) return Machine;
         if (cls.Contains("ClipGenerator")) return Color.Parse("#3FB950");
         if (cls.Contains("Sequence")) return Color.Parse("#2EA043");
         if (cls.Contains("Blender") || cls.Contains("Layer") || cls.Contains("Selector"))
             return Color.Parse("#D29922");
-        if (cls.Contains("Transition")) return Color.Parse("#A371F7");
+        if (cls.Contains("Transition")) return Transitions;
         if (cls.Contains("Modifier")) return Color.Parse("#DB6D28");
         return TextMeta;
     }
