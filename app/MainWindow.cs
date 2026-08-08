@@ -2245,7 +2245,7 @@ public class MainWindow : Window
 
         foreach (var p in parameters)
         {
-            string name = p.Name;
+            string address = p.Address;
             string original = p.Value;
             string owner = objectId;
 
@@ -2268,7 +2268,7 @@ public class MainWindow : Window
             void Commit()
             {
                 if (field.Text == original) return;
-                Apply(owner, name, field, original);
+                Apply(owner, address, field, original);
                 original = field.Text ?? original;
             }
 
@@ -2312,6 +2312,7 @@ public class MainWindow : Window
         };
 
         string name = p.Name;
+        string address = p.Address;
         string original = p.Value;
 
         void Commit()
@@ -2319,7 +2320,7 @@ public class MainWindow : Window
             string now = choice.SelectedItem as string ?? original;
             if (now == original) return;
 
-            if (SetParam(owner, name, now)) original = now;
+            if (SetParam(owner, address, now)) original = now;
             else choice.SelectedItem = original;
         }
 
@@ -2985,27 +2986,32 @@ public class MainWindow : Window
         foreach (var commit in _fieldCommits.ToList()) commit();
     }
 
-    private void Apply(string objectId, string paramName, TextBox field, string original)
+    private void Apply(string objectId, string address, TextBox field, string original)
     {
         if (field.Text == original || _xmlText.Length == 0) return;
-        if (!SetParam(objectId, paramName, field.Text ?? "")) field.Text = original;
+        if (!SetParam(objectId, address, field.Text ?? "")) field.Text = original;
     }
 
     /// Writes one field and reports whether it took, so a control that has to put itself back on a
     /// refusal can. Shared by the typed boxes and the enum lists rather than written twice.
-    private bool SetParam(string objectId, string paramName, string value)
+    ///
+    /// `address` is where the field sits rather than what it is called: `transitions[1].eventId` for
+    /// one element of an array of structs, and a bare name for a field the object holds directly,
+    /// which is the same string it always was. Naming the field alone reached the first one with
+    /// that name, so every box below the first element of an array wrote the first element's value.
+    private bool SetParam(string objectId, string address, string value)
     {
         if (_xmlText.Length == 0) return false;
 
         try
         {
-            Commit(HkxTextEdit.SetParam(_xmlText, objectId, paramName, value));
-            _editedFields.Add(objectId + "." + paramName);
-            SetStatus($"#{objectId}.{paramName} = {value}   (unsaved)", Ux.CodeBrush);
+            Commit(HkxTextEdit.SetParamAt(_xmlText, objectId, address, value));
+            _editedFields.Add(objectId + "." + address);
+            SetStatus($"#{objectId}.{address} = {value}   (unsaved)", Ux.CodeBrush);
 
             // Retimes a preview that is already running, so an edited speed shows up without having
             // to stop and start playback to see it.
-            if (paramName == "playbackSpeed" && objectId == _selectedId && _clock != null)
+            if (address == "playbackSpeed" && objectId == _selectedId && _clock != null)
                 _clock.Interval = TimeSpan.FromSeconds(
                     Math.Clamp(_poseAnimation!.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4));
 
