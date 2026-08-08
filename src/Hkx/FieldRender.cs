@@ -91,7 +91,10 @@ public static class FieldRender
             case "TYPE_CHAR":
             case "TYPE_INT8" or "TYPE_UINT8" or "TYPE_INT16" or "TYPE_UINT16"
                 or "TYPE_INT32" or "TYPE_UINT32":
-                return Narrow(objects.ReadIntAt(at), member.VType);
+                // At its own width rather than as four bytes masked down. The two are the same
+                // everywhere except the last bytes of a section, where the wider read runs off the
+                // end and the value reads as nothing.
+                return Narrow(objects.ReadNarrowAt(at, Bytes(member.VType)), member.VType);
 
             case "TYPE_ULONG":
             case "TYPE_INT64":
@@ -213,6 +216,14 @@ public static class FieldRender
     };
 
     /// How much room one value of a type takes, for stepping through a fixed length array of them.
+    /// How many bytes a narrow field occupies, which is how many should be read for it.
+    private static int Bytes(string vtype) => vtype switch
+    {
+        "TYPE_BOOL" or "TYPE_CHAR" or "TYPE_INT8" or "TYPE_UINT8" => 1,
+        "TYPE_INT16" or "TYPE_UINT16" => 2,
+        _ => 4,
+    };
+
     private static int Width(string vtype) => vtype switch
     {
         "TYPE_BOOL" or "TYPE_CHAR" or "TYPE_INT8" or "TYPE_UINT8" => 1,

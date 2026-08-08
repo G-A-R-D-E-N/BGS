@@ -114,6 +114,22 @@ public sealed class PackfileObjects
     public int? ReadIntAt(int at) =>
         at < 0 || at + 4 > _data.Data.Length ? null : BitConverter.ToInt32(_data.Data, at);
 
+    /// A field narrower than four bytes, read at its own width.
+    ///
+    /// Reading a two byte value as four and masking works everywhere except the last two bytes of a
+    /// section, where the four byte read runs off the end and the value comes back as nothing at
+    /// all. Nothing in a vanilla file sits there, so this never showed until an array of numbers was
+    /// lengthened and its new run was appended to the end: the last element of it read as blank
+    /// while the count beside it said otherwise.
+    public int? ReadNarrowAt(int at, int width)
+    {
+        if (at < 0 || width <= 0 || at + width > _data.Data.Length) return null;
+
+        int value = 0;
+        for (int b = 0; b < width; b++) value |= _data.Data[at + b] << (8 * b);
+        return value;
+    }
+
     /// Eight bytes rather than four. `hkbNode.userData` is the common one, and reading it as an int
     /// would come back right only while the top half happens to be zero.
     public ulong? ReadULongAt(int at) =>

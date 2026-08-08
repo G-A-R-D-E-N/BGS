@@ -143,6 +143,58 @@ public static class NativeSave
     private static bool IsTextArray(string type) =>
         type == "array of stringptr" || type == "array of cstring";
 
+    /// How many bytes one element of an array of plain numbers takes, or nought when the type is
+    /// not one of those.
+    ///
+    /// The last kind of array that had to go through a rebuild. Unlike an array of names or an array
+    /// of children, nothing inside it is a pointer, so the whole thing is one run of numbers and one
+    /// fixup: the array's own. Enums are left out on purpose, since how wide one is stored depends
+    /// on the enum and getting that wrong writes into the element beside it.
+    private static int ValueElement(string type) => type switch
+    {
+        "array of real" or "array of int32" or "array of uint32" => 4,
+        "array of int16" or "array of uint16" => 2,
+        "array of int8" or "array of uint8" or "array of bool" or "array of char" => 1,
+        "array of int64" or "array of uint64" or "array of ulong" => 8,
+        _ => 0,
+    };
+
+    /// The numbers out of a whitespace separated list, written into a run at the given width.
+    /// Null when any of them is not a number of that kind, which is a refusal rather than a guess.
+    private static byte[]? Numbers(string value, string type, int width)
+    {
+        var tokens = value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var run = new byte[tokens.Length * width];
+
+        for (int i = 0; i < tokens.Length; i++)
+        {
+            if (type == "array of real")
+            {
+                if (!float.TryParse(tokens[i], NumberStyles.Float, CultureInfo.InvariantCulture,
+                                    out float f) || float.IsNaN(f) || float.IsInfinity(f))
+                    return null;
+                BitConverter.GetBytes(f).CopyTo(run, i * 4);
+                continue;
+            }
+
+            string token = tokens[i];
+            if (type == "array of bool")
+            {
+                if (token is "true" or "1") { run[i] = 1; continue; }
+                if (token is "false" or "0") { run[i] = 0; continue; }
+                return null;
+            }
+
+            if (!long.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out long n))
+                return null;
+
+            var bytes = BitConverter.GetBytes(n);
+            for (int b = 0; b < width; b++) run[i * width + b] = bytes[b];
+        }
+
+        return run;
+    }
+
     /// What holds an array of names together while it is one value.
     ///
     /// A zero byte, because a name in this format ends at the first one and so cannot contain one.
@@ -272,6 +324,18 @@ public static class NativeSave
                 if (IsTextArray(type))
                 {
                     changes.Add(new Change(className, i, field, now, Text: true, Array: true));
+                    return null;
+                }
+
+                // An array of plain numbers, at whatever length the edit left it. One run and one
+                // fixup, since nothing inside it points anywhere.
+                if (ValueElement(type) is int width and > 0)
+                {
+                    if (Numbers(now, type, width) == null)
+                        return $"{className}.{field} was set to something that is not a list of " +
+                               $"{type[("array of ").Length..]}";
+
+                    changes.Add(new Change(className, i, field, now, Array: true));
                     return null;
                 }
 
@@ -651,6 +715,8 @@ public static class NativeSave
 
             bool written = change.Ref ? Repoint(image, objects, instance, change)
                          : change.Array && change.Text ? ResizeText(image, objects, instance, change)
+                         : change.Array && ValueElement(member.Type) > 0
+                             ? ResizeValues(image, objects, instance, change, member.Type)
                          : change.Array ? Resize(image, objects, instance, change)
                          : WideFloats(member.Type) > 0
                              ? WriteWide(objects, instance, change, WideFloats(member.Type), image)
@@ -831,6 +897,43 @@ public static class NativeSave
         if (at < 0 || at + 8 > data.Data.Length) return false;
 
         BitConverter.GetBytes(value).CopyTo(data.Data, at);
+        return true;
+    }
+
+    /// Writes an array of plain numbers at whatever length the edit left it.
+    ///
+    /// The simplest of the three resizes, because nothing inside it points anywhere: one run on the
+    /// end of the section, the array's own pointer aimed at it, the count beside it rewritten. There
+    /// are no element fixups to move and none to drop.
+    private static bool ResizeValues(PackfileImage image, PackfileObjects objects,
+                                     PackfileObjects.Instance instance, Change change, string type)
+    {
+        var data = image.Section("__data__");
+        if (data == null) return false;
+
+        if (objects.FieldAt(instance, change.Field) is not int at) return false;
+
+        int width = ValueElement(type);
+        if (width <= 0) return false;
+        if (Numbers(change.Value, type, width) is not byte[] run) return false;
+
+        int count = run.Length / width;
+
+        if (count == 0)
+        {
+            data.SetLocal(at, -1);
+            BitConverter.GetBytes(0).CopyTo(data.Data, at + 8);
+            uint none = BitConverter.ToUInt32(data.Data, at + 12);
+            BitConverter.GetBytes(none & 0xC0000000u).CopyTo(data.Data, at + 12);
+            return true;
+        }
+
+        data.AlignData(NativeAppend.Alignment);
+        data.SetLocal(at, data.AppendData(run));
+
+        BitConverter.GetBytes(count).CopyTo(data.Data, at + 8);
+        uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
+        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)count).CopyTo(data.Data, at + 12);
         return true;
     }
 

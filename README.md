@@ -451,15 +451,23 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them**. The other 128
   hold a class hkxpack strides wrongly, so its text is misaligned and there is nothing to match.
   What still needs Java: packing a file back after an edit this cannot express in bytes. That list is
-  now a class that has gained or lost a field, a file whose objects have been renumbered, and an
-  array of numbers that changed length. Adding an object, deleting one, declaring an event or a
-  variable, and writing a vector or a transform all go native. See #32 and #34.
+  now a class that has gained or lost a field, or a file whose objects have been renumbered. Neither
+  is something the editor does; both are the guards that catch two documents that are not the same
+  file. Every edit the editor can actually make goes into the bytes: values, wide values, pointers,
+  arrays of children, arrays of struct elements, arrays of names, arrays of numbers, strings, adding
+  an object and deleting one. See #32 and #34.
 - **The wide fixed width fields are written where they sit.** A `vector4` is sixteen bytes wherever
   it is and a `qstransform` forty eight, so writing one over another moves nothing, and they were
   refused only because nothing read the spelling back. The spelling is the one the panel already
   shows, floats four to a bracket, `(1.5 -2.25 3.75 0.5)`. Proved by changing a vector in each of the
   243 vanilla behaviours that carry one and reading it back, with the file exactly as long as it was.
   A value of the wrong length is refused rather than part written.
+- **An array of numbers grows the same way**, one run appended and the array aimed at it, proved on
+  the 56 vanilla behaviours that carry one. That run turned up a reading fault worth naming: a field
+  narrower than four bytes was read as four bytes and masked down, which is right everywhere except
+  the last bytes of a section. Nothing in a vanilla file sits there, so it never showed until an
+  appended run ended flush with the section and its final element read as blank while the count
+  beside it said otherwise. Narrow fields are read at their own width now.
 - **The class table is not just self consistent, it agrees with the game.** Every offset written into
   a file comes from `HavokClassTypes.json`, which was built from hkxpack's class data. Fallout 4's
   own startup initializers carry the same information, read out of the binary rather than out of any
