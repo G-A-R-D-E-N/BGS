@@ -3424,11 +3424,20 @@ public class MainWindow : Window
             ReplaceFile(_hkxPath, bytes);
 
             ResetHistory();
+
+            // Said plainly, because deleting is the one save that moves things. Every other kind
+            // leaves the rest of the file where it was, and somebody who has just deleted a node
+            // should be told that this one did not.
+            string how = plan.Gone.Count > 0
+                ? $"and took out {plan.Gone.Count} object{(plan.Gone.Count == 1 ? "" : "s")}, " +
+                  "so the file was laid out again and everything after them has moved. Object " +
+                  "numbers above the ones deleted have changed. "
+                : plan.Grows
+                    ? "with anything that grew added on the end so nothing already in it moved. "
+                    : "leaving every other byte as it was. ";
+
             SetStatus($"Saved {plan.Changes.Count} " +
-                      $"change{(plan.Changes.Count == 1 ? "" : "s")} straight into the file, " +
-                      (plan.Grows
-                          ? "with anything that grew added on the end so nothing already in it moved. "
-                          : "leaving every other byte as it was. ") +
+                      $"change{(plan.Changes.Count == 1 ? "" : "s")} straight into the file, " + how +
                       $"The original is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
             Load();
             return true;

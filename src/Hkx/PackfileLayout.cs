@@ -179,6 +179,25 @@ public static class PackfileLayout
 
         if (!Accounted(items, data.Data.Length)) return false;
 
+        return RewriteAs(image, items);
+    }
+
+    /// The same, over a list of items the caller has already worked out.
+    ///
+    /// This is how an object is deleted. The walk has to happen before the object leaves the file,
+    /// because afterwards there is nothing left to say which runs were its, so the caller takes the
+    /// items, drops the ones belonging to what is going, and hands back the rest. Anything not in
+    /// the list is not written, which is the whole point and also the danger: a caller that drops an
+    /// item still pointed at leaves a fixup aiming at nothing.
+    ///
+    /// Every entry in all three tables must have a source inside a kept item. A caller that has
+    /// dropped items has to drop their fixups first, and this returns false rather than writing a
+    /// file with a pointer into a hole.
+    public static bool RewriteAs(PackfileImage image, IReadOnlyList<Item> items)
+    {
+        var data = image.Section("__data__");
+        if (data == null) return false;
+
         var at = Where(items);
 
         // Where each old offset ends up. Kept as the items sorted by where they were, so an offset
@@ -247,6 +266,69 @@ public static class PackfileLayout
         data.SetLocals(locals);
         data.SetGlobals(globals);
         data.SetVirtuals(virtuals);
+        return true;
+    }
+
+    /// The items split into one run per object: the object itself and everything it points at.
+    ///
+    /// The walk writes an object and then what it points at before moving on, so a new run starts at
+    /// every object and ends at the next one. The order matches the object list, so the nth run
+    /// belongs to the nth object in the file.
+    ///
+    /// This is what deleting needs. An object's bytes are not the object alone: a state machine that
+    /// goes takes its transition array and its name with it, and those are not next to each other in
+    /// any list the file keeps.
+    public static List<List<Item>> ByObject(IReadOnlyList<Item> items)
+    {
+        var runs = new List<List<Item>>();
+
+        foreach (var item in items)
+        {
+            if (item.Kind == "object" || runs.Count == 0) runs.Add(new List<Item>());
+            runs[^1].Add(item);
+        }
+
+        return runs;
+    }
+
+    /// Whether every pointer in the section names a byte the items cover.
+    ///
+    /// The looser question, and the right one once a file has been edited. `Accounted` asks whether
+    /// the items are the whole section, which stops being true the moment anything is appended: a
+    /// longer string, a resized array or an orphaned node all leave the run they replaced sitting
+    /// there with nothing pointing at it. Laying the file out again drops those, which is a tidy up
+    /// rather than a loss, and refusing to do it because of them would mean an edited file could
+    /// never be compacted.
+    ///
+    /// What must not happen is dropping something still pointed at, and that is what this asks. Both
+    /// ends of every local, the source of every global and its destination when it stays in this
+    /// section, and the source of every virtual, all have to land inside an item.
+    public static bool Reaches(IReadOnlyList<Item> items, PackfileSection data, int section)
+    {
+        var spans = items.Select(i => (i.At, End: i.At + i.Length)).OrderBy(x => x.At).ToList();
+
+        bool Lands(int offset)
+        {
+            int low = 0, high = spans.Count - 1;
+            while (low <= high)
+            {
+                int mid = (low + high) / 2;
+                if (offset < spans[mid].At) high = mid - 1;
+                else if (offset >= spans[mid].End) low = mid + 1;
+                else return true;
+            }
+            return false;
+        }
+
+        foreach (var (source, destination) in data.Locals())
+            if (!Lands(source) || !Lands(destination)) return false;
+
+        foreach (var (source, which, destination) in data.Globals())
+            if (!Lands(source) || (which == section && !Lands(destination))) return false;
+
+        foreach (var (source, _, _) in data.Virtuals())
+            if (!Lands(source)) return false;
+
         return true;
     }
 

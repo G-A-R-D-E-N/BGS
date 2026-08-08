@@ -252,7 +252,23 @@ public static class HkxTextEdit
         {
             if (matches[i].Groups["id"].Value != id) continue;
             int start = matches[i].Index;
-            int end = i + 1 < matches.Count ? matches[i + 1].Index : xmlText.Length;
+
+            // One object's block runs to the head of the next one. The last object has no next one,
+            // and taking the rest of the document was wrong rather than harmless: deleting the last
+            // object in a file took the closing tags with it and left text no parser would read.
+            // Its block ends at its own closing tag, which is the final one in the document, since
+            // the only hkobject tags after its head are the structs written inside it.
+            if (i + 1 < matches.Count) return (start, matches[i + 1].Index - start);
+
+            int closed = xmlText.LastIndexOf("</hkobject>", StringComparison.Ordinal);
+            if (closed < start) return (start, xmlText.Length - start);
+
+            int end = closed + "</hkobject>".Length;
+
+            // Trailing whitespace goes with it, so removing the block does not leave the blank line
+            // it sat on behind.
+            while (end < xmlText.Length && char.IsWhiteSpace(xmlText[end])) end++;
+
             return (start, end - start);
         }
         return (-1, 0);
