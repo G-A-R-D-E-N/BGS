@@ -111,6 +111,18 @@ public class MainWindow : Window
     private readonly HkGrid _problems = new(("", 70), ("Object", -3), ("What is wrong", -7));
     private readonly TextBlock _problemBar = new() { Foreground = Ux.MetaBrush, FontSize = 12, Margin = new Thickness(2, 6, 2, 2) };
 
+    /// The graph, stepped rather than only drawn. Null until a runnable behaviour is open.
+    private GraphRun? _run;
+    private readonly ComboBox _runEvents = new()
+        { MinWidth = 190, MaxWidth = 260, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private readonly TextBlock _runSummary = new()
+        { Foreground = Ux.MetaBrush, FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
+          TextWrapping = TextWrapping.Wrap, Margin = new Thickness(10, 0, 0, 0) };
+    private readonly HkGrid _running = new(("Machine", -4), ("Is in state", -4)) { Height = 130 };
+    private readonly TextBlock _runStops = new()
+        { Foreground = Ux.WarnBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+          Margin = new Thickness(2, 4, 2, 2) };
+
     private readonly Dictionary<int, int> _offsetToIndex = new();
     private HashSet<string> _emptyStates = new();
     private List<string> _objectIds = new();
@@ -334,16 +346,24 @@ public class MainWindow : Window
         }
         top.Children.Add(new Panel());
 
+        var runBar = BuildRunControls();
+
         var panel = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(top, Dock.Top);
+        DockPanel.SetDock(runBar, Dock.Top);
         DockPanel.SetDock(_problemBar, Dock.Bottom);
         DockPanel.SetDock(_problems, Dock.Bottom);
+        DockPanel.SetDock(_runStops, Dock.Bottom);
+        DockPanel.SetDock(_running, Dock.Bottom);
         DockPanel.SetDock(_graphProps, Dock.Right);
         DockPanel.SetDock(splitter, Dock.Right);
         DockPanel.SetDock(_legend, Dock.Left);
         panel.Children.Add(top);
+        panel.Children.Add(runBar);
         panel.Children.Add(_problemBar);
         panel.Children.Add(_problems);
+        panel.Children.Add(_runStops);
+        panel.Children.Add(_running);
         panel.Children.Add(_graphProps);
         panel.Children.Add(splitter);
         panel.Children.Add(_legend);
@@ -351,7 +371,141 @@ public class MainWindow : Window
 
         _problems.IsVisible = false;
         _problemBar.IsVisible = false;
+        _running.IsVisible = false;
+        _runStops.IsVisible = false;
         return panel;
+    }
+
+    /// The controls that step the graph: pick an event, send it, and see which states go active.
+    ///
+    /// The event is a dropdown of the graph's own declared events rather than a free text box on
+    /// purpose. An event the file never declares cannot move anything, and offering to send one would
+    /// only produce the answer "nothing happened" for a reason the box hid. What it does not have yet
+    /// is a clock: nothing here advances time, so a transition's blend plays instantly and the answer
+    /// is which state you land in, not what the blend looks like part way. That is the rest of #37.
+    private Control BuildRunControls()
+    {
+        var send = Ux.Primary("Send");
+        send.Click += (_, _) => SendRunEvent();
+
+        var restart = Ux.Secondary("Restart");
+        ToolTip.SetTip(restart, "Put the graph back in the state it starts in.");
+        restart.Click += (_, _) => StartRun("Back at the start.");
+
+        // Clicking a running machine jumps the canvas to the state it is in, which is the point of
+        // the list: on a real character a dozen machines are live at once and finding them by eye on
+        // the canvas is the thing this is meant to save.
+        _running.SelectionChanged += () =>
+        {
+            if (_running.SelectedTag is string id && id.Length > 0 && _graph.FocusOn(id))
+                SelectObjectId(id);
+        };
+
+        var label = new TextBlock
+        {
+            Text = "Send event",
+            Foreground = Ux.MetaBrush,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+
+        var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        foreach (var control in new Control[] { label, _runEvents, send, restart })
+            left.Children.Add(control);
+
+        var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 6), LastChildFill = true };
+        DockPanel.SetDock(left, Dock.Left);
+        bar.Children.Add(left);
+        bar.Children.Add(_runSummary);
+
+        SetRunSummary("Open a behaviour, then send it an event to watch which state goes active.",
+            Ux.MutedBrush);
+        return bar;
+    }
+
+    /// Puts the graph in its starting configuration and lists what is running.
+    private void StartRun(string note = "Started at the graph's root.")
+    {
+        _graph.ClearActive();
+        _running.Clear();
+        _running.IsVisible = false;
+        _runStops.IsVisible = false;
+
+        var model = Model();
+        if (model.Objects.Count == 0)
+        {
+            _run = null;
+            _runEvents.ItemsSource = null;
+            SetRunSummary("Open a behaviour to run it.", Ux.MutedBrush);
+            return;
+        }
+
+        _run = GraphRun.Start(model);
+        if (_run.RootId.Length == 0)
+        {
+            _run = null;
+            _runEvents.ItemsSource = null;
+            SetRunSummary("This is a project or character file rather than a graph, so there is " +
+                          "nothing in it to run.", Ux.MutedBrush);
+            return;
+        }
+
+        _runEvents.ItemsSource = _run.Events;
+        if (_run.Events.Count > 0) _runEvents.SelectedIndex = 0;
+        RefreshRun(note);
+    }
+
+    private void SendRunEvent()
+    {
+        if (_run == null)
+        {
+            SetRunSummary("Open a behaviour first.", Ux.MutedBrush);
+            return;
+        }
+
+        if (_runEvents.SelectedItem is not string name || name.Length == 0)
+        {
+            SetRunSummary("Choose an event to send.", Ux.MutedBrush);
+            return;
+        }
+
+        var fired = _run.Send(name);
+        RefreshRun(fired.Count == 0
+            ? $"Sent {name}. Nothing in a running state was listening for it."
+            : $"Sent {name}. {fired.Count} transition(s) fired.");
+    }
+
+    /// Redraws the active states on the canvas and rebuilds the running list.
+    private void RefreshRun(string note)
+    {
+        if (_run == null) return;
+
+        var here = _run.Where();
+        _graph.ShowActive(here.Select(a => a.StateId));
+
+        _running.Clear();
+        foreach (var active in here)
+            _running.Add(null,
+                active.MachineName.Length > 0 ? active.MachineName : "#" + active.MachineId,
+                active.StateName.Length > 0 ? active.StateName : "#" + active.StateId)
+                .Tag(active.StateId);
+        _running.IsVisible = true;
+
+        if (_run.Stops.Count > 0)
+        {
+            _runStops.Text = "Stops here: " + string.Join("    ", _run.Stops.Select(s => s.Why));
+            _runStops.IsVisible = true;
+        }
+        else _runStops.IsVisible = false;
+
+        SetRunSummary($"{here.Count} machine(s) running.  {note}", Ux.MetaBrush);
+    }
+
+    private void SetRunSummary(string text, IBrush brush)
+    {
+        _runSummary.Text = text;
+        _runSummary.Foreground = brush;
     }
 
     private Control _legend = new Panel();
@@ -476,6 +630,20 @@ public class MainWindow : Window
             },
         }, "Start", "The state its machine begins in. One per machine, at the top right of the box.");
 
+        Swatch(new Border
+        {
+            Width = 20,
+            Height = 12,
+            CornerRadius = new CornerRadius(3),
+            Background = new SolidColorBrush(Ux.RouteColour, 0.30),
+            BorderBrush = new SolidColorBrush(Ux.RouteColour),
+            BorderThickness = new Thickness(2),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
+        }, "Teal glow: running now",
+           "The state a machine is in right now, while the graph is being stepped. Send an event " +
+           "with the box above the canvas and watch these move. Several light at once, because " +
+           "several machines run at the same time.");
+
         Swatch(Wire(Ux.Bad, false), "Red outline",
                "Check graph found something wrong here. The list under the canvas says what.");
         Swatch(Wire(Ux.Warn, false), "Amber outline",
@@ -564,6 +732,20 @@ public class MainWindow : Window
     public string LoadedXml => _xmlText;
     public Inspector GraphProperties => _graphProps;
     public GraphView Canvas => _graph;
+
+    /// Read-only hooks for the window checks, so the run panel can be exercised headless.
+    public bool RunReady => _run != null;
+    public int RunEventCount => _run?.Events.Count ?? 0;
+    public IReadOnlyList<string> RunEvents => _run?.Events ?? Array.Empty<string>();
+    public int RunningCount => _running.RowCount;
+    public bool RunningVisible => _running.IsVisible;
+
+    /// Selects an event and sends it, the way clicking the dropdown and Send does.
+    public void SendEventForTest(string name)
+    {
+        _runEvents.SelectedItem = name;
+        SendRunEvent();
+    }
 
     /// Selects through the same handler a click on the canvas uses, so a check exercises the path a
     /// person takes rather than a parallel one.
@@ -2241,6 +2423,7 @@ public class MainWindow : Window
         BuildClipList(model);
         BuildChain(java, jar);
         FindMeshForFile();
+        StartRun();
 
         string source = reading != null ? "read from the file itself" : "read through hkxpack";
         SetStatus(_xmlText.Length > 0

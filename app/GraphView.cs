@@ -36,6 +36,7 @@ public class GraphView : Control
         public Color Accent;
         public bool Empty;
         public bool Start;
+        public bool Active;
         /// Events that enter this state from any state of its machine, which are shown on the node
         /// rather than drawn as lines. See `WildcardRows`.
         public List<string> Wildcards = new();
@@ -102,6 +103,31 @@ public class GraphView : Control
         _problems = problems;
         foreach (var node in _nodes.Values)
             node.Problem = problems.TryGetValue(node.Id, out var level) ? level : null;
+        InvalidateVisual();
+    }
+
+    /// The states the stepper says are live right now, drawn as a bright ring.
+    ///
+    /// Kept apart from the highlight and the fault marks because it answers a different question:
+    /// not what you picked, and not what is wrong, but where the graph actually is. A running
+    /// character lights several of these at once, since several machines run at the same time, which
+    /// is the thing a static picture cannot show and the reason this exists.
+    private readonly HashSet<string> _active = new(StringComparer.Ordinal);
+
+    public IReadOnlyCollection<string> ActiveIds => _active;
+
+    public void ShowActive(IEnumerable<string> stateIds)
+    {
+        _active.Clear();
+        foreach (string id in stateIds) _active.Add(id);
+        foreach (var node in _nodes.Values) node.Active = _active.Contains(node.Id);
+        InvalidateVisual();
+    }
+
+    public void ClearActive()
+    {
+        _active.Clear();
+        foreach (var node in _nodes.Values) node.Active = false;
         InvalidateVisual();
     }
 
@@ -220,6 +246,7 @@ public class GraphView : Control
         _related.Clear();
         _needle = "";
         _matched.Clear();
+        _active.Clear();
         SelectedId = "";
         _zoom = 0.9;
         _pan = new Point(40, 40);
@@ -636,9 +663,18 @@ public class GraphView : Control
                 ctx.DrawRectangle(null, new Pen(new SolidColorBrush(colour, 0.10 * ring), ring * 2 + 1),
                                   r.Inflate(ring * 1.5), 5, 5);
 
-        var edge = new Pen(new SolidColorBrush(fault ?? node.Accent), fault != null ? 2.5 : selected ? 2 : 1);
+        // A live state gets a bright halo outside its border, brighter and wider than a fault's, so a
+        // running graph reads at a glance and lights up as events move it. Drawn even when the node is
+        // also faulted, since where the graph is and what is wrong with it are both worth seeing.
+        if (node.Active)
+            for (int ring = 4; ring >= 1; ring--)
+                ctx.DrawRectangle(null, new Pen(new SolidColorBrush(Ux.RouteColour, 0.16 * ring), ring * 2 + 2),
+                                  r.Inflate(ring * 2.0), 6, 6);
+
+        var borderColour = node.Active ? Ux.RouteColour : fault ?? node.Accent;
+        var edge = new Pen(new SolidColorBrush(borderColour), node.Active ? 3 : fault != null ? 2.5 : selected ? 2 : 1);
         ctx.DrawRectangle(body, edge, r, 4, 4);
-        ctx.DrawRectangle(new SolidColorBrush(fault ?? node.Accent, fault != null ? 0.22 : 0.35), null,
+        ctx.DrawRectangle(new SolidColorBrush(borderColour, node.Active ? 0.30 : fault != null ? 0.22 : 0.35), null,
             new Rect(r.X, r.Y, r.Width, HeaderHeight * _zoom), 4, 4);
 
         double scale = _zoom;
