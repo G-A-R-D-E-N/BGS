@@ -29,8 +29,16 @@ public static class ClassFields
     /// One value as the file writes it. `Owner` is the class that declares the member, which is not
     /// the class of the object when the field belongs to a struct written inside it. `Element` picks
     /// one out of a fixed length array, where `hkReal[8]` is written as eight separate fields.
+    ///
+    /// `Path` is where the value sits rather than what it is called: `transitions[1].eventId` for
+    /// the second transition's, and `eventId` for a field the object holds directly. A name on its
+    /// own does not identify a field, because every element of an array of structs carries the same
+    /// names, and a write addressed by name lands on the first of them.
+    ///
+    /// `Group` is the element the field belongs to, `transitions[1]`, or empty for a field that
+    /// belongs to the object itself. The panel groups by it; nothing else needs it.
     public sealed record Field(string Name, string Owner, int At, HavokClassTypes.Member Member,
-                               int Element = 0)
+                               int Element = 0, string Path = "", string Group = "")
     {
         public override string ToString() => $"{Owner}.{Name} at 0x{At:x}";
     }
@@ -39,15 +47,20 @@ public static class ClassFields
     /// not resolve. Null is the useful answer: it says the list is unknown rather than short.
     public static List<Field>? Of(PackfileObjects objects, PackfileObjects.Instance instance,
                                   HavokClassTypes? types = null) =>
-        Walk(objects, types ?? HavokClassTypes.Shipped, instance.ClassName, instance.Offset, 0);
+        Walk(objects, types ?? HavokClassTypes.Shipped, instance.ClassName, instance.Offset, 0, "", "");
 
     /// Just the names, which is what a comparison against hkxpack's list needs.
     public static List<string>? NamesOf(PackfileObjects objects, PackfileObjects.Instance instance,
                                         HavokClassTypes? types = null) =>
         Of(objects, instance, types)?.Select(f => f.Name).ToList();
 
+    /// `under` is the path of whatever is being walked into, so a field's own path is that plus its
+    /// name. `group` is the array element the walk is currently inside, which does not grow as the
+    /// walk descends into a struct written within that element: a field of
+    /// `transitions[1].initiateInterval` still belongs to `transitions[1]` as far as the panel is
+    /// concerned, because that is the thing a person collapses.
     private static List<Field>? Walk(PackfileObjects objects, HavokClassTypes types,
-                                     string className, int at, int depth)
+                                     string className, int at, int depth, string under, string group)
     {
         if (depth > Deepest || !types.Knows(className)) return null;
 
@@ -57,6 +70,7 @@ public static class ClassFields
             if (!member.Written) continue;
 
             int here = at + member.Offset;
+            string path = under.Length == 0 ? member.Name : under + "." + member.Name;
 
             if (member.VType == "TYPE_STRUCT")
             {
@@ -65,7 +79,7 @@ public static class ClassFields
                 // short by however many they are.
                 if (member.CType == null) return null;
 
-                var inside = Walk(objects, types, member.CType, here, depth + 1);
+                var inside = Walk(objects, types, member.CType, here, depth + 1, path, group);
                 if (inside == null) return null;
                 fields.AddRange(inside);
                 continue;
@@ -82,7 +96,9 @@ public static class ClassFields
 
                 for (int i = 0; i < elements.Count; i++)
                 {
-                    var inside = Walk(objects, types, member.CType, elements.At + i * stride.Value, depth + 1);
+                    string element = $"{path}[{i}]";
+                    var inside = Walk(objects, types, member.CType,
+                                      elements.At + i * stride.Value, depth + 1, element, element);
                     if (inside == null) return null;
                     fields.AddRange(inside);
                 }
@@ -94,15 +110,20 @@ public static class ClassFields
             if (member.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY") continue;
 
             // A fixed length C array is not an array as far as the file is concerned: `hkReal[8]`
-            // is written as eight fields named enabled1 to enabled8.
+            // is written as eight fields named enabled1 to enabled8. The path follows the name it is
+            // written under, because that is what the text holds.
             if (member.ArrSize > 0)
             {
                 for (int i = 1; i <= member.ArrSize; i++)
-                    fields.Add(new Field(member.Name + i, className, here, member, i - 1));
+                {
+                    string numbered = member.Name + i;
+                    fields.Add(new Field(numbered, className, here, member, i - 1,
+                                         under.Length == 0 ? numbered : under + "." + numbered, group));
+                }
                 continue;
             }
 
-            fields.Add(new Field(member.Name, className, here, member));
+            fields.Add(new Field(member.Name, className, here, member, 0, path, group));
         }
 
         return fields;

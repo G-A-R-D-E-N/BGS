@@ -86,6 +86,7 @@ public static class Tests
         ("AnEnumIsNamedSignedAndPrintedUnsigned", AnEnumIsNamedSignedAndPrintedUnsigned),
         ("APaddedStructIsKnownFromHkxPacksIdeaOfIt", APaddedStructIsKnownFromHkxPacksIdeaOfIt),
         ("AnElementsFieldIsWrittenToThatElement", AnElementsFieldIsWrittenToThatElement),
+        ("EveryFieldSaysWhereItSits", EveryFieldSaysWhereItSits),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -2144,6 +2145,31 @@ public static class Tests
                                                m.VType != "TYPE_STRUCT")
                                    .Select(m => m.Name).ToList();
         Check("in the order the file writes them", string.Join(",", order), string.Join(",", names));
+    }
+
+    /// A field the object holds directly is addressed by its own name, so everything that has always
+    /// written by name keeps working and only the fields inside an array of structs change shape.
+    ///
+    /// The interesting half of this cannot be built by hand at a useful size: a fixture with five
+    /// transitions in it proves less than one real behaviour with seventy nine transition arrays,
+    /// which is what `symrm paths` sweeps.
+    private static void EveryFieldSaysWhereItSits()
+    {
+        Console.WriteLine("\nevery field says where it sits");
+
+        var objects = new PackfileObjects(ClipInAPackfile("A.hkx", out _));
+        var fields = ClassFields.Of(objects, objects.Instances.Single());
+
+        CheckTrue("a list comes back", fields != null);
+        CheckTrue("a field held by the object is addressed by its own name",
+                  fields!.All(f => f.Path == f.Name));
+        CheckTrue("and belongs to no element", fields!.All(f => f.Group.Length == 0));
+
+        var panel = PanelFields.For(objects, objects.Instances.Single(),
+                                    fields!.Select(f => (f.Name, "")).ToList(),
+                                    (_, _) => "");
+        CheckTrue("the panel carries the same addresses",
+                  panel.All(p => p.Address == p.Name));
     }
 
     /// A file whose classes are signed differently was written against a different definition than

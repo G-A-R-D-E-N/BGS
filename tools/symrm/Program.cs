@@ -54,6 +54,7 @@ public static class Program
             case "fields": return Fields(argv);
             case "signatures": return Signatures(argv);
             case "panel": return Panel(argv);
+            case "paths": return Paths(argv);
             case "objects": return Objects(argv);
             case "capacity": return Capacity(argv);
             case "grow": return Grow(argv);
@@ -171,6 +172,14 @@ public static class Program
               hkxpack's by its own schema, so agreement across a whole file is what says the offsets
               are right rather than plausible. Needs Java and the jar. Exits non zero on any
               disagreement.
+
+          dotnet run --project tools/symrm/symrm.csproj -- paths <file.hkx | folder>
+              Writes a sentinel through every field the panel shows, addressed by where the field
+              sits, and checks that exactly that field moved. The panel's boxes line up with the
+              file's values by position, and a name does not preserve that: an array of structs
+              repeats every name once per element, so a write by name lands on the first of them.
+              Reports how many fields sit inside an element and how many of those a name alone
+              would have missed, which is the size of what this fixes. Needs no Java.
 
           dotnet run --project tools/symrm/symrm.csproj -- packfile <file.hkx | folder>
               Takes a .hkx apart and puts it back together, and reports whether the result is the
@@ -1641,6 +1650,113 @@ public static class Program
     ///
     /// It calls the same `PanelFields.For` the window calls, so what it reports is what is on
     /// screen rather than a second implementation of it.
+    /// Every field on the panel, written by its path, checked to have moved that field and nothing
+    /// else.
+    ///
+    /// The panel's boxes and the file's values line up by position, and that is the assumption the
+    /// whole panel rests on. Naming a field does not preserve it: an array of structs repeats every
+    /// name once per element, so a write by name lands on the first of them however far down the
+    /// panel the box was. Writing a sentinel through each path and reading the whole object back is
+    /// the check that says box N moves value N, for every box of every object in a real file rather
+    /// than for a fixture built to pass.
+    ///
+    /// Needs no Java: the text comes from NativeXml, the same way the window builds it.
+    private static int Paths(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        if (Directory.Exists(target))
+        {
+            int cleanFiles = 0, badFiles = 0;
+            foreach (string each in Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                                             .OrderBy(f => f, StringComparer.Ordinal))
+            {
+                var carried = new[] { argv[0], each }.Concat(argv.Skip(2)).ToArray();
+                if (Paths(carried) == 0) cleanFiles++; else badFiles++;
+            }
+
+            Console.WriteLine($"\n{cleanFiles} file(s) where every path lands where it should, {badFiles} not");
+            return badFiles == 0 ? 0 : 1;
+        }
+
+        string file = target;
+        var objects = new PackfileObjects(PackfileImage.Read(file));
+        string xml = NativeXml.From(File.ReadAllBytes(file));
+        var ids = HkxTextEdit.ObjectIds(xml);
+
+        if (ids.Count != objects.Instances.Count)
+        {
+            Console.WriteLine($"{Path.GetFileName(file)}: the text has {ids.Count} objects and the " +
+                              $"bytes have {objects.Instances.Count}, so nothing can be lined up");
+            return 1;
+        }
+
+        int checkedFields = 0, elementFields = 0, wrong = 0, unaddressable = 0, byNameWrong = 0;
+
+        for (int i = 0; i < ids.Count; i++)
+        {
+            var fields = ClassFields.Of(objects, objects.Instances[i]);
+            if (fields == null) continue;
+
+            var before = HkxTextEdit.ReadParams(xml, ids[i]);
+            if (before.Count != fields.Count)
+            {
+                // The two readings disagree about what is in this object, which the panel already
+                // refuses to work from. Nothing to prove about addressing until that is settled.
+                unaddressable += fields.Count;
+                continue;
+            }
+
+            for (int f = 0; f < fields.Count; f++)
+            {
+                // A sentinel no vanilla value takes, so a field that did not change cannot be
+                // mistaken for one that did.
+                const string Sentinel = "-987654321";
+                string after;
+                try
+                {
+                    after = HkxTextEdit.SetParamAt(xml, ids[i], fields[f].Path, Sentinel);
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"  {Path.GetFileName(file)} #{ids[i]} " +
+                                      $"{objects.Instances[i].ClassName}.{fields[f].Path}: {e.Message}");
+                    wrong++;
+                    continue;
+                }
+
+                checkedFields++;
+                if (fields[f].Group.Length > 0) elementFields++;
+
+                // What the same box did before it carried a path. Addressing by name reaches the
+                // first field with that name, so every later one wrote somebody else's value and
+                // said it had worked. Counted rather than described, because the size of it is the
+                // reason the path exists.
+                if (before.FindIndex(p => p.Name == fields[f].Name) != f) byNameWrong++;
+
+                var now = HkxTextEdit.ReadParams(after, ids[i]);
+                var moved = Enumerable.Range(0, Math.Min(before.Count, now.Count))
+                                      .Where(n => before[n].Value != now[n].Value).ToList();
+
+                if (moved.Count == 1 && moved[0] == f) continue;
+
+                wrong++;
+                Console.WriteLine($"  {Path.GetFileName(file)} #{ids[i]} " +
+                                  $"{objects.Instances[i].ClassName}.{fields[f].Path} is field {f}, " +
+                                  (moved.Count == 0
+                                       ? "and writing it moved nothing"
+                                       : $"but writing it moved {string.Join(", ", moved)}"));
+            }
+        }
+
+        Console.WriteLine($"{Path.GetFileName(file),-34} {checkedFields,6} fields, " +
+                          $"{elementFields,6} inside an element, {byNameWrong,6} of which a name " +
+                          $"alone would have missed, {wrong,4} landed wrong" +
+                          (unaddressable > 0 ? $", {unaddressable} not lined up to check" : ""));
+        return wrong == 0 ? 0 : 1;
+    }
+
     private static int Panel(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }

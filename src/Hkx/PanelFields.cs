@@ -40,10 +40,19 @@ public static class PanelFields
     /// comparison can meet hkxpack in, because hkxpack prints one or the other as it pleases.
     /// `Choices` holds an enum's declared value names when the panel can safely offer them instead
     /// of a text box, and is empty otherwise. Empty is the common case and the safe one.
+    /// `Path` is where the value sits, `transitions[1].eventId`, and is what a write is addressed by.
+    /// `Group` is the array element it belongs to, `transitions[1]`, or empty when the field belongs
+    /// to the object itself. Both are empty on a field that fell back to hkxpack's text, because
+    /// that list is names and values with no idea of where anything sits; such a field is written by
+    /// name, which is what it was before.
     public sealed record Field(string Name, string Value, Source From, string Raw, string Owner = "",
-                               IReadOnlyList<string>? Choices = null)
+                               IReadOnlyList<string>? Choices = null, string Path = "", string Group = "")
     {
         public IReadOnlyList<string> Options => Choices ?? Array.Empty<string>();
+
+        /// What a write should address this field by. The path when there is one, and the bare name
+        /// when there is not.
+        public string Address => Path.Length > 0 ? Path : Name;
 
         public override string ToString() => $"{Name} = {Value}" + (From == Source.Bytes ? "" : $"  ({From})");
     }
@@ -69,9 +78,13 @@ public static class PanelFields
             var field = found[i];
             string text = xml[i].Value;
 
-            if (edited != null && edited.Contains(field.Name))
+            // Keyed by path, so editing one element's eventId does not mark every other element's as
+            // edited too. A field the object holds directly has a path equal to its name, so a caller
+            // that has always keyed by name is unaffected.
+            if (edited != null && edited.Contains(field.Path))
             {
-                fields.Add(new Field(field.Name, text, Source.Edited, text, field.Owner));
+                fields.Add(new Field(field.Name, text, Source.Edited, text, field.Owner,
+                                     null, field.Path, field.Group));
                 continue;
             }
 
@@ -80,13 +93,15 @@ public static class PanelFields
 
             if (shown == null)
             {
-                fields.Add(new Field(field.Name, text, Source.Fallback, text, field.Owner));
+                fields.Add(new Field(field.Name, text, Source.Fallback, text, field.Owner,
+                                     null, field.Path, field.Group));
                 continue;
             }
 
             string value = Shown(shown);
             fields.Add(new Field(field.Name, value, Source.Bytes, shown, field.Owner,
-                                 Choices(field.Owner, field.Member, value, types)));
+                                 Choices(field.Owner, field.Member, value, types),
+                                 field.Path, field.Group));
         }
 
         return fields;
