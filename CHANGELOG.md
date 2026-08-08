@@ -3,6 +3,41 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, a transition's condition is read instead of assumed
+
+A transition can be gated on a variable, and the stepper did not read that gate. Every conditional
+transition counted as able to fire, so a door whose transition reads `bPartialCover==1` fired in the
+stepper whatever the variable held. The Graph tab now reads the condition, and the run bar has a
+**Variable** box to change what it reads, so a gated transition can be tried both ways.
+
+**The language was counted, not guessed at.** `symrm conditions` reads every condition out of the 531
+vanilla behaviours: 49 of them, 34 distinct, in 13 files. Between them they use a variable name, a
+number, the six comparisons, `&&`, `||`, `!`, brackets, and a bare variable meaning "not zero". That
+is the whole of it, so the reading is complete for the shipped data rather than a subset of it.
+
+**Unknown always means the transition still fires.** Reading a condition can only ever hold back one
+this can prove will not fire. It can never add a transition and it can never hide one it did not
+understand, so a build whose parser stopped working would behave exactly like the build before
+conditions were read at all.
+
+**One vanilla oddity is reported rather than resolved.** `MTBehavior.hkx` carries
+`iSyncIdleLocomotion=18`, written with a single `=`, which in this language is an assignment and not a
+test. Havok's own compiler would probably evaluate it to the assigned value and so to true, but that
+is a guess about a runtime nobody here has, so it stays undecided and the transition still fires.
+
+When a transition is held back, the run says so and names the condition. "I sent the event and
+nothing happened" and "something was listening but a variable is stopping it" are different answers,
+and the second one tells you what to go and change.
+
+**Three gates, and each catches something the others do not**, which was established by breaking the
+code on purpose rather than by reasoning about coverage. The corpus gate proves all 49 conditions
+parse and that all 84 conditional transitions change their answer as their variables are driven
+through a spread of values; it does not notice `!=` being read as `==`. A table of answers worked out
+by hand does notice that, three checks going red. A small graph with one gated transition proves the
+stepper acts on the verdict rather than only computing it. A fourth break, a real variable read as its
+raw bit pattern, was caught by none of them, because every vanilla file that compares against a real
+starts it at zero where both readings agree; a check was added for it and it now goes red.
+
 ## 2026-08-08, copy and paste a subtree
 
 Building the same generator shape once per idle was the main thing anybody did with this tool by

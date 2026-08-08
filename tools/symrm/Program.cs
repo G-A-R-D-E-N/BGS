@@ -48,6 +48,7 @@ public static class Program
             case "relayout": return Relayout(argv);
             case "delete": return DeleteObject(argv);
             case "paste": return Paste(argv);
+            case "conditions": return Conditions(argv);
             case "savedelete": return SaveDelete(argv);
             case "classcheck": return ClassCheck(argv);
             case "chain": return Chain(argv);
@@ -256,6 +257,14 @@ public static class Program
               reads back with exactly that object gone, fully accounted for, and no pointer left
               aiming into the hole. Defaults to the last object in the file, orphaned first so
               nothing points at it. Changes nothing on disk. Needs no game and no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- conditions <file.hkx | folder>
+              Reads every transition condition and every expression modifier line in the files, and
+              reports what the language actually contains. Then checks each condition parses, that
+              every variable it names is one the file declares, and that its answer changes as its
+              variables are driven through a spread of values, which is what tells a condition being
+              read from one being ignored. Exits non zero on a condition it cannot read or one that
+              never changes its mind. Changes nothing on disk. Needs no game and no Java.
 
           dotnet run --project tools/symrm/symrm.csproj -- paste <file.hkx | folder>
               Copies a subtree out of each file and pastes it back, then reads the result and checks
@@ -3615,7 +3624,7 @@ public static class Program
         int read = 0, unreadable = 0, noRoot = 0, narrower = 0;
         long machines = 0, running = 0, states = 0, reachable = 0, unreachable = 0;
         long dead = 0, conditional = 0, stops = 0, noGraphObject = 0;
-        long neverEntered = 0, widerBy = 0, steppedInto = 0;
+        long neverEntered = 0, widerBy = 0, steppedInto = 0, blockedByCondition = 0, conditionsWeighed = 0;
         int walkedOff = 0;
         var stopKinds = new SortedDictionary<string, int>();
         var complaints = new List<string>();
@@ -3675,7 +3684,9 @@ public static class Program
             // moves it. They are separate code and they can disagree, and the direction that matters
             // is a step landing somewhere the analysis says is impossible: that is either the analysis
             // being too narrow or the stepper going somewhere it should not, and both are faults.
-            var stepped = StepEverywhere(model);
+            var stepped = StepEverywhere(model, out int heldBack, out int weighed);
+            blockedByCondition += heldBack;
+            conditionsWeighed += weighed;
             var impossible = stepped.Except(reach.Reachable).ToList();
             steppedInto += stepped.Count;
             if (impossible.Count > 0)
@@ -3708,7 +3719,9 @@ public static class Program
         Console.WriteLine($"{machines} state machine(s), of which {running} are running at the start");
         Console.WriteLine($"{states} state(s): {reachable} reachable by some event, {unreachable} not");
         Console.WriteLine($"{dead} transition(s) leave a state nothing can reach");
-        Console.WriteLine($"{conditional} transition(s) carry a condition, which is not evaluated");
+        Console.WriteLine($"{conditional} transition(s) carry a condition, which is now read rather " +
+                          $"than assumed to pass: the sweep weighed {conditionsWeighed} of them and held " +
+                          $"back {blockedByCondition} because the starting values say they cannot fire");
         Console.WriteLine($"{stops} stop(s) where the run refuses to guess:");
         foreach (var kind in stopKinds) Console.WriteLine($"    {kind.Key,-40} {kind.Value}");
         if (noGraphObject > 0) Console.WriteLine($"    of those, {noGraphObject} are files with no hkbBehaviorGraph");
@@ -3732,9 +3745,13 @@ public static class Program
     /// Deliberately not a search over every ordering. The point is to move the graph for real and see
     /// where it ends up, not to enumerate; a fixed number of sweeps over the event list reaches a
     /// settled set on every file in the corpus and keeps the whole gate under two seconds.
-    private static HashSet<string> StepEverywhere(BehaviourGraphModel model)
+    private static HashSet<string> StepEverywhere(BehaviourGraphModel model, out int heldBack,
+                                                  out int weighed)
     {
         var landed = new HashSet<string>(StringComparer.Ordinal);
+        heldBack = 0;
+        weighed = 0;
+
         var run = GraphRun.Start(model);
         if (run.RootId.Length == 0) return landed;
 
@@ -3746,6 +3763,8 @@ public static class Program
             foreach (string name in run.Events)
             {
                 foreach (var fired in run.Send(name)) landed.Add(fired.ToStateId);
+                heldBack += run.HeldBack.Count;
+                weighed = run.ConditionsWeighed;
                 foreach (var active in run.Where()) landed.Add(active.StateId);
             }
             if (landed.Count == before) break;
@@ -6091,6 +6110,247 @@ public static class Program
             if (!Lands(source)) return $"an object is listed at 0x{source:x}, which is not written";
 
         return "";
+    }
+
+    /// What the expression language a file can carry actually says, counted rather than guessed at.
+    ///
+    /// The stepper treats a transition carrying a condition as able to fire, because nothing here
+    /// evaluates one. Whether that is a small gap or a large one depends entirely on what the
+    /// expressions are, and that is a question about the shipped data rather than about the format.
+    private static int Conditions(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        var conditions = new Dictionary<string, int>(StringComparer.Ordinal);
+        var expressions = new Dictionary<string, int>(StringComparer.Ordinal);
+        int filesWithConditions = 0, filesWithExpressions = 0, unread = 0;
+        int parsedOk = 0, unparsed = 0, undecided = 0, trueAtStart = 0, falseAtStart = 0;
+        int driven = 0, flipped = 0, reachedFromState = 0, sweepEnters = 0, falseNow = 0;
+        var problems = new List<string>();
+        var assignments = new List<string>();
+        var undeclared = new List<string>();
+        var stuck = new List<string>();
+
+        foreach (string file in files)
+        {
+            PackfileObjects objects;
+            try { objects = new PackfileObjects(PackfileImage.Read(file)); }
+            catch (Exception) { unread++; continue; }
+
+            int here = 0, there = 0;
+
+            var declared = VariableTable(objects);
+
+            foreach (var instance in objects.OfClass("hkbExpressionCondition"))
+            {
+                string text = objects.ReadString(instance, "expression") ?? "";
+                conditions[text] = conditions.GetValueOrDefault(text) + 1;
+                here++;
+
+                var parsed = Expression.Parse(text);
+                if (!parsed.Ok)
+                {
+                    unparsed++;
+                    problems.Add($"{Path.GetFileName(file)}: \"{text}\" {parsed.Problem}");
+                    continue;
+                }
+
+                parsedOk++;
+                if (parsed.IsAssignment) assignments.Add($"{Path.GetFileName(file)}: {text}");
+
+                // Every name a condition uses has to be a variable the file declares, or the answer
+                // can never be anything but Unknown and the condition is dead text.
+                foreach (string name in parsed.Names)
+                    if (!declared.ContainsKey(name))
+                        undeclared.Add($"{Path.GetFileName(file)}: \"{text}\" names {name}, which this file does not declare");
+
+                var verdict = Expression.Evaluate(parsed, n => declared.TryGetValue(n, out double v) ? v : null);
+                if (verdict == Expression.Verdict.Unknown) undecided++;
+                else if (verdict == Expression.Verdict.True) trueAtStart++;
+                else falseAtStart++;
+            }
+
+            // The same language, reached from the other direction. An expression modifier assigns
+            // the result of one of these to a variable or sends an event, so anything that evaluates
+            // a condition can evaluate these too, and they are the larger population.
+            foreach (var instance in objects.OfClass("hkbExpressionDataArray"))
+            {
+                var array = objects.ReadArray(instance, "expressionsData");
+                int stride = HavokClassTypes.Shipped["hkbExpressionData"]?.Size ?? 0;
+                if (array == null || stride <= 0) continue;
+
+                for (int e = 0; e < array.Count; e++)
+                {
+                    string text = objects.ReadStringAt(array.At + e * stride) ?? "";
+                    expressions[text] = expressions.GetValueOrDefault(text) + 1;
+                    there++;
+                }
+            }
+
+            if (here > 0) filesWithConditions++;
+            if (there > 0) filesWithExpressions++;
+        }
+
+        Console.WriteLine($"{files.Length} file(s), {unread} unread");
+        Console.WriteLine($"transition conditions: {conditions.Values.Sum()} in {filesWithConditions} file(s), " +
+                          $"{conditions.Count} distinct");
+        foreach (var (text, count) in conditions.OrderByDescending(c => c.Value))
+            Console.WriteLine($"  {count,5}  {text}");
+
+        // Where the conditional transitions actually sit, which is the difference between a reading
+        // that changes what the stepper does and one that changes nothing. A condition on a
+        // transition out of a state nothing enters can never hold anything back.
+        foreach (string file in files)
+        {
+            BehaviourGraphModel? model;
+            try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)))); }
+            catch (Exception) { continue; }
+            if (model == null) continue;
+
+            var run = GraphRun.Start(model);
+            if (run.RootId.Length == 0) continue;
+
+            var withCondition = run.Conditions();
+            if (withCondition.Count == 0) continue;
+
+            var reached = run.Reachable().Reachable.ToHashSet(StringComparer.Ordinal);
+            var landed = StepEverywhere(model, out _, out _);
+
+            int analysisReaches = withCondition.Count(c => reached.Contains(c.Route.FromId));
+            int stepReaches = withCondition.Count(c => landed.Contains(c.Route.FromId));
+            int wildcard = withCondition.Count(c => c.Route.Wildcard);
+            int wouldHold = withCondition.Count(c => c.Verdict == Expression.Verdict.False);
+
+            reachedFromState += analysisReaches;
+            sweepEnters += stepReaches;
+            falseNow += wouldHold;
+
+            // The causal half, and the one that means something.
+            //
+            // A count of how many conditions came out false at the values the file happens to ship
+            // with proves nothing about the reading being live: an evaluator that returned False for
+            // everything would score well on it. So every condition is driven instead. Its variables
+            // are set to each of a spread of values through the run's own setter, and the condition
+            // has to come out true for some of them and false for others. One that never changes its
+            // mind whatever its variables hold is being read, if at all, by something that is not
+            // looking at the variables.
+            foreach (var (route, condition, _) in withCondition)
+            {
+                var parsed = Expression.Parse(condition);
+                if (!parsed.Ok || parsed.IsAssignment || parsed.Names.Count == 0) continue;
+                if (parsed.Names.Any(n => run.ValueOf(n) == null)) continue;
+
+                driven++;
+                var seen = new HashSet<Expression.Verdict>();
+                var restore = parsed.Names.ToDictionary(n => n, n => run.ValueOf(n)!.Value);
+
+                foreach (double a in Spread)
+                foreach (double b in parsed.Names.Count > 1 ? Spread : new double[] { 0 })
+                {
+                    run.Set(parsed.Names[0], a);
+                    if (parsed.Names.Count > 1) run.Set(parsed.Names[1], b);
+                    seen.Add(run.Test(condition));
+                }
+
+                foreach (var (name, was) in restore) run.Set(name, was);
+
+                if (seen.Contains(Expression.Verdict.True) && seen.Contains(Expression.Verdict.False))
+                    { flipped++; continue; }
+
+                stuck.Add($"{Path.GetFileName(file)}: \"{condition}\" on #{route.FromId} never changes " +
+                          $"its mind whatever its variables hold, it is always {string.Join("/", seen)}");
+            }
+
+            Console.WriteLine($"  {Path.GetFileName(file)}: {withCondition.Count} conditional transition(s), " +
+                              $"{wildcard} of them wildcards, {analysisReaches} leave a state the analysis " +
+                              $"reaches, {stepReaches} leave a state the sweep enters, {wouldHold} are false " +
+                              "at the starting values");
+        }
+
+        Console.WriteLine($"\nread: {parsedOk} parsed, {unparsed} did not");
+        Console.WriteLine($"answered against each file's own starting values: {trueAtStart} true, " +
+                          $"{falseAtStart} false, {undecided} undecided, which is a transition that " +
+                          "still fires because nothing here can say it should not");
+
+        Console.WriteLine($"driven through a spread of values: {driven} condition(s) on transitions, " +
+                          $"{flipped} change their answer as their variables change, {driven - flipped} do not");
+        Console.WriteLine($"conditional transitions: {reachedFromState} leave a state the analysis reaches, " +
+                          $"{sweepEnters} leave one the sweep enters, {falseNow} are false at the starting values");
+
+        foreach (string one in stuck) Console.WriteLine("  " + one);
+        foreach (string problem in problems) Console.WriteLine("  cannot read: " + problem);
+        foreach (string one in assignments)
+            Console.WriteLine("  an assignment where a test was expected, so it stays undecided: " + one);
+        foreach (string one in undeclared) Console.WriteLine("  " + one);
+
+        Console.WriteLine($"\nexpression modifier lines: {expressions.Values.Sum()} in " +
+                          $"{filesWithExpressions} file(s), {expressions.Count} distinct");
+        foreach (var (text, count) in expressions.OrderByDescending(c => c.Value).Take(15))
+            Console.WriteLine($"  {count,5}  {text}");
+
+        // A condition this cannot read is not a soft failure. It means the stepper is back to firing
+        // that transition whatever the variables hold, silently, which is the state this work exists
+        // to leave behind.
+        // A condition that cannot be read, or one that never changes its mind whatever its variables
+        // hold, both mean the same thing in the end: the stepper is back to firing that transition
+        // regardless, silently, which is the state this work exists to leave behind.
+        return unparsed == 0 && stuck.Count == 0 ? 0 : 1;
+    }
+
+    /// Values to drive a condition's variables through. Chosen to straddle every constant the vanilla
+    /// conditions compare against, which `symrm conditions` prints: 0, 1, 2, 3, 5, 9, 10, 18, 20.
+    private static readonly double[] Spread = { -1, 0, 1, 2, 3, 5, 9, 10, 18, 20, 21, 100 };
+
+    /// What a file's variables are called and what they start at, as numbers.
+    ///
+    /// A word value is thirty two bits whose meaning is the variable's declared type, so a real is
+    /// stored as the bit pattern of its float and reading it as a whole number gives something like
+    /// 1065353216 for 1.0. The type comes from `variableInfos`, positionally, which is the only key
+    /// the format has.
+    private static Dictionary<string, double> VariableTable(PackfileObjects objects)
+    {
+        var table = new Dictionary<string, double>(StringComparer.Ordinal);
+
+        var strings = objects.OfClass("hkbBehaviorGraphStringData").FirstOrDefault();
+        var data = objects.OfClass("hkbBehaviorGraphData").FirstOrDefault();
+        var set = objects.OfClass("hkbVariableValueSet").FirstOrDefault();
+        if (strings == null || set == null) return table;
+
+        var names = objects.ReadStringArray(strings, "variableNames");
+        if (names == null) return table;
+
+        var values = objects.ReadArray(set, "wordVariableValues");
+        int stride = HavokClassTypes.Shipped["hkbVariableValue"]?.Size ?? 0;
+
+        var infos = data == null ? null : objects.ReadArray(data, "variableInfos");
+        int infoStride = HavokClassTypes.Shipped["hkbVariableInfo"]?.Size ?? 0;
+        var typeMember = HavokClassTypes.Shipped.Members("hkbVariableInfo")
+                                                .FirstOrDefault(m => m.Name == "type");
+
+        for (int i = 0; i < names.Count; i++)
+        {
+            if (names[i] is not string name || name.Length == 0) continue;
+            if (values == null || stride <= 0 || i >= values.Count) continue;
+
+            if (objects.ReadIntAt(values.At + i * stride) is not int word) continue;
+
+            int type = 0;
+            if (infos != null && infoStride > 0 && typeMember != null && i < infos.Count)
+                type = objects.ReadNarrowAt(infos.At + i * infoStride + typeMember.Offset,
+                                            HavokClassTypes.Width(typeMember.VType)) ?? 0;
+
+            // VARIABLE_TYPE_REAL is 2 in the enum the game registers, and it is the only one whose
+            // word is not already the number.
+            table[name] = type == 2 ? BitConverter.Int32BitsToSingle(word) : word;
+        }
+
+        return table;
     }
 
     /// The gate on copying a subtree and pasting it.

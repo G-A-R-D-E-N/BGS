@@ -124,6 +124,20 @@ public class MainWindow : Window
           Margin = new Thickness(2, 4, 2, 2) };
     private Button _step = Ux.Secondary("Step 0.1s");
 
+    /// The variables a condition can read, and the box that sets one.
+    ///
+    /// A transition can be gated on a variable, and until the variable can be changed the answer to
+    /// "does this ever fire" is whatever the file happened to ship the variable at. 107 transitions
+    /// in the corpus carry a condition and 29 of them are false at the shipped values, so without
+    /// this those 29 could only ever be watched not firing.
+    private readonly ComboBox _runVariables = new()
+        { MinWidth = 170, MaxWidth = 230, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private readonly TextBox _runValue = new()
+        { Width = 80, Foreground = Ux.CodeBrush, FontSize = 12, Watermark = "value" };
+    private readonly TextBlock _runHeldBack = new()
+        { Foreground = Ux.WarnBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+          Margin = new Thickness(2, 4, 2, 2) };
+
     /// The subtree waiting to be pasted. Static so it survives opening the file it is going into,
     /// which is what makes copying between two files a thing a person can actually do: there is one
     /// window, so the second file is the same window with something else open in it.
@@ -368,6 +382,7 @@ public class MainWindow : Window
         DockPanel.SetDock(_problemBar, Dock.Bottom);
         DockPanel.SetDock(_problems, Dock.Bottom);
         DockPanel.SetDock(_runStops, Dock.Bottom);
+        DockPanel.SetDock(_runHeldBack, Dock.Bottom);
         DockPanel.SetDock(_running, Dock.Bottom);
         DockPanel.SetDock(_graphProps, Dock.Right);
         DockPanel.SetDock(splitter, Dock.Right);
@@ -378,6 +393,7 @@ public class MainWindow : Window
         panel.Children.Add(_problemBar);
         panel.Children.Add(_problems);
         panel.Children.Add(_runStops);
+        panel.Children.Add(_runHeldBack);
         panel.Children.Add(_running);
         panel.Children.Add(_graphProps);
         panel.Children.Add(splitter);
@@ -388,6 +404,7 @@ public class MainWindow : Window
         _problemBar.IsVisible = false;
         _running.IsVisible = false;
         _runStops.IsVisible = false;
+        _runHeldBack.IsVisible = false;
         return panel;
     }
 
@@ -437,8 +454,26 @@ public class MainWindow : Window
             Margin = new Thickness(0, 0, 8, 0),
         };
 
+        // Setting a variable is what makes a gated transition testable rather than only reported.
+        // Refused for a name the graph does not declare, because nothing in the graph could read it.
+        var set = Ux.Secondary("Set");
+        ToolTip.SetTip(set, "Change a variable, so a transition gated on it can be tried both ways.");
+        set.Click += (_, _) => SetRunVariable();
+        _runValue.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) SetRunVariable(); };
+        _runVariables.SelectionChanged += (_, _) => ShowRunVariable();
+
+        var variableLabel = new TextBlock
+        {
+            Text = "Variable",
+            Foreground = Ux.MetaBrush,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(12, 0, 8, 0),
+        };
+
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        foreach (var control in new Control[] { label, _runEvents, send, _step, restart })
+        foreach (var control in new Control[]
+                 { label, _runEvents, send, _step, restart, variableLabel, _runVariables, _runValue, set })
             left.Children.Add(control);
 
         var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 6), LastChildFill = true };
@@ -646,6 +681,7 @@ public class MainWindow : Window
         _running.Clear();
         _running.IsVisible = false;
         _runStops.IsVisible = false;
+        _runHeldBack.IsVisible = false;
         _step.IsEnabled = false;
 
         var model = Model();
@@ -653,6 +689,7 @@ public class MainWindow : Window
         {
             _run = null;
             _runEvents.ItemsSource = null;
+            _runVariables.ItemsSource = null;
             SetRunSummary("Open a behaviour to run it.", Ux.MutedBrush);
             return;
         }
@@ -662,12 +699,16 @@ public class MainWindow : Window
         {
             _run = null;
             _runEvents.ItemsSource = null;
+            _runVariables.ItemsSource = null;
             SetRunSummary("This is a project or character file rather than a graph, so there is " +
                           "nothing in it to run.", Ux.MutedBrush);
             return;
         }
 
         _runEvents.ItemsSource = _run.Events;
+        _runVariables.ItemsSource = _run.Variables;
+        if (_run.Variables.Count > 0) _runVariables.SelectedIndex = 0;
+        ShowRunVariable();
         if (_run.Events.Count > 0) _runEvents.SelectedIndex = 0;
         RefreshRun(note);
     }
@@ -687,9 +728,57 @@ public class MainWindow : Window
         }
 
         var fired = _run.Send(name);
-        RefreshRun(fired.Count == 0
-            ? $"Sent {name}. Nothing in a running state was listening for it."
-            : $"Sent {name}. {fired.Count} transition(s) fired.");
+        int held = _run.HeldBack.Count;
+
+        // The two nothings are different answers and saying so is the point. Nothing listening means
+        // the event is not wired to anything running; something listening but held back means it is
+        // wired and a variable is stopping it, which is a thing the person can then go and change.
+        string said = fired.Count == 0
+            ? held == 0
+              ? $"Sent {name}. Nothing in a running state was listening for it."
+              : $"Sent {name}. Something was listening, but {held} transition(s) are held back by a condition."
+            : $"Sent {name}. {fired.Count} transition(s) fired." +
+              (held > 0 ? $" {held} other(s) held back by a condition." : "");
+
+        RefreshRun(said);
+    }
+
+    /// Puts the value of the chosen variable in the box, so it can be read before it is changed.
+    private void ShowRunVariable()
+    {
+        if (_run == null || _runVariables.SelectedItem is not string name) return;
+        _runValue.Text = _run.ValueOf(name) is double value
+            ? value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : "";
+    }
+
+    private void SetRunVariable()
+    {
+        if (_run == null) { SetRunSummary("Open a behaviour first.", Ux.MutedBrush); return; }
+
+        if (_runVariables.SelectedItem is not string name || name.Length == 0)
+        {
+            SetRunSummary("Choose a variable to set.", Ux.MutedBrush);
+            return;
+        }
+
+        if (!double.TryParse(_runValue.Text ?? "", System.Globalization.NumberStyles.Float,
+                             System.Globalization.CultureInfo.InvariantCulture, out double value))
+        {
+            SetRunSummary($"'{_runValue.Text}' is not a number, so {name} was not changed.", Ux.BadBrush);
+            return;
+        }
+
+        try
+        {
+            _run.Set(name, value);
+            RefreshRun($"{name} is now {value.ToString(System.Globalization.CultureInfo.InvariantCulture)}. " +
+                       "Send an event to see what that changes.");
+        }
+        catch (ArgumentException e)
+        {
+            SetRunSummary(e.Message, Ux.BadBrush);
+        }
     }
 
     /// Redraws the active states on the canvas and rebuilds the running list.
@@ -727,6 +816,18 @@ public class MainWindow : Window
             _runStops.IsVisible = true;
         }
         else _runStops.IsVisible = false;
+
+        // "I sent the event and nothing happened" is the question this answers. A transition held
+        // back by its condition is the commonest reason, and it is invisible unless it is said.
+        if (_run.HeldBack.Count > 0)
+        {
+            _runHeldBack.Text = "Held back by a condition: " + string.Join("    ",
+                _run.HeldBack.Select(h =>
+                    $"{h.Event} to '{(h.ToStateName.Length > 0 ? h.ToStateName : "#" + h.ToStateId)}' " +
+                    $"needs {h.Condition}"));
+            _runHeldBack.IsVisible = true;
+        }
+        else _runHeldBack.IsVisible = false;
 
         int machines = here.Count(a => !a.Fading);
         string blending = _run.Blending ? "  A transition is blending; Step to move it along." : "";
@@ -980,6 +1081,22 @@ public class MainWindow : Window
     {
         _runEvents.SelectedItem = name;
         SendRunEvent();
+    }
+
+    public IReadOnlyList<string> RunVariables =>
+        (_runVariables.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
+    public int RunHeldBack => _run?.HeldBack.Count ?? 0;
+    public bool RunHeldBackVisible => _runHeldBack.IsVisible;
+    public string RunHeldBackText => _runHeldBack.Text ?? "";
+    public string RunSummary => _runSummary.Text ?? "";
+    public double? RunValueOf(string name) => _run?.ValueOf(name);
+
+    /// Sets a variable, the way choosing it and typing a value and pressing Set does.
+    public void SetVariableForTest(string name, string value)
+    {
+        _runVariables.SelectedItem = name;
+        _runValue.Text = value;
+        SetRunVariable();
     }
 
     /// Selects through the same handler a click on the canvas uses, so a check exercises the path a

@@ -82,6 +82,8 @@ public static class Tests
         ("ThePointerTableKeepsTheOrderItWasWrittenIn", ThePointerTableKeepsTheOrderItWasWrittenIn),
         ("AnAddedObjectHasToLandWhereItsIdSays", AnAddedObjectHasToLandWhereItsIdSays),
         ("APastedSubtreePointsAtItself", APastedSubtreePointsAtItself),
+        ("AConditionSaysWhatItSays", AConditionSaysWhatItSays),
+        ("AFalseConditionHoldsATransitionBack", AFalseConditionHoldsATransitionBack),
         ("TheReadingFromTheBytesRefusesWhatItCannotDescribe", TheReadingFromTheBytesRefusesWhatItCannotDescribe),
         ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
@@ -1264,6 +1266,90 @@ public static class Tests
                         </hkobject>
                         <hkobject>
                             <hkparam name="value">0</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
+
+    /// One machine, two states, one event, two ways out of the first state. The higher priority way
+    /// out is gated on a variable, so the same event goes to a different state depending on what that
+    /// variable holds, which is the whole of what a condition does.
+    private static string GatedGraph() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraph" name="#90" signature="0xb1218f86">
+                    <hkparam name="name">Graph</hkparam>
+                    <hkparam name="rootGenerator">#92</hkparam>
+                    <hkparam name="data">#100</hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphStringData" name="#91" signature="0xc713064e">
+                    <hkparam name="eventNames" numelements="1">Go</hkparam>
+                    <hkparam name="variableNames" numelements="2">bGateOpen fSpeed</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachine" name="#92" signature="0xa5896bcf">
+                    <hkparam name="name">Root</hkparam>
+                    <hkparam name="startStateId">0</hkparam>
+                    <hkparam name="states" numelements="3">#93 #96 #97</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#93" signature="0x39d76713">
+                    <hkparam name="name">Start</hkparam>
+                    <hkparam name="stateId">0</hkparam>
+                    <hkparam name="transitions">#94</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineTransitionInfoArray" name="#94" signature="0xe397b11e">
+                    <hkparam name="transitions" numelements="2">
+                        <hkobject>
+                            <hkparam name="eventId">0</hkparam>
+                            <hkparam name="toStateId">1</hkparam>
+                            <hkparam name="priority">10</hkparam>
+                            <hkparam name="condition">#95</hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="eventId">0</hkparam>
+                            <hkparam name="toStateId">2</hkparam>
+                            <hkparam name="priority">1</hkparam>
+                            <hkparam name="condition">null</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbExpressionCondition" name="#95" signature="0x78a69526">
+                    <hkparam name="expression">bGateOpen == 1</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#96" signature="0x39d76713">
+                    <hkparam name="name">Gated</hkparam>
+                    <hkparam name="stateId">1</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#97" signature="0x39d76713">
+                    <hkparam name="name">Fallback</hkparam>
+                    <hkparam name="stateId">2</hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphData" name="#100" signature="0x95aca5d">
+                    <hkparam name="variableInfos" numelements="2">
+                        <hkobject>
+                            <hkparam name="type">VARIABLE_TYPE_INT32</hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="type">VARIABLE_TYPE_REAL</hkparam>
+                        </hkobject>
+                    </hkparam>
+                    <hkparam name="eventInfos" numelements="1">
+                        <hkobject>
+                            <hkparam name="flags">0</hkparam>
+                        </hkobject>
+                    </hkparam>
+                    <hkparam name="stringData">#91</hkparam>
+                    <hkparam name="variableInitialValues">#101</hkparam>
+                </hkobject>
+                <hkobject class="hkbVariableValueSet" name="#101" signature="0x27812d8d">
+                    <hkparam name="wordVariableValues" numelements="2">
+                        <hkobject>
+                            <hkparam name="value">0</hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="value">1075838976</hkparam>
                         </hkobject>
                     </hkparam>
                 </hkobject>
@@ -3176,6 +3262,170 @@ public static class Tests
     /// whatever fell out of the implementation. Two of these are meant to keep failing until #19
     /// comes back from the game: full removal renumbers every object after the hole, and there is no
     /// way to check a renumber against the engine from here.
+    /// What a condition comes to, worked out by hand and written down here.
+    ///
+    /// This is the independent opinion, and the corpus cannot supply one. `symrm conditions` proves
+    /// every vanilla condition parses and that every one changes its answer as its variables change,
+    /// and neither of those notices an operator being read as the wrong operator: `Pose != 5` read as
+    /// `Pose == 5` still parses and still flips. Only an answer somebody worked out separately
+    /// catches that, so the answers below were worked out separately.
+    ///
+    /// Every shape the 34 distinct vanilla conditions use is here, and the two the corpus does not
+    /// use but the parser accepts, `&lt;=` and an unbracketed `&amp;&amp;`, because an operator with no test
+    /// is where a hole goes.
+    private static void AConditionSaysWhatItSays()
+    {
+        Console.WriteLine("\na condition says what it says");
+
+        var world = new Dictionary<string, double>(StringComparer.Ordinal)
+        {
+            ["iIsInSneak"] = 0,
+            ["IsPlayer"] = 1,
+            ["Speed"] = 12,
+            ["TrotMaxSpeed"] = 20,
+            ["Pose"] = 5,
+            ["isMirrored"] = 1,
+            ["isSightedOver"] = 0,
+            ["iSyncReadyAlertRelaxed"] = 2,
+            ["iSyncIdleLocomotion"] = 0,
+            ["bBlockMoveStop"] = 0,
+            ["fReal"] = 2.5,
+        };
+
+        double? Value(string name) => world.TryGetValue(name, out double v) ? v : null;
+
+        var expected = new (string Text, Expression.Verdict Want)[]
+        {
+            // The plain comparisons, one of each operator, both ways round.
+            ("iIsInSneak == 0", Expression.Verdict.True),
+            ("iIsInSneak == 1", Expression.Verdict.False),
+            ("Pose != 5", Expression.Verdict.False),
+            ("Pose != 4", Expression.Verdict.True),
+            ("Pose == 5", Expression.Verdict.True),
+            ("Speed  > 10", Expression.Verdict.True),
+            ("Speed < 9", Expression.Verdict.False),
+            ("Speed >= 20", Expression.Verdict.False),
+            ("Speed >= 12", Expression.Verdict.True),
+            ("Speed <= 12", Expression.Verdict.True),
+            ("Speed <= 11", Expression.Verdict.False),
+
+            // A comparison of two variables, which one vanilla condition does.
+            ("Speed > TrotMaxSpeed", Expression.Verdict.False),
+            ("TrotMaxSpeed > Speed", Expression.Verdict.True),
+
+            // A bare variable as a truth, and its negation.
+            ("IsPlayer", Expression.Verdict.True),
+            ("!IsPlayer", Expression.Verdict.False),
+            ("!bBlockMoveStop", Expression.Verdict.True),
+            ("bBlockMoveStop", Expression.Verdict.False),
+
+            // The compound ones, including the De Morgan pair vanilla ships as complements of each
+            // other. Under these values the first is true and the second must be false.
+            ("(iSyncReadyAlertRelaxed==2) && (iSyncIdleLocomotion==0)", Expression.Verdict.True),
+            ("(iSyncReadyAlertRelaxed!=2) || (iSyncIdleLocomotion==1)", Expression.Verdict.False),
+            ("(isMirrored == 0) && (isSightedOver == 0)", Expression.Verdict.False),
+            ("(isMirrored == 1) && (isSightedOver == 0)", Expression.Verdict.True),
+
+            // Without brackets, which vanilla never writes and the parser has to get right anyway.
+            ("iIsInSneak == 0 && Pose == 5", Expression.Verdict.True),
+            ("iIsInSneak == 1 || Pose == 5", Expression.Verdict.True),
+            ("iIsInSneak == 1 && Pose == 5", Expression.Verdict.False),
+
+            // A real variable, which is stored as the bit pattern of a float and would come out as
+            // 1075838976 if the type were ignored.
+            ("fReal > 2", Expression.Verdict.True),
+            ("fReal > 3", Expression.Verdict.False),
+
+            // A name the graph does not declare is Unknown, not zero. Zero is a value a variable can
+            // really hold, so answering with it would make this come out true on a file that has no
+            // such variable at all.
+            ("noSuchVariable == 0", Expression.Verdict.Unknown),
+
+            // Unknown short circuits where the operator allows it and not where it does not.
+            ("noSuchVariable == 0 && iIsInSneak == 1", Expression.Verdict.False),
+            ("noSuchVariable == 0 || iIsInSneak == 0", Expression.Verdict.True),
+            ("noSuchVariable == 0 && iIsInSneak == 0", Expression.Verdict.Unknown),
+
+            // An assignment is not a test. Vanilla ships one, `iSyncIdleLocomotion=18`, and reading
+            // it as `==` would be inventing a meaning nothing here can check.
+            ("iSyncIdleLocomotion=18", Expression.Verdict.Unknown),
+
+            // Nonsense stays Unknown rather than becoming an answer.
+            ("Speed >", Expression.Verdict.Unknown),
+            ("((Speed > 1)", Expression.Verdict.Unknown),
+            ("", Expression.Verdict.Unknown),
+        };
+
+        foreach (var (text, want) in expected)
+            Check($"\"{text}\"", want, Expression.Evaluate(text, Value));
+
+        // Unknown has to mean the transition still fires. If reading a condition could ever hold one
+        // back for a reason this did not understand, a build with a broken parser would be worse than
+        // a build with no parser, which is the wrong way round for a feature nobody asked to depend
+        // on.
+        CheckTrue("an unreadable condition is not a reason to hold a transition back",
+                  Expression.Evaluate("this is not an expression @@@", Value) != Expression.Verdict.False);
+    }
+
+    /// That a false condition actually stops the transition, rather than only being computed.
+    ///
+    /// The corpus gate drives conditions and watches the answer change, which proves the reading is
+    /// live. It does not prove the stepper does anything with it. This is a graph small enough to
+    /// hold in your head: one machine, two states, and one event with two transitions out of the
+    /// first state, the higher priority one gated on a variable.
+    private static void AFalseConditionHoldsATransitionBack()
+    {
+        Console.WriteLine("\na false condition holds a transition back");
+
+        var model = BehaviourGraphModel.Parse(GatedGraph());
+        var run = GraphRun.Start(model);
+
+        Check("the graph starts in its first state", "Start", run.Where().FirstOrDefault()?.StateName ?? "");
+        Check("and declares the variable the condition names", 0d, run.ValueOf("bGateOpen") ?? -1);
+
+        // A real variable is stored as the bit pattern of its float, so 2.5 sits in the file as
+        // 1075838976. Read as a whole number every comparison against it is nonsense and every one of
+        // them comes out the same way, which looks like a working condition until somebody sets the
+        // variable and nothing changes. Nothing in the corpus catches this: the vanilla files that
+        // compare against a real all start it at zero, whose bit pattern is also zero, so the two
+        // readings agree exactly where the shipped data can see them.
+        Check("a real variable is the number it stores and not its bit pattern", 2.5d,
+              run.ValueOf("fSpeed") ?? -1);
+        Check("so a comparison against it means what it says", Expression.Verdict.True,
+              run.Test("fSpeed > 2"));
+        Check("in both directions", Expression.Verdict.False, run.Test("fSpeed > 3"));
+
+        // Shut, so the gated transition cannot fire and the ungated one takes it instead.
+        var fired = run.Send("Go");
+        Check("the gated route does not fire while its condition is false", "Fallback",
+              fired.FirstOrDefault()?.ToStateName ?? "");
+        Check("and the one held back is reported rather than passed over in silence", 1, run.HeldBack.Count);
+        CheckTrue("naming the condition that held it",
+                  run.HeldBack.Count > 0 && run.HeldBack[0].Condition == "bGateOpen == 1");
+
+        // Changing a variable clears what was held back, because it was held back by the values as
+        // they were and the list would otherwise name a reason that is no longer the reason.
+        run.Set("bGateOpen", 1);
+        Check("changing a variable drops the reason the last send gave", 0, run.HeldBack.Count);
+
+        // Open, and the same event goes the other way. Same graph, same event, different answer, so
+        // the condition is what decided it.
+        var again = GraphRun.Start(model);
+        again.Set("bGateOpen", 1);
+        var second = again.Send("Go");
+        Check("with the variable set the gated route fires instead", "Gated",
+              second.FirstOrDefault()?.ToStateName ?? "");
+        Check("and nothing is held back", 0, again.HeldBack.Count);
+
+        // A variable the graph never declared cannot be set, because nothing in the graph could ever
+        // read it and quietly accepting one would look like it had worked.
+        string refused = "";
+        try { again.Set("noSuchVariable", 1); }
+        catch (ArgumentException e) { refused = e.Message; }
+        CheckTrue("setting a variable the graph does not declare is refused",
+                  refused.Contains("declares no variable", StringComparison.Ordinal));
+    }
+
     /// Copy and paste of a subtree.
     ///
     /// The corpus proof is `symrm paste`, over all 531 behaviours, and it is the one that matters:
