@@ -3,6 +3,22 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, the last two things that asked for Java stop asking
+
+Opening and editing a file stopped needing Java a while ago. The Chain tab and the Check project
+button did not, and the reason was easy to miss: they read the *other* files in a project, and while
+the open file was being read from its own bytes those were still being unpacked with hkxpack. Check
+project refused outright without it and the Chain tab was skipped. #34.
+
+Both go through one front door now, `HkxTextEdit.TextOf`, which writes a file's text from its own
+bytes and reaches for hkxpack only when the class table cannot describe it. The test for whether our
+own text can be trusted is the one the window already used: the ids in it have to account for every
+object in the bytes.
+
+`symrm chain` runs both halves and prints them, and the output is identical with Java on PATH and
+with Java and hkxpack both hidden. The window's own smoke test now runs 129 checks either way, where
+without Java it used to run 120.
+
 ## 2026-08-08, an array of numbers can grow, and narrow fields read at their own width
 
 The last kind of array that had to go out through a rebuild. Simpler than the array of names before

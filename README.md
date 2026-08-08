@@ -444,12 +444,18 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   `symrm panel` compares what the panel itself would display, **509,557 values, every one of them read
   from the file's own bytes with none falling back**, all agreeing. An enum field offers its declared
   values rather than asking for the name to be typed, which covers 42,733 of those fields.
-- **Java is no longer needed to open, edit or compare a file.** The graph, the tree, the properties,
+- **Java is no longer needed for anything the window does.** The graph, the tree, the properties,
   the symbols, what each event is used for, and the whole checker are read from the file's own bytes,
   and the text form an edit is made through is written from those bytes as well rather than unpacked.
   That text was set against hkxpack's own line by line over every vanilla behaviour: **of the 370
   files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them**. The other 128
   hold a class hkxpack strides wrongly, so its text is misaligned and there is nothing to match.
+  The Chain tab and Check project were the last two that still asked for it, because they read the
+  *other* files in a project and were still unpacking those. They read them the same way now.
+  `symrm chain` runs both halves and prints them, and its output is identical with Java on PATH and
+  with Java and hkxpack both hidden: 4 links, 100 animations, 65 bones, 4 behaviours checked, none
+  unread. The window's own smoke test now runs 129 checks either way, where without Java it used to
+  run 120.
   What still needs Java: packing a file back after an edit this cannot express in bytes. That list is
   now a class that has gained or lost a field, or a file whose objects have been renumbered. Neither
   is something the editor does; both are the guards that catch two documents that are not the same

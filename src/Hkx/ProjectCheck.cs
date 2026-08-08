@@ -60,7 +60,8 @@ public static class ProjectCheck
         return found;
     }
 
-    public static Result Run(ProjectChain chain, string java, string jar, Action<string>? progress = null)
+    public static Result Run(ProjectChain chain, string? java = null, string? jar = null,
+                             Action<string>? progress = null)
     {
         var result = new Result();
         var files = BehaviourFiles(chain);
@@ -74,10 +75,14 @@ public static class ProjectCheck
 
             try
             {
-                string work = Path.Combine(Path.GetTempPath(), "bgs_project",
-                                           Path.GetFileNameWithoutExtension(path));
-                HkxTextEdit.ResetDirectory(work);
-                string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(java, jar, path, work));
+                string xml = HkxTextEdit.TextOf(path, java, jar);
+                if (xml.Length == 0)
+                {
+                    file.Error = "holds a class this build cannot describe, and there is no hkxpack " +
+                                 "to fall back on";
+                    continue;
+                }
+
                 file.Findings.AddRange(GraphValidator.Check(xml, chain));
             }
             catch (Exception ex)

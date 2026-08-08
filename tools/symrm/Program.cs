@@ -49,6 +49,7 @@ public static class Program
             case "delete": return DeleteObject(argv);
             case "savedelete": return SaveDelete(argv);
             case "classcheck": return ClassCheck(argv);
+            case "chain": return Chain(argv);
             case "saveevent": return SaveEvent(argv);
             case "savewide": return SaveWide(argv);
             case "savenumbers": return SaveNumbers(argv);
@@ -230,6 +231,11 @@ public static class Program
               Declares an event the way the window does, all the way to the bytes, and checks the
               file comes back holding it. Adding one lengthens an array of strings, which used to be
               the last edit that forced a save out through hkxpack. Needs no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- chain <behaviour.hkx>
+              The project around a file: its character, its skeleton, the animations it declares and
+              the bones it has. Reads the other files the same way it reads this one. Run it once
+              with Java on PATH and once under tools/no-java.sh and the output has to match.
 
           dotnet run --project tools/symrm/symrm.csproj -- classcheck <hkclass-field-layouts.txt>
               Sets this build's class table against Fallout 4's own account of itself, read out of
@@ -4033,6 +4039,47 @@ public static class Program
         Console.WriteLine($"laid out from scratch: {placedWhereExpected}/{placedSeen} " +
                           "object(s) and run(s) land where the walk puts them");
         return oddFiles == 0 && skipped == 0 ? 0 : 1;
+    }
+
+    // The project around a file: which character, which skeleton, which animations it declares.
+    //
+    // This reads other files, and until now it read them through hkxpack, so the Chain tab and the
+    // Check project button were the last two things in the window that asked for Java after opening
+    // a file stopped needing it. Run this with Java hidden and with Java present and the output has
+    // to be the same, which is the whole point.
+    private static int Chain(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string file = Path.GetFullPath(argv[1]);
+        string? java = HkxTextEdit.FindJava("");
+        string? jar = HkxTextEdit.FindHkxPack("", AppContext.BaseDirectory);
+
+        Console.WriteLine($"java {(java == null ? "hidden" : "present")}, " +
+                          $"hkxpack {(jar == null ? "missing" : "present")}");
+
+        var chain = ProjectChain.Resolve(file, java, jar);
+
+        foreach (var link in chain.Links)
+            Console.WriteLine($"  {link.Role,-12} {(link.Exists ? "found  " : "MISSING")} {link.Declared}");
+
+        Console.WriteLine($"  animations   {chain.Animations.Count} declared by the character");
+        Console.WriteLine($"  bones        {chain.Bones.Count} in the skeleton");
+
+        foreach (string problem in chain.Problems) Console.WriteLine("  problem: " + problem);
+
+        // The other half of what the Check project button does, and the other thing that used to
+        // demand Java. Every behaviour in the project read and run through the validator.
+        var checkResult = ProjectCheck.Run(chain, java, jar);
+        int unread = checkResult.Files.Count(f => f.Error.Length > 0);
+
+        foreach (var unreadable in checkResult.Files.Where(f => f.Error.Length > 0).Take(5))
+            Console.WriteLine($"  unread: {unreadable.Name}, {unreadable.Error}");
+
+        Console.WriteLine($"\n{chain.Links.Count} link(s), {chain.Problems.Count} problem(s)");
+        Console.WriteLine($"checked {checkResult.Files.Count} behaviour file(s), {unread} unread, " +
+                          $"{checkResult.Errors} error(s), {checkResult.Warnings} warning(s)");
+        return chain.Links.Count == 0 || unread > 0 ? 1 : 0;
     }
 
     // Lengthening an array of plain numbers, the last kind of array that needed a rebuild.
