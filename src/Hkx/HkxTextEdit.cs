@@ -306,6 +306,167 @@ public static class HkxTextEdit
         return xmlText.Substring(0, start) + updated + xmlText.Substring(start + length);
     }
 
+    /// Writes one field addressed by where it sits rather than by what it is called.
+    ///
+    /// `SetParam` above replaces the first `hkparam` in the object's block with a matching name, and
+    /// for anything holding an array of structs that is the wrong one. Every element of a transition
+    /// array carries an `eventId`, so a five transition array holds five of them, and every element
+    /// carries two time intervals, so it holds ten `enterEventId` as well. Naming the field says
+    /// nothing about which.
+    ///
+    /// A path says which: `transitions[1].eventId` is the second element's, and
+    /// `transitions[1].initiateInterval.enterEventId` is the one inside the struct written inside
+    /// that element. A path with no brackets and one segment is what `SetParam` already does, and
+    /// goes through the same code here.
+    ///
+    /// Refusing is the point of the walk. An index past the end of the array or a member the element
+    /// does not carry throws, because the alternative is writing whichever field happened to be
+    /// nearby and reporting that the edit worked.
+    public static string SetParamAt(string xmlText, string id, string path, string newValue)
+    {
+        var (start, length) = ObjectBlock(xmlText, id);
+        if (start < 0) throw new ArgumentException($"object #{id} not found");
+
+        string block = xmlText.Substring(start, length);
+
+        // The block runs from this object's own head to the next one's, so its only top level tag is
+        // the object itself and the walk starts inside it.
+        var self = TopLevel(block, 0, block.Length)
+            .Find(p => p.Kind == "hkobject");
+        if (self.Kind == null) throw new ArgumentException($"#{id} has no body to write into");
+
+        var segments = path.Split('.');
+        int from = self.InnerStart, to = self.InnerEnd;
+
+        for (int i = 0; i < segments.Length - 1; i++)
+        {
+            var (name, index) = Segment(segments[i]);
+            var param = Find(block, from, to, name)
+                ?? throw new ArgumentException($"#{id} has no {name} at {Sofar(segments, i)}");
+
+            if (index < 0)
+            {
+                // A struct written inline is an hkobject with a name rather than an id, sitting
+                // alone inside its param.
+                var inline = TopLevel(block, param.InnerStart, param.InnerEnd)
+                    .Find(p => p.Kind == "hkobject");
+                if (inline.Kind == null)
+                    throw new ArgumentException($"#{id}.{Sofar(segments, i)} holds no struct to walk into");
+                (from, to) = (inline.InnerStart, inline.InnerEnd);
+                continue;
+            }
+
+            var elements = TopLevel(block, param.InnerStart, param.InnerEnd)
+                .FindAll(p => p.Kind == "hkobject");
+            if (index >= elements.Count)
+                throw new ArgumentException(
+                    $"#{id}.{name} has {elements.Count} element{(elements.Count == 1 ? "" : "s")}, " +
+                    $"so there is no [{index}]");
+            (from, to) = (elements[index].InnerStart, elements[index].InnerEnd);
+        }
+
+        var (last, lastIndex) = Segment(segments[^1]);
+        if (lastIndex >= 0)
+            throw new ArgumentException($"{path} names an array, not a value inside one");
+
+        var target = Find(block, from, to, last)
+            ?? throw new ArgumentException($"#{id} has no {last} at {path}");
+
+        string body = newValue.Length == 0
+            ? $"<hkparam name=\"{last}\"/>"
+            : $"<hkparam name=\"{last}\">{Escape(newValue)}</hkparam>";
+
+        string rewritten = block[..target.Start] + body + block[target.End..];
+        return xmlText[..start] + rewritten + xmlText[(start + length)..];
+    }
+
+    /// `transitions[1]` as its parts. An index of -1 means the segment named no element.
+    private static (string Name, int Index) Segment(string segment)
+    {
+        int bracket = segment.IndexOf('[');
+        if (bracket < 0) return (segment, -1);
+
+        string inside = segment[(bracket + 1)..].TrimEnd(']');
+        if (!int.TryParse(inside, out int index) || index < 0)
+            throw new ArgumentException($"{segment} does not name an element");
+
+        return (segment[..bracket], index);
+    }
+
+    private static string Sofar(string[] segments, int upto) => string.Join('.', segments[..(upto + 1)]);
+
+    private static Piece? Find(string text, int from, int to, string name)
+    {
+        foreach (var piece in TopLevel(text, from, to))
+            if (piece.Kind == "hkparam" && piece.Name == name) return piece;
+        return null;
+    }
+
+    private readonly record struct Piece(string Kind, string Name, int Start, int End,
+                                         int InnerStart, int InnerEnd);
+
+    private static readonly Regex AnyTag =
+        new(@"<(?<close>/?)(?<kind>hkparam|hkobject)(?<attrs>[^>]*)>", RegexOptions.Compiled);
+
+    /// The tags sitting directly inside a region, with what each one encloses.
+    ///
+    /// Depth is counted rather than assumed, so a struct written inside an element does not read as
+    /// another element, which is the mistake that makes a flat scan of an object's text wrong in the
+    /// first place.
+    private static List<Piece> TopLevel(string text, int from, int to)
+    {
+        var pieces = new List<Piece>();
+        int depth = 0;
+        string openKind = "", openName = "";
+        int openStart = 0, openInner = 0;
+
+        foreach (Match m in AnyTag.Matches(text, from))
+        {
+            if (m.Index >= to) break;
+
+            string kind = m.Groups["kind"].Value;
+            string attrs = m.Groups["attrs"].Value;
+            bool closing = m.Groups["close"].Value == "/";
+            bool selfClosing = attrs.TrimEnd().EndsWith('/');
+
+            if (closing)
+            {
+                depth--;
+                if (depth == 0)
+                    pieces.Add(new Piece(openKind, openName, openStart, m.Index + m.Length,
+                                         openInner, m.Index));
+                continue;
+            }
+
+            if (selfClosing)
+            {
+                // Nothing inside it, so it opens and closes at once. An empty value is written this
+                // way, which is the shape an animationBundleName arrives in.
+                if (depth == 0)
+                    pieces.Add(new Piece(kind, NameOf(attrs), m.Index, m.Index + m.Length,
+                                         m.Index + m.Length, m.Index + m.Length));
+                continue;
+            }
+
+            if (depth == 0)
+            {
+                openKind = kind;
+                openName = NameOf(attrs);
+                openStart = m.Index;
+                openInner = m.Index + m.Length;
+            }
+            depth++;
+        }
+
+        return pieces;
+    }
+
+    private static string NameOf(string attrs)
+    {
+        var m = Regex.Match(attrs, @"name=""([^""]*)""");
+        return m.Success ? m.Groups[1].Value : "";
+    }
+
     public static string ClassOf(string xmlText, string id)
     {
         foreach (Match m in ObjectHead.Matches(xmlText))

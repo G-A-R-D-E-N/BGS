@@ -291,20 +291,189 @@ public class MainWindow : Window
 
         var splitter = new GridSplitter { Width = 6, Background = Brushes.Transparent };
 
+        // The canvas draws six node colours, three kinds of line and two badges, and none of them
+        // says what it means. That is a lot to hold in your head on a graph with eight hundred boxes
+        // in it, and the answer is not fewer marks: it is the marks having somewhere to be looked up.
+        _legend = BuildLegend();
+        _legend.IsVisible = false;
+
+        var legendButton = Ux.Secondary("Legend");
+        legendButton.Click += (_, _) =>
+        {
+            _legend.IsVisible = !_legend.IsVisible;
+            legendButton.Content = _legend.IsVisible ? "Hide legend" : "Legend";
+        };
+
+        var top = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        DockPanel.SetDock(legendButton, Dock.Left);
+        top.Children.Add(legendButton);
+        top.Children.Add(new Panel());
+
         var panel = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(top, Dock.Top);
         DockPanel.SetDock(_problemBar, Dock.Bottom);
         DockPanel.SetDock(_problems, Dock.Bottom);
         DockPanel.SetDock(_graphProps, Dock.Right);
         DockPanel.SetDock(splitter, Dock.Right);
+        DockPanel.SetDock(_legend, Dock.Left);
+        panel.Children.Add(top);
         panel.Children.Add(_problemBar);
         panel.Children.Add(_problems);
         panel.Children.Add(_graphProps);
         panel.Children.Add(splitter);
+        panel.Children.Add(_legend);
         panel.Children.Add(Framed(_graph));
 
         _problems.IsVisible = false;
         _problemBar.IsVisible = false;
         return panel;
+    }
+
+    private Control _legend = new Panel();
+
+    /// Read only, for the window checks.
+    public Control Legend => _legend;
+
+    /// What everything on the canvas means, in the words somebody reading a graph would use.
+    ///
+    /// Every colour here is asked for by class name rather than written down again, so the legend
+    /// cannot come to disagree with the picture. A legend that is wrong is worse than none: it is
+    /// read as the answer rather than checked against the thing it describes.
+    private Control BuildLegend()
+    {
+        var body = new StackPanel { Spacing = 4, Width = 260 };
+
+        void Heading(string text)
+        {
+            var title = Ux.SectionTitle(text);
+            title.Margin = new Thickness(0, 10, 0, 2);
+            body.Children.Add(title);
+        }
+
+        void Swatch(Control mark, string name, string what)
+        {
+            // Width given rather than inherited. The row is a DockPanel with the swatch docked left,
+            // and the words filling what is left of a panel that is itself inside a scroll viewer,
+            // which measures its content as though it had all the room in the world. Left to itself
+            // the last word of every explanation sat past the edge of the panel.
+            var words = new StackPanel { Spacing = 1, Width = 212 };
+            var title = Ux.Label(name);
+            title.Foreground = Ux.TitleBrush;
+            words.Children.Add(title);
+
+            var said = Ux.Label(what);
+            said.Foreground = Ux.MutedBrush;
+            said.FontSize = 11;
+            said.TextWrapping = TextWrapping.Wrap;
+            words.Children.Add(said);
+
+            mark.Margin = new Thickness(0, 3, 8, 0);
+            mark.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top;
+
+            var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
+            DockPanel.SetDock(mark, Dock.Left);
+            row.Children.Add(mark);
+            row.Children.Add(words);
+            body.Children.Add(row);
+        }
+
+        Control Box(string className) => new Border
+        {
+            Width = 20,
+            Height = 12,
+            CornerRadius = new CornerRadius(3),
+            Background = new SolidColorBrush(Ux.ForClass(className), 0.35),
+            BorderBrush = new SolidColorBrush(Ux.ForClass(className)),
+            BorderThickness = new Thickness(1.5),
+        };
+
+        Control Wire(Color colour, bool dashed) => new Avalonia.Controls.Shapes.Line
+        {
+            StartPoint = new Point(0, 6),
+            EndPoint = new Point(20, 6),
+            Stroke = new SolidColorBrush(colour),
+            StrokeThickness = 2,
+            StrokeDashArray = dashed ? new Avalonia.Collections.AvaloniaList<double> { 3, 2 } : null,
+            Width = 20,
+            Height = 12,
+        };
+
+        Heading("Boxes");
+        Swatch(Box("hkbStateMachine"), "State machine",
+               "A set of states with one of them active at a time.");
+        Swatch(Box("hkbStateMachineStateInfo"), "State",
+               "One of those. Holds whatever plays while it is the active one.");
+        Swatch(Box("hkbStateMachineTransitionInfoArray"), "Transitions",
+               "The list of ways out of a state. Click it to read them one at a time.");
+        Swatch(Box("hkbClipGenerator"), "Clip",
+               "Plays one animation file.");
+        Swatch(Box("hkbBlenderGenerator"), "Blend",
+               "Mixes several animations together by weight.");
+        Swatch(Box("hkbModifierGenerator"), "Modifier",
+               "Changes the pose after it has been made.");
+
+        Heading("Lines");
+        Swatch(Wire(Ux.ForClass("hkbStateMachine"), false), "Solid: holds",
+               "The box at one end contains the box at the other. This is shape, not behaviour.");
+        Swatch(Wire(Ux.RouteColour, true), "Dashed: transition",
+               "Send the event written on it and the machine moves along the arrow. This is the " +
+               "thing you cannot read anywhere else.");
+        Swatch(Wire(Ux.Warn, true), "Dashed orange: from anywhere",
+               "Fires from any state in that machine, not from one. Kept faint until you highlight " +
+               "the machine, because there are usually a lot of them.");
+
+        Heading("Marks");
+        Swatch(new Border
+        {
+            Height = 12,
+            CornerRadius = new CornerRadius(3),
+            Background = new SolidColorBrush(Ux.Good),
+            Child = new TextBlock
+            {
+                Text = "start",
+                FontSize = 8,
+                Foreground = Ux.BaseBrush,
+                Margin = new Thickness(3, 0),
+            },
+        }, "Start", "The state its machine begins in.");
+
+        Swatch(Wire(Ux.Bad, false), "Red outline",
+               "Check graph found something wrong here. The list under the canvas says what.");
+        Swatch(Wire(Ux.Warn, false), "Amber outline",
+               "Check graph found something worth a look, but not an error.");
+
+        Heading("Getting around");
+        foreach (string tip in new[]
+                 {
+                     "Right click a box, then Highlight the paths of, to dim everything it is not " +
+                     "joined to. Escape clears it.",
+                     "Labels appear where there is room for them. Zoom in with the wheel to see more.",
+                     "Drag with the middle button to move around. Double click a box to edit its fields.",
+                 })
+        {
+            var line = Ux.Label(tip);
+            line.Foreground = Ux.MetaBrush;
+            line.FontSize = 11;
+            line.TextWrapping = TextWrapping.Wrap;
+            line.Width = 240;
+            line.Margin = new Thickness(0, 3, 0, 0);
+            body.Children.Add(line);
+        }
+
+        return new Border
+        {
+            Background = Ux.CardBrush,
+            BorderBrush = Ux.BorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(10, 6, 10, 10),
+            Margin = new Thickness(0, 0, 8, 0),
+            Child = new ScrollViewer
+            {
+                Content = body,
+                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            },
+        };
     }
 
     private void OnProblemSelected()
@@ -2243,56 +2412,112 @@ public class MainWindow : Window
         heading.TextWrapping = TextWrapping.Wrap;
         panel.Add(heading);
 
-        foreach (var p in parameters)
-        {
-            string name = p.Name;
-            string original = p.Value;
-            string owner = objectId;
+        // An array of structs is shown one element at a time rather than as one flat run of boxes.
+        // The file writes an element's fields together, so the fields sharing a group arrive
+        // together and a run of them is an element. A transition array with five transitions in it
+        // is eighty boxes laid out flat, with every name repeated once per element and nothing
+        // saying where one transition ends and the next begins.
+        var summaries = ElementSummary.For(model, objectId);
 
-            // An enum whose values the class table declares becomes a list rather than a box. The
-            // names are the ones the game registers, not ours, and PanelFields only offers them when
-            // the value already in the file is one of them, so picking from the list can never be the
-            // only way to keep what is there.
-            if (p.Options.Count > 0)
+        for (int i = 0; i < parameters.Count;)
+        {
+            string group = parameters[i].Group;
+            if (group.Length == 0)
             {
-                panel.Add(EnumRow(p, owner));
+                panel.Add(FieldRow(parameters[i], objectId));
+                i++;
                 continue;
             }
 
-            var field = Ux.Field();
-            field.Text = p.Value;
-            // Committing is driven by what the box holds, not by which box has focus. Focus is the
-            // usual trigger, but a window closing has no focus change to hang off, and asking every
-            // field whether it differs is both simpler and safe: one that has not been touched
-            // commits nothing, and one already committed commits nothing twice.
-            void Commit()
-            {
-                if (field.Text == original) return;
-                Apply(owner, name, field, original);
-                original = field.Text ?? original;
-            }
+            int end = i;
+            while (end < parameters.Count && parameters[end].Group == group) end++;
 
-            _fieldCommits.Add(Commit);
-            field.LostFocus += (_, _) => Commit();
-            field.KeyDown += (_, e) =>
-            {
-                if (e.Key == Avalonia.Input.Key.Enter) Commit();
-            };
+            var inside = new StackPanel { Spacing = 6, Margin = new Thickness(8, 4, 0, 4) };
+            for (int f = i; f < end; f++) inside.Children.Add(FieldRow(parameters[f], objectId));
 
-            var label = Ux.Label(p.Name);
-            label.Width = 128;
-            label.TextTrimming = TextTrimming.CharacterEllipsis;
-            ToolTip.SetTip(label, p.Name);
-
-            var row = new DockPanel();
-            DockPanel.SetDock(label, Dock.Left);
-            row.Children.Add(label);
-            row.Children.Add(field);
-            panel.Add(row);
+            panel.Add(ElementBlock(group, summaries.GetValueOrDefault(group, ""), inside));
+            i = end;
         }
 
         AddSymbolSection(panel, objectId, model);
         AddBindingSection(panel, objectId, model);
+    }
+
+    /// One element of an array of structs, behind a line saying what it is.
+    ///
+    /// Collapsed to start with, because the point is that five transitions read as five lines. The
+    /// summary is what the element means rather than what it is called, and an element with no
+    /// summary shows its index alone: a made up description would read as a fact about the file.
+    private static Control ElementBlock(string group, string summary, Control inside)
+    {
+        var header = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8 };
+
+        var index = Ux.Label(group);
+        index.Foreground = Ux.MutedBrush;
+        header.Children.Add(index);
+
+        if (summary.Length > 0)
+        {
+            var said = Ux.Label(summary);
+            said.Foreground = Ux.CodeBrush;
+            said.TextTrimming = TextTrimming.CharacterEllipsis;
+            ToolTip.SetTip(said, summary);
+            header.Children.Add(said);
+        }
+
+        return new Expander
+        {
+            Header = header,
+            Content = inside,
+            IsExpanded = false,
+            Padding = new Thickness(0),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+        };
+    }
+
+    private Control FieldRow(PanelFields.Field p, string owner)
+    {
+        // An enum whose values the class table declares becomes a list rather than a box. The names
+        // are the ones the game registers, not ours, and PanelFields only offers them when the value
+        // already in the file is one of them, so picking from the list can never be the only way to
+        // keep what is there.
+        if (p.Options.Count > 0) return EnumRow(p, owner);
+
+        string address = p.Address;
+        string original = p.Value;
+
+        var field = Ux.Field();
+        field.Text = p.Value;
+        // Committing is driven by what the box holds, not by which box has focus. Focus is the
+        // usual trigger, but a window closing has no focus change to hang off, and asking every
+        // field whether it differs is both simpler and safe: one that has not been touched
+        // commits nothing, and one already committed commits nothing twice.
+        void Commit()
+        {
+            if (field.Text == original) return;
+            Apply(owner, address, field, original);
+            original = field.Text ?? original;
+        }
+
+        _fieldCommits.Add(Commit);
+        field.LostFocus += (_, _) => Commit();
+        field.KeyDown += (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter) Commit();
+        };
+
+        var label = Ux.Label(p.Name);
+        label.Width = 128;
+        label.TextTrimming = TextTrimming.CharacterEllipsis;
+        // The name alone does not say which of them this is, and inside an element there are several
+        // with the same name, so the tip carries the address the edit will be written to.
+        ToolTip.SetTip(label, address);
+
+        var row = new DockPanel();
+        DockPanel.SetDock(label, Dock.Left);
+        row.Children.Add(label);
+        row.Children.Add(field);
+        return row;
     }
 
     // The other direction of the usages question: not who touches this symbol, but which symbols this
@@ -2312,6 +2537,7 @@ public class MainWindow : Window
         };
 
         string name = p.Name;
+        string address = p.Address;
         string original = p.Value;
 
         void Commit()
@@ -2319,7 +2545,7 @@ public class MainWindow : Window
             string now = choice.SelectedItem as string ?? original;
             if (now == original) return;
 
-            if (SetParam(owner, name, now)) original = now;
+            if (SetParam(owner, address, now)) original = now;
             else choice.SelectedItem = original;
         }
 
@@ -2985,27 +3211,32 @@ public class MainWindow : Window
         foreach (var commit in _fieldCommits.ToList()) commit();
     }
 
-    private void Apply(string objectId, string paramName, TextBox field, string original)
+    private void Apply(string objectId, string address, TextBox field, string original)
     {
         if (field.Text == original || _xmlText.Length == 0) return;
-        if (!SetParam(objectId, paramName, field.Text ?? "")) field.Text = original;
+        if (!SetParam(objectId, address, field.Text ?? "")) field.Text = original;
     }
 
     /// Writes one field and reports whether it took, so a control that has to put itself back on a
     /// refusal can. Shared by the typed boxes and the enum lists rather than written twice.
-    private bool SetParam(string objectId, string paramName, string value)
+    ///
+    /// `address` is where the field sits rather than what it is called: `transitions[1].eventId` for
+    /// one element of an array of structs, and a bare name for a field the object holds directly,
+    /// which is the same string it always was. Naming the field alone reached the first one with
+    /// that name, so every box below the first element of an array wrote the first element's value.
+    private bool SetParam(string objectId, string address, string value)
     {
         if (_xmlText.Length == 0) return false;
 
         try
         {
-            Commit(HkxTextEdit.SetParam(_xmlText, objectId, paramName, value));
-            _editedFields.Add(objectId + "." + paramName);
-            SetStatus($"#{objectId}.{paramName} = {value}   (unsaved)", Ux.CodeBrush);
+            Commit(HkxTextEdit.SetParamAt(_xmlText, objectId, address, value));
+            _editedFields.Add(objectId + "." + address);
+            SetStatus($"#{objectId}.{address} = {value}   (unsaved)", Ux.CodeBrush);
 
             // Retimes a preview that is already running, so an edited speed shows up without having
             // to stop and start playback to see it.
-            if (paramName == "playbackSpeed" && objectId == _selectedId && _clock != null)
+            if (address == "playbackSpeed" && objectId == _selectedId && _clock != null)
                 _clock.Interval = TimeSpan.FromSeconds(
                     Math.Clamp(_poseAnimation!.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4));
 

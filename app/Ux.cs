@@ -21,6 +21,21 @@ public static class Ux
     public static readonly Color TextCode = Color.Parse("#00A0DA");
     public static readonly Color Bad = Color.Parse("#FF5555");
     public static readonly Color Warn = Color.Parse("#E0A030");
+    public static readonly Color Good = Color.Parse("#3FB950");
+
+    /// A transition on the canvas. Not a class colour: a route is an event the game sends rather
+    /// than one object holding another, so it has to read as a different kind of thing from the
+    /// ownership wires it is drawn over.
+    public static readonly Color RouteColour = Color.Parse("#58D0C0");
+
+    /// The outline drawn under a line that has been picked out, so lines running together stay
+    /// countable instead of merging into one band.
+    ///
+    /// The canvas colour, not the opposite of it. A light casing was tried first and is wrong here
+    /// for the case that needs it most: twenty five wildcard routes converge on one node, and giving
+    /// each a bright edge welds them into a solid block. A casing in the background colour puts a gap
+    /// between neighbours instead, which is what separates them.
+    public static readonly Color Casing = Base;
 
     public static readonly IBrush BaseBrush = new SolidColorBrush(Base);
     public static readonly IBrush CardBrush = new SolidColorBrush(Card);
@@ -94,15 +109,35 @@ public static class Ux
         };
     }
 
-    // Node colouring by class family, carried over unchanged.
-    public static Color ForClass(string cls)
+    /// The machine itself, a state of one, and a state's list of routes out of it. Three different
+    /// things, and the whole of a behaviour's shape is how they sit together.
+    public static readonly Color Machine = Accent;
+    public static readonly Color StateInfo = Color.Parse("#79C0FF");
+    public static readonly Color Transitions = Color.Parse("#A371F7");
+
+    // Node colouring by class family.
+    //
+    // The state machine family is matched by exact name, before anything is matched by substring.
+    // `hkbStateMachineStateInfo` and `hkbStateMachineTransitionInfoArray` both contain
+    // "StateMachine", so the first rule caught all three and the Transition rule below never fired
+    // for any of them: a machine, its states and their routes all drew in the same colour, which is
+    // the one distinction a state machine most needs on screen.
+    public static Color ForClass(string cls) => cls switch
     {
-        if (cls.Contains("StateMachine")) return Accent;
+        "hkbStateMachine" => Machine,
+        "hkbStateMachineStateInfo" => StateInfo,
+        "hkbStateMachineTransitionInfoArray" => Transitions,
+        _ => ByFamily(cls),
+    };
+
+    private static Color ByFamily(string cls)
+    {
+        if (cls.Contains("StateMachine")) return Machine;
         if (cls.Contains("ClipGenerator")) return Color.Parse("#3FB950");
         if (cls.Contains("Sequence")) return Color.Parse("#2EA043");
         if (cls.Contains("Blender") || cls.Contains("Layer") || cls.Contains("Selector"))
             return Color.Parse("#D29922");
-        if (cls.Contains("Transition")) return Color.Parse("#A371F7");
+        if (cls.Contains("Transition")) return Transitions;
         if (cls.Contains("Modifier")) return Color.Parse("#DB6D28");
         return TextMeta;
     }

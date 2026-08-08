@@ -85,6 +85,8 @@ public static class Tests
         ("AMisSignedFileIsNotWrittenInto", AMisSignedFileIsNotWrittenInto),
         ("AnEnumIsNamedSignedAndPrintedUnsigned", AnEnumIsNamedSignedAndPrintedUnsigned),
         ("APaddedStructIsKnownFromHkxPacksIdeaOfIt", APaddedStructIsKnownFromHkxPacksIdeaOfIt),
+        ("AnElementsFieldIsWrittenToThatElement", AnElementsFieldIsWrittenToThatElement),
+        ("EveryFieldSaysWhereItSits", EveryFieldSaysWhereItSits),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -131,6 +133,18 @@ public static class Tests
         HkObject o => $"#{o.Id} {o.Class}" + (o.Str("name").Length > 0 ? $" '{o.Str("name")}'" : ""),
         _ => value.ToString() ?? "null",
     };
+
+    /// A refusal is a result like any other. Checking only that the good case works leaves the bad
+    /// case free to quietly do something else, which for a write is the worse of the two failures.
+    private static void CheckThrows(string what, Action action)
+    {
+        _ran++;
+        bool threw = false;
+        try { action(); }
+        catch (Exception) { threw = true; }
+        if (!threw) _failed++;
+        Console.WriteLine($"  {(threw ? "ok  " : "FAIL")}  {what}");
+    }
 
     private static void CheckTrue(string what, bool value)
     {
@@ -763,6 +777,101 @@ public static class Tests
     /// value, aimed somewhere the object's own class does not describe. Before this the whole array
     /// read as one blob of text, so one number changing looked like the whole field changing and
     /// there was nothing left to say which element or which member.
+    /// A field named on its own reaches the first element that happens to have that name, which for
+    /// an array of structs is almost never the one meant.
+    ///
+    /// Every element of a transition array carries an `eventId`, a `toStateId` and two time
+    /// intervals, so a five transition array holds `eventId` five times. The panel builds a box per
+    /// field and writes back by name, and the writer replaces the first match in the object's block.
+    /// Editing the fifth transition therefore rewrote the first one, and said it had worked.
+    ///
+    /// The fix is that a field is addressed by where it sits rather than by what it is called.
+    private static void AnElementsFieldIsWrittenToThatElement()
+    {
+        Console.WriteLine("\na field inside an element is written to that element");
+
+        string xml = TwoTransitions();
+
+        // What the panel used to do. Kept as a check rather than deleted, because it is the whole
+        // reason the path exists and a reader should be able to see the difference.
+        string byName = HkxTextEdit.SetParam(xml, "95", "eventId", "9");
+        Check("naming the field alone still reaches the first element", "9",
+              TransitionEventId(byName, 0));
+        Check("which is why it is not enough on its own", "2", TransitionEventId(byName, 1));
+
+        string byPath = HkxTextEdit.SetParamAt(xml, "95", "transitions[1].eventId", "9");
+        Check("addressing the element writes that element", "9", TransitionEventId(byPath, 1));
+        Check("and leaves the one before it alone", "1", TransitionEventId(byPath, 0));
+
+        // A struct written inside an element, which is the case that made the flat list ambiguous in
+        // the first place: the same `enterEventId` name appears once per interval per transition.
+        //
+        // Read back off the text rather than through the model: the model stops at an element's own
+        // fields and does not descend into a struct written inside one, so asking it would report
+        // nothing changed whether or not it had.
+        string nested = HkxTextEdit.SetParamAt(xml, "95",
+                                               "transitions[1].initiateInterval.enterEventId", "7");
+        Check("exactly one enterEventId is now 7", 1, Occurrences(nested, "\"enterEventId\">7<"));
+        Check("and the other is untouched", 1, Occurrences(nested, "\"enterEventId\">-1<"));
+        CheckTrue("the one that changed is the second element's",
+                  nested.IndexOf("\"enterEventId\">7<", StringComparison.Ordinal)
+                  > nested.IndexOf("\"eventId\">1<", StringComparison.Ordinal));
+
+        // An index past the end is a caller asking for something that is not there. Writing the last
+        // element instead would look like it worked.
+        CheckThrows("an element that is not there is refused",
+                    () => HkxTextEdit.SetParamAt(xml, "95", "transitions[2].eventId", "9"));
+        CheckThrows("and so is a member the element does not have",
+                    () => HkxTextEdit.SetParamAt(xml, "95", "transitions[0].nothing", "9"));
+    }
+
+    private static int Occurrences(string text, string needle)
+    {
+        int count = 0;
+        for (int at = text.IndexOf(needle, StringComparison.Ordinal); at >= 0;
+             at = text.IndexOf(needle, at + needle.Length, StringComparison.Ordinal))
+            count++;
+        return count;
+    }
+
+    private static string TransitionEventId(string xml, int element) =>
+        BehaviourGraphModel.Parse(xml).Get("95")!.StructLists["transitions"][element]["eventId"];
+
+    /// Two transitions on one array, which is the smallest shape where addressing by name and
+    /// addressing by position give different answers.
+    private static string TwoTransitions() =>
+        """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="8" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbStateMachineTransitionInfoArray" name="#95" signature="0x704a19af">
+                    <hkparam name="transitions" numelements="2">
+                        <hkobject>
+                            <hkparam name="initiateInterval">
+                                <hkobject class="hkbStateMachineTimeInterval" name="initiateInterval" signature="0x60a881e5">
+                                    <hkparam name="enterEventId">-1</hkparam>
+                                    <hkparam name="exitEventId">-1</hkparam>
+                                </hkobject>
+                            </hkparam>
+                            <hkparam name="eventId">1</hkparam>
+                            <hkparam name="toStateId">0</hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="initiateInterval">
+                                <hkobject class="hkbStateMachineTimeInterval" name="initiateInterval" signature="0x60a881e5">
+                                    <hkparam name="enterEventId">-1</hkparam>
+                                    <hkparam name="exitEventId">-1</hkparam>
+                                </hkobject>
+                            </hkparam>
+                            <hkparam name="eventId">2</hkparam>
+                            <hkparam name="toStateId">3</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
+
     private static void AValueInsideAStructArrayIsWrittenInPlace()
     {
         Console.WriteLine("\na value inside a struct array is written where it sits");
@@ -2036,6 +2145,31 @@ public static class Tests
                                                m.VType != "TYPE_STRUCT")
                                    .Select(m => m.Name).ToList();
         Check("in the order the file writes them", string.Join(",", order), string.Join(",", names));
+    }
+
+    /// A field the object holds directly is addressed by its own name, so everything that has always
+    /// written by name keeps working and only the fields inside an array of structs change shape.
+    ///
+    /// The interesting half of this cannot be built by hand at a useful size: a fixture with five
+    /// transitions in it proves less than one real behaviour with seventy nine transition arrays,
+    /// which is what `symrm paths` sweeps.
+    private static void EveryFieldSaysWhereItSits()
+    {
+        Console.WriteLine("\nevery field says where it sits");
+
+        var objects = new PackfileObjects(ClipInAPackfile("A.hkx", out _));
+        var fields = ClassFields.Of(objects, objects.Instances.Single());
+
+        CheckTrue("a list comes back", fields != null);
+        CheckTrue("a field held by the object is addressed by its own name",
+                  fields!.All(f => f.Path == f.Name));
+        CheckTrue("and belongs to no element", fields!.All(f => f.Group.Length == 0));
+
+        var panel = PanelFields.For(objects, objects.Instances.Single(),
+                                    fields!.Select(f => (f.Name, "")).ToList(),
+                                    (_, _) => "");
+        CheckTrue("the panel carries the same addresses",
+                  panel.All(p => p.Address == p.Name));
     }
 
     /// A file whose classes are signed differently was written against a different definition than

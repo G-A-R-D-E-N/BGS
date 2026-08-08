@@ -35,6 +35,7 @@ public class GraphView : Control
         public List<GraphLinks.Slot> Slots = new();
         public Color Accent;
         public bool Empty;
+        public bool Start;
         public GraphValidator.Level? Problem;
         public Point InPort => new(Bounds.X - PortRadius, Bounds.Y + HeaderHeight / 2);
         public Point OutPort(int index) =>
@@ -45,6 +46,19 @@ public class GraphView : Control
     private readonly List<string> _order = new();
     private readonly Dictionary<string, Point> _placed = new();
     private BehaviourGraphModel? _model;
+
+    /// Which event moves which state to which state. Held apart from the nodes because it is not
+    /// drawn from them: a route joins two states that hold no reference to each other, and the
+    /// ownership wires the rest of the canvas draws cannot show one.
+    private StateRoutes _routes = new();
+
+    /// Off by default. A shipped behaviour draws a few thousand ownership wires already, and routes
+    /// laid over all of them at once is a worse picture rather than a fuller one.
+    public bool ShowRoutes { get; set; } = true;
+
+    /// A route's label is only worth the space when it can be read. Below this the routes still draw
+    /// and only the words are dropped, so the shape survives zooming out and the clutter does not.
+    private const double LabelZoom = 0.55;
 
     private double _zoom = 0.9;
     private Point _pan = new(40, 40);
@@ -118,6 +132,11 @@ public class GraphView : Control
                     if (node.Id == _highlight) _related.Add(target);
                     else if (target == _highlight) _related.Add(node.Id);
                 }
+
+        // A state's routes are the reason to pick it out in the first place. Ownership alone answers
+        // what a state contains; it says nothing about what enters it or what it leads to, which is
+        // the question somebody clicking a state is asking.
+        foreach (string id in _routes.Touching(_highlight)) _related.Add(id);
     }
 
     /// The filter box, applied to the canvas rather than only to the tree. Non-matching nodes dim
@@ -147,6 +166,9 @@ public class GraphView : Control
                 || node.Animation.Contains(_needle, StringComparison.OrdinalIgnoreCase))
                 _matched.Add(node.Id);
     }
+
+    /// Read only, for the window checks.
+    public bool IsDimmed(string id) => Dimmed(id);
 
     private bool Dimmed(string id) =>
         (_highlight.Length > 0 && !_related.Contains(id))
@@ -181,6 +203,7 @@ public class GraphView : Control
         // The canvas is only refilled when a file has a text form to draw from. Without this, opening
         // something that cannot be unpacked left the previous file's graph on screen.
         _model = null;
+        _routes = new StateRoutes();
         _nodes.Clear();
         _order.Clear();
         _placed.Clear();
@@ -197,6 +220,7 @@ public class GraphView : Control
     public void Show(BehaviourGraphModel model)
     {
         _model = model;
+        _routes = StateRoutes.Of(model);
         _nodes.Clear();
         _order.Clear();
 
@@ -237,6 +261,7 @@ public class GraphView : Control
                 Slots = slots,
                 Accent = Ux.ForClass(obj.Class),
                 Empty = empty.Contains(obj.Id),
+                Start = _routes.StartStates.Contains(obj.Id),
                 Problem = _problems.TryGetValue(obj.Id, out var level) ? level : null,
                 Bounds = new Rect(at.X, at.Y, NodeWidth, height),
             };
@@ -251,6 +276,15 @@ public class GraphView : Control
 
     public int DrawnCount => _nodes.Count;
     public IReadOnlyCollection<string> DrawnIds => _nodes.Keys;
+
+    /// Read only, for the window checks. A route whose two ends are not both on the canvas cannot be
+    /// drawn, so the count that matters is the drawable one rather than the file's total.
+    public int RouteCount => _routes.Routes.Count;
+    public int DrawableRouteCount =>
+        _routes.Routes.Count(r => _nodes.ContainsKey(r.FromId) && _nodes.ContainsKey(r.ToId));
+    public int NestedRouteCount => _routes.Routes.Count(r => r.IntoId.Length > 0);
+    public IReadOnlyCollection<string> StartStateIds => _routes.StartStates;
+    public bool IsStart(string id) => _nodes.TryGetValue(id, out var node) && node.Start;
 
     public Point? PositionOf(string id) => _nodes.TryGetValue(id, out var node) ? node.Bounds.TopLeft : null;
 
@@ -298,19 +332,144 @@ public class GraphView : Control
                         var into = ToScreen(to.InPort);
                         if (OffScreen(from, into)) continue;
 
-                        DrawLink(ctx, from, into, node.Accent,
-                                 lit && (_highlight.Length > 0 || _needle.Length > 0) ? 2.6 : 1.6,
-                                 lit ? 0.85 : 0.42);
+                        DrawLink(ctx, from, node.Accent, 1.6, lit ? 0.9 : 0.42, into,
+                                 cased: lit && focused);
                     }
 
+        if (ShowRoutes) DrawRoutes(ctx);
+
         if (_wiring is { } w)
-            DrawLink(ctx, ToScreen(w.Node.OutPort(w.Slot)), _wireTo, Ux.Accent, 2.2, 0.85);
+            DrawLink(ctx, ToScreen(w.Node.OutPort(w.Slot)), Ux.Accent, 2.2, 0.85, _wireTo);
 
         foreach (var node in _nodes.Values)
         {
             if (!Dimmed(node.Id)) DrawNode(ctx, node);
             else using (ctx.PushOpacity(0.4)) DrawNode(ctx, node);
         }
+    }
+
+    /// The routes, over the ownership wires rather than among them.
+    ///
+    /// A route joins two states side by side in the same column, so it is drawn between the sides of
+    /// the nodes rather than between the ports: a port to port curve between neighbours doubles back
+    /// on itself and reads as a wire to somewhere else entirely.
+    ///
+    /// Labels come last and only when picked out or zoomed in. Half of all machines hold two
+    /// transitions and nine in ten hold eight, so most graphs can carry every label at once; the one
+    /// vanilla machine with 168 of them cannot, and that is what the gating is for.
+    private void DrawRoutes(DrawingContext ctx)
+    {
+        bool focused = _highlight.Length > 0 || _needle.Length > 0;
+        var wanted = new List<(string Text, Point At, Color Colour, bool Lit, bool Wildcard)>();
+
+        foreach (var route in _routes.Routes)
+        {
+            if (!_nodes.TryGetValue(route.FromId, out var from)) continue;
+            if (!_nodes.TryGetValue(route.ToId, out var to)) continue;
+
+            bool lit = Lit(route.FromId, route.ToId);
+
+            // A wildcard fires from any state, so every one of a machine's wildcards leaves the same
+            // node and they fan out across the whole graph. Dogmeat's paired animation machine has
+            // twenty five, which drew as a sheet of lines over everything else. They stay on screen,
+            // because a machine having them is worth seeing, but they sit back until the machine or
+            // one of its targets is picked out.
+            // Weight stays the same lit or not. What changes is the outline under it, which is what
+            // separates a picked out route from the ones it runs alongside without widening it into
+            // them.
+            double weight = route.Wildcard && !lit ? 0.9 : 1.4;
+            double alpha = route.Wildcard ? (lit ? 0.95 : 0.10) : lit ? 1.0 : 0.28;
+            bool cased = lit && focused;
+
+            var a = ToScreen(RouteExit(from, to));
+            var b = ToScreen(RouteEntry(to, from));
+            if (OffScreen(a, b)) continue;
+
+            var colour = route.Wildcard ? Ux.Warn : Ux.RouteColour;
+            DrawLink(ctx, a, colour, weight, alpha, b, dashed: true, cased: cased);
+            DrawArrowHead(ctx, a, b, colour, alpha);
+
+            // The second hop of a nested transition, which enters a state and picks a state inside
+            // it at the same time. Drawn from the state entered to the state chosen within it, so
+            // the pair reads as one route with two ends rather than as two unrelated ones.
+            if (route.IntoId.Length > 0 && _nodes.TryGetValue(route.IntoId, out var into))
+            {
+                var c = ToScreen(RouteExit(to, into));
+                var d = ToScreen(RouteEntry(into, to));
+                DrawLink(ctx, c, colour, weight * 0.8, alpha * 0.8, d, dashed: true, cased: cased);
+                DrawArrowHead(ctx, c, d, colour, alpha * 0.8);
+            }
+
+            if (!lit || _zoom < LabelZoom) continue;
+
+            // A wildcard's name only appears once something is picked out. Unlit, they are the bulk
+            // of the labels and none of them is the one being looked for.
+            if (route.Wildcard && !focused) continue;
+
+            wanted.Add((route.Wildcard ? "any: " + route.Event : route.Event,
+                        new Point((a.X + b.X) / 2, (a.Y + b.Y) / 2), colour, lit, route.Wildcard));
+        }
+
+        DrawLabels(ctx, wanted);
+    }
+
+    /// The labels that fit, rather than all of them.
+    ///
+    /// Routes converge, so their midpoints do too, and drawing every label put text over text in
+    /// exactly the busy places where reading one matters most. A label that would land on one
+    /// already drawn is dropped instead: the route is still there to follow, and the alternative is
+    /// a pile that names neither of them.
+    ///
+    /// Ordered so the ones worth keeping are placed first. Anything picked out beats anything not,
+    /// and a plain route beats a wildcard, whose name is the same at every one of its ends.
+    private void DrawLabels(DrawingContext ctx,
+                            List<(string Text, Point At, Color Colour, bool Lit, bool Wildcard)> wanted)
+    {
+        var taken = new List<Rect>();
+
+        foreach (var label in wanted.OrderByDescending(l => l.Lit).ThenBy(l => l.Wildcard))
+        {
+            var formatted = new FormattedText(label.Text, CultureInfo.InvariantCulture,
+                                              FlowDirection.LeftToRight, Typeface.Default,
+                                              Math.Max(8, 10 * _zoom), new SolidColorBrush(label.Colour));
+
+            var box = new Rect(label.At.X - formatted.Width / 2 - 3, label.At.Y - formatted.Height / 2 - 1,
+                               formatted.Width + 6, formatted.Height + 2);
+
+            if (box.Right < 0 || box.X > Bounds.Width || box.Bottom < 0 || box.Y > Bounds.Height) continue;
+            if (taken.Any(t => t.Intersects(box))) continue;
+
+            taken.Add(box);
+            ctx.DrawRectangle(new SolidColorBrush(Ux.Base, 0.85), null, box, 3, 3);
+            ctx.DrawText(formatted, new Point(box.X + 3, box.Y + 1));
+        }
+    }
+
+    // The side of the node a route should leave from, chosen by where the other end is. A route to
+    // something above or below leaves the top or the bottom, which is the common case: a machine's
+    // states are laid out in one column.
+    private static Point RouteExit(Node from, Node to) =>
+        to.Bounds.Center.Y < from.Bounds.Y ? new Point(from.Bounds.Center.X, from.Bounds.Y)
+        : to.Bounds.Center.Y > from.Bounds.Bottom ? new Point(from.Bounds.Center.X, from.Bounds.Bottom)
+        : new Point(to.Bounds.Center.X < from.Bounds.X ? from.Bounds.X : from.Bounds.Right,
+                    from.Bounds.Center.Y);
+
+    private static Point RouteEntry(Node to, Node from) => RouteExit(to, from);
+
+    private void DrawArrowHead(DrawingContext ctx, Point from, Point to, Color colour, double alpha)
+    {
+        double angle = Math.Atan2(to.Y - from.Y, to.X - from.X);
+        double size = Math.Max(4, 7 * _zoom);
+
+        var geometry = new StreamGeometry();
+        using (var g = geometry.Open())
+        {
+            g.BeginFigure(to, true);
+            g.LineTo(to - new Vector(Math.Cos(angle - 0.4) * size, Math.Sin(angle - 0.4) * size));
+            g.LineTo(to - new Vector(Math.Cos(angle + 0.4) * size, Math.Sin(angle + 0.4) * size));
+            g.EndFigure(true);
+        }
+        ctx.DrawGeometry(new SolidColorBrush(colour, alpha), null, geometry);
     }
 
     // A weapon graph holds a few thousand wires and only a handful are on screen. The curve stays
@@ -324,17 +483,53 @@ public class GraphView : Control
             || Math.Min(from.Y, to.Y) > Bounds.Height;
     }
 
-    private void DrawLink(DrawingContext ctx, Point from, Point to, Color colour, double width, double alpha)
+    /// A wire between two points. `to` sits after the alpha so the ownership calls that have always
+    /// passed three numbers keep reading the way they did.
+    ///
+    /// Dashed is what tells a route from a wire. They mean different things, a route being an event
+    /// the game sends and a wire being one object holding another, and drawing both as solid curves
+    /// in different colours left the two reading as one kind of thing.
+    private void DrawLink(DrawingContext ctx, Point from, Color colour, double width, double alpha,
+                          Point to, bool dashed = false, bool cased = false)
     {
         double bend = Math.Max(40, Math.Abs(to.X - from.X) * 0.45);
         var geometry = new StreamGeometry();
         using (var g = geometry.Open())
         {
             g.BeginFigure(from, false);
-            g.CubicBezierTo(from + new Vector(bend, 0), to - new Vector(bend, 0), to);
+            if (dashed)
+            {
+                // A route joins states that usually sit one above the other, where a horizontal bend
+                // would loop out sideways and back. Bending along the run keeps it between its ends.
+                var lift = new Vector((to.X - from.X) * 0.3, (to.Y - from.Y) * 0.15);
+                g.CubicBezierTo(from + lift, to - lift, to);
+            }
+            else
+            {
+                g.CubicBezierTo(from + new Vector(bend, 0), to - new Vector(bend, 0), to);
+            }
             g.EndFigure(false);
         }
-        ctx.DrawGeometry(null, new Pen(new SolidColorBrush(colour, alpha), width), geometry);
+
+        // An outline under the line rather than a thicker line on top of it.
+        //
+        // Picking a route out used to mean drawing it fatter, which fails exactly where it is needed:
+        // routes converge, and two fat lines running together read as one fat line. A casing gives
+        // each its own edge, so lines crossing or running side by side stay countable without any of
+        // them taking more room. Drawn in the opposite of the canvas, which is the one colour
+        // guaranteed to separate from both the background and every wire on it.
+        if (cased)
+        {
+            var casing = new Pen(new SolidColorBrush(Ux.Casing, 0.95), width + 2.6)
+            {
+                LineCap = PenLineCap.Round,
+            };
+            ctx.DrawGeometry(null, casing, geometry);
+        }
+
+        var pen = new Pen(new SolidColorBrush(colour, alpha), width);
+        if (dashed) pen.DashStyle = new DashStyle(new double[] { 4, 3 }, 0);
+        ctx.DrawGeometry(null, pen, geometry);
     }
 
     private void DrawNode(DrawingContext ctx, Node node)
@@ -373,6 +568,17 @@ public class GraphView : Control
         Draw(ctx, node.Empty ? node.Class + "  nothing to play" : node.Class,
              r.X + 6 * scale, r.Y + (HeaderHeight + 1) * scale, 9 * scale,
              faultBrush ?? new SolidColorBrush(node.Accent), r.Width - 12 * scale);
+
+        // The state its machine starts in. A machine's states are otherwise identical on the canvas
+        // and which one the graph begins in cannot be read off the picture at all: it is a number on
+        // the machine, matched against a number on the state, neither of which is drawn.
+        if (node.Start)
+        {
+            var badge = new Rect(r.Right - 30 * scale, r.Y - 7 * scale, 28 * scale, 13 * scale);
+            ctx.DrawRectangle(new SolidColorBrush(Ux.Good), null, badge, 3, 3);
+            Draw(ctx, "start", badge.X + 3 * scale, badge.Y + 1 * scale, 8 * scale,
+                 Ux.BaseBrush, badge.Width - 4 * scale);
+        }
 
         ctx.DrawEllipse(new SolidColorBrush(node.Accent), null, ToScreen(node.InPort), PortRadius * scale, PortRadius * scale);
 
@@ -529,6 +735,14 @@ public class GraphView : Control
             ClearHighlight();
             e.Handled = true;
         }
+    }
+
+    /// Read only, for the headless renderer: a picture has to be taken at a chosen zoom rather than
+    /// at whatever the last interaction left behind.
+    public void SetZoom(double zoom)
+    {
+        _zoom = Math.Clamp(zoom, 0.15, 3.0);
+        InvalidateVisual();
     }
 
     public void FrameAll()

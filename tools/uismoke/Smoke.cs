@@ -16,8 +16,80 @@ public static class Smoke
     private static int _failed;
     private static int _ran;
 
+    /// Draws the canvas to a PNG with no display attached.
+    ///
+    /// The checks above can prove a route was counted and that its ends are on the canvas. They
+    /// cannot say whether the picture is readable, and "is it readable" is the entire point of
+    /// drawing transitions rather than listing them. Rendering it to a file is how that question
+    /// gets answered without asking somebody to open the window and describe what they see.
+    ///
+    /// Usage: uismoke --png &lt;behaviour.hkx&gt; [out.png] [zoom] [focus node id]
+    private static int Png(string[] args)
+    {
+        // Real drawing rather than the headless stub, which records that something was drawn and
+        // produces no pixels.
+        AppBuilder.Configure<HeadlessApp>()
+            .UseSkia()
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            .SetupWithoutStarting();
+
+        string file = args[1];
+        string output = args.Length > 2 && !args[2].StartsWith("--") ? args[2] : System.IO.Path.ChangeExtension(file, ".png");
+        var rest = args.Skip(3).Where(a => !a.StartsWith("--")).ToList();
+        double zoom = rest.Count > 0 && double.TryParse(rest[0], out double z) ? z : 0.75;
+        string focus = rest.Count > 1 ? rest[1] : "";
+
+        var window = new MainWindow();
+        window.Show();
+        window.Open(file);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        // A TabControl builds only the tab that is showing, so the canvas does not exist as a visual
+        // until the Graph tab is the selected one.
+        var tabs = Find<TabControl>(window).First();
+        tabs.SelectedIndex = tabs.Items.OfType<TabItem>().ToList()
+                                 .FindIndex(t => t.Header?.ToString() == "Graph");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        // The whole window rather than the canvas alone, for anything that is drawn beside it: the
+        // legend explains the canvas and cannot be checked from a picture that leaves it out.
+        bool whole = args.Contains("--window");
+        if (args.Contains("--legend"))
+        {
+            Find<Button>(window).First(b => b.Content?.ToString() == "Legend")
+                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        }
+
+        var canvas = Find<GraphView>(window).First();
+        var size = new Size(1600, 1000);
+        Control drawn = whole ? window : canvas;
+        drawn.Measure(size);
+        drawn.Arrange(new Rect(size));
+
+        if (focus.Length > 0)
+        {
+            canvas.FocusOn(focus);
+            canvas.Highlight(focus);
+        }
+        canvas.SetZoom(zoom);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        using var bitmap = new Avalonia.Media.Imaging.RenderTargetBitmap(
+            new PixelSize((int)size.Width, (int)size.Height), new Vector(96, 96));
+        bitmap.Render(drawn);
+        bitmap.Save(output);
+
+        Console.WriteLine($"{output}: {canvas.DrawnCount} node(s), {canvas.DrawableRouteCount} route(s), " +
+                          $"{canvas.StartStateIds.Count} start state(s), zoom {zoom}" +
+                          (focus.Length > 0 ? $", focused on #{focus}" : ""));
+        return 0;
+    }
+
     public static int Main(string[] args)
     {
+        if (args.Length >= 2 && args[0] == "--png") return Png(args);
+
         AppBuilder.Configure<HeadlessApp>().UseHeadless(new AvaloniaHeadlessPlatformOptions())
             .SetupWithoutStarting();
 
@@ -58,8 +130,36 @@ public static class Smoke
         foreach (string expected in new[]
                  { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
                    "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
-                   "Play", "From selected node", "Fit" })
+                   "Play", "From selected node", "Fit", "Legend" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
+
+        // The canvas draws six node colours, three kinds of line and two badges. The legend is the
+        // only thing that says what any of them mean, so it has to be closed to start with, open on
+        // asking, and name every mark that is actually drawn.
+        {
+            tabs[0].SelectedIndex = headers.IndexOf("Graph");
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+            var legendButton = Find<Button>(window).First(b => b.Content?.ToString() == "Legend");
+            CheckTrue("the legend stays out of the way until it is asked for", !window.Legend.IsVisible);
+
+            legendButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("clicking Legend opens it", window.Legend.IsVisible);
+            Check("and the button then offers to put it away", "Hide legend", legendButton.Content?.ToString());
+
+            var said = Find<TextBlock>(window.Legend).Select(t => t.Text ?? "").ToList();
+            foreach (string mark in new[]
+                     { "State machine", "State", "Transitions", "Clip", "Blend", "Modifier",
+                       "Solid: holds", "Dashed: transition", "Dashed orange: from anywhere",
+                       "Start", "Red outline", "Amber outline" })
+                CheckTrue($"the legend explains {mark}", said.Contains(mark));
+
+            legendButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("and clicking again puts it away", !window.Legend.IsVisible);
+            tabs[0].SelectedIndex = 0;
+        }
 
         // Nothing loaded, so the viewport must be empty rather than drawing a rig from the last file.
         tabs[0].SelectedIndex = headers.IndexOf("Playback");
@@ -193,6 +293,98 @@ public static class Smoke
                     Check($"{name}: highlighting one node sticks", node, canvas.HighlightId);
                     canvas.ClearHighlight();
                     Check($"{name}: and clearing it releases the canvas", "", canvas.HighlightId);
+                }
+
+                // Which event moves which state to which state, which is the thing the canvas has
+                // never been able to show: none of it is a reference in the file, so the ownership
+                // wires cannot carry it.
+                {
+                    var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
+                    var routes = OpenCommonwealth.Services.Hkx.StateRoutes.Of(model);
+
+                    Console.WriteLine($"        routes: {canvas.RouteCount} in the file, " +
+                                      $"{canvas.DrawableRouteCount} with both ends on the canvas, " +
+                                      $"{canvas.NestedRouteCount} nested, " +
+                                      $"{canvas.StartStateIds.Count} start state(s)");
+
+                    Check($"{name}: the canvas reads the same routes as the file",
+                          routes.Routes.Count, canvas.RouteCount);
+                    CheckTrue($"{name}: and there are some to draw", canvas.RouteCount > 0);
+
+                    // A route the canvas cannot draw is one whose ends are missing from it, which
+                    // would make the picture quietly incomplete rather than visibly wrong.
+                    Check($"{name}: every route has both ends on the canvas",
+                          canvas.RouteCount, canvas.DrawableRouteCount);
+
+                    // A machine starts somewhere, and which state that is cannot be read off the
+                    // picture without the badge.
+                    CheckTrue($"{name}: a start state is marked", canvas.StartStateIds.Count > 0);
+                    CheckTrue($"{name}: and the node itself knows it is one",
+                              canvas.StartStateIds.All(id => !canvas.DrawnIds.Contains(id) || canvas.IsStart(id)));
+
+                    // Picking a state out has to bring what it routes to with it. Ownership alone
+                    // answers what a state contains and says nothing about what enters or leaves it.
+                    var routed = routes.Routes.FirstOrDefault(r => canvas.DrawnIds.Contains(r.FromId) &&
+                                                                   canvas.DrawnIds.Contains(r.ToId));
+                    if (routed != null)
+                    {
+                        canvas.Highlight(routed.FromId);
+                        CheckTrue($"{name}: highlighting a state keeps what it routes to lit",
+                                  !canvas.IsDimmed(routed.ToId));
+                        canvas.ClearHighlight();
+                    }
+                }
+
+                // A transition array is the object the flat panel was worst at: every element
+                // carries the same field names, so five transitions arrived as eighty boxes with
+                // nothing saying where one ended and the next began. Each element is now behind a
+                // line naming its event and its target, and the boxes only exist once opened.
+                // The busiest array that is on the canvas, not the first: an array holding one
+                // transition proves nothing about a panel whose problem only appears when the same
+                // field names repeat.
+                var full = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
+                string array = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                    .IdsOfClass(window.LoadedXml, "hkbStateMachineTransitionInfoArray")
+                    .Where(id => canvas.DrawnIds.Contains(id))
+                    .OrderByDescending(id => full.Get(id)?.StructLists.GetValueOrDefault("transitions")?.Count ?? 0)
+                    .FirstOrDefault() ?? "";
+
+                if (array.Length > 0)
+                {
+                    var model = full;
+                    var summaries = OpenCommonwealth.Services.Hkx.ElementSummary.For(model, array);
+                    int flat = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                        .ReadParams(window.LoadedXml, array).Count;
+
+                    window.SelectNode(array);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    var blocks = Find<Expander>(window.GraphProperties);
+                    int collapsed = Find<TextBox>(window.GraphProperties).Count;
+
+                    Console.WriteLine($"        #{array}: {flat} fields flat, {blocks.Count} element(s), " +
+                                      $"{collapsed} box(es) while collapsed");
+
+                    Check($"{name}: one block per element of the array", summaries.Count, blocks.Count);
+                    CheckTrue($"{name}: which is fewer things to read than the flat list",
+                              blocks.Count < flat);
+                    CheckTrue($"{name}: and the boxes stay out of the way until asked for",
+                              collapsed < flat);
+                    CheckTrue($"{name}: every block starts closed", blocks.All(b => !b.IsExpanded));
+
+                    // The line is the whole point: it has to name the event, not the element index.
+                    CheckTrue($"{name}: each block says which event it fires on",
+                              blocks.Count == 0 || summaries.Values.All(s => s.Contains("->")));
+
+                    // Opening one has to produce the fields, or the grouping has hidden them rather
+                    // than tidied them.
+                    if (blocks.Count > 0)
+                    {
+                        blocks[0].IsExpanded = true;
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                        CheckTrue($"{name}: opening a block shows that element's fields",
+                                  Find<TextBox>(window.GraphProperties).Count > collapsed);
+                    }
                 }
 
                 // The filter box sits above the tabs, so it has to work on whichever one is showing.

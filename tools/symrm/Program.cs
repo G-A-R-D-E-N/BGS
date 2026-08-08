@@ -54,6 +54,9 @@ public static class Program
             case "fields": return Fields(argv);
             case "signatures": return Signatures(argv);
             case "panel": return Panel(argv);
+            case "paths": return Paths(argv);
+            case "elements": return Elements(argv);
+            case "nesting": return Nesting(argv);
             case "objects": return Objects(argv);
             case "capacity": return Capacity(argv);
             case "grow": return Grow(argv);
@@ -171,6 +174,26 @@ public static class Program
               hkxpack's by its own schema, so agreement across a whole file is what says the offsets
               are right rather than plausible. Needs Java and the jar. Exits non zero on any
               disagreement.
+
+          dotnet run --project tools/symrm/symrm.csproj -- elements <file.hkx | folder>
+              The line the panel puts at the head of each transition, so they can be read against
+              the file's own XML. Needs no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- nesting <file.hkx | folder>
+              How much of a machine's routing an arrow from one state to another can carry: how
+              many transitions are wildcard, how many carry a nested state id, how many
+              transitions a machine holds, and whether a nested id resolves to a real state of the
+              machine under the state being entered. This is the measurement behind drawing
+              transitions on the canvas, so the decision can be rechecked rather than taken on
+              trust. Needs no Java.
+
+          dotnet run --project tools/symrm/symrm.csproj -- paths <file.hkx | folder>
+              Writes a sentinel through every field the panel shows, addressed by where the field
+              sits, and checks that exactly that field moved. The panel's boxes line up with the
+              file's values by position, and a name does not preserve that: an array of structs
+              repeats every name once per element, so a write by name lands on the first of them.
+              Reports how many fields sit inside an element and how many of those a name alone
+              would have missed, which is the size of what this fixes. Needs no Java.
 
           dotnet run --project tools/symrm/symrm.csproj -- packfile <file.hkx | folder>
               Takes a .hkx apart and puts it back together, and reports whether the result is the
@@ -1641,6 +1664,378 @@ public static class Program
     ///
     /// It calls the same `PanelFields.For` the window calls, so what it reports is what is on
     /// screen rather than a second implementation of it.
+    /// How much of a state machine's routing an arrow from one state to another can actually carry.
+    ///
+    /// Drawing transitions on the canvas is only worth doing if a transition is mostly one state to
+    /// one state. Two things would make it not worth doing, and both are countable rather than
+    /// arguable:
+    ///
+    /// A `toNestedStateId` other than zero means the transition enters a state *and* sets the
+    /// machine inside that state to a particular state of its own. One arrow cannot say that, so
+    /// every such transition is either drawn as a stop or drawn wrongly.
+    ///
+    /// Density is the other. A machine with two hundred transitions in it draws as a hairball
+    /// whether or not each arrow is honest, so the count per machine decides whether labels can ever
+    /// be on screen at once or only ever on selection.
+    private static int Nesting(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        long transitions = 0, nestedTo = 0, nestedFrom = 0, wildcards = 0, danglingTarget = 0;
+        long machines = 0, statesTotal = 0, nestedMachines = 0;
+        long nestedResolves = 0, nestedUnresolved = 0, nestedNotAMachine = 0;
+        long naiveWildcardLines = 0, fromMachineLines = 0;
+        var nestedHolds = new Dictionary<string, int>(StringComparer.Ordinal);
+        var perMachine = new List<int>();
+        int filesRead = 0, filesFailed = 0;
+
+        foreach (string file in files)
+        {
+            BehaviourGraphModel model;
+            try
+            {
+                model = BehaviourGraphModel.Parse(NativeXml.From(File.ReadAllBytes(file)));
+            }
+            catch
+            {
+                filesFailed++;
+                continue;
+            }
+            filesRead++;
+
+            // A machine sitting in another machine's state, which is the hierarchy the graph already
+            // draws through ownership. Counted to say how common nesting is at all, separately from
+            // whether a single transition crosses a level.
+            var machineIds = model.Objects.Where(o => o.Class == "hkbStateMachine")
+                                          .Select(o => o.Id).ToList();
+            var nestedInside = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string id in machineIds)
+                foreach (string stateId in model.Get(id)!.Refs("states"))
+                {
+                    string? generator = model.Get(stateId)?.Ref("generator");
+                    if (generator != null && model.Get(generator)?.Class == "hkbStateMachine")
+                        nestedInside.Add(generator);
+                }
+
+            machines += machineIds.Count;
+            nestedMachines += nestedInside.Count;
+
+            foreach (string id in machineIds)
+            {
+                var states = StateEditor.States(model, id);
+                statesTotal += states.Count;
+                var known = states.Select(s => s.StateId).ToHashSet();
+
+                var rows = StateEditor.Transitions(model, id);
+                perMachine.Add(rows.Count);
+
+                // What drawing a wildcard the obvious way would cost. A wildcard fires from any
+                // state, so showing it as "from each state to the target" is one line per state per
+                // wildcard. Drawing it from the machine instead is one line, and says the same
+                // thing: the machine is what any state has in common.
+                int wildcardsHere = rows.Count(r => r.Wildcard);
+                naiveWildcardLines += (long)wildcardsHere * states.Count;
+                fromMachineLines += wildcardsHere;
+
+                foreach (var row in rows)
+                {
+                    transitions++;
+                    if (row.Wildcard) wildcards++;
+                    if (!known.Contains(row.ToStateId)) danglingTarget++;
+                    if (row.ToNestedStateId == 0) continue;
+
+                    nestedTo++;
+
+                    // What a nested id is has to be established rather than assumed. The reading
+                    // being tested is that it names a state of the machine sitting inside the state
+                    // being entered. If that holds for every one of them, the reading is right; if
+                    // it holds for none, it means something else entirely and nothing should be
+                    // drawn for it.
+                    string? entered = states.FirstOrDefault(s => s.StateId == row.ToStateId)?.GeneratorRef;
+                    var inner = model.Get(entered?.TrimStart('#'));
+
+                    // A machine is often not the state's generator directly: a modifier generator or
+                    // a bone switch wraps it, and looking only at the immediate generator counts
+                    // those as unexplained. Walk the wrappers before giving up.
+                    //
+                    // The canvas's own walk, not a second one written here: a measurement that says
+                    // every route resolves is worth nothing if the thing drawing the routes resolves
+                    // them differently.
+                    var machine = StateRoutes.MachineUnder(model, inner, 0);
+                    if (machine == null)
+                    {
+                        nestedNotAMachine++;
+                        string held = inner?.Class ?? "nothing";
+                        nestedHolds[held] = nestedHolds.GetValueOrDefault(held) + 1;
+                        continue;
+                    }
+
+                    var innerStates = StateEditor.States(model, machine.Id).Select(s => s.StateId).ToHashSet();
+                    if (innerStates.Contains(row.ToNestedStateId)) nestedResolves++;
+                    else nestedUnresolved++;
+                }
+
+                // fromNestedStateId sits on the same struct and the reader does not surface it, so
+                // it is read here directly rather than assumed to be zero.
+                foreach (var array in model.Objects)
+                {
+                    if (array.Class != "hkbStateMachineTransitionInfoArray") continue;
+                    if (ElementSummary.MachineOwning(model, array.Id) != id) continue;
+                    if (!array.StructLists.TryGetValue("transitions", out var elements)) continue;
+
+                    foreach (var element in elements)
+                        if (element.TryGetValue("fromNestedStateId", out var from) &&
+                            int.TryParse(from, out int value) && value != 0) nestedFrom++;
+                }
+            }
+        }
+
+        // What the canvas will actually draw, counted the same way. A route that resolves in the
+        // measurement above and then does not come back from StateRoutes is a route the picture
+        // silently drops, which is the failure this is here to catch.
+        long drawable = 0, drawableNested = 0, startStates = 0;
+        foreach (string file in files)
+        {
+            try
+            {
+                var model = BehaviourGraphModel.Parse(NativeXml.From(File.ReadAllBytes(file)));
+                var routes = StateRoutes.Of(model);
+                drawable += routes.Routes.Count;
+                drawableNested += routes.Routes.Count(r => r.IntoId.Length > 0);
+                startStates += routes.StartStates.Count;
+            }
+            catch
+            {
+            }
+        }
+
+        perMachine.Sort();
+        int median = perMachine.Count == 0 ? 0 : perMachine[perMachine.Count / 2];
+        int busiest = perMachine.Count == 0 ? 0 : perMachine[^1];
+        int p90 = perMachine.Count == 0 ? 0 : perMachine[(int)(perMachine.Count * 0.9)];
+
+        Console.WriteLine($"\n{filesRead} file(s) read, {filesFailed} that would not parse");
+        Console.WriteLine($"  {machines,7} state machine(s), {nestedMachines,7} of them sitting in " +
+                          $"another machine's state ({Percent(nestedMachines, machines)})");
+        Console.WriteLine($"  {statesTotal,7} state(s)");
+        Console.WriteLine($"  {transitions,7} transition(s)");
+        Console.WriteLine($"  {wildcards,7} of them wildcard, fired from any state ({Percent(wildcards, transitions)})");
+        Console.WriteLine($"  {nestedTo,7} with a toNestedStateId, which one arrow cannot say ({Percent(nestedTo, transitions)})");
+        Console.WriteLine($"          {nestedResolves,7} of those name a real state of the machine inside the state entered");
+        Console.WriteLine($"          {nestedUnresolved,7} name a state that machine does not have");
+        Console.WriteLine($"          {nestedNotAMachine,7} where the state entered leads to no machine at all");
+        foreach (var (held, count) in nestedHolds.OrderByDescending(p => p.Value))
+            Console.WriteLine($"                  {count,5}  {held}");
+        Console.WriteLine($"  {nestedFrom,7} with a fromNestedStateId ({Percent(nestedFrom, transitions)})");
+        Console.WriteLine($"  {danglingTarget,7} whose toStateId is not a state of the machine ({Percent(danglingTarget, transitions)})");
+        Console.WriteLine($"  transitions per machine: median {median}, 90th percentile {p90}, busiest {busiest}");
+        Console.WriteLine($"\n  wildcards, drawn from each state they could fire from:");
+        Console.WriteLine($"  {naiveWildcardLines,7} line(s), which is the drawing nobody wants");
+        Console.WriteLine($"  {fromMachineLines,7} line(s) drawn from the machine instead, " +
+                          $"{(naiveWildcardLines == 0 ? "n/a" : $"{(double)naiveWildcardLines / fromMachineLines:0.0} times fewer")}");
+        Console.WriteLine($"\n  what the canvas draws from the same files:");
+        Console.WriteLine($"  {drawable,7} route(s), {drawableNested,7} of them with a second hop into a nested state");
+        Console.WriteLine($"  {startStates,7} start state(s) to badge, one per machine that has its own");
+
+        if (drawable != transitions)
+            Console.WriteLine($"  MISMATCH: {transitions - drawable} transition(s) would not be drawn");
+
+        return drawable == transitions ? 0 : 1;
+    }
+
+    /// The state machine a state's generator leads to, through whatever wraps it. A machine is often
+    /// not the generator itself: a modifier generator or a bone switch holds it, and a behaviour
+    /// reference generator loads another file entirely and leads nowhere this file can see.
+    private static HkObject? MachineUnder(BehaviourGraphModel model, HkObject? generator, int depth)
+    {
+        if (generator == null || depth > 6) return null;
+        if (generator.Class == "hkbStateMachine") return generator;
+
+        foreach (string field in new[] { "generator", "pDefaultGenerator", "pBlenderGenerator" })
+        {
+            var next = model.Get(generator.Ref(field));
+            var found = MachineUnder(model, next, depth + 1);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private static string Percent(long part, long whole) =>
+        whole == 0 ? "n/a" : $"{100.0 * part / whole:0.00}%";
+
+    /// What the panel puts at the head of each element of an array of structs, printed.
+    ///
+    /// The panel collapses an element behind this line, so a wrong line hides a wrong element rather
+    /// than showing one. Printing them for a whole file is how they get read against the file's own
+    /// XML, which is what people were reading before the panel could group anything.
+    ///
+    /// Needs no Java.
+    private static int Elements(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        if (Directory.Exists(target))
+        {
+            int worst = 0;
+            foreach (string each in Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                                             .OrderBy(f => f, StringComparer.Ordinal))
+                worst = Math.Max(worst, Elements(new[] { argv[0], each }.Concat(argv.Skip(2)).ToArray()));
+            return worst;
+        }
+
+        string xml = NativeXml.From(File.ReadAllBytes(target));
+        var model = BehaviourGraphModel.Parse(xml);
+
+        int arrays = 0, summarised = 0, unnamed = 0;
+        foreach (var obj in model.Objects)
+        {
+            if (obj.Class != "hkbStateMachineTransitionInfoArray") continue;
+            arrays++;
+
+            var lines = ElementSummary.For(model, obj.Id);
+            if (lines.Count == 0)
+            {
+                // An array nothing points at. Its numbers cannot be resolved, because a toStateId
+                // only means something inside the machine that owns the array.
+                unnamed++;
+                Console.WriteLine($"  #{obj.Id}  no state machine points at this array");
+                continue;
+            }
+
+            summarised += lines.Count;
+            string machine = ElementSummary.MachineOwning(model, obj.Id);
+            Console.WriteLine($"  #{obj.Id}  on #{machine} {model.Get(machine)?.Str("name")}");
+            // By element number, not by the text of the key: sorting `transitions[10]` as a string
+            // puts it before `transitions[2]`, which reads as a file whose transitions are shuffled.
+            foreach (var key in lines.Keys.OrderBy(ElementNumber))
+                Console.WriteLine($"      {key,-16} {lines[key]}");
+        }
+
+        Console.WriteLine($"{Path.GetFileName(target),-34} {arrays,4} transition array(s), " +
+                          $"{summarised,5} element(s) summarised, {unnamed,3} array(s) with no owner");
+        return 0;
+    }
+
+    private static int ElementNumber(string group)
+    {
+        int bracket = group.IndexOf('[');
+        return bracket >= 0 && int.TryParse(group[(bracket + 1)..].TrimEnd(']'), out int n) ? n : 0;
+    }
+
+    /// Every field on the panel, written by its path, checked to have moved that field and nothing
+    /// else.
+    ///
+    /// The panel's boxes and the file's values line up by position, and that is the assumption the
+    /// whole panel rests on. Naming a field does not preserve it: an array of structs repeats every
+    /// name once per element, so a write by name lands on the first of them however far down the
+    /// panel the box was. Writing a sentinel through each path and reading the whole object back is
+    /// the check that says box N moves value N, for every box of every object in a real file rather
+    /// than for a fixture built to pass.
+    ///
+    /// Needs no Java: the text comes from NativeXml, the same way the window builds it.
+    private static int Paths(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        if (Directory.Exists(target))
+        {
+            int cleanFiles = 0, badFiles = 0;
+            foreach (string each in Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                                             .OrderBy(f => f, StringComparer.Ordinal))
+            {
+                var carried = new[] { argv[0], each }.Concat(argv.Skip(2)).ToArray();
+                if (Paths(carried) == 0) cleanFiles++; else badFiles++;
+            }
+
+            Console.WriteLine($"\n{cleanFiles} file(s) where every path lands where it should, {badFiles} not");
+            return badFiles == 0 ? 0 : 1;
+        }
+
+        string file = target;
+        var objects = new PackfileObjects(PackfileImage.Read(file));
+        string xml = NativeXml.From(File.ReadAllBytes(file));
+        var ids = HkxTextEdit.ObjectIds(xml);
+
+        if (ids.Count != objects.Instances.Count)
+        {
+            Console.WriteLine($"{Path.GetFileName(file)}: the text has {ids.Count} objects and the " +
+                              $"bytes have {objects.Instances.Count}, so nothing can be lined up");
+            return 1;
+        }
+
+        int checkedFields = 0, elementFields = 0, wrong = 0, unaddressable = 0, byNameWrong = 0;
+
+        for (int i = 0; i < ids.Count; i++)
+        {
+            var fields = ClassFields.Of(objects, objects.Instances[i]);
+            if (fields == null) continue;
+
+            var before = HkxTextEdit.ReadParams(xml, ids[i]);
+            if (before.Count != fields.Count)
+            {
+                // The two readings disagree about what is in this object, which the panel already
+                // refuses to work from. Nothing to prove about addressing until that is settled.
+                unaddressable += fields.Count;
+                continue;
+            }
+
+            for (int f = 0; f < fields.Count; f++)
+            {
+                // A sentinel no vanilla value takes, so a field that did not change cannot be
+                // mistaken for one that did.
+                const string Sentinel = "-987654321";
+                string after;
+                try
+                {
+                    after = HkxTextEdit.SetParamAt(xml, ids[i], fields[f].Path, Sentinel);
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"  {Path.GetFileName(file)} #{ids[i]} " +
+                                      $"{objects.Instances[i].ClassName}.{fields[f].Path}: {e.Message}");
+                    wrong++;
+                    continue;
+                }
+
+                checkedFields++;
+                if (fields[f].Group.Length > 0) elementFields++;
+
+                // What the same box did before it carried a path. Addressing by name reaches the
+                // first field with that name, so every later one wrote somebody else's value and
+                // said it had worked. Counted rather than described, because the size of it is the
+                // reason the path exists.
+                if (before.FindIndex(p => p.Name == fields[f].Name) != f) byNameWrong++;
+
+                var now = HkxTextEdit.ReadParams(after, ids[i]);
+                var moved = Enumerable.Range(0, Math.Min(before.Count, now.Count))
+                                      .Where(n => before[n].Value != now[n].Value).ToList();
+
+                if (moved.Count == 1 && moved[0] == f) continue;
+
+                wrong++;
+                Console.WriteLine($"  {Path.GetFileName(file)} #{ids[i]} " +
+                                  $"{objects.Instances[i].ClassName}.{fields[f].Path} is field {f}, " +
+                                  (moved.Count == 0
+                                       ? "and writing it moved nothing"
+                                       : $"but writing it moved {string.Join(", ", moved)}"));
+            }
+        }
+
+        Console.WriteLine($"{Path.GetFileName(file),-34} {checkedFields,6} fields, " +
+                          $"{elementFields,6} inside an element, {byNameWrong,6} of which a name " +
+                          $"alone would have missed, {wrong,4} landed wrong" +
+                          (unaddressable > 0 ? $", {unaddressable} not lined up to check" : ""));
+        return wrong == 0 ? 0 : 1;
+    }
+
     private static int Panel(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
