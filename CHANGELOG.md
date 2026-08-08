@@ -3,6 +3,86 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-07, a state machine can be read
+
+Which event moves which state to which state is the most important thing a behaviour holds, and the
+tool showed almost none of it. #45.
+
+**The properties panel showed an array of structs as one flat run of boxes**, because that is how the
+file writes it. Dogmeat's paired animation machine holds 25 wildcard transitions, which arrived as
+400 boxes with every field name repeated 25 times and nothing marking where one transition ended.
+People were reading the unpacked XML instead, where hkxpack writes a comment naming the event and the
+target above each element. Each element now sits behind a line saying what it is, closed to start
+with, so those 400 boxes read as 25 lines: `164 dynIdleLoop  ->  100 EAP_dynIdleLoop_A`. The names
+come out of the file, and an element nothing can be said about shows its index alone rather than an
+invented description.
+
+**Underneath it was a live way to corrupt a file.** A field was written by name, and the writer
+replaced the first `hkparam` with that name in the object's block. Every element of a transition
+array carries an `eventId`, so editing the fifth transition rewrote the first and reported success.
+On `DogmeatDefault.hkx` that is 2,717 of 11,882 panel boxes writing a different field than their
+label; on `DogmeatDefaultWrappingSneak.hkx` it is 797 of 849. Fields carry the path to where they sit
+now, `transitions[1].eventId`, and writes are addressed by it. `symrm paths` writes a sentinel
+through every field of every object in a file and checks exactly that field moved: 453 files, none
+landed wrong.
+
+**The canvas drew a machine, its states and their transition lists in one colour**, because
+`Ux.ForClass` tested `Contains("StateMachine")` first and all three class names contain it, so the
+rule below it never fired for any of them. Matched by exact name now, ahead of the substring rules
+that still cover everything else. The state a machine starts in is badged; it was a number on the
+machine matched against a number on a state, neither of which was drawn.
+
+**Transitions are drawn.** Dashed, over the ownership wires, labelled with the event name, because a
+wire is one object holding another and a route is an event the game sends. A nested transition draws
+its second hop into the state it selects inside the state it enters.
+
+**Whether that could be drawn at all was measured rather than argued about**, since the objection was
+that a transition entering a state and setting the machine inside it cannot be one arrow. Of 6,394
+transitions in the 531 vanilla behaviours, 230 carry a nested state id, and all 230 name a real state
+of the machine reachable under the state entered. Finding that machine has to walk through whatever
+wraps it, usually a modifier generator or a bone switch; looking only one level down accounts for 81
+and makes the other 149 read as unexplained, which is what the first pass reported and it was wrong.
+Density was the other worry and is not one: half of all machines hold two transitions or fewer and
+nine in ten hold eight. `symrm nesting` reprints all of it.
+
+**A wildcard is drawn from the machine rather than from every state it could fire from.** Drawn the
+obvious way it is one line per state per wildcard, which across the corpus is 41,751 lines; from the
+machine it is 2,398, seventeen times fewer, and says the same thing because the machine is what any
+state has in common. They stay faint and unnamed until that machine is picked out.
+
+**Labels are placed rather than drawn where they fall.** The first version put every one on screen at
+once and in the busy part of the graph they sat on top of each other and named neither route. One
+that would cover a label already placed is dropped, and the ones worth keeping go first: anything
+picked out before anything not, and a plain route before a wildcard, whose name is the same at every
+one of its ends.
+
+**Picking a route out gives it an outline rather than making it thicker.** Thicker fails exactly
+where it is needed, since routes converge and two fat lines running together read as one fat line.
+The outline is drawn in the canvas colour, which puts a gap between neighbours. A light outline was
+tried first, on the suggestion that the opposite of the background would separate best, and it is
+wrong for the case that needs it most: the 25 wildcards meeting at one node each gained a bright edge
+and welded into a solid band.
+
+**A Legend button says what all of it means.** Six node colours, three kinds of line and two badges,
+and nothing on screen said what any of them were. Every colour in the panel is asked for by class
+name rather than written down again, so it cannot come to disagree with the picture; a legend that is
+wrong is worse than none, because it gets read as the answer instead of checked against the thing it
+describes.
+
+**`uismoke --png` draws the canvas to a file with no display attached**, which is how the label pile
+and the welded wildcards were found. The checks can prove a route was counted and that both its ends
+are on the canvas; they cannot say whether the picture can be read, and that is the whole point of
+drawing routes rather than listing them.
+
+Flag decoding is deliberately left alone. The panel shows `flags 9728` where the XML says
+`FLAG_IS_LOCAL_WILDCARD`, because flag decoding returns the raw number when any set bit has no
+declared name, which is the honest answer and means the class table is missing bits for that enum.
+That is #36.
+
+symrm 608, xunit 67, window checks 116 on a behaviour and 107 with Java hidden, 58 with nothing
+loaded. Panel and crosscheck against hkxpack on Dogmeat unchanged at 11,882 and 7,587, both fully
+agreeing.
+
 ## 2026-08-07, a frame can be changed from the window
 
 The other end of #35's first half. Writing a clip back was already done, but nothing in the window
