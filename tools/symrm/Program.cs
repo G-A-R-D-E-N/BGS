@@ -6292,7 +6292,24 @@ public static class Program
             }
         }
 
+        // The one thing the ownership rule is soft about, counted rather than asserted. Two objects in
+        // a pointer cycle each wait for the other, so neither is ever taken into a copy and both come
+        // out shared. That is the safe way round and it would still be worth knowing about.
+        int cycles = 0, cyclicFiles = 0;
+        foreach (string file in files)
+        {
+            try
+            {
+                int found = PointerCycles(PackfileImage.Read(file));
+                if (found > 0) { cycles += found; cyclicFiles++; }
+            }
+            catch (Exception) { }
+        }
+
         foreach (string note in notes) Console.WriteLine("  " + note);
+
+        Console.WriteLine($"pointer cycles among objects: {cycles} in {cyclicFiles} file(s), which " +
+                          "is what the ownership rule cannot take into a copy");
 
         Console.WriteLine($"\nwithin a file: {files.Length} file(s), {pasted} pasted and read back " +
                           $"correctly, {wrong} came back wrong, {withinRefused} refused, " +
@@ -6306,6 +6323,117 @@ public static class Program
             Console.WriteLine($"  {count} refused for {kind}");
 
         return wrong == 0 ? 0 : 1;
+    }
+
+    /// How many objects in a file sit on a cycle of pointers. Read off the same fixup table the
+    /// ownership rule reads, by Tarjan's strongly connected components: anything in a component of
+    /// more than one object, or pointing at itself, is on a cycle.
+    private static int PointerCycles(PackfileImage image)
+    {
+        var data = image.Section("__data__");
+        if (data == null) return 0;
+
+        var objects = new PackfileObjects(image);
+        var items = PackfileLayout.Of(image);
+        if (items == null) return 0;
+
+        var runs = PackfileLayout.ByObject(items);
+        if (runs.Count != objects.Instances.Count) return 0;
+
+        var spans = new List<(int At, int End, int Which)>();
+        for (int i = 0; i < runs.Count; i++)
+            foreach (var item in runs[i]) spans.Add((item.At, item.At + item.Length, i));
+        spans.Sort((a, b) => a.At.CompareTo(b.At));
+
+        int Owner(int offset)
+        {
+            int low = 0, high = spans.Count - 1;
+            while (low <= high)
+            {
+                int mid = (low + high) / 2;
+                if (offset < spans[mid].At) high = mid - 1;
+                else if (offset >= spans[mid].End) low = mid + 1;
+                else return spans[mid].Which;
+            }
+            return -1;
+        }
+
+        var startsAt = new Dictionary<int, int>();
+        for (int i = 0; i < objects.Instances.Count; i++) startsAt[objects.Instances[i].Offset] = i;
+
+        int section = image.Sections.IndexOf(data);
+        var outs = new List<List<int>>();
+        for (int i = 0; i < objects.Instances.Count; i++) outs.Add(new List<int>());
+
+        int self = 0;
+        foreach (var (source, which, destination) in data.Globals())
+        {
+            if (which != section || !startsAt.TryGetValue(destination, out int to)) continue;
+            int from = Owner(source);
+            if (from < 0) continue;
+            if (from == to) { self++; continue; }
+            outs[from].Add(to);
+        }
+
+        int count = objects.Instances.Count;
+        var index = new int[count];
+        var low = new int[count];
+        var onStack = new bool[count];
+        Array.Fill(index, -1);
+        var stack = new Stack<int>();
+        int next = 0, onCycle = self;
+
+        for (int start = 0; start < count; start++)
+        {
+            if (index[start] >= 0) continue;
+
+            // Iterative, because a behaviour is deep enough that recursion here would be a stack
+            // overflow on a real file rather than on a pathological one.
+            var work = new Stack<(int Node, int Edge)>();
+            work.Push((start, 0));
+            index[start] = low[start] = next++;
+            stack.Push(start);
+            onStack[start] = true;
+
+            while (work.Count > 0)
+            {
+                var (node, edge) = work.Pop();
+                if (edge < outs[node].Count)
+                {
+                    work.Push((node, edge + 1));
+                    int to = outs[node][edge];
+                    if (index[to] < 0)
+                    {
+                        index[to] = low[to] = next++;
+                        stack.Push(to);
+                        onStack[to] = true;
+                        work.Push((to, 0));
+                    }
+                    else if (onStack[to]) low[node] = Math.Min(low[node], index[to]);
+                    continue;
+                }
+
+                if (work.Count > 0)
+                {
+                    var (parent, _) = work.Peek();
+                    low[parent] = Math.Min(low[parent], low[node]);
+                }
+
+                if (low[node] != index[node]) continue;
+
+                int size = 0;
+                while (true)
+                {
+                    int member = stack.Pop();
+                    onStack[member] = false;
+                    size++;
+                    if (member == node) break;
+                }
+                if (size > 1) onCycle += size;
+            }
+        }
+
+        return onCycle;
     }
 
     /// The numbers the states of a machine carry, which are unique inside that machine and nowhere

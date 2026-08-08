@@ -75,8 +75,10 @@ public static class NativePaste
     /// which passes through the root, so nothing reachable from elsewhere is ever taken.
     ///
     /// A pointer cycle inside a subtree would leave both of its objects waiting for the other and so
-    /// both shared rather than copied. That is the safe way round, and it does not happen in any of
-    /// the 531 vanilla behaviours, which was counted rather than assumed.
+    /// both shared rather than copied. That is the safe way round, and it does not happen: `symrm
+    /// paste` counts the objects on a cycle over the whole corpus and reports 0 in 0 of the 531
+    /// vanilla behaviours. It is counted on every run rather than recorded here once, so a file that
+    /// did have one would say so rather than quietly coming out shared.
     public static Subtree Of(PackfileImage image, int rootId, HavokClassTypes? types = null)
     {
         types ??= HavokClassTypes.Shipped;
