@@ -1690,6 +1690,7 @@ public static class Program
         long transitions = 0, nestedTo = 0, nestedFrom = 0, wildcards = 0, danglingTarget = 0;
         long machines = 0, statesTotal = 0, nestedMachines = 0;
         long nestedResolves = 0, nestedUnresolved = 0, nestedNotAMachine = 0;
+        long naiveWildcardLines = 0, fromMachineLines = 0;
         var nestedHolds = new Dictionary<string, int>(StringComparer.Ordinal);
         var perMachine = new List<int>();
         int filesRead = 0, filesFailed = 0;
@@ -1733,6 +1734,14 @@ public static class Program
 
                 var rows = StateEditor.Transitions(model, id);
                 perMachine.Add(rows.Count);
+
+                // What drawing a wildcard the obvious way would cost. A wildcard fires from any
+                // state, so showing it as "from each state to the target" is one line per state per
+                // wildcard. Drawing it from the machine instead is one line, and says the same
+                // thing: the machine is what any state has in common.
+                int wildcardsHere = rows.Count(r => r.Wildcard);
+                naiveWildcardLines += (long)wildcardsHere * states.Count;
+                fromMachineLines += wildcardsHere;
 
                 foreach (var row in rows)
                 {
@@ -1826,6 +1835,10 @@ public static class Program
         Console.WriteLine($"  {nestedFrom,7} with a fromNestedStateId ({Percent(nestedFrom, transitions)})");
         Console.WriteLine($"  {danglingTarget,7} whose toStateId is not a state of the machine ({Percent(danglingTarget, transitions)})");
         Console.WriteLine($"  transitions per machine: median {median}, 90th percentile {p90}, busiest {busiest}");
+        Console.WriteLine($"\n  wildcards, drawn from each state they could fire from:");
+        Console.WriteLine($"  {naiveWildcardLines,7} line(s), which is the drawing nobody wants");
+        Console.WriteLine($"  {fromMachineLines,7} line(s) drawn from the machine instead, " +
+                          $"{(naiveWildcardLines == 0 ? "n/a" : $"{(double)naiveWildcardLines / fromMachineLines:0.0} times fewer")}");
         Console.WriteLine($"\n  what the canvas draws from the same files:");
         Console.WriteLine($"  {drawable,7} route(s), {drawableNested,7} of them with a second hop into a nested state");
         Console.WriteLine($"  {startStates,7} start state(s) to badge, one per machine that has its own");
