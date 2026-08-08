@@ -75,6 +75,7 @@ public static class Program
             case "splinestats": return SplineStats(argv);
             case "spline": return Spline(argv);
             case "savespline": return SaveSpline(argv);
+            case "editframe": return EditFrame(argv);
             case "run": return Run(argv);
             case "weights": return Weights(argv);
             case "crosscheck": return CrossCheck(argv);
@@ -123,6 +124,10 @@ public static class Program
               The same trip through a real file: written into the packfile, rebuilt, and read back
               with the ordinary reader. Covers the header fields, the four arrays and the pointer
               retargeting that the codec check cannot see.
+
+          dotnet run --project tools/symrm/symrm.csproj -- editframe <animDir | file.hkx> [everyNth]
+              The frame editor's whole path: change a bone at one frame, save, and read back. Proves
+              the edited frame comes back changed and no other frame moved.
 
           dotnet run --project tools/symrm/symrm.csproj -- unpack <hkxDir> [everyNth] [outDir]
               Run hkxpack over them, writing to <hkxDir>/xml unless told otherwise. One JVM at a
@@ -3832,6 +3837,119 @@ public static class Program
         }
 
         return 0;
+    }
+
+    // Editing a frame and saving it, the whole way the window does.
+    //
+    // The window lets a person pick a frame, change a bone's position, and save. That is three things
+    // in a row and the last of them, the save, re-encodes the whole clip. So the question this answers
+    // is the one the feature lives or dies on: after all that, does the frame that was changed come
+    // back changed, and does every frame that was not stay where it was.
+    //
+    // It edits a bone's translation because that is the plainest edit and the one most likely to catch
+    // a fault: a channel a vanilla clip left undriven has to become a curve the moment a single frame
+    // of it differs, which is exactly the case a naive encoder drops. The edit is a value no vanilla
+    // frame holds, so a frame that comes back near it came back because of the edit and not by luck.
+    private static int EditFrame(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToArray()
+            : new[] { target };
+
+        int everyNth = argv.Length > 2 && int.TryParse(argv[2], out int n) && n > 0 ? n : 1;
+        if (everyNth > 1) Console.WriteLine($"every {everyNth}th file");
+
+        var edit = new System.Numerics.Vector3(11.5f, -22.25f, 33.75f);
+        const float keptLimit = 0.1f;      // the edited frame has to come back within this
+        const float elsewhereLimit = 0.1f; // and no other frame may move by more than this
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm-editframe");
+        Directory.CreateDirectory(work);
+
+        var reader = new HkxBinaryReader();
+        int done = 0, kept = 0, lost = 0, disturbed = 0, refused = 0, skipped = 0;
+        float worstKept = 0, worstElsewhere = 0;
+        string worstKeptFile = "", worstElsewhereFile = "";
+        var failures = new List<string>();
+
+        for (int i = 0; i < files.Length; i++)
+        {
+            if (i % everyNth != 0) continue;
+            string file = files[i];
+
+            HkxAnimationData before;
+            try
+            {
+                if (!reader.TryReadAnimation(file, out before)) { skipped++; continue; }
+                if (before.AnimationClass != "hkaSplineCompressedAnimation") { skipped++; continue; }
+                if (before.NumFrames < 3 || before.Tracks.Count == 0) { skipped++; continue; }
+                if (before.Tracks[0].Translations.Count < before.NumFrames) { skipped++; continue; }
+            }
+            catch (Exception) { skipped++; continue; }
+
+            done++;
+            int track = 0, frame = before.NumFrames / 2;
+
+            // The frames as they were, to measure what the edit disturbed. A copy, because the edit
+            // and the re-encode both run over the same lists.
+            var wasTranslations = before.Tracks[track].Translations.ToList();
+            before.Tracks[track].Translations[frame] = edit;
+
+            NativeAnimation.Result written;
+            try { written = NativeAnimation.Recompress(file, before); }
+            catch (InvalidOperationException e) { refused++; failures.Add($"{Path.GetFileName(file)}: refused, {e.Message}"); continue; }
+            catch (Exception e) { lost++; failures.Add($"{Path.GetFileName(file)}: threw, {e.Message}"); continue; }
+
+            string outPath = Path.Combine(work, "edited.hkx");
+            File.WriteAllBytes(outPath, written.Bytes);
+
+            HkxAnimationData after;
+            try { after = reader.ReadAnimation(outPath); }
+            catch (Exception e) { lost++; failures.Add($"{Path.GetFileName(file)}: could not be read back, {e.Message}"); continue; }
+
+            if (after.Tracks.Count <= track || after.Tracks[track].Translations.Count <= frame)
+            {
+                lost++; failures.Add($"{Path.GetFileName(file)}: the edited track came back short"); continue;
+            }
+
+            float keptDrift = (after.Tracks[track].Translations[frame] - edit).Length();
+            if (keptDrift > worstKept) { worstKept = keptDrift; worstKeptFile = Path.GetFileName(file); }
+
+            // Every other frame of that channel, against where it was. Editing one frame must not drag
+            // its neighbours, which a curve fitted too loosely would.
+            float elsewhere = 0;
+            for (int fr = 0; fr < before.NumFrames && fr < after.Tracks[track].Translations.Count; fr++)
+            {
+                if (fr == frame) continue;
+                elsewhere = MathF.Max(elsewhere, (after.Tracks[track].Translations[fr] - wasTranslations[fr]).Length());
+            }
+            if (elsewhere > worstElsewhere) { worstElsewhere = elsewhere; worstElsewhereFile = Path.GetFileName(file); }
+
+            bool keptOk = keptDrift <= keptLimit;
+            bool elsewhereOk = elsewhere <= elsewhereLimit;
+            if (keptOk && elsewhereOk) kept++;
+            else
+            {
+                if (!keptOk) { lost++; failures.Add($"{Path.GetFileName(file)}: the edit drifted {keptDrift:F3}"); }
+                if (!elsewhereOk) { disturbed++; failures.Add($"{Path.GetFileName(file)}: a frame it did not touch moved {elsewhere:F3}"); }
+            }
+
+            try { File.Delete(outPath); } catch (Exception) { }
+        }
+
+        Console.WriteLine($"\n{done} spline clip(s) edited and saved: {kept} kept the change and left the " +
+                          $"rest alone, {lost} lost the change, {disturbed} disturbed another frame, " +
+                          $"{refused} refused, {skipped} not editable spline clips");
+        Console.WriteLine($"limits: the edit within {keptLimit} unit(s), no other frame moved more than {elsewhereLimit}");
+        Console.WriteLine($"worst on the edited frame   {worstKept:F5}   {worstKeptFile}");
+        Console.WriteLine($"worst on a frame not edited {worstElsewhere:F5}   {worstElsewhereFile}");
+        foreach (string line in failures.Take(20)) Console.WriteLine($"  {line}");
+        if (failures.Count > 20) Console.WriteLine($"  and {failures.Count - 20} more");
+
+        return lost + disturbed + refused == 0 ? 0 : 1;
     }
 
     // The same trip as `spline`, but through a real file rather than a blob held in memory.

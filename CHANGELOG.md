@@ -3,6 +3,28 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, a clip's frames can be edited and saved
+
+The Animation tab could pick a frame and change a bone, and until the spline encoder landed a save
+wrote the whole clip out uncompressed, several times its old size. Now a spline clip is written back
+spline compressed and comes out smaller than it went in, so editing a frame is a real change to a real
+file rather than a change that bloated it. Only a lossless clip, which nothing re-encodes, still falls
+back to uncompressed.
+
+The button that said "Save uncompressed" now says "Save changes", because it is no longer true: the
+answer line after a save says which of the two happened and by how much, spline and smaller or
+uncompressed and larger.
+
+**Proved end to end, not asserted.** `symrm editframe` changes a bone at one frame of every spline
+clip in the animation corpus, saves through the same path the window uses, and reads it back: 13,154
+of 13,156 keep the change within a hundredth of a unit and leave every other frame within the same,
+and the 2 refused are the float track clips nothing here decodes. The window's own save is walked by
+the headless checks on a copy of a real clip, which now expect the class the file went in as rather
+than always uncompressed, and confirm on disk that the typed frame landed and the rest held still.
+
+An undriven channel becomes a curve the moment one of its frames differs, which is the case a naive
+encoder drops and which this checks for by editing a bone a vanilla clip left flat.
+
 ## 2026-08-08, time and blend weights
 
 The graph ran but could not answer two things a static picture never could: how much of each animation

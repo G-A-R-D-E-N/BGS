@@ -107,6 +107,7 @@ public static class Tests
         ("APlainBlenderSharesByWeight", APlainBlenderSharesByWeight),
         ("AParametricBlenderIsPickedNotMixed", AParametricBlenderIsPickedNotMixed),
         ("ADrivenBlendIsReportedNotGuessed", ADrivenBlendIsReportedNotGuessed),
+        ("AnEditedFrameSurvivesReEncoding", AnEditedFrameSurvivesReEncoding),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -4480,5 +4481,38 @@ public static class Tests
         var driven = byWeight.Children.First(c => c.WeightDriven);
         Check("a child weight on a variable is marked driven and named", "Speed", driven.WeightDriver);
         CheckTrue("so the blender is not resolved", !byWeight.Resolved);
+    }
+
+    // The whole point of the frame editor: a frame changed and written back comes back changed, and
+    // the frames around it do not. Proved on the codec here, which is what the save path runs, so it
+    // needs no file; the file level version is symrm editframe over the corpus.
+    private static void AnEditedFrameSurvivesReEncoding()
+    {
+        Console.WriteLine("\nan edited frame survives being re-encoded");
+
+        var clip = MadeUpClip(60, 2);
+        int track = 0, frame = 30;
+        var edit = new Vector3(11.5f, -22.25f, 33.75f);
+
+        // Remember a neighbour, to prove the edit did not drag it.
+        var neighbour = clip.Tracks[track].Translations[frame + 1];
+        clip.Tracks[track].Translations[frame] = edit;
+
+        var blob = SplineEncoder.Encode(clip);
+        var back = new HkxAnimationData { NumFrames = clip.NumFrames };
+        SplineEncoder.Decode(blob.Data, blob.BlockOffsets, clip.Tracks.Count, clip.NumFrames,
+            blob.MaskAndQuantizationSize, blob.MaxFramesPerBlock, back);
+
+        float keptDrift = (back.Tracks[track].Translations[frame] - edit).Length();
+        CheckTrue($"the edited frame comes back where it was put ({keptDrift:F4})", keptDrift < 0.05f);
+
+        float neighbourDrift = (back.Tracks[track].Translations[frame + 1] - neighbour).Length();
+        CheckTrue($"and the frame beside it did not move with it ({neighbourDrift:F4})", neighbourDrift < 0.1f);
+
+        // A channel a clip never drove has to become a curve the moment one of its frames differs,
+        // which is the case a naive encoder drops. The made up clip drives translation, so this also
+        // checks the plainer path: the change is really in the bytes, not only in memory.
+        CheckTrue("the change is not lost to the encoder",
+            Math.Abs(back.Tracks[track].Translations[frame].X - edit.X) < 0.05f);
     }
 }
