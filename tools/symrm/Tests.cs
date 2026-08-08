@@ -93,6 +93,11 @@ public static class Tests
         ("APaddedStructIsKnownFromHkxPacksIdeaOfIt", APaddedStructIsKnownFromHkxPacksIdeaOfIt),
         ("AnElementsFieldIsWrittenToThatElement", AnElementsFieldIsWrittenToThatElement),
         ("EveryFieldSaysWhereItSits", EveryFieldSaysWhereItSits),
+        ("APackedRotationComesBackAsItself", APackedRotationComesBackAsItself),
+        ("ALinearCurvePassesThroughEveryFrame", ALinearCurvePassesThroughEveryFrame),
+        ("AnEncodedClipDecodesToWhatWentIn", AnEncodedClipDecodesToWhatWentIn),
+        ("AnUndrivenChannelIsNotWrittenAsACurve", AnUndrivenChannelIsNotWrittenAsACurve),
+        ("AClipTooLongForOneBlockIsSplit", AClipTooLongForOneBlockIsSplit),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -3725,5 +3730,203 @@ public static class Tests
         CheckTrue("a reading wrong about every value disagrees", !everything.Clean);
         Check("about all seven of them", 7, everything.Total);
         Check("with the examples capped", 3, everything.Shown.Count);
+    }
+
+    // The rotation packers, against their own readers.
+    //
+    // Each narrow format drops the largest component and rebuilds it from the other three, so a
+    // writer that picks a different component from the one the reader expects still produces a valid
+    // looking five bytes. Checked over a spread of rotations rather than one, because the failure is
+    // per component: a writer that only ever gets tested on a rotation about one axis agrees for
+    // exactly as long as nothing turns about another.
+    private static void APackedRotationComesBackAsItself()
+    {
+        var samples = new List<Quaternion>();
+        for (int i = 0; i < 4; i++)
+            for (float angle = -3f; angle < 3.1f; angle += 0.7f)
+            {
+                var axis = i switch
+                {
+                    0 => new Vector3(1, 0, 0),
+                    1 => new Vector3(0, 1, 0),
+                    2 => new Vector3(0, 0, 1),
+                    _ => Vector3.Normalize(new Vector3(1, 1, 1)),
+                };
+                samples.Add(Quaternion.CreateFromAxisAngle(axis, angle));
+            }
+
+        var scratch = new byte[16];
+        float worst40 = 0, worst48 = 0;
+        foreach (var q in samples)
+        {
+            SplineQuat.Write40(q, scratch, 0);
+            worst40 = MathF.Max(worst40, SplineQuat.AngleBetween(q, SplineQuat.Read40(scratch, 0)));
+            SplineQuat.Write48(q, scratch, 0);
+            worst48 = MathF.Max(worst48, SplineQuat.AngleBetween(q, SplineQuat.Read48(scratch, 0)));
+        }
+
+        Check("every rotation is tried", 36, samples.Count);
+
+        // Forty bits gives twelve to each of three components over a range of about 1.4, so a
+        // thousandth of a radian is the width of two or three steps rather than a loose bound.
+        CheckTrue($"forty bit rotations come back within a thousandth of a radian ({worst40:F6})",
+            worst40 < 0.001f);
+        CheckTrue($"forty eight bit rotations come back ten times closer ({worst48:F7})",
+            worst48 < 0.0001f);
+
+        // The sign of the dropped component is carried in a bit of its own, and a writer that drops
+        // it reads back as the rotation the other way round on half of these.
+        var backwards = Quaternion.Normalize(new Quaternion(0.1f, 0.2f, 0.3f, -0.927f));
+        SplineQuat.Write40(backwards, scratch, 0);
+        CheckTrue("a negative largest component keeps its sign",
+            SplineQuat.AngleBetween(backwards, SplineQuat.Read40(scratch, 0)) < 0.001f);
+    }
+
+    // The guarantee the whole encoder rests on: a clamped B-spline of degree one with a control
+    // point per frame passes exactly through every frame. That is what makes the fit a search for
+    // something smaller rather than a search for anything at all, so if it ever stops being true the
+    // encoder has no floor under it.
+    private static void ALinearCurvePassesThroughEveryFrame()
+    {
+        const int frames = 40;
+        var samples = new float[frames];
+        for (int f = 0; f < frames; f++) samples[f] = MathF.Sin(f * 0.4f) * 17f + f * 0.9f;
+
+        var curve = SplineFit.FitScalarAt(samples, frames, 1);
+        Check("one control point per frame", frames, curve.ControlPoints.Length);
+        Check("at degree one", 1, curve.Degree);
+
+        // Not zero: the control points are stored in sixteen bits across the channel's own range, so
+        // the floor is the width of one step and not nothing. Asserting zero here would be asserting
+        // something untrue and would have to be loosened the first time it ran.
+        float step = (curve.Max - curve.Min) / 65535f;
+        CheckTrue($"and lands on every frame within one quantisation step ({curve.Error:F6} against {step:F6})",
+            curve.Error <= step * 1.01f);
+
+        var knots = SplineFormat.Knots(frames, 1, frames);
+        Check("the knot vector is the length the format states", frames + 2, knots.Length);
+        Check("it starts clamped", 0, (int)knots[0]);
+        Check("and ends on the last frame", frames - 1, (int)knots[^1]);
+        CheckTrue("with no repeated span in the middle", SplineFormat.KnotsUsable(knots, frames, 1));
+    }
+
+    /// A clip built in memory, with a different shape of motion on each track.
+    private static HkxAnimationData MadeUpClip(int frames, int tracks)
+    {
+        var clip = new HkxAnimationData
+        {
+            AnimationClass = "hkaSplineCompressedAnimation",
+            NumFrames = frames,
+            NumTracks = tracks,
+            Duration = (frames - 1) / 30f,
+            FrameDuration = 1f / 30f,
+        };
+
+        for (int t = 0; t < tracks; t++)
+        {
+            var track = new HkxTrackData();
+            for (int f = 0; f < frames; f++)
+            {
+                float at = f / (float)Math.Max(1, frames - 1);
+                track.Translations.Add(new Vector3(
+                    MathF.Sin(at * 6f + t) * 12f,
+                    at * 30f - t,
+                    MathF.Cos(at * 4f + t) * 5f));
+                track.Rotations.Add(Quaternion.CreateFromAxisAngle(
+                    Vector3.Normalize(new Vector3(1, t + 1, 2)), at * 2.4f + t * 0.3f));
+                track.Scales.Add(Vector3.One);
+            }
+            clip.Tracks.Add(track);
+        }
+
+        return clip;
+    }
+
+    private static (float Position, float Rotation) RoundTrip(HkxAnimationData clip)
+    {
+        var blob = SplineEncoder.Encode(clip);
+        var back = new HkxAnimationData { NumFrames = clip.NumFrames };
+        SplineEncoder.Decode(blob.Data, blob.BlockOffsets, clip.Tracks.Count, clip.NumFrames,
+            blob.MaskAndQuantizationSize, blob.MaxFramesPerBlock, back);
+
+        float position = 0, rotation = 0;
+        for (int t = 0; t < clip.Tracks.Count; t++)
+            for (int f = 0; f < clip.NumFrames; f++)
+            {
+                position = MathF.Max(position,
+                    (clip.Tracks[t].Translations[f] - back.Tracks[t].Translations[f]).Length());
+                rotation = MathF.Max(rotation,
+                    SplineQuat.AngleBetween(clip.Tracks[t].Rotations[f], back.Tracks[t].Rotations[f]));
+            }
+        return (position, rotation);
+    }
+
+    // The codec end to end, on frames chosen here rather than read from a file.
+    //
+    // The corpus gate is the real measurement and this is not a smaller copy of it. This one exists
+    // because the corpus needs a Fallout 4 install and this does not, so a change that breaks the
+    // encoder is caught by the suite that actually runs on every build.
+    private static void AnEncodedClipDecodesToWhatWentIn()
+    {
+        var clip = MadeUpClip(60, 3);
+        var blob = SplineEncoder.Encode(clip);
+
+        Check("one block holds it", 1, blob.NumBlocks);
+        Check("the mask is four bytes a track", 12, blob.MaskAndQuantizationSize);
+        Check("the block starts at the front of the blob", 0, blob.BlockOffsets[0]);
+        CheckTrue("the timing is carried across rather than recomputed",
+            MathF.Abs(blob.FrameDuration - clip.FrameDuration) < 1e-6f);
+
+        var drift = RoundTrip(clip);
+        CheckTrue($"every bone lands where it started ({drift.Position:F5} unit(s))", drift.Position < 0.05f);
+        CheckTrue($"and facing the way it was ({drift.Rotation:F6} radian(s))", drift.Rotation < 0.01f);
+    }
+
+    // A channel nobody drives has to be written as undriven rather than as a flat curve. Getting
+    // this wrong costs nothing visible and several times the size, which is exactly the kind of
+    // fault that survives forever because the frames still come back right.
+    private static void AnUndrivenChannelIsNotWrittenAsACurve()
+    {
+        var clip = MadeUpClip(40, 1);
+        var blob = SplineEncoder.Encode(clip);
+
+        // Scale is a flat one on every frame of the made up clip, which is what almost every vanilla
+        // track carries: 1,291,375 of the 1,291,826 track blocks in the game have no scale at all.
+        Check("scale is marked undriven", 0, (int)blob.Data[3]);
+        CheckTrue("rotation is marked as a curve", (blob.Data[2] >> 4) != 0);
+        CheckTrue("and so is position", (blob.Data[1] >> 4) != 0);
+
+        Check("three channels counted as undriven", 3, blob.Report.Identity);
+
+        // Same clip with the scale actually moving: now it has to be a curve.
+        var moving = MadeUpClip(40, 1);
+        for (int f = 0; f < moving.NumFrames; f++)
+            moving.Tracks[0].Scales[f] = new Vector3(1f + f * 0.01f, 1f, 1f);
+
+        var second = SplineEncoder.Encode(moving);
+        CheckTrue("a scale that moves is written as one", (second.Data[3] >> 4) != 0);
+    }
+
+    // Past 256 frames the blob becomes more than one block, and every offset after the first is one
+    // this code chose rather than one the format dictated. A clip that decodes correctly inside its
+    // first block and wrongly after it is the specific failure here, so the check is deliberately on
+    // a length that needs three blocks and does not divide evenly into them.
+    private static void AClipTooLongForOneBlockIsSplit()
+    {
+        var clip = MadeUpClip(600, 2);
+        var blob = SplineEncoder.Encode(clip);
+
+        Check("three blocks hold six hundred frames", 3, blob.NumBlocks);
+        Check("at 256 frames each", 256, blob.MaxFramesPerBlock);
+        Check("the first starts at the front", 0, blob.BlockOffsets[0]);
+        CheckTrue("and each one after it starts later than the last",
+            blob.BlockOffsets[1] > blob.BlockOffsets[0] && blob.BlockOffsets[2] > blob.BlockOffsets[1]);
+        CheckTrue("on a sixteen byte boundary",
+            blob.BlockOffsets.All(o => o % 16 == 0));
+
+        var drift = RoundTrip(clip);
+        CheckTrue($"the last block decodes as well as the first ({drift.Position:F5} unit(s))",
+            drift.Position < 0.05f);
+        CheckTrue($"including its rotations ({drift.Rotation:F6} radian(s))", drift.Rotation < 0.01f);
     }
 }

@@ -1192,66 +1192,17 @@ public class HkxBinaryReader
 
     #region B-Spline Evaluation
 
-    private static int FindKnotSpan(int degree, float t, int numCp, float[] knots)
-    {
-        if (numCp <= 0 || knots.Length == 0) return 0;
-        if (t >= knots[numCp]) return numCp - 1;
-        int lo = degree, hi = numCp, mid = (lo + hi) / 2;
-        for (int iter = 0; iter < 100; iter++)
-        {
-            if (t < knots[mid]) hi = mid;
-            else if (t >= knots[mid + 1]) lo = mid;
-            else break;
-            mid = (lo + hi) / 2;
-        }
-        return mid;
-    }
+    // These were three private copies of the curve until an encoder needed the same curve to fit
+    // against. A fit measured with a second implementation is a fit against a curve no reader draws,
+    // so the one implementation lives in SplineFormat and both directions call it.
+    private static int FindKnotSpan(int degree, float t, int numCp, float[] knots) =>
+        SplineFormat.FindKnotSpan(degree, t, numCp, knots);
 
-    private static float EvalBSplineScalar(int span, int degree, float t, float[] knots, List<float> cps)
-    {
-        if (cps.Count == 0) return 0;
-        if (cps.Count == 1) return cps[0];
-        float[] N = new float[degree + 1];
-        N[0] = 1f;
-        for (int i = 1; i <= degree; i++)
-            for (int j = i-1; j >= 0; j--)
-            {
-                float d = span+i-j < knots.Length && span-j >= 0
-                    ? knots[span+i-j] - knots[span-j] : 0;
-                float A = d >= 1e-10f ? (t - knots[span-j]) / d : 0;
-                float tmp = N[j] * A;
-                if (j+1 < N.Length) N[j+1] += N[j] - tmp;
-                N[j] = tmp;
-            }
-        float r = 0;
-        for (int i = 0; i <= degree; i++) { int idx = span-i; if (idx >= 0 && idx < cps.Count) r += cps[idx] * N[i]; }
-        return r;
-    }
+    private static float EvalBSplineScalar(int span, int degree, float t, float[] knots, List<float> cps) =>
+        SplineFormat.Evaluate(span, degree, t, knots, cps);
 
-    private static Quaternion EvalBSplineQuat(int span, int degree, float t, float[] knots, List<Quaternion> cps)
-    {
-        if (cps.Count == 0) return Quaternion.Identity;
-        if (cps.Count == 1) return cps[0];
-        float[] N = new float[degree + 1];
-        N[0] = 1f;
-        for (int i = 1; i <= degree; i++)
-            for (int j = i-1; j >= 0; j--)
-            {
-                float d = span+i-j < knots.Length && span-j >= 0
-                    ? knots[span+i-j] - knots[span-j] : 0;
-                float A = d >= 1e-10f ? (t - knots[span-j]) / d : 0;
-                float tmp = N[j] * A;
-                if (j+1 < N.Length) N[j+1] += N[j] - tmp;
-                N[j] = tmp;
-            }
-        Quaternion r = new(0,0,0,0);
-        for (int i = 0; i <= degree; i++)
-        {
-            int idx = span - i;
-            if (idx >= 0 && idx < cps.Count) { var q = cps[idx]; r = new(r.X+q.X*N[i], r.Y+q.Y*N[i], r.Z+q.Z*N[i], r.W+q.W*N[i]); }
-        }
-        return Quaternion.Normalize(r);
-    }
+    private static Quaternion EvalBSplineQuat(int span, int degree, float t, float[] knots, List<Quaternion> cps) =>
+        SplineFormat.Evaluate(span, degree, t, knots, cps);
 
     #endregion
 

@@ -3,6 +3,48 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, a clip can be saved as the kind of animation it was
+
+Reading a spline compressed animation has worked for a long time, which is why the tool can show a
+clip and draw it. Nothing could produce one, so saving a clip wrote every frame out uncompressed
+instead. That is correct and about six times the size, and it is why an edited clip could not be
+saved as the clip it replaced. There is now an encoder. #35.
+
+**The free choices were counted rather than picked.** An encoder has to decide how finely to
+quantise, how many frames go in a block and what degree of curve to fit, and the shipped files are
+the only statement available about what the engine accepts. Across all 13,514 vanilla spline
+animations: positions and scales are always sixteen bit, rotations are forty bit in 1,173,390 track
+blocks and forty eight bit in 118,436, and every single file uses 256 frames to a block. Degree is
+not always three, which is what reasoning would have said; vanilla ships both one and three.
+`symrm splinestats` prints all of it.
+
+**The fit never trusts itself.** Every candidate curve is quantised, decoded back through the same
+evaluator a reader will use, and measured against the frames it came from, so a curve is accepted
+because its measured error is small rather than because the mathematics says it should be. There is
+always an answer: a clamped linear curve with one control point per frame passes exactly through
+every frame, so the search is only ever choosing something smaller than a guaranteed fallback.
+
+**Two faults were found by running the sweep, and both would have passed a code review.** The three
+axes of a position share one knot vector, so once the widest has chosen a shape the other two are
+refitted onto it, and that refit was never checked against the tolerance. On 55 of the 13,514 clips
+it drifted up to 1.59 units, on hand and finger bones during talking idles, while their rotations
+stayed clean. Separately, the error measure itself was wrong: `2 * acos(dot)` cannot resolve a small
+angle in single precision and bottoms out around 0.0009 radians, so it had been reporting the same
+number for a packer known to be good as for everything else. Fixing it made the accuracy real and cut
+the blob by ten percentage points, because the noise floor had been rejecting good small fits.
+
+**Measured.** `symrm spline` takes every vanilla clip, decodes it, encodes those frames again,
+decodes that, and compares: 13,514 of 13,514 within 0.05 units and 0.01 radians, worst case 0.028
+units and 0.0011 radians, at 84.9% of the blob the game shipped. `symrm savespline` does the same
+through a real file, written into the packfile and read back with the ordinary reader: 13,510 of
+13,514 at 80.8% of the shipped file size. The four refused drive float tracks, which nothing here
+decodes, and are turned away rather than written short.
+
+The animation being replaced is now taken out of the file rather than left in it unreferenced, which
+is what makes a saved clip smaller than the one it replaced instead of larger. That is deletion, so
+it renumbers, which is the hazard #19 is about; `Recompress` takes a switch for anyone who would
+rather not. A lossless compressed clip still saves uncompressed, because nothing re-encodes one.
+
 ## 2026-08-08, a field says what it is
 
 The properties panel was a column of boxes with a name beside each one. Hovering a name now says
