@@ -34,6 +34,7 @@ public static class Tests
         ("BlenderChildIsWrapped", BlenderChildIsWrapped),
         ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
         ("AReferenceInsideAStructIsSeenByBothReaders", AReferenceInsideAStructIsSeenByBothReaders),
+        ("ADanglingReferenceIsReportedWhereverItSits", ADanglingReferenceIsReportedWhereverItSits),
         ("StructuralObjectsAreProtected", StructuralObjectsAreProtected),
         ("PortTypesRefuseNonsense", PortTypesRefuseNonsense),
         ("BundledHkxPackIsFound", BundledHkxPackIsFound),
@@ -784,13 +785,10 @@ public static class Tests
         Check("the payload is gone", null, afterDelete.Get("99"));
         CheckTrue("the note says which holder it cleared", note.Contains("#98"));
 
-        // The check above is what proves the struct member was cleared. This one cannot: the
-        // validator's dangling reference walk reads scalars, lists and struct lists and not structs,
-        // so it stays quiet about a struct pointing at a deleted object either way. Verified by
-        // taking the struct arm back out of Detach, which turned the check above red and left this
-        // one green. Kept because it still covers the other three kinds, and labelled so nobody
-        // reads it as cover the validator does not currently give.
-        CheckTrue("and nothing dangles that the validator can see",
+        // This once passed whatever Detach did, because the validator kept its own walk and that
+        // walk did not read structs. It reads the shared one now, so it can fail for the reason its
+        // name gives.
+        CheckTrue("and no dangling reference is left behind",
                   GraphValidator.Check(gone).All(f => !f.What.Contains("not in this file")));
 
         // The other two kinds the shared walk carries. Both were unguarded: taking either arm out of
@@ -814,6 +812,34 @@ public static class Tests
                   .StructLists["transitions"][0].GetValueOrDefault("transition"));
         Check("the transition itself survives", 1,
               BehaviourGraphModel.Parse(effectGone).Get("101")!.StructLists["transitions"].Count);
+    }
+
+    /// Check graph reports a reference to an object that is not there, whichever of the four kinds
+    /// of place holds it.
+    ///
+    /// The validator kept its own walk and read three of the four, so a struct naming a deleted
+    /// object was the one dangling reference it could not see. That is the check the delete path
+    /// leans on to say it left the file whole, so the gap made the reassurance worth less than it
+    /// looked.
+    private static void ADanglingReferenceIsReportedWhereverItSits()
+    {
+        Console.WriteLine("\na reference to something that is not there is reported wherever it sits");
+
+        foreach (var (kind, xml) in new[]
+                 {
+                     ("a scalar", SmallGraph().Replace(">#94<", ">#994<")),
+                     ("a list element", SmallGraph().Replace("#93 #95", "#993 #95")),
+                     ("a struct list member", TwoStateBlendGraph().Replace(">#102<", ">#902<")),
+                     ("a struct member", StructReferenceGraph().Replace(">#99<", ">#999<")),
+                 })
+        {
+            var dangling = GraphValidator.Check(xml)
+                .Where(f => f.What.Contains("not in this file", StringComparison.Ordinal)).ToList();
+
+            Check($"{kind} pointing at a missing object is reported", 1, dangling.Count);
+            CheckTrue($"{kind} finding names the object holding it",
+                      dangling.Count == 0 || dangling[0].Where.StartsWith('#'));
+        }
     }
 
     /// A modifier whose named `alarmEvent` struct is the only thing pointing at its payload, which
