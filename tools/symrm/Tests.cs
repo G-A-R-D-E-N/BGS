@@ -22,6 +22,8 @@ public static class Tests
     {
         ("DetachedSubtreeStaysDrawn", DetachedSubtreeStaysDrawn),
         ("EveryDrawnNodeHasOneOwner", EveryDrawnNodeHasOneOwner),
+        ("OwnershipAnswersWhatMovesAndWhatHides", OwnershipAnswersWhatMovesAndWhatHides),
+        ("ASharedGeneratorBelongsToOneBranchOnly", ASharedGeneratorBelongsToOneBranchOnly),
         ("ReplacingLinkSaysWhatItDisplaced", ReplacingLinkSaysWhatItDisplaced),
         ("BlenderChildIsWrapped", BlenderChildIsWrapped),
         ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
@@ -253,6 +255,130 @@ public static class Tests
             }
         }
     }
+
+    // The three questions the canvas asks about ownership, on a shape built so the shared case is the
+    // interesting one. A owns B and C; B owns D; C owns E which owns F.
+    private static void OwnershipAnswersWhatMovesAndWhatHides()
+    {
+        Console.WriteLine("\nownership answers what moves and what hides");
+
+        var tree = GraphOwnership.Of(new[]
+        {
+            ("A", ""), ("B", "A"), ("C", "A"), ("D", "B"), ("E", "C"), ("F", "E"),
+        });
+
+        Check("A owns two directly", "B, C", string.Join(", ", tree.Children("A")));
+        Check("and everything under it", "B, D, C, E, F", string.Join(", ", tree.Under("A")));
+        Check("D is owned by B and nobody else", "B", tree.Owner["D"]);
+        Check("a leaf owns nothing", 0, tree.Under("F").Count);
+
+        Check("F's chain runs nearest first", "E, C, A", string.Join(", ", tree.Chain("F")));
+        Check("and a root's chain is empty", 0, tree.Chain("A").Count);
+
+        var collapsed = new HashSet<string> { "B" };
+        CheckTrue("collapsing B hides what B owns", tree.Hidden(collapsed, "D"));
+        CheckTrue("and leaves the other branch alone", !tree.Hidden(collapsed, "E"));
+        CheckTrue("and does not hide B itself, which is what you click to undo it",
+            !tree.Hidden(collapsed, "B"));
+
+        Check("B's badge counts only what B hides", 1, tree.HiddenBy(collapsed, "B"));
+        Check("a node that is not collapsed hides nothing", 0, tree.HiddenBy(collapsed, "A"));
+
+        // Two collapses, one inside the other. The badge's promise is what it will bring back when
+        // clicked, so neither may count what the other is holding.
+        //
+        // E is hidden by A, so its own badge is not even on screen and claims nothing. A claims B, C,
+        // D and E: four, not five. F is left out because expanding A does not reveal F, E is still
+        // shut. A badge reading five here would promise a node it cannot produce.
+        var both = new HashSet<string> { "A", "E" };
+        Check("an inner collapse claims nothing already hidden", 0, tree.HiddenBy(both, "E"));
+        Check("and the outer one claims what it can actually bring back", 4, tree.HiddenBy(both, "A"));
+
+        // The dedupe that matters: E is selected in its own right and is also under A.
+        var moving = tree.Moving(new[] { "A", "E" });
+        Check("everything moves, once each", "A, B, C, D, E, F",
+            string.Join(", ", moving.OrderBy(m => m, StringComparer.Ordinal)));
+        Check("the set is a set", 6, moving.Count);
+
+        Check("a node nobody placed moves nothing", 0, tree.Moving(new[] { "Z" }).Count);
+    }
+
+    // The case ownership exists for, on a real graph rather than a made up map.
+    //
+    // Two states point at one clip. The canvas can only draw it in one place, so the first state to
+    // reach it owns it, and the second gets a wire to somewhere it does not control. Everything that
+    // could go wrong here goes wrong quietly: collapsing the second state must not hide the clip out
+    // from under the first, and dragging the second must not drag it away either.
+    private static void ASharedGeneratorBelongsToOneBranchOnly()
+    {
+        Console.WriteLine("\na shared generator belongs to one branch only");
+
+        var model = BehaviourGraphModel.Parse(SharedGeneratorGraph());
+        var placed = GraphAuthor.Layout(model, 1000);
+        var tree = GraphOwnership.Of(placed);
+
+        Check("both states point at the same clip", "#94",
+            model.Get("95")?.Ref("generator") is string g ? "#" + g : "none");
+
+        Check("the clip is drawn once", 1, placed.Count(p => p.Node.Id == "94"));
+        Check("and owned by the state that reached it first", "93", tree.Owner["94"]);
+        Check("the second state owns nothing", 0, tree.Under("95").Count);
+
+        // Hiding. The clip is under #93 and must not answer to #95.
+        var shutSecond = new HashSet<string> { "95" };
+        CheckTrue("collapsing the borrower does not hide the shared clip",
+            !tree.Hidden(shutSecond, "94"));
+        Check("and its badge claims nothing", 0, tree.HiddenBy(shutSecond, "95"));
+
+        var shutFirst = new HashSet<string> { "93" };
+        CheckTrue("collapsing the owner does hide it", tree.Hidden(shutFirst, "94"));
+        Check("and its badge says so", 1, tree.HiddenBy(shutFirst, "93"));
+
+        // Moving. Same rule, same reason.
+        Check("dragging the borrower moves only itself", "95",
+            string.Join(", ", tree.Moving(new[] { "95" })));
+        Check("dragging the owner takes the clip with it", "93, 94",
+            string.Join(", ", tree.Moving(new[] { "93" }).OrderBy(m => m, StringComparer.Ordinal)));
+    }
+
+    /// Two states whose generator is the same clip, which is the ordinary shape in a shipped file
+    /// rather than a contrived one: 3,624 of the corpus's 5,320 state infos share something.
+    private static string SharedGeneratorGraph() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraph" name="#91" signature="0xb1218f86">
+                    <hkparam name="name">Graph</hkparam>
+                    <hkparam name="rootGenerator">#92</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachine" name="#92" signature="0xa5896bcf">
+                    <hkparam name="name">Root</hkparam>
+                    <hkparam name="startStateId">0</hkparam>
+                    <hkparam name="wildcardTransitions">null</hkparam>
+                    <hkparam name="states" numelements="2">
+                        #93 #95
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#93" signature="0x39d76713">
+                    <hkparam name="name">First</hkparam>
+                    <hkparam name="stateId">0</hkparam>
+                    <hkparam name="generator">#94</hkparam>
+                    <hkparam name="transitions">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#94" signature="0xd4cc9f6">
+                    <hkparam name="name">Shared</hkparam>
+                    <hkparam name="animationName">shared.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#95" signature="0x39d76713">
+                    <hkparam name="name">Second</hkparam>
+                    <hkparam name="stateId">1</hkparam>
+                    <hkparam name="generator">#94</hkparam>
+                    <hkparam name="transitions">null</hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
 
     private static void ReplacingLinkSaysWhatItDisplaced()
     {
