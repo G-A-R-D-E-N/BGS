@@ -21,6 +21,7 @@ public static class Tests
     public static readonly (string Name, Action Check)[] Cases =
     {
         ("DetachedSubtreeStaysDrawn", DetachedSubtreeStaysDrawn),
+        ("EveryDrawnNodeHasOneOwner", EveryDrawnNodeHasOneOwner),
         ("ReplacingLinkSaysWhatItDisplaced", ReplacingLinkSaysWhatItDisplaced),
         ("BlenderChildIsWrapped", BlenderChildIsWrapped),
         ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
@@ -213,6 +214,44 @@ public static class Tests
         CheckTrue("the displaced state machine #92 is still drawn", drawn.Contains("92"));
         CheckTrue("its child state #93 is still drawn", drawn.Contains("93"));
         CheckTrue("the clip under that state #94 is still drawn", drawn.Contains("94"));
+    }
+
+    // Ownership is the rule the whole canvas hangs off: where a node is placed, whether a collapse
+    // hides it, and whether a drag moves it. It is not a new idea, it is a fact the walk already knew
+    // and threw away, so this pins it down before anything is built on it.
+    private static void EveryDrawnNodeHasOneOwner()
+    {
+        Console.WriteLine("\nevery drawn node has one owner");
+
+        var model = BehaviourGraphModel.Parse(BlenderGraph(0, 0, 1, 1));
+        var placed = GraphAuthor.Layout(model, 1000);
+
+        // Every object in the fixture except #130, the binding set, which nothing points at in this
+        // shape and which is not a node the canvas draws. Named and in order rather than counted,
+        // because the order is the walk and the walk is what decides ownership: breadth first, so
+        // the graph's own targets come before their children.
+        Check("the walk placed the graph, breadth first", "91, 110, 80, 111, 112, 81, 121, 122",
+              string.Join(", ", placed.Select(p => p.Node.Id)));
+
+        var owner = placed.ToDictionary(p => p.Node.Id, p => p.OwnerId);
+        Check("the root owns nothing above it", "", owner["91"]);
+        Check("the blender is owned by the graph that names it", "91", owner["110"]);
+        Check("and a blender child by the blender", "110", owner["111"]);
+
+        // Every node bar a walk root has exactly one owner, and following owners always ends.
+        foreach (var (node, _, ownerId) in placed)
+        {
+            if (ownerId.Length == 0) continue;
+            CheckTrue($"#{node.Id}'s owner is itself drawn", owner.ContainsKey(ownerId));
+
+            var seen = new HashSet<string>();
+            string at = node.Id;
+            while (owner.TryGetValue(at, out string? up) && up.Length > 0)
+            {
+                CheckTrue($"#{node.Id}'s owner chain does not loop", seen.Add(up));
+                at = up;
+            }
+        }
     }
 
     private static void ReplacingLinkSaysWhatItDisplaced()

@@ -209,10 +209,17 @@ public static class GraphAuthor
     // makes an entire subtree vanish the moment a link is dragged.
     //
     // So every detached subtree gets walked as well, from its own head.
-    public static List<(HkObject Node, int Column)> Layout(BehaviourGraphModel model, int max)
+    /// Every node the canvas will draw, with its depth from the root and the node that reached it
+    /// first.
+    ///
+    /// That last value is what makes the canvas work rather than a detail of the walk. A node can be
+    /// pointed at by several parents, and the picture has to put it in one place, hide it under one
+    /// collapse and move it with one drag. The walk already decides which parent gets there first,
+    /// because it skips a node it has placed; this stops throwing that answer away.
+    public static List<(HkObject Node, int Column, string OwnerId)> Layout(BehaviourGraphModel model, int max)
     {
         var placed = new Dictionary<string, int>();
-        var order = new List<(HkObject, int)>();
+        var order = new List<(HkObject, int, string)>();
 
         var root = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraph")
                    ?? model.Objects.FirstOrDefault(o => o.Class == "hkbStateMachine")
@@ -232,12 +239,15 @@ public static class GraphAuthor
     }
 
     private static int Walk(BehaviourGraphModel model, HkObject from, int column,
-                            Dictionary<string, int> placed, List<(HkObject, int)> order, int max)
+                            Dictionary<string, int> placed, List<(HkObject, int, string)> order, int max)
     {
         var queue = new Queue<(HkObject Node, int Column)>();
         queue.Enqueue((from, column));
         placed[from.Id] = column;
-        order.Add((from, column));
+
+        // A walk root is owned by nothing. There is one per detached subtree as well as the real
+        // root, and each is the top of its own family.
+        order.Add((from, column, ""));
         int deepest = column;
 
         while (queue.Count > 0 && order.Count < max)
@@ -251,7 +261,7 @@ public static class GraphAuthor
 
                 placed[target] = depth + 1;
                 deepest = Math.Max(deepest, depth + 1);
-                order.Add((next, depth + 1));
+                order.Add((next, depth + 1, current.Id));
                 queue.Enqueue((next, depth + 1));
                 if (order.Count >= max) break;
             }

@@ -281,7 +281,7 @@ public class GraphView : Control
         }
 
         var nextY = new Dictionary<int, double>();
-        foreach (var (obj, column) in GraphAuthor.Layout(model, MaxNodes))
+        foreach (var (obj, column, _) in GraphAuthor.Layout(model, MaxNodes))
         {
             var slots = GraphLinks.OutSlots(model, obj);
             var wildcards = wildcardsInto.GetValueOrDefault(obj.Id) ?? new List<string>();
