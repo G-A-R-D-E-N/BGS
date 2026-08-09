@@ -1334,6 +1334,28 @@ names the other parents rather than only counting them."
 
 ### Task 8: A standalone animation fills the clip list
 
+> **Superseded by implementation, commit `7d37022`. Read this note before the steps below.**
+>
+> The steps are left as written because the reasoning in them is the point: the obvious premise was
+> stated, acted on, and disproved, and replacing it would hide that.
+>
+> **What was wrong.** Step 2 hangs the fix off the branch taken when `ParseBehavior` returns no root.
+> That branch is never reached by an animation. `ParseBehavior` falls back to the first object in the
+> file when it finds no graph or machine to prefer, so every packfile holding objects resolves a root
+> and an animation goes down the same path a behaviour does. Code written on `root == null` to detect
+> an animation cannot run. The contract is now documented on `ParseBehavior` itself; that is the copy
+> to trust.
+>
+> Step 1 also names `_animation`, which is the Animation tab's `HkGrid`. The decoded data is
+> `_animationData`.
+>
+> **What was built instead.** The fallback lives inside `BuildClipList`, which was already the only
+> thing that fills `_clips`, and fires on the condition that actually separates the two kinds of file:
+> the list came out empty. The no-root branch now calls `BuildClipList` with an empty reading rather
+> than being skipped, so one method answers what the clip list holds on every path that reaches it.
+> `HkGrid.SelectFirst` and the test are as described. The test finds the grid through a new
+> `MainWindow.ClipGrid` rather than by position, which Step 3 anticipated.
+
 **Files:**
 - Modify: `app/MainWindow.cs:2316-2328`, and the load path at `app/MainWindow.cs:2784`
 - Test: `tools/uismoke/Smoke.cs`

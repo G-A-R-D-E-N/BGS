@@ -2337,10 +2337,9 @@ public class MainWindow : Window
     /// the animation is already the thing being played. Saying that costs a row and saves everyone
     /// working out the distinction before they can use the tab.
     ///
-    /// Not gated on the file failing to parse as a behaviour, which was the obvious guess and is
-    /// wrong: `ParseBehavior` falls back to the first object in the file, so an animation resolves a
-    /// root like anything else and takes the same path a behaviour does. What actually tells them
-    /// apart is that one of them lists no clips.
+    /// Gated on the list being empty rather than on the file failing to parse as a behaviour, which
+    /// was the obvious guess and cannot work. `ParseBehavior` documents why: an animation resolves a
+    /// root like anything else, so it takes the same path a behaviour does.
     ///
     /// Only ever called by `BuildClipList` on finding nothing to list, so the list has one filler and
     /// the rule for when this row appears lives in one place.
