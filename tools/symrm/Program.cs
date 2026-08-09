@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -91,6 +92,7 @@ public static class Program
             case "link": return Link(argv);
             case "draw": return Draw(argv);
             case "test": return Tests.Run();
+            case "defaults": return Defaults(argv);
             default: Usage(); return 1;
         }
     }
@@ -372,6 +374,12 @@ public static class Program
               Regression checks on graphs built in memory. No game install, no hkxpack, no JVM,
               so this one can be run on every change. Exits non zero on any failure.
 
+          dotnet run --project tools/symrm/symrm.csproj -- defaults <Fallout4.exe.unpacked.exe> <Fallout4_163_functions.txt> [class]
+              What the game says every field starts out as, read off the class registrations in the
+              executable, against what the class table believes. The table's own 625 defaults are
+              the gate: this has to reproduce all of them or it is reading the blob wrongly. Naming
+              a class prints everything the game says about it instead of gating.
+
           dotnet run --project tools/symrm/symrm.csproj -- door <SpecialCaseDoors Behavior.hkx> <out.hkx>
               The additive door edit: two new events and two new states that give a door a way to
               be placed already open or already closed without playing the transition, in the shape
@@ -394,6 +402,137 @@ public static class Program
     /// pointing one of these commands at a file that already sits in a directory of that name
     /// deletes the file being read. Found by doing it: a run of crosscheck against a file left in an
     /// earlier crosscheck's working directory took the file with it.
+    /// What the game says every field starts out as, against what the class table believes.
+    ///
+    /// The table is generated from hkxpack's database, which records a default for 625 members and
+    /// none at all for the ones whose value comes from a fixed set. The game registers every class at
+    /// startup and hands the constructor a blob of defaults, so it knows all of them.
+    ///
+    /// The 625 the table already has are the gate. If this cannot reproduce those exactly then it is
+    /// reading the blob wrongly and nothing it says about the rest is worth having.
+    private static int Defaults(string[] argv)
+    {
+        if (argv.Length < 3)
+        {
+            Console.Error.WriteLine(
+                "defaults <Fallout4.exe.unpacked.exe> <Fallout4_163_functions.txt>");
+            return 1;
+        }
+
+        var types = HavokClassTypes.Shipped;
+        var (read, refused) = GameDefaults.Of(argv[1], argv[2], types);
+
+        // Naming a class prints everything the game says about it, which is the shape a person wants
+        // when checking one field rather than gating the whole table.
+        if (argv.Length > 3)
+        {
+            foreach (var one in read.Where(r => r.ClassName.Contains(argv[3], StringComparison.OrdinalIgnoreCase)))
+            {
+                Console.WriteLine($"{one.ClassName}: {one.Members} member(s), {one.ObjectSize} bytes, version {one.Version}");
+                foreach (var member in types[one.ClassName]!.Declared)
+                {
+                    one.Defaults.TryGetValue(member.Name, out string? game);
+                    if (game == null && member.Default == null) continue;
+                    string mark = game == null ? "zero by omission" : game;
+                    Console.WriteLine($"    {member.Name,-40} {mark,-42} table {member.Default ?? "-"}");
+                }
+            }
+            return 0;
+        }
+
+        int agreed = 0, differed = 0, gained = 0, lost = 0, zeroed = 0;
+        var disagreements = new List<string>();
+        var lostOnes = new List<string>();
+        var gainedOnes = new List<string>();
+
+        foreach (var found in read)
+        {
+            foreach (var member in types[found.ClassName]!.Declared)
+            {
+                found.Defaults.TryGetValue(member.Name, out string? game);
+                string? table = member.Default;
+
+                if (table == null && game == null) continue;
+                if (table == null)
+                {
+                    gained++;
+                    if (found.ClassName.StartsWith("hkb", StringComparison.Ordinal) ||
+                        found.ClassName.StartsWith("BS", StringComparison.Ordinal))
+                        gainedOnes.Add($"{found.ClassName}.{member.Name} = {game}");
+                    continue;
+                }
+                if (game == null)
+                {
+                    // The blob only carries a default that is not zero. A field the game leaves out
+                    // starts as zero, which is what the table says for these, so the two agree.
+                    if (IsZero(table)) { zeroed++; continue; }
+                    lost++;
+                    lostOnes.Add($"{found.ClassName}.{member.Name} = {table}");
+                    continue;
+                }
+
+                if (SameDefault(table, game)) agreed++;
+                else
+                {
+                    differed++;
+                    disagreements.Add($"{found.ClassName}.{member.Name}: table {table}, game {game}");
+                }
+            }
+        }
+
+        Console.WriteLine($"{read.Count} class(es) read, {refused.Count} refused");
+        Console.WriteLine($"  the table already had  : {agreed + differed + lost}");
+        Console.WriteLine($"    agreeing             : {agreed}");
+        Console.WriteLine($"    disagreeing          : {differed}");
+        Console.WriteLine($"    zero, which the game stores by leaving out: {zeroed}");
+        Console.WriteLine($"    the game does not set and is not zero      : {lost}");
+        Console.WriteLine($"  the game adds          : {gained}");
+
+        foreach (var why in refused.Take(12)) Console.WriteLine("  refused: " + why);
+        if (refused.Count > 12) Console.WriteLine($"  ... and {refused.Count - 12} more");
+
+        foreach (string line in disagreements.Take(25)) Console.WriteLine("  differs: " + line);
+        if (disagreements.Count > 25) Console.WriteLine($"  ... and {disagreements.Count - 25} more");
+
+        foreach (string line in gainedOnes.Take(30)) Console.WriteLine("  the game says: " + line);
+        if (gainedOnes.Count > 30) Console.WriteLine($"  ... and {gainedOnes.Count - 30} more on behaviour classes");
+
+        foreach (string line in lostOnes.Take(10)) Console.WriteLine("  only in the table: " + line);
+        if (lostOnes.Count > 10) Console.WriteLine($"  ... and {lostOnes.Count - 10} more");
+
+        // The gate. Reading the blob wrongly shows up here first, because these are the values two
+        // independent sources both claim to know.
+        return differed == 0 ? 0 : 1;
+    }
+
+    /// Whether two spellings of the same default mean the same thing. The table spells a real as
+    /// `0.000000` and this spells it `0.0`, which is a difference in the writing and not the value.
+    /// Whether a spelling means zero, in any of the shapes the table writes one.
+    private static bool IsZero(string value)
+    {
+        string t = value.Trim();
+        if (t == "false") return true;
+        if (float.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out float f)) return f == 0;
+        return t.Trim('(', ')', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .All(x => float.TryParse(x, NumberStyles.Float, CultureInfo.InvariantCulture, out float e) && e == 0);
+    }
+
+    private static bool SameDefault(string table, string game)
+    {
+        if (string.Equals(table.Trim(), game.Trim(), StringComparison.OrdinalIgnoreCase)) return true;
+
+        if (float.TryParse(table, NumberStyles.Float, CultureInfo.InvariantCulture, out float a) &&
+            float.TryParse(game, NumberStyles.Float, CultureInfo.InvariantCulture, out float b))
+        {
+            // Relative, because these run from 0 to 1.8e19 and a fixed tolerance calls the big ones
+            // different when only their spelling is.
+            float scale = Math.Max(Math.Abs(a), Math.Abs(b));
+            return Math.Abs(a - b) <= (scale > 1 ? scale * 1e-6f : 1e-6f);
+        }
+
+        return false;
+    }
+
     private static string WorkDirectory(string prefix, string file)
     {
         string work = Path.Combine(Path.GetTempPath(), prefix + Path.GetFileNameWithoutExtension(file));
