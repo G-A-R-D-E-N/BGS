@@ -142,14 +142,22 @@ duration compared against both readings.
 | duration equals `(frames - 1) / fps` | 76 |
 | duration equals `frames / fps` | 0 |
 
-**Why it matters later.** `NativeAnimation` reads the existing duration and writes it back unchanged,
-which is correct while an edit moves a frame without changing how many there are. Anything that
-changes the number of frames or the rate has to recompute duration by the rule above, and has to
-rescale annotation times with it. An error here does not fail any check. It plays the clip at
-slightly the wrong speed and slides every sync marker.
+**Already honoured, which this measurement confirms rather than warns about.** `AnimationEdit` on
+`chore/measure-clip-trim` computes `duration = (kept - 1) * frameDuration` when trimming and derives
+a missing frame duration as `Duration / (NumFrames - 1)`. Annotations are rebased rather than copied.
 
-Dogmeat's clips carry markers named `FootFront`, `SyncLeft` and `SyncRight`, so the visible symptom
-would be feet out of step with the ground.
+The measurement was worth taking because the rule was being followed without anything asserting it,
+and because it was assumed rather than checked. On `main`, `NativeAnimation` reads the existing
+duration and writes it back unchanged, which is right only while an edit leaves the frame count
+alone.
+
+What is missing is a regression check. An error here fails nothing. It plays the clip at slightly
+the wrong speed and slides every sync marker. Dogmeat's clips carry markers named `FootFront`,
+`SyncLeft` and `SyncRight`, so the symptom is feet out of step with the ground rather than anything
+that looks like a bug in a file.
+
+Annotation firing is a half open window, so one landing exactly on `duration` never fires. No
+annotation in the corpus sits past its clip's duration, so that is gateable as an invariant.
 
 ---
 
