@@ -82,6 +82,9 @@ public class GraphView : Control
 
     public string OwnerOf(string id) => _own.Owner.TryGetValue(id, out string? owner) ? owner : "";
 
+    /// What a node is called on the canvas, or its id when it has no name.
+    public string NameOf(string id) => _nameOf.GetValueOrDefault(id, "#" + id);
+
     private BehaviourGraphModel? _model;
 
     /// Who owns what, rebuilt with the nodes. Every question about where a node is placed goes
@@ -359,17 +362,21 @@ public class GraphView : Control
             _nameOf[obj.Id] = name.Length > 0 ? name : "#" + obj.Id;
         }
 
+        // The same enumeration that decided ownership, not the port list. Ownership can be settled
+        // through a reference buried in an array element, a transition's blend effect being the
+        // usual one, and the ports never carried those. Counting parents off the ports would mark
+        // fewer nodes than the walk actually shared, so the mark would be quietly wrong in exactly
+        // the places the picture is hardest to read.
         foreach (var (obj, _, _) in placed)
-            foreach (var slot in GraphLinks.OutSlots(model, obj))
-                foreach (string target in slot.Targets)
-                {
-                    if (target == obj.Id) continue;
-                    if (!_own.Owner.TryGetValue(target, out string? owner) || owner == obj.Id) continue;
+            foreach (string target in GraphAuthor.PointsAt(model, obj))
+            {
+                if (target == obj.Id) continue;
+                if (!_own.Owner.TryGetValue(target, out string? owner) || owner == obj.Id) continue;
 
-                    if (!_sharedBy.TryGetValue(target, out var by))
-                        _sharedBy[target] = by = new List<string>();
-                    if (!by.Contains(obj.Id)) by.Add(obj.Id);
-                }
+                if (!_sharedBy.TryGetValue(target, out var by))
+                    _sharedBy[target] = by = new List<string>();
+                if (!by.Contains(obj.Id)) by.Add(obj.Id);
+            }
 
         // A folded branch is left out here rather than drawn and skipped, so the contour it would
         // have reserved is never measured and the space it was holding comes back.
@@ -1034,15 +1041,29 @@ public class GraphView : Control
         if (over == _hovered) return;
         _hovered = over;
 
-        var borrowers = over.Length > 0 ? SharedBy(over) : Array.Empty<string>();
-        if (borrowers.Count == 0) { ToolTip.SetTip(this, null); return; }
+        string tip = SharedTip(over);
+        ToolTip.SetTip(this, tip.Length > 0 ? tip : null);
+    }
 
-        string owner = OwnerOf(over);
+    /// What hovering a shared node says, or nothing when the node has one parent.
+    ///
+    /// The order is fixed rather than whatever an enumeration happens to give: the owner first,
+    /// because the node is sitting where the owner put it and that is the part the picture is
+    /// otherwise silent about, then the borrowers in the order the walk met them. Nothing here reads
+    /// a dictionary in its own order, so the same file gives the same sentence every time.
+    public string SharedTip(string id)
+    {
+        if (id.Length == 0) return "";
+
+        var borrowers = SharedBy(id);
+        if (borrowers.Count == 0) return "";
+
+        string owner = OwnerOf(id);
         var homes = new List<string>();
         if (owner.Length > 0) homes.Add(_nameOf.GetValueOrDefault(owner, "#" + owner) + " (owner)");
         foreach (string by in borrowers) homes.Add(_nameOf.GetValueOrDefault(by, "#" + by));
 
-        ToolTip.SetTip(this, $"Shared by {homes.Count} parents: {string.Join(", ", homes)}");
+        return $"Shared by {homes.Count} parents: {string.Join(", ", homes)}";
     }
 
     private string _hovered = "";

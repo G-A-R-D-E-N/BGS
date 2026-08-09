@@ -253,7 +253,7 @@ public static class GraphAuthor
         while (queue.Count > 0 && order.Count < max)
         {
             var (current, depth) = queue.Dequeue();
-            foreach (string target in Targets(model, current))
+            foreach (string target in PointsAt(model, current))
             {
                 if (placed.ContainsKey(target)) continue;
                 var next = model.Get(target);
@@ -269,9 +269,15 @@ public static class GraphAuthor
         return deepest;
     }
 
-    // Everything the object points at, including references buried in array elements such as a
-    // transition's blend effect, which the port list does not carry.
-    private static IEnumerable<string> Targets(BehaviourGraphModel model, HkObject obj)
+    /// Everything the object points at, including references buried in array elements such as a
+    /// transition's blend effect, which the port list does not carry.
+    ///
+    /// Public because this is the definition of an edge on the canvas and more than one thing needs
+    /// it. The walk below uses it to decide ownership; anything asking how many parents a node has
+    /// has to ask the same question or it will disagree with where the node was put. Answering from
+    /// the port list alone under reports, because ownership can be settled through an array element
+    /// the ports never carried.
+    public static IEnumerable<string> PointsAt(BehaviourGraphModel model, HkObject obj)
     {
         foreach (var slot in GraphLinks.OutSlots(model, obj))
             foreach (string target in slot.Targets)

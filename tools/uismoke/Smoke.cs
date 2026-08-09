@@ -382,18 +382,50 @@ public static class Smoke
                 CheckTrue($"{name}: the file shares nodes, so the mark has something to say",
                           shared.Count > 0);
 
-                foreach (string one in shared.Take(50))
+                foreach (string each in shared.Take(50))
                 {
-                    CheckTrue($"{name}: #{one}'s owner is not listed among its borrowers",
-                              !canvas.SharedBy(one).Contains(canvas.OwnerOf(one)));
-                    CheckTrue($"{name}: #{one} does not borrow itself",
-                              !canvas.SharedBy(one).Contains(one));
+                    CheckTrue($"{name}: #{each}'s owner is not listed among its borrowers",
+                              !canvas.SharedBy(each).Contains(canvas.OwnerOf(each)));
+                    CheckTrue($"{name}: #{each} does not borrow itself",
+                              !canvas.SharedBy(each).Contains(each));
                 }
 
                 // A node with one parent is not marked, or the mark means nothing.
                 var only = canvas.DrawnIds.FirstOrDefault(id => canvas.SharedBy(id).Count == 0
                                                              && canvas.OwnerOf(id).Length > 0);
                 CheckTrue($"{name}: a node with one parent carries no mark", only != null);
+
+                // The sentence is fixed, not whatever order an enumeration gives, and the owner
+                // leads because the node is sitting where the owner put it.
+                string one = shared[0];
+                string tip = canvas.SharedTip(one);
+                string ownerName = canvas.NameOf(canvas.OwnerOf(one));
+
+                CheckTrue($"{name}: the tip names the owner as the owner", tip.Contains("(owner)"));
+                CheckTrue($"{name}: and names it first",
+                          tip.Contains($": {ownerName} (owner)"));
+                Check($"{name}: it names every home once", canvas.SharedBy(one).Count + 1,
+                      tip.Split(", ").Length);
+
+                // Folding the branch a node is borrowed from must not make it look exclusive, and
+                // folding is a full rebuild, so this checks the sentence survives one too.
+                string borrower = canvas.SharedBy(one).FirstOrDefault(b => canvas.DrawnIds.Contains(b)) ?? "";
+                string branch = borrower.Length > 0 ? canvas.OwnerOf(borrower) : "";
+
+                if (branch.Length > 0 && canvas.DrawnIds.Contains(branch))
+                {
+                    canvas.ToggleCollapse(branch, false);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    CheckTrue($"{name}: folding a borrower away leaves the mark on",
+                              canvas.SharedBy(one).Count > 0);
+                    Check($"{name}: and the tip still names every home, word for word", tip,
+                          canvas.SharedTip(one));
+
+                    canvas.ToggleCollapse(branch, false);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    Check($"{name}: and unfolding leaves it unchanged", tip, canvas.SharedTip(one));
+                }
             }
 
             // Several nodes picked and dragged together. The failure this guards is a node that is
