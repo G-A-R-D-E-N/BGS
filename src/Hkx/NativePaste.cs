@@ -667,6 +667,6 @@ public static class NativePaste
 
         var text = new byte[length + 1];
         Array.Copy(from, at, text, 0, length);
-        return data.AppendData(text);
+        return data.AppendAligned(text, PackfileSection.StringAlignment);
     }
 }

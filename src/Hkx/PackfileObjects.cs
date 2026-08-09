@@ -334,7 +334,7 @@ public sealed class PackfileObjects
         var withTerminator = new byte[bytes.Length + 1];
         bytes.CopyTo(withTerminator, 0);
 
-        int landed = _data.AppendData(withTerminator);
+        int landed = _data.AppendAligned(withTerminator, PackfileSection.StringAlignment);
         _data.SetLocal(at.Value, landed);
         // The lookup is a copy of the table, so it has to be told as well, or a read after a write
         // in the same session still finds the old text.

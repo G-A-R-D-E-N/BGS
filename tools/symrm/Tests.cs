@@ -35,6 +35,7 @@ public static class Tests
         ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
         ("AReferenceInsideAStructIsSeenByBothReaders", AReferenceInsideAStructIsSeenByBothReaders),
         ("ADanglingReferenceIsReportedWhereverItSits", ADanglingReferenceIsReportedWhereverItSits),
+        ("AppendedStringsLandOnAnEvenOffset", AppendedStringsLandOnAnEvenOffset),
         ("StructuralObjectsAreProtected", StructuralObjectsAreProtected),
         ("PortTypesRefuseNonsense", PortTypesRefuseNonsense),
         ("BundledHkxPackIsFound", BundledHkxPackIsFound),
@@ -2591,6 +2592,48 @@ public static class Tests
                   sources.Count(s => s == nameField) == 1);
         Check("and the field that had none gained one, rather than the table being rebuilt", 2,
               sources.Count);
+    }
+
+    /// A string has to land on an even offset, because the lowest bit of the pointer to it is not
+    /// part of the address.
+    ///
+    /// A string member keeps an ownership flag in bit 0 of its pointer: set means the buffer belongs
+    /// to the object and goes when it does. Section data starts on a sixteen byte boundary, so an
+    /// offset's parity inside the section is the loaded address's parity, and a string landing on an
+    /// odd offset hands the game a pointer that claims to own memory inside the packfile image.
+    ///
+    /// Nothing else would notice. The file reads back, repacks identically and passes the validator.
+    /// The cost lands when the game releases the object.
+    ///
+    /// Measured rather than assumed: across 453 sample files, every one of 37,545 local fixup
+    /// destinations is even. 7,618 of those point at text, and only 6,278 are sixteen byte aligned,
+    /// so the rule Havok actually holds to is even, not aligned like an object.
+    private static void AppendedStringsLandOnAnEvenOffset()
+    {
+        Console.WriteLine("\nan appended string lands on an even offset");
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        var objects = new PackfileObjects(image);
+        var clip = objects.Instances.Single();
+
+        // An even number of characters is an odd number of bytes once the terminator is on it, so
+        // the next append after this one starts on an odd offset unless something rounds up. Two
+        // string edits in one save is all it takes, and half of all names are an even length.
+        const string even = "Walk.hkx";
+        CheckTrue("a name of even length is accepted", objects.WriteString(clip, "animationName", even));
+        CheckTrue("and a second name after it", objects.WriteString(clip, "animationBundleName", "bundle"));
+
+        var landed = image.Section("__data__")!.Locals().Select(l => l.Destination).ToList();
+        Check("both names are pointed at", 2, landed.Count);
+        Check("and neither landed on an odd offset", 0, landed.Count(d => d % 2 != 0));
+
+        // The rounding must not cost the string itself. A pad written over the front of a name would
+        // satisfy the check above and lose the name.
+        var reread = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        var again = reread.Instances.Single();
+        Check("the first name still reads back", even, reread.ReadString(again, "animationName"));
+        Check("and so does the second", "bundle", reread.ReadString(again, "animationBundleName"));
+        Check("the value beside them is untouched", 2.5f, reread.ReadFloat(again, "playbackSpeed"));
     }
 
     /// A field wider than four bytes, and one that is several floats in a row. Both were being read
