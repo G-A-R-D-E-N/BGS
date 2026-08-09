@@ -42,6 +42,7 @@ public static class Tests
         ("Fo4CharacterListsItsAnimations", Fo4CharacterListsItsAnimations),
         ("MissingClipAnimationIsReported", MissingClipAnimationIsReported),
         ("RepackDriftNamesWhatMoved", RepackDriftNamesWhatMoved),
+        ("TransitionRowsCarryPriorityAndFlags", TransitionRowsCarryPriorityAndFlags),
         ("AnUnreachableStateIsReported", AnUnreachableStateIsReported),
         ("EventUsageSaysWhoSendsAndWhoListens", EventUsageSaysWhoSendsAndWhoListens),
         ("ScaleIsShownOnlyWhenItIsRealScale", ScaleIsShownOnlyWhenItIsRealScale),
@@ -1127,15 +1128,182 @@ public static class Tests
         string reached = StateEditor.AddTransition(chained, "92", "93", 1, 0, "null");
         Check("wiring A to B makes C reachable too", 0, Unreachable(reached).Count);
 
+        string throughDisabled = StateEditor.AddState(driven, "92", "C", "#97", out _, out int afterDisabled);
+        throughDisabled = StateEditor.AddTransition(throughDisabled, "92", "95", afterDisabled, 0, "null");
+        throughDisabled = StateEditor.AddTransition(throughDisabled, "92", "93", 1, 0, "null")
+            .Replace("<hkparam name=\"name\">B</hkparam>",
+                     "<hkparam name=\"name\">B</hkparam><hkparam name=\"enable\">false</hkparam>");
+        var disabledRouteWarnings = Unreachable(throughDisabled);
+        Check("a disabled state cannot relay reachability", 1, disabledRouteWarnings.Count);
+        CheckTrue("the state beyond the disabled one stays unreachable",
+                  disabledRouteWarnings.Any(f => f.Where.Contains("'C'")));
+
         // A machine whose start state does not exist is already reported on its own, and treating
         // every state as unreachable on top of that would bury it.
         string noStart = driven.Replace("<hkparam name=\"startStateId\">0</hkparam>",
                                         "<hkparam name=\"startStateId\">9</hkparam>");
         Check("a broken startStateId is not turned into a flood", 0, Unreachable(noStart).Count);
+
+        const string Start = "<hkparam name=\"startStateId\">0</hkparam>";
+        string random = driven.Replace(Start, Start +
+            "<hkparam name=\"startStateMode\">START_STATE_MODE_RANDOM</hkparam>");
+        Check("a random-start machine can enter either enabled state", 0, Unreachable(random).Count);
+
+        string disabled = driven.Replace("<hkparam name=\"name\">B</hkparam>",
+            "<hkparam name=\"name\">B</hkparam><hkparam name=\"enable\">false</hkparam>");
+        Check("a disabled state is not reported as an entry problem", 0,
+              Unreachable(disabled).Count);
+
+        string synced = driven.Replace(Start, Start +
+            "<hkparam name=\"startStateMode\">START_STATE_MODE_SYNC</hkparam>");
+        Check("a synced machine does not claim its file chooses the entry", 0, Unreachable(synced).Count);
+
+        string syncedByVariable = driven.Replace(Start, Start +
+            "<hkparam name=\"syncVariableIndex\">3</hkparam>");
+        Check("a sync variable can choose a state outside the transition walk", 0,
+              Unreachable(syncedByVariable).Count);
+
+        string selected = driven.Replace(Start, Start +
+            "<hkparam name=\"startStateIdSelector\">#97</hkparam>");
+        Check("a selector can choose a state outside the transition walk", 0,
+              Unreachable(selected).Count);
+
+        foreach (string field in new[]
+                 {
+                     "transitionToNextHigherStateEventId",
+                     "transitionToNextLowerStateEventId",
+                 })
+        {
+            string stepped = driven.Replace(Start, Start + $"<hkparam name=\"{field}\">4</hkparam>");
+            Check($"{field} makes every state enterable", 0, Unreachable(stepped).Count);
+        }
+
+        string nested = NestedReachabilityGraph();
+        var nestedWarnings = Unreachable(nested);
+        Check("a flagged nested target of zero reaches only its child machine", 1,
+              nestedWarnings.Count);
+        CheckTrue("the child machine's nested state zero is reachable",
+                  !nestedWarnings.Any(f => f.Where.Contains("'Nested zero'")));
+        CheckTrue("an unrelated machine's state zero is still unreachable",
+                  nestedWarnings.Any(f => f.Where.Contains("'Unrelated zero'")));
+
+        string disabledEntered = nested.Replace("<hkparam name=\"name\">Outer B</hkparam>",
+            "<hkparam name=\"name\">Outer B</hkparam><hkparam name=\"enable\">false</hkparam>");
+        var disabledEnteredWarnings = Unreachable(disabledEntered);
+        Check("a disabled entered state cannot seed its child machine", 2,
+              disabledEnteredWarnings.Count);
+        CheckTrue("the nested target under it stays unreachable",
+                  disabledEnteredWarnings.Any(f => f.Where.Contains("'Nested zero'")));
+
+        string unreachableSource = nested.Replace("<hkparam name=\"startStateId\">0</hkparam>",
+                                                   "<hkparam name=\"startStateId\">1</hkparam>");
+        var sourceWarnings = Unreachable(unreachableSource);
+        Check("a transition from an unreachable outer state seeds nothing", 3,
+              sourceWarnings.Count);
+        CheckTrue("its nested target remains unreachable",
+                  sourceWarnings.Any(f => f.Where.Contains("'Nested zero'")));
+
+        string unflagged = nested.Replace("<hkparam name=\"flags\">8192</hkparam>",
+                                          "<hkparam name=\"flags\">0</hkparam>");
+        Check("an unflagged zero is not treated as a nested target", 2,
+              Unreachable(unflagged).Count);
+    }
+
+    // Losing these two fields made every consumer either guess at transition semantics or reread
+    // the raw struct dictionaries. The literal values are deliberately unlike the defaults, so a
+    // parser that drops either field cannot satisfy the checks by accident.
+    private static void TransitionRowsCarryPriorityAndFlags()
+    {
+        Console.WriteLine("\ntransition rows carry priority and flags");
+
+        string xml = StateEditor.AddTransition(SmallGraph(), "92", "93", 1, 0, "null")
+            .Replace("<hkparam name=\"priority\">0</hkparam>",
+                     "<hkparam name=\"priority\">7</hkparam>")
+            .Replace("<hkparam name=\"flags\">0</hkparam>",
+                     "<hkparam name=\"flags\">FLAG_TO_NESTED_STATE_ID_IS_VALID</hkparam>");
+        var row = StateEditor.Transitions(BehaviourGraphModel.Parse(xml), "92").Single();
+
+        Check("priority comes from its own transition element", 7, row.Priority);
+        Check("flags come from its own transition element", 8192, row.Flags);
+        CheckTrue("the nested-target validity bit is visible", row.HasFlag(0x2000));
+        CheckTrue("an unrelated flag is not invented", !row.HasFlag(0x1000));
     }
 
     private static List<GraphValidator.Finding> Unreachable(string xml) =>
         GraphValidator.Check(xml).Where(f => f.What.StartsWith("cannot be entered")).ToList();
+
+    private static string NestedReachabilityGraph() => """
+        <hkpackfile><hksection name="__data__">
+            <hkobject class="hkbStateMachine" name="#10">
+                <hkparam name="name">Outer</hkparam>
+                <hkparam name="startStateId">0</hkparam>
+                <hkparam name="wildcardTransitions">null</hkparam>
+                <hkparam name="states" numelements="2">#11 #13</hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#11">
+                <hkparam name="name">Outer A</hkparam><hkparam name="stateId">0</hkparam>
+                <hkparam name="generator">#12</hkparam><hkparam name="transitions">#40</hkparam>
+            </hkobject>
+            <hkobject class="hkbClipGenerator" name="#12"><hkparam name="name">Outer clip</hkparam></hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#13">
+                <hkparam name="name">Outer B</hkparam><hkparam name="stateId">1</hkparam>
+                <hkparam name="generator">#20</hkparam><hkparam name="transitions">null</hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachine" name="#20">
+                <hkparam name="name">Nested</hkparam>
+                <hkparam name="startStateId">1</hkparam>
+                <hkparam name="wildcardTransitions">null</hkparam>
+                <hkparam name="states" numelements="2">#21 #23</hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#21">
+                <hkparam name="name">Nested zero</hkparam><hkparam name="stateId">0</hkparam>
+                <hkparam name="generator">#22</hkparam><hkparam name="transitions">null</hkparam>
+            </hkobject>
+            <hkobject class="hkbClipGenerator" name="#22"><hkparam name="name">Nested zero clip</hkparam></hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#23">
+                <hkparam name="name">Nested one</hkparam><hkparam name="stateId">1</hkparam>
+                <hkparam name="generator">#24</hkparam><hkparam name="transitions">#41</hkparam>
+            </hkobject>
+            <hkobject class="hkbClipGenerator" name="#24"><hkparam name="name">Nested one clip</hkparam></hkobject>
+            <hkobject class="hkbStateMachine" name="#30">
+                <hkparam name="name">Unrelated</hkparam>
+                <hkparam name="startStateId">1</hkparam>
+                <hkparam name="wildcardTransitions">null</hkparam>
+                <hkparam name="states" numelements="2">#31 #33</hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#31">
+                <hkparam name="name">Unrelated zero</hkparam><hkparam name="stateId">0</hkparam>
+                <hkparam name="generator">#32</hkparam><hkparam name="transitions">null</hkparam>
+            </hkobject>
+            <hkobject class="hkbClipGenerator" name="#32"><hkparam name="name">Unrelated zero clip</hkparam></hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#33">
+                <hkparam name="name">Unrelated one</hkparam><hkparam name="stateId">1</hkparam>
+                <hkparam name="generator">#34</hkparam><hkparam name="transitions">#42</hkparam>
+            </hkobject>
+            <hkobject class="hkbClipGenerator" name="#34"><hkparam name="name">Unrelated one clip</hkparam></hkobject>
+            <hkobject class="hkbStateMachineTransitionInfoArray" name="#40">
+                <hkparam name="transitions" numelements="1"><hkobject>
+                    <hkparam name="eventId">0</hkparam><hkparam name="toStateId">1</hkparam>
+                    <hkparam name="toNestedStateId">0</hkparam><hkparam name="priority">7</hkparam>
+                    <hkparam name="flags">8192</hkparam>
+                </hkobject></hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachineTransitionInfoArray" name="#41">
+                <hkparam name="transitions" numelements="1"><hkobject>
+                    <hkparam name="eventId">1</hkparam><hkparam name="toStateId">1</hkparam>
+                    <hkparam name="toNestedStateId">0</hkparam><hkparam name="priority">0</hkparam>
+                    <hkparam name="flags">0</hkparam>
+                </hkobject></hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachineTransitionInfoArray" name="#42">
+                <hkparam name="transitions" numelements="1"><hkobject>
+                    <hkparam name="eventId">2</hkparam><hkparam name="toStateId">1</hkparam>
+                    <hkparam name="toNestedStateId">0</hkparam><hkparam name="priority">0</hkparam>
+                    <hkparam name="flags">0</hkparam>
+                </hkobject></hkparam>
+            </hkobject>
+        </hksection></hkpackfile>
+        """;
 
     private static string Fo4Character() => """
         <?xml version="1.0" encoding="ascii"?>

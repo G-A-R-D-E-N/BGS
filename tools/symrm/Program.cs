@@ -2078,6 +2078,7 @@ public static class Program
             : new[] { target };
 
         long transitions = 0, nestedTo = 0, nestedFrom = 0, wildcards = 0, danglingTarget = 0;
+        long nestedFlag = 0, nonzeroNestedWithoutFlag = 0, zeroNestedWithFlag = 0;
         long machines = 0, statesTotal = 0, nestedMachines = 0;
         long nestedResolves = 0, nestedUnresolved = 0, nestedNotAMachine = 0;
         long naiveWildcardLines = 0, fromMachineLines = 0;
@@ -2143,6 +2144,11 @@ public static class Program
                     transitions++;
                     if (row.Wildcard) wildcards++;
                     if (!known.Contains(row.ToStateId)) danglingTarget++;
+
+                    bool nestedIsValid = row.HasFlag(0x2000);
+                    if (nestedIsValid) nestedFlag++;
+                    if (row.ToNestedStateId != 0 && !nestedIsValid) nonzeroNestedWithoutFlag++;
+                    if (row.ToNestedStateId == 0 && nestedIsValid) zeroNestedWithFlag++;
                     if (row.ToNestedStateId == 0) continue;
 
                     nestedTo++;
@@ -2274,6 +2280,9 @@ public static class Program
         Console.WriteLine($"  {transitions,7} transition(s)");
         Console.WriteLine($"  {wildcards,7} of them wildcard, fired from any state ({Percent(wildcards, transitions)})");
         Console.WriteLine($"  {nestedTo,7} with a toNestedStateId, which one arrow cannot say ({Percent(nestedTo, transitions)})");
+        Console.WriteLine($"  {nestedFlag,7} carrying FLAG_TO_NESTED_STATE_ID_IS_VALID (0x2000)");
+        Console.WriteLine($"  {nonzeroNestedWithoutFlag,7} with a nonzero toNestedStateId without that flag");
+        Console.WriteLine($"  {zeroNestedWithFlag,7} with toNestedStateId zero and that flag");
         Console.WriteLine($"          {nestedResolves,7} of those name a real state of the machine inside the state entered");
         Console.WriteLine($"          {nestedUnresolved,7} name a state that machine does not have");
         Console.WriteLine($"          {nestedNotAMachine,7} where the state entered leads to no machine at all");

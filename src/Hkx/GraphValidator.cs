@@ -287,55 +287,140 @@ public static class GraphValidator
     // event does, and it silently orphans whatever the transition used to point at.
     private static void CheckReachableStates(BehaviourGraphModel model, List<Finding> found)
     {
-        // A transition in one machine can enter a nested machine's state directly, so a state named
-        // anywhere as a nested target is enterable even with nothing pointing at it in its own
-        // machine.
-        var nestedTargets = model.Objects
-            .Where(o => o.Class == "hkbStateMachineTransitionInfoArray")
-            .SelectMany(o => o.StructLists.TryGetValue("transitions", out var rows) ? rows : new())
-            .Select(r => r.TryGetValue("toNestedStateId", out var v) && int.TryParse(v, out int n) ? n : 0)
-            .Where(n => n != 0)
-            .ToHashSet();
+        var machines = model.Objects.Where(o => o.Class == "hkbStateMachine").ToList();
+        var statesByMachine = machines.ToDictionary(m => m.Id, m => StateEditor.States(model, m.Id));
+        var transitionsByMachine = machines.ToDictionary(m => m.Id,
+            m => StateEditor.Transitions(model, m.Id));
+        var enabledByMachine = statesByMachine.ToDictionary(p => p.Key,
+            p => p.Value.Where(s => s.Enabled).Select(s => s.StateId).ToHashSet());
+        var reachableByMachine = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        var checkedMachines = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+        foreach (var machine in machines)
         {
-            var states = StateEditor.States(model, machine.Id);
+            var states = statesByMachine[machine.Id];
+            var reachable = new HashSet<int>();
+            reachableByMachine[machine.Id] = reachable;
+            if (states.Count == 0) continue;
+
+            string startMode = machine.Str("startStateMode");
+            bool randomStart = startMode is "START_STATE_MODE_RANDOM" or "2";
+            bool defaultStart = startMode.Length == 0 ||
+                                startMode is "START_STATE_MODE_DEFAULT" or "0";
+
+            // These fields let something outside this transition walk choose or step the current
+            // state. In those cases the file does not establish that any state is unreachable.
+            bool externalEntry = (!defaultStart && !randomStart) ||
+                                 machine.Ref("startStateIdSelector") != null ||
+                                 machine.Int("syncVariableIndex") >= 0 ||
+                                 machine.Int("transitionToNextHigherStateEventId") >= 0 ||
+                                 machine.Int("transitionToNextLowerStateEventId") >= 0;
+            if (externalEntry)
+            {
+                reachable.UnionWith(states.Where(s => s.Enabled).Select(s => s.StateId));
+                continue;
+            }
+
             int start = machine.Int("startStateId");
+            // A default-mode machine whose start state does not exist is already an error above,
+            // and treating it as unreachable here would report every state on top of that. Random
+            // mode does not use startStateId, so it does not need this guard.
+            if (!randomStart && !states.Any(s => s.StateId == start))
+            {
+                reachable.UnionWith(states.Where(s => s.Enabled).Select(s => s.StateId));
+                continue;
+            }
 
-            // A machine whose start state does not exist is already an error above, and treating it
-            // as unreachable here would report every state in the machine on top of that.
-            if (states.Count == 0 || !states.Any(s => s.StateId == start)) continue;
-
-            var transitions = StateEditor.Transitions(model, machine.Id);
+            var transitions = transitionsByMachine[machine.Id];
 
             // A machine with no transitions at all is not transition driven: the engine picks the
             // state. Saying nothing transitions to a state there is true and useless, and it is how
             // vanilla writes ragdoll and death machines.
-            if (transitions.Count == 0) continue;
-
-            var reachable = new HashSet<int> { start };
-
-            for (bool grew = true; grew;)
+            if (transitions.Count == 0)
             {
-                grew = false;
-                foreach (var t in transitions)
-                {
-                    if (t.ToStateId < 0 || reachable.Contains(t.ToStateId)) continue;
-                    // A wildcard fires from any state, so its target is live once anything is.
-                    if (!t.Wildcard && !reachable.Contains(t.FromStateId)) continue;
-                    reachable.Add(t.ToStateId);
-                    grew = true;
-                }
+                reachable.UnionWith(states.Where(s => s.Enabled).Select(s => s.StateId));
+                continue;
             }
 
-            // A warning, not an error. The ticket assumed an unreachable state is always a mistake;
-            // vanilla disagrees 123 times across 56 files, and every one checked is a state the game
-            // enters from outside the graph rather than through a transition: ragdoll, death
-            // variants, paired animations, the SharedCore wrapper.
-            foreach (var s in states.Where(s => !reachable.Contains(s.StateId) && !nestedTargets.Contains(s.StateId)))
+            if (randomStart) reachable.UnionWith(states.Where(s => s.Enabled).Select(s => s.StateId));
+            else if (enabledByMachine[machine.Id].Contains(start)) reachable.Add(start);
+            checkedMachines.Add(machine.Id);
+        }
+
+        // Close both kinds of route together. A nested target is live only when its outer
+        // transition can fire, and adding it can make transitions in the child machine live in
+        // turn. Repeating to a fixed point handles that chain without pooling state ids by file.
+        for (bool grew = true; grew;)
+        {
+            grew = false;
+            foreach (var machine in machines)
+            {
+                if (ExpandReachable(reachableByMachine[machine.Id],
+                                    transitionsByMachine[machine.Id],
+                                    enabledByMachine[machine.Id]))
+                    grew = true;
+            }
+
+            foreach (var outer in machines)
+            {
+                var outerReachable = reachableByMachine[outer.Id];
+                if (outerReachable.Count == 0) continue;
+
+                var outerStates = statesByMachine[outer.Id];
+                foreach (var transition in transitionsByMachine[outer.Id]
+                             .Where(t => t.HasFlag(0x2000)))
+                {
+                    if (!transition.Wildcard && !outerReachable.Contains(transition.FromStateId))
+                        continue;
+
+                    var entered = outerStates.FirstOrDefault(s => s.StateId == transition.ToStateId);
+                    if (entered == null || !entered.Enabled) continue;
+                    var generator = model.Get(entered?.GeneratorRef.TrimStart('#'));
+                    var inner = StateRoutes.MachineUnder(model, generator, 0);
+                    if (inner == null || !reachableByMachine.TryGetValue(inner.Id, out var innerReachable))
+                        continue;
+
+                    if (enabledByMachine[inner.Id].Contains(transition.ToNestedStateId) &&
+                        innerReachable.Add(transition.ToNestedStateId))
+                        grew = true;
+                }
+            }
+        }
+
+        foreach (var machine in machines.Where(m => checkedMachines.Contains(m.Id)))
+        {
+            var states = statesByMachine[machine.Id];
+            var reachable = reachableByMachine[machine.Id];
+            // A warning, not an error. The remaining cases can still be states the game enters from
+            // outside the graph rather than through a transition: ragdoll, death variants, paired
+            // animations, and wrappers are all ordinary examples.
+            foreach (var s in states.Where(s => s.Enabled && !reachable.Contains(s.StateId)))
                 Add(found, Level.Warning, $"#{s.Id} state '{s.Name}'",
                     $"cannot be entered from inside this file: nothing in #{machine.Id} '{machine.Str("name")}' transitions to stateId {s.StateId}, and it is not the start state");
         }
+    }
+
+    private static bool ExpandReachable(HashSet<int> reachable,
+                                        IReadOnlyList<StateEditor.TransitionRow> transitions,
+                                        IReadOnlySet<int> enabled)
+    {
+        bool changed = false;
+        for (bool grew = true; grew;)
+        {
+            grew = false;
+            foreach (var transition in transitions)
+            {
+                if (transition.ToStateId < 0 || !enabled.Contains(transition.ToStateId) ||
+                    reachable.Contains(transition.ToStateId))
+                    continue;
+                // A wildcard fires from any live state. A direct transition needs its own source.
+                if (!transition.Wildcard && !reachable.Contains(transition.FromStateId)) continue;
+                if (transition.Wildcard && reachable.Count == 0) continue;
+                reachable.Add(transition.ToStateId);
+                changed = grew = true;
+            }
+        }
+        return changed;
     }
 
     private static void CheckBlenders(BehaviourGraphModel model, List<Finding> found)
