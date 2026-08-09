@@ -29,6 +29,7 @@ public static class Tests
         ("APinnedNodeIsNeverMovedToMakeRoom", APinnedNodeIsNeverMovedToMakeRoom),
         ("ASharedNodeIsPlacedOnceByItsOwner", ASharedNodeIsPlacedOnceByItsOwner),
         ("SubtreesOfDifferentDepthsShareTheHeight", SubtreesOfDifferentDepthsShareTheHeight),
+        ("DepthOnOneSideCostsNothingOnTheOther", DepthOnOneSideCostsNothingOnTheOther),
         ("ReplacingLinkSaysWhatItDisplaced", ReplacingLinkSaysWhatItDisplaced),
         ("BlenderChildIsWrapped", BlenderChildIsWrapped),
         ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
@@ -557,6 +558,66 @@ public static class Tests
         var order = items.Where(i => i.Column == 2).OrderBy(i => y[i.Id]).Select(i => i.Id[0]).ToArray();
         Check("neither family is split by the other in the column they share", "dwwwwwwww",
             new string(order));
+    }
+
+    // The defining property of contour packing, stated as the thing that must not happen: making one
+    // family deeper must cost the other family nothing in the columns it never reaches.
+    //
+    // Sized by totals this fails by construction, because a total counts every node under a subtree
+    // whatever column it sits in, so each node added to the deep chain pushes the wide family down by
+    // a row. Sized by contour the chain's columns 3 and beyond are its own business and the wide
+    // family never hears about them.
+    private static void DepthOnOneSideCostsNothingOnTheOther()
+    {
+        Console.WriteLine("\ndepth on one side costs nothing on the other");
+
+        Dictionary<string, double> WithChainOf(int levels)
+        {
+            var items = new List<GraphLayout.Item>
+            {
+                Node("root", 0, ""),
+                Node("deep", 1, "root"),
+                Node("wide", 1, "root"),
+            };
+
+            // One node per column, running out as far as asked.
+            string parent = "deep";
+            for (int level = 0; level < levels; level++)
+            {
+                string id = "d" + level;
+                items.Add(Node(id, 2 + level, parent));
+                parent = id;
+            }
+
+            // Twelve children, all in column 2, and nothing past it.
+            for (int i = 0; i < 12; i++) items.Add(Node($"w{i:00}", 2, "wide"));
+
+            return GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+        }
+
+        var shallow = WithChainOf(3);
+        var deeper = WithChainOf(9);
+
+        // The wide family does not move. Not "moves less", does not move.
+        var before = string.Join(", ", Enumerable.Range(0, 12).Select(i => $"{shallow[$"w{i:00}"]:F0}"));
+        var after = string.Join(", ", Enumerable.Range(0, 12).Select(i => $"{deeper[$"w{i:00}"]:F0}"));
+        Check("six more columns of depth move the wide family not at all", before, after);
+
+        // Nor does the column they share get any taller.
+        double sharedShallow = shallow["w11"] + 100 - Math.Min(shallow["d0"], shallow["w00"]);
+        double sharedDeeper = deeper["w11"] + 100 - Math.Min(deeper["d0"], deeper["w00"]);
+        Check("and the column they share is the same height", sharedShallow.ToString("F0"),
+              sharedDeeper.ToString("F0"));
+
+        // The chain really did get longer, so the check above is not passing because nothing changed.
+        // Counted by the chain's own names rather than by first letter, which also matches "deep".
+        int Links(Dictionary<string, double> laid) => laid.Keys.Count(k => k.Length > 1 && k[0] == 'd' && char.IsDigit(k[1]));
+        Check("while the chain really is six nodes longer", "3, 9", $"{Links(shallow)}, {Links(deeper)}");
+
+        // And the deep side stays a straight line, level with itself all the way out.
+        for (int level = 1; level < 9; level++)
+            CheckTrue($"d{level} is level with d{level - 1}",
+                Math.Abs(deeper["d" + level] - deeper["d" + (level - 1)]) < 0.001);
     }
 
     /// Two states whose generator is the same clip, which is the ordinary shape in a shipped file
