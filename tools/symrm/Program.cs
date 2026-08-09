@@ -48,6 +48,7 @@ public static class Program
             case "relayout": return Relayout(argv);
             case "delete": return DeleteObject(argv);
             case "paste": return Paste(argv);
+            case "template": return Template(argv);
             case "conditions": return Conditions(argv);
             case "savedelete": return SaveDelete(argv);
             case "classcheck": return ClassCheck(argv);
@@ -112,6 +113,15 @@ public static class Program
               that inside a machine the run entered it reaches at least what the validator's own
               per machine rule reaches, and that actually stepping never lands somewhere the
               reachability analysis calls impossible.
+
+          dotnet run --project tools/symrm/symrm.csproj -- template <behaviourDir> [everyNth]
+              What a kept shape could be, and whether keeping one works. Counts how many clip
+              generators, blenders and state infos could leave their file at all, how many share an
+              object and so cannot, and how many carry event or variable names a file they land in
+              would have to declare. Then lifts every Nth of them, applies it into a separate copy of
+              its own file, and checks the objects arrive. Also checks that every Nth shape which does
+              share is refused, since otherwise the sweep would only ever exercise the shapes that
+              were going to work. everyNth defaults to 37.
 
           dotnet run --project tools/symrm/symrm.csproj -- cliptime <behaviourDir | behaviour.hkx>
               How long every clip plays for and when the events it carries go out. Needs the corpus
@@ -6755,6 +6765,229 @@ public static class Program
     /// Two passes. Within a file, over every behaviour that has a subtree worth copying. Between
     /// files, the same subtree into the next file along, which is where symbols and shared objects
     /// decide whether it is taken or refused.
+    // What a lifted template could actually be, counted before any of it is built.
+    //
+    // A template is a subtree lifted out of a real behaviour and kept, so the question that decides
+    // whether the idea works at all is how many subtrees can survive leaving their file. Two things
+    // stop one. It can share an object with the rest of the file it came from, which a paste into a
+    // different file refuses outright because there is nothing there to point at. Or it can use an
+    // event or variable by name that the file it lands in does not declare, which is refused with a
+    // list of what to declare.
+    //
+    // The three shapes this issue names are counted separately, because "templates are mostly
+    // unusable" and "templates are mostly usable but need two events declaring first" are different
+    // answers and only the second is worth building.
+    private static int Template(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        string[] shapes = { "hkbClipGenerator", "hkbBlenderGenerator", "hkbStateMachineStateInfo" };
+        var roots = new SortedDictionary<string, int>();
+        var liftable = new SortedDictionary<string, int>();
+        var shares = new SortedDictionary<string, int>();
+        var needsSymbols = new SortedDictionary<string, int>();
+        var sizes = new SortedDictionary<string, long>();
+        int read = 0;
+        long symbolsUsed = 0;
+        var examples = new List<string>();
+
+        foreach (string file in files)
+        {
+            PackfileImage image;
+            PackfileObjects objects;
+            try
+            {
+                image = PackfileImage.Read(file);
+                objects = new PackfileObjects(image, HavokClasses.Shipped);
+            }
+            catch (Exception) { continue; }
+            read++;
+
+            foreach (string shape in shapes)
+                foreach (var instance in objects.OfClass(shape))
+                {
+                    int id = NativeGraphModel.FirstId + objects.IndexOf(instance);
+
+                    NativePaste.Subtree tree;
+                    try { tree = NativePaste.Of(image, id); }
+                    catch (Exception) { continue; }
+
+                    roots[shape] = roots.GetValueOrDefault(shape) + 1;
+
+                    if (tree.Shared.Count > 0)
+                    {
+                        shares[shape] = shares.GetValueOrDefault(shape) + 1;
+                        continue;
+                    }
+
+                    liftable[shape] = liftable.GetValueOrDefault(shape) + 1;
+                    sizes[shape] = sizes.GetValueOrDefault(shape) + tree.Ids.Count;
+
+                    int symbols = tree.Events.Count + tree.Variables.Count;
+                    symbolsUsed += symbols;
+                    if (symbols > 0)
+                    {
+                        needsSymbols[shape] = needsSymbols.GetValueOrDefault(shape) + 1;
+                        if (examples.Count < 8)
+                            examples.Add($"{Path.GetFileName(file)} #{id} {shape}: {tree.Ids.Count} object(s), " +
+                                         $"needs {string.Join(", ", tree.Events.Concat(tree.Variables).Take(4))}");
+                    }
+                }
+        }
+
+        Console.WriteLine($"\n{read} file(s) read");
+        Console.WriteLine($"{"shape",-28} {"roots",8} {"liftable",9} {"shares",8} {"needs symbols",14} {"mean size",10}");
+        foreach (string shape in shapes)
+        {
+            int all = roots.GetValueOrDefault(shape);
+            int can = liftable.GetValueOrDefault(shape);
+            Console.WriteLine($"{shape,-28} {all,8} {can,9} {shares.GetValueOrDefault(shape),8} " +
+                              $"{needsSymbols.GetValueOrDefault(shape),14} " +
+                              $"{(can > 0 ? (double)sizes.GetValueOrDefault(shape) / can : 0),10:F1}");
+        }
+        Console.WriteLine($"symbol uses across every liftable subtree: {symbolsUsed}");
+        foreach (string line in examples) Console.WriteLine($"  {line}");
+
+        // Measuring what could be lifted says nothing about whether lifting works, so every Nth
+        // liftable root is actually lifted, kept, and applied into a different file on disk.
+        //
+        // The target is a copy of the file the shape came from. That is not a same file paste: it is
+        // a different file, taken down the cross file path with its shared object check and its
+        // symbol remapping, and it is the only target guaranteed to declare the symbols the shape
+        // uses. A target picked at random would mostly be refused for symbols it does not declare,
+        // which is correct behaviour and would measure nothing about the copy itself.
+        Console.WriteLine();
+        int lifted = 0, applied = 0, wrong = 0, refused = 0;
+        int sharing = 0, properlyRefused = 0, wronglyKept = 0;
+        var complaints = new List<string>();
+
+        string folder = Path.Combine(Path.GetTempPath(), "symrm-template-gate");
+        if (Directory.Exists(folder)) Directory.Delete(folder, true);
+        Directory.CreateDirectory(folder);
+        TemplateStore.Folder = folder;
+
+        string work = Path.Combine(folder, "work");
+        Directory.CreateDirectory(work);
+
+        int nth = argv.Length > 2 && int.TryParse(argv[2], out int n) && n > 0 ? n : 37;
+        int seen = 0;
+
+        foreach (string file in files)
+        {
+            PackfileImage image;
+            PackfileObjects objects;
+            try
+            {
+                image = PackfileImage.Read(file);
+                objects = new PackfileObjects(image, HavokClasses.Shipped);
+            }
+            catch (Exception) { continue; }
+
+            foreach (string shape in shapes)
+                foreach (var instance in objects.OfClass(shape))
+                {
+                    int id = NativeGraphModel.FirstId + objects.IndexOf(instance);
+
+                    NativePaste.Subtree tree;
+                    try { tree = NativePaste.Of(image, id); }
+                    catch (Exception) { continue; }
+
+                    // A subtree that shares has to be refused, and the corpus has thousands of them,
+                    // so the refusal is checked against real data rather than only against the one
+                    // built by hand. Without this the sweep would only ever exercise the shapes that
+                    // were going to work anyway, and a build that had stopped refusing would sail
+                    // through it.
+                    if (tree.Shared.Count > 0)
+                    {
+                        if (sharing++ % nth != 0) continue;
+                        try
+                        {
+                            TemplateStore.Lift(file, id, $"s{sharing}");
+                            wronglyKept++;
+                            TemplateStore.Remove(TemplateStore.Slug($"s{sharing}"));
+                            if (complaints.Count < 10)
+                                complaints.Add($"{Path.GetFileName(file)} #{id}: shares " +
+                                               $"{tree.Shared.Count} object(s) and was lifted anyway");
+                        }
+                        catch (InvalidOperationException) { properlyRefused++; }
+                        continue;
+                    }
+
+                    if (seen++ % nth != 0) continue;
+
+                    string slug;
+                    try
+                    {
+                        slug = TemplateStore.Lift(file, id, $"t{seen}").Slug;
+                        lifted++;
+                    }
+                    catch (Exception e)
+                    {
+                        refused++;
+                        if (complaints.Count < 10)
+                            complaints.Add($"{Path.GetFileName(file)} #{id}: lift refused, {e.Message.Split('\n')[0]}");
+                        continue;
+                    }
+
+                    string into = Path.Combine(work, $"t{seen}.hkx");
+                    File.Copy(file, into, overwrite: true);
+
+                    int before = objects.Instances.Count;
+                    try
+                    {
+                        var result = TemplateStore.Apply(TemplateStore.Get(slug)!, into);
+                        var after = new PackfileObjects(PackfileImage.Read(result.Bytes), HavokClasses.Shipped);
+
+                        if (after.Instances.Count != before + tree.Ids.Count)
+                        {
+                            wrong++;
+                            if (complaints.Count < 10)
+                                complaints.Add($"{Path.GetFileName(file)} #{id}: expected " +
+                                               $"{before + tree.Ids.Count} object(s), got {after.Instances.Count}");
+                        }
+                        else if (result.RootId != NativeGraphModel.FirstId + before)
+                        {
+                            wrong++;
+                            if (complaints.Count < 10)
+                                complaints.Add($"{Path.GetFileName(file)} #{id}: applied root came back as " +
+                                               $"#{result.RootId} rather than #{NativeGraphModel.FirstId + before}");
+                        }
+                        else
+                        {
+                            applied++;
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        refused++;
+                        if (complaints.Count < 10)
+                            complaints.Add($"{Path.GetFileName(file)} #{id}: apply refused, {e.Message.Split('\n')[0]}");
+                    }
+                    finally
+                    {
+                        TemplateStore.Remove(slug);
+                        if (File.Exists(into)) File.Delete(into);
+                    }
+                }
+        }
+
+        Directory.Delete(folder, true);
+
+        Console.WriteLine($"lifted and applied every {nth}th liftable shape: {lifted} kept, {applied} " +
+                          $"went into a different file correctly, {wrong} came back wrong, {refused} refused");
+        Console.WriteLine($"every {nth}th shape that shares an object: {properlyRefused} refused as they " +
+                          $"must be, {wronglyKept} lifted anyway");
+        foreach (string line in complaints) Console.WriteLine($"  {line}");
+
+        return wrong + refused + wronglyKept == 0 ? 0 : 1;
+    }
+
     private static int Paste(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
