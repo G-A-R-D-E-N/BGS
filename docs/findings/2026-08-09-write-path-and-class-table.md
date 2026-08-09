@@ -142,8 +142,8 @@ duration compared against both readings.
 | duration equals `(frames - 1) / fps` | 76 |
 | duration equals `frames / fps` | 0 |
 
-**Already honoured, which this measurement confirms rather than warns about.** `AnimationEdit` on
-`chore/measure-clip-trim` computes `duration = (kept - 1) * frameDuration` when trimming and derives
+**Already honoured, which this measurement confirms rather than warns about.** `AnimationEdit`
+computes `duration = (kept - 1) * frameDuration` when trimming and derives
 a missing frame duration as `Duration / (NumFrames - 1)`. Annotations are rebased rather than copied.
 
 The measurement was worth taking because the rule was being followed without anything asserting it,

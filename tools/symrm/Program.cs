@@ -6523,8 +6523,8 @@ public static class Program
     //
     // Two numbers, and the gap between them is the point. Every field can be described, because the
     // class table knows what shape it is. Almost none can be explained, because there is nowhere
-    // honest to get a sentence from: the Havok manual issue #36 names is not on this machine, and
-    // writing plausible sentences from field names would produce something that reads exactly like
+    // honest to get a sentence from, and writing plausible sentences from field names would produce
+    // something that reads exactly like
     // the handful that were actually established.
     //
     // So this reports the coverage rather than hiding it, and the explained count is meant to go up

@@ -30,8 +30,8 @@ public static class PanelFields
         /// The byte reader could not render it, so hkxpack's text is shown instead.
         Fallback,
 
-        /// Changed in this session and not yet saved, so the bytes on disk are out of date and the
-        /// edit is what belongs on screen.
+        /// Changed but not yet saved, so the bytes on disk are out of date and the edit is what
+        /// belongs on screen.
         Edited,
     }
 

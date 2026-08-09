@@ -800,9 +800,8 @@ public static class Smoke
                     var blocks = Find<Expander>(window.GraphProperties);
                     int collapsed = Find<TextBox>(window.GraphProperties).Count;
 
-                    // What hovering a field name actually says, read off the built controls rather
-                    // than worked out from the code that builds them. Issue #36 sat open for a
-                    // session because nobody looked at a box, and the same applies to a tip.
+                    // What hovering a field name actually says is read from the built controls,
+                    // rather than inferred from the code that builds them.
                     //
                     // Opened first, because a collapsed element has built no field rows and there is
                     // nothing to hover. Reading the tips without this found the summary lines on the
@@ -1267,6 +1266,9 @@ public static class Smoke
                   said.Contains("IdleOutroDogmeatWalkForward"));
         CheckTrue($"and says how long it runs ({string.Join(" | ", said)})",
                   said.Contains($"11.20s, {window.AnimationFrameCount} frames"));
+        CheckTrue("and the file summary calls it an animation",
+                  Find<TextBlock>(window).Any(t => (t.Text ?? "").Contains("an animation, not a behaviour",
+                                                                  StringComparison.Ordinal)));
     }
 
     /// The archive browser, built on a real archive written here rather than one from the game, so

@@ -543,7 +543,7 @@ public class MainWindow : Window
                              "in another file later.");
         save.Click += (_, _) => SaveTemplate();
 
-        _applyTemplate.Click += (_, _) => ApplyTemplate();
+        _applyTemplate.Click += (_, _) => ApplyStoredTemplate();
         _applyTemplate.IsEnabled = false;
         ToolTip.SetTip(_applyTemplate,
             "Put a kept shape into this file and save it. The file is kept as .bak first.");
@@ -742,7 +742,7 @@ public class MainWindow : Window
     }
 
     /// Puts a kept shape into the file that is open, down the same path a paste takes.
-    private void ApplyTemplate()
+    private void ApplyStoredTemplate()
     {
         if (_templates.SelectedItem as string is not { } slug || slug.Length == 0)
         {
@@ -866,7 +866,7 @@ public class MainWindow : Window
         _templates.SelectedItem = slug;
         DescribeTemplate();
     }
-    public void ApplyTemplateForTest() => ApplyTemplate();
+    public void ApplyTemplateForTest() => ApplyStoredTemplate();
 
     /// Test hooks, so the headless smoke test can walk the copy and paste path.
     public string ClipSummary => _clip == null ? "" : Held(_clip);
@@ -2897,10 +2897,12 @@ public class MainWindow : Window
         // The class warning goes here rather than on the status line because the status line has
         // four ways out of PrepareEditing and only one of them was carrying it: a file with classes
         // we do not describe *and* no Java present reported the Java and swallowed the rest.
-        SetSummary($"{Path.GetFileName(path)}   root {root.ClassName}   {_objects.Count} objects   " +
-                   $"{classes.Count} classes   {clips} clip references" +
-                   (_classWarning.Length > 0 ? "   —   " + _classWarning : ""),
-                   _classWarning.Length > 0 ? Ux.WarnBrush : Ux.TitleBrush);
+        SetSummary(isAnimation
+                       ? $"{Path.GetFileName(path)}   an animation, not a behaviour. See the Animation and Playback tabs."
+                       : $"{Path.GetFileName(path)}   root {root.ClassName}   {_objects.Count} objects   " +
+                         $"{classes.Count} classes   {clips} clip references" +
+                         (_classWarning.Length > 0 ? "   —   " + _classWarning : ""),
+                   isAnimation ? Ux.MutedBrush : _classWarning.Length > 0 ? Ux.WarnBrush : Ux.TitleBrush);
 
         RebuildTree();
         Settings.Set("last_path", path);

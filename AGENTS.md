@@ -1,7 +1,7 @@
 # AGENTS.md
 
-## Project memory
+## Project reference
 
-Condensed notes from past conversations. Read this before starting work.
+Durable engineering constraints for this repository. Read this before starting work.
 
 @./memory.md

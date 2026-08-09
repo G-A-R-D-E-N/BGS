@@ -192,10 +192,8 @@ public class HkxBehaviorParser
         // decide what to show. So anything with objects in it resolves a root and the caller reads
         // what it actually found.
         //
-        // The cost is that `root == null` stops being a test for anything except an unreadable file.
-        // It is intentionally never true here for a populated packfile, so do not reach for it to
-        // detect an animation. That mistake has been made once already and the branch it produced
-        // could never run. See the contract on ParseBehavior above.
+        // `root == null` is therefore a test only for an unreadable file. It is never true for a
+        // populated packfile and cannot identify an animation.
         if (rootNode == null && objects.Count > 0)
         {
             rootNode = objects[0];

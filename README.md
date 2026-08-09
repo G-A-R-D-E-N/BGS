@@ -10,7 +10,7 @@ Fallout 4 file. This reads the Fallout 4 format directly.
 
 This README covers what the tool is and how to use it. What we have worked out about the format and
 the game, with the evidence behind it, lives in the
-[wiki](https://gitlab.com/opencw1/behaviortoolstandalone/-/wikis/home).
+[wiki](https://git.nomadicinteractive.dev/nomadic-interactive/behaviortoolstandalone/-/wikis/home).
 
 ## What it does
 
@@ -215,7 +215,7 @@ exist yet. Open `Meshes\Pipboy\Behaviors\PipboyBehavior.hkx` in the Symbols tab 
 example.
 
 The full write up, including which of the Pip-Boy's four variables are actually used and how that was
-established, is in the wiki: **[Pip-Boy Variables](https://gitlab.com/opencw1/behaviortoolstandalone/-/wikis/Pip-Boy-Variables)**.
+established, is in the wiki: **[Pip-Boy Variables](https://git.nomadicinteractive.dev/nomadic-interactive/behaviortoolstandalone/-/wikis/Pip-Boy-Variables)**.
 
 ## Doors, lifts and switches are driven by events, not variables
 
@@ -471,8 +471,7 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   project has established, each carrying where it came from. That is **7.7%** of them, and the number
   is printed by `symrm notes` rather than left as an impression. The rest say nothing: a plausible
   sentence written from a field's name would read with exactly the authority of a measured one, and
-  nobody could tell them apart. Issue #36 proposed taking the rest from Havok's 2018 Animation
-  manual, which is not on this machine.
+  nobody could tell them apart. No installed reference establishes the rest of those meanings.
 - **Java is no longer needed for anything the window does.** The graph, the tree, the properties,
   the symbols, what each event is used for, and the whole checker are read from the file's own bytes,
   and the text form an edit is made through is written from those bytes as well rather than unpacked.

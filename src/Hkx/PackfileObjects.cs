@@ -336,8 +336,8 @@ public sealed class PackfileObjects
 
         int landed = _data.AppendAligned(withTerminator, PackfileSection.StringAlignment);
         _data.SetLocal(at.Value, landed);
-        // The lookup is a copy of the table, so it has to be told as well, or a read after a write
-        // in the same session still finds the old text.
+        // The lookup is a copy of the table, so it has to be updated too or a later read still
+        // finds the old text.
         _pointsAt[at.Value] = landed;
         return true;
     }
