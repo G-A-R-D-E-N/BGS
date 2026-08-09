@@ -14,10 +14,8 @@ namespace OpenCommonwealth.Services.Hkx;
 // array holds, what class an inline struct is, how many values an enum declares. Nothing is invented
 // and every field gets one.
 //
-// **What a field means** is a sentence, and there is nowhere honest to get one for most fields.
-// Issue #36 proposed taking them from Havok's 2018 Animation manual. That manual is not on this
-// machine, and the earlier search for `hkb` class documentation in what is here came back empty, so
-// the alternative would be writing plausible sentences from the field names. A plausible sentence
+// **What a field means** is a sentence, and no installed reference establishes that meaning for most
+// fields. The alternative would be writing plausible sentences from the field names. A plausible sentence
 // about a field nobody has checked is worse than silence: it reads with the same authority as the
 // ones that were established, and there is no way for a reader to tell which is which.
 //
