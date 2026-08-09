@@ -87,25 +87,13 @@ public static class GraphAuthor
     // these are usually nodes the user meant to hook up and did not.
     public static List<HkObject> Unattached(BehaviourGraphModel model)
     {
-        var referenced = new HashSet<string>();
-        foreach (var obj in model.Objects)
-        {
-            foreach (var value in obj.Scalars.Values)
-                if (value.StartsWith('#')) referenced.Add(value[1..]);
-            foreach (var list in obj.Lists.Values)
-                foreach (string token in list)
-                    if (token.StartsWith('#')) referenced.Add(token[1..]);
-            foreach (var rows in obj.StructLists.Values)
-                foreach (var row in rows)
-                    foreach (var value in row.Values)
-                        if (value.StartsWith('#')) referenced.Add(value[1..]);
-            // Named nested objects, such as an event's payload, hold references too. Missing these
-            // reported every hkbStringEventPayload in a vanilla graph as unreachable.
-            foreach (var members in obj.Structs.Values)
-                foreach (var value in members.Values)
-                    if (value.StartsWith('#')) referenced.Add(value[1..]);
-        }
+        // Named nested objects, such as an event's payload, hold references too. Missing these
+        // reported every hkbStringEventPayload in a vanilla graph as unreachable. That is one of the
+        // reasons the walk moved to HkReferences: the lesson had been learned here and nowhere else.
+        var referenced = HkReferences.Targets(model);
 
+        // The class filter is this caller's business, not the walk's. Only nodes are drawn, so only
+        // a node going unreferenced is worth reporting to someone editing a graph.
         return model.Objects.Where(o => !referenced.Contains(o.Id) && IsNode(o.Class)).ToList();
     }
 
@@ -167,35 +155,38 @@ public static class GraphAuthor
     }
 
     // Clears every reference to target held by this one object, whichever shape it is in.
+    /// Clears every place this holder names the target.
+    ///
+    /// Which places those are is HkReferences' answer, so this can no longer disagree with the
+    /// search that found the holder in the first place. A pointer inside an element of an array of
+    /// structs, which is where a transition keeps the effect it plays, was once found by that search
+    /// and then never cleared here: deleting a blending transition effect took the object out of the
+    /// document and left every transition still naming it. Nothing said so, because the save went
+    /// out through hkxpack, which was handed a file naming an object that was not in it. Sharing the
+    /// walk is what stops that being possible rather than merely fixed.
+    ///
+    /// What differs per kind is the writing, which is this method's own business. A list element is
+    /// dropped. Everything else is set to null in place: a transition with no effect is a transition
+    /// that snaps, which the format allows and vanilla files do, so dropping the element would
+    /// silently delete a route between two states instead.
     private static string Detach(string xml, HkObject holder, string targetId)
     {
-        string token = "#" + targetId;
+        var sites = HkReferences.In(holder).Where(s => s.Target == targetId).ToList();
 
-        foreach (var (field, value) in holder.Scalars.Where(p => p.Value == token).ToList())
-            xml = HkxTextEdit.SetParam(xml, holder.Id, field, "null");
+        // A plain field keeps going through SetParam rather than the path writer. The two find the
+        // parameter differently, and this one has been writing scalars correctly for the whole life
+        // of the tool, so consolidating the search is not a reason to also change the write.
+        foreach (var site in sites.Where(s => s.How == HkReferences.Held.Scalar))
+            xml = HkxTextEdit.SetParam(xml, holder.Id, site.Field, "null");
 
-        foreach (var (field, list) in holder.Lists)
-        {
-            // Back to front, because removing an element renumbers the ones after it.
-            var indices = list.Select((v, i) => (v, i)).Where(p => p.v == token)
-                              .Select(p => p.i).OrderByDescending(i => i).ToList();
-            foreach (int index in indices)
-                xml = HkxTextEdit.ArrayRemoveAt(xml, holder.Id, field, index);
-        }
+        foreach (var site in sites.Where(s => s.How is HkReferences.Held.StructListMember
+                                                   or HkReferences.Held.StructMember))
+            xml = HkxTextEdit.SetParamAt(xml, holder.Id, site.Path(), "null");
 
-        // A pointer inside an element of an array of structs, which is where a transition keeps the
-        // effect it plays. These were found by the search for holders and then never cleared, so
-        // deleting a blending transition effect took the object out of the document and left every
-        // transition still naming it. Nothing said so: the save went out through hkxpack, which was
-        // handed a file naming an object that was not in it.
-        //
-        // Cleared to null rather than by dropping the element. A transition with no effect is a
-        // transition that snaps, which is a thing the format allows and vanilla files do; dropping
-        // the element would silently delete a route between two states instead.
-        foreach (var (field, rows) in holder.StructLists)
-            for (int row = 0; row < rows.Count; row++)
-                foreach (var (member, value) in rows[row].Where(p => p.Value == token).ToList())
-                    xml = HkxTextEdit.SetParamAt(xml, holder.Id, $"{field}[{row}].{member}", "null");
+        // Back to front, because removing an element renumbers the ones after it.
+        foreach (var site in sites.Where(s => s.How == HkReferences.Held.ListElement)
+                                  .OrderByDescending(s => s.Index))
+            xml = HkxTextEdit.ArrayRemoveAt(xml, holder.Id, site.Field, site.Index);
 
         return xml;
     }

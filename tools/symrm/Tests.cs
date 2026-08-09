@@ -33,6 +33,7 @@ public static class Tests
         ("ReplacingLinkSaysWhatItDisplaced", ReplacingLinkSaysWhatItDisplaced),
         ("BlenderChildIsWrapped", BlenderChildIsWrapped),
         ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
+        ("AReferenceInsideAStructIsSeenByBothReaders", AReferenceInsideAStructIsSeenByBothReaders),
         ("StructuralObjectsAreProtected", StructuralObjectsAreProtected),
         ("PortTypesRefuseNonsense", PortTypesRefuseNonsense),
         ("BundledHkxPackIsFound", BundledHkxPackIsFound),
@@ -718,6 +719,162 @@ public static class Tests
         CheckTrue("no dangling reference remains", GraphValidator.Check(xml)
             .All(f => !f.What.Contains("not in this file")));
     }
+
+    /// A payload hung off a named struct is referenced, and both readers of "what points at this"
+    /// have to agree that it is.
+    ///
+    /// The shape is `BSRandomAlarmModifier.alarmEvent`, a named `hkbEventProperty` whose `payload`
+    /// names an object. Copied from DogmeatDefault.hkx rather than invented: six objects in that one
+    /// vanilla file are reachable this way and no other, so this is the ordinary case and not a
+    /// corner. `Unattached` already learned it, which is what its comment about every
+    /// hkbStringEventPayload reading as unreachable is a record of. `ReferencesTo` has not, and it
+    /// is the one guarding deletion.
+    private static void AReferenceInsideAStructIsSeenByBothReaders()
+    {
+        Console.WriteLine("\na reference held in a named struct counts as a reference");
+
+        var model = BehaviourGraphModel.Parse(StructReferenceGraph());
+
+        // First prove the fixture exercises the path it claims to. A nested hkobject lands in
+        // Structs only when it carries a name; without one the parser files it under StructLists,
+        // which both readers already walk, and the check below would prove nothing.
+        var holder = model.Get("98")!;
+        CheckTrue("the fixture really parsed alarmEvent as a struct",
+                  holder.Structs.ContainsKey("alarmEvent"));
+        Check("and the struct holds the payload reference", "#99",
+              holder.Structs["alarmEvent"].GetValueOrDefault("payload"));
+        CheckTrue("with nothing else in the file pointing at the payload",
+                  model.Objects.All(o => o.Scalars.Values.All(v => v != "#99")));
+
+        // Unattached reads Structs. Proved on the clip rather than on the payload: a payload is not
+        // a node class, so Unattached would leave it out whether it read structs or not, and
+        // asserting on it would pass for the wrong reason. The spare clip is a node, is named by
+        // nothing but a struct, and is therefore only invisible to Unattached because the struct is
+        // read. This arm is built to exercise that branch and is not copied from a vanilla file.
+        CheckTrue("Unattached reads structs, so a node held only by one is not called orphaned",
+                  GraphAuthor.Unattached(model).All(o => o.Id != "97"));
+
+        // ReferencesTo does not, so it reports the payload as pointed at by nothing. That is the
+        // answer Remove trusts before it deletes, and it is wrong.
+        Check("ReferencesTo names the modifier that holds it", 1,
+              GeneratorEditor.ReferencesTo(model, "99").Count);
+
+        // What the disagreement costs, driven through the path a user reaches rather than asserted.
+        // Remove without force is the guard against leaving a dangling reference behind.
+        string after = GeneratorEditor.Remove(StructReferenceGraph(), "99", force: false,
+                                              out var blockers);
+        Check("and Remove refuses to delete it", 1, blockers.Count);
+        CheckTrue("so the payload is still there", BehaviourGraphModel.Parse(after).Get("99") != null);
+
+        // Whether the link could be broken at all, which decided whether the finder could be widened
+        // or needed a writer built first. It can: SetParamAt already walks into a named inline struct
+        // with a dotted path. Kept because the design rested on it.
+        string cleared = HkxTextEdit.SetParamAt(StructReferenceGraph(), "98", "alarmEvent.payload", "null");
+        Check("a struct member can be cleared the way Detach would need to", "null",
+              BehaviourGraphModel.Parse(cleared).Get("98")?.Structs["alarmEvent"]
+                  .GetValueOrDefault("payload"));
+
+        // And that deleting for real goes through it. Finding the holder is worth nothing on its own:
+        // the previous time these two walks disagreed, the holder was found and then never cleared,
+        // and the file went out naming an object that was no longer in it.
+        string gone = GraphAuthor.DeleteNode(StructReferenceGraph(), "99", out string note);
+        var afterDelete = BehaviourGraphModel.Parse(gone);
+        Check("deleting the payload clears the struct member that held it", "null",
+              afterDelete.Get("98")?.Structs["alarmEvent"].GetValueOrDefault("payload"));
+        Check("the payload is gone", null, afterDelete.Get("99"));
+        CheckTrue("the note says which holder it cleared", note.Contains("#98"));
+
+        // The check above is what proves the struct member was cleared. This one cannot: the
+        // validator's dangling reference walk reads scalars, lists and struct lists and not structs,
+        // so it stays quiet about a struct pointing at a deleted object either way. Verified by
+        // taking the struct arm back out of Detach, which turned the check above red and left this
+        // one green. Kept because it still covers the other three kinds, and labelled so nobody
+        // reads it as cover the validator does not currently give.
+        CheckTrue("and nothing dangles that the validator can see",
+                  GraphValidator.Check(gone).All(f => !f.What.Contains("not in this file")));
+
+        // The other two kinds the shared walk carries. Both were unguarded: taking either arm out of
+        // HkReferences left the whole suite green, so consolidating them was being done without a
+        // net. A list element first, which is how a machine holds its states.
+        Check("a reference in a list element is found", 1,
+              GeneratorEditor.ReferencesTo(model, "93").Count);
+        string listCleared = GraphAuthor.DeleteNode(StructReferenceGraph(), "93", out _);
+        CheckTrue("and deleting it drops the element rather than nulling it",
+                  BehaviourGraphModel.Parse(listCleared).Get("92")!.Refs("states").Count == 0);
+
+        // Then a member inside an element of an array of structs, which is where a transition keeps
+        // the effect it plays. This is the case the clearing walk got wrong once before.
+        var blend = BehaviourGraphModel.Parse(TwoStateBlendGraph());
+        Check("a reference inside a struct list element is found", 1,
+              GeneratorEditor.ReferencesTo(blend, "102").Count);
+
+        string effectGone = GraphAuthor.DeleteNode(TwoStateBlendGraph(), "102", out _);
+        Check("and deleting it nulls the member, keeping the route", "null",
+              BehaviourGraphModel.Parse(effectGone).Get("101")!
+                  .StructLists["transitions"][0].GetValueOrDefault("transition"));
+        Check("the transition itself survives", 1,
+              BehaviourGraphModel.Parse(effectGone).Get("101")!.StructLists["transitions"].Count);
+    }
+
+    /// A modifier whose named `alarmEvent` struct is the only thing pointing at its payload, which
+    /// is how vanilla files are built.
+    private static string StructReferenceGraph() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraph" name="#91" signature="0xb1218f86">
+                    <hkparam name="name">Graph</hkparam>
+                    <hkparam name="rootGenerator">#92</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachine" name="#92" signature="0xa5896bcf">
+                    <hkparam name="name">Root</hkparam>
+                    <hkparam name="startStateId">0</hkparam>
+                    <hkparam name="wildcardTransitions">null</hkparam>
+                    <hkparam name="states" numelements="1">
+                        #93
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#93" signature="0x39d76713">
+                    <hkparam name="name">A</hkparam>
+                    <hkparam name="stateId">0</hkparam>
+                    <hkparam name="generator">#94</hkparam>
+                    <hkparam name="transitions">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#94" signature="0xd4cc9f6">
+                    <hkparam name="name">ClipA</hkparam>
+                    <hkparam name="animationName">a.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="BSRandomAlarmModifier" name="#98" signature="0x8e5f5f3c">
+                    <hkparam name="name">Alarm</hkparam>
+                    <hkparam name="enable">true</hkparam>
+                    <hkparam name="alarmEvent">
+                        <hkobject class="hkbEventProperty" name="alarmEvent" signature="0xdb38a15">
+                            <hkparam name="id">169</hkparam>
+                            <hkparam name="payload">#99</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStringEventPayload" name="#99" signature="0xed04256a">
+                    <hkparam name="data">AlarmPayload</hkparam>
+                </hkobject>
+                <hkobject class="hkbModifierList" name="#96" signature="0x1f81a3b8">
+                    <hkparam name="name">Holder</hkparam>
+                    <hkparam name="spare">
+                        <hkobject class="hkbEventProperty" name="spare" signature="0xdb38a15">
+                            <hkparam name="id">170</hkparam>
+                            <hkparam name="payload">#97</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#97" signature="0xd4cc9f6">
+                    <hkparam name="name">Spare</hkparam>
+                    <hkparam name="animationName">spare.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
 
     private static void StructuralObjectsAreProtected()
     {
