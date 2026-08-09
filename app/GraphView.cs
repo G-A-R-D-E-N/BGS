@@ -52,6 +52,19 @@ public class GraphView : Control
     private readonly Dictionary<string, Node> _nodes = new();
     private readonly List<string> _order = new();
     private readonly Dictionary<string, Point> _placed = new();
+
+    /// Which nodes are folded shut, kept across rebuilds so an edit does not silently unfold the
+    /// graph, and cleared when a different file is opened.
+    ///
+    /// A folded node's family is left out of the layout altogether rather than drawn and skipped.
+    /// That is what makes the space come back: the contour a subtree reserved is reserved because it
+    /// was measured, so a subtree nobody can see has to not be measured.
+    private readonly HashSet<string> _collapsed = new(StringComparer.Ordinal);
+
+    /// How many nodes the file has that the canvas is not showing, which is what a folded branch is
+    /// holding.
+    private int _placedCount;
+
     private BehaviourGraphModel? _model;
 
     /// Who owns what, rebuilt with the nodes. Every question about where a node is placed goes
@@ -249,6 +262,8 @@ public class GraphView : Control
         _nodes.Clear();
         _order.Clear();
         _placed.Clear();
+        _collapsed.Clear();
+        _placedCount = 0;
         _problems.Clear();
         _highlight = "";
         _related.Clear();
@@ -294,12 +309,18 @@ public class GraphView : Control
         var placed = GraphAuthor.Layout(model, MaxNodes);
         _own = GraphOwnership.Of(placed);
 
+        _placedCount = placed.Count;
+
+        // A folded branch is left out here rather than drawn and skipped, so the contour it would
+        // have reserved is never measured and the space it was holding comes back.
+        var showing = placed.Where(p => !_own.Hidden(_collapsed, p.Node.Id)).ToList();
+
         var measured = new List<GraphLayout.Item>();
         var slotsOf = new Dictionary<string, List<GraphLinks.Slot>>(StringComparer.Ordinal);
         var wildcardsOf = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         var heightOf = new Dictionary<string, double>(StringComparer.Ordinal);
 
-        foreach (var (obj, column, ownerId) in placed)
+        foreach (var (obj, column, ownerId) in showing)
         {
             var slots = GraphLinks.OutSlots(model, obj);
             var wildcards = wildcardsInto.GetValueOrDefault(obj.Id) ?? new List<string>();
@@ -320,7 +341,7 @@ public class GraphView : Control
 
         var y = GraphLayout.Place(measured, pinned, RowGap);
 
-        foreach (var (obj, column, ownerId) in placed)
+        foreach (var (obj, column, ownerId) in showing)
         {
             double x = _placed.TryGetValue(obj.Id, out var kept) ? kept.X : column * ColumnGap;
 
@@ -366,6 +387,54 @@ public class GraphView : Control
                                   - (owner.Bounds.Y + owner.Bounds.Height / 2));
         }
     }
+
+    public IReadOnlyCollection<string> Collapsed => _collapsed;
+
+    /// What a node owns, restricted to the nodes actually on the canvas.
+    public int OwnedCount(string id) => _own.Under(id).Count(_nodes.ContainsKey);
+
+    public IReadOnlyList<string> OwnedIds(string id) => _own.Under(id).Where(_nodes.ContainsKey).ToList();
+
+    /// How many nodes the folded branches are holding, which is the file's node count less what is
+    /// on screen. Read straight off the two counts rather than recomputed, so it cannot disagree
+    /// with what was drawn.
+    public int HiddenCount => Math.Max(0, _placedCount - _nodes.Count);
+
+    public bool IsCollapsed(string id) => _collapsed.Contains(id);
+
+    /// Folds a node shut or open, and lays the graph out again so the space comes back.
+    ///
+    /// Deep does every node it owns rather than one level: if any of them is open they all shut,
+    /// otherwise they all open, so one gesture always has an obvious result rather than toggling
+    /// each independently and leaving a half folded branch.
+    public void ToggleCollapse(string id, bool deep)
+    {
+        if (!_own.Owner.ContainsKey(id)) return;
+
+        if (!deep)
+        {
+            if (!_collapsed.Add(id)) _collapsed.Remove(id);
+        }
+        else
+        {
+            var family = _own.Under(id).Append(id).Where(n => _own.Children(n).Count > 0).ToList();
+            bool anyOpen = family.Any(n => !_collapsed.Contains(n));
+
+            foreach (string node in family)
+                if (anyOpen) _collapsed.Add(node); else _collapsed.Remove(node);
+        }
+
+        if (_model != null) Show(_model);
+    }
+
+    /// Where the chevron sits, in screen space. Left of the title, inside the header.
+    private Rect ChevronRect(Node node)
+    {
+        var at = ToScreen(node.Bounds.TopLeft);
+        return new Rect(at.X + 2 * _zoom, at.Y + 3 * _zoom, 13 * _zoom, 13 * _zoom);
+    }
+
+    private bool HasFamily(Node node) => _own.Children(node.Id).Count > 0;
 
     public int DrawnCount => _nodes.Count;
     public IReadOnlyCollection<string> DrawnIds => _nodes.Keys;
@@ -722,8 +791,34 @@ public class GraphView : Control
         double scale = _zoom;
         var faultBrush = fault is { } f ? new SolidColorBrush(f) : null;
         string title = node.Name.Length > 0 ? node.Name : node.Class;
-        Draw(ctx, title, r.X + 6 * scale, r.Y + 4 * scale, 11 * scale,
-             faultBrush ?? Ux.TitleBrush, r.Width - 12 * scale);
+
+        // The title starts clear of the chevron on a node that has one, so folding does not cover
+        // the name of the thing being folded.
+        bool family = HasFamily(node);
+        double titleAt = family ? 18 : 6;
+
+        Draw(ctx, title, r.X + titleAt * scale, r.Y + 4 * scale, 11 * scale,
+             faultBrush ?? Ux.TitleBrush, r.Width - (titleAt + 6) * scale);
+
+        if (family)
+        {
+            bool shut = _collapsed.Contains(node.Id);
+            var chevron = ChevronRect(node);
+            Draw(ctx, shut ? ">" : "v", chevron.X + 2 * scale, chevron.Y - 1 * scale, 11 * scale,
+                 shut ? new SolidColorBrush(node.Accent) : Ux.MutedBrush, chevron.Width);
+
+            // What this fold is holding, which is what clicking it again brings back. Owned
+            // descendants only and only those not already held by a fold further up, so the number
+            // is a promise rather than a subtree size.
+            if (shut)
+            {
+                int held = _own.HiddenBy(_collapsed, node.Id);
+                var badge = new Rect(r.Right - 66 * scale, r.Bottom - 15 * scale, 62 * scale, 13 * scale);
+                ctx.DrawRectangle(new SolidColorBrush(node.Accent, 0.30), null, badge, 3, 3);
+                Draw(ctx, $"+{held} hidden", badge.X + 4 * scale, badge.Y + 1 * scale, 8 * scale,
+                     Ux.TitleBrush, badge.Width - 6 * scale);
+            }
+        }
         Draw(ctx, node.Empty ? node.Class + "  nothing to play" : node.Class,
              r.X + 6 * scale, r.Y + (HeaderHeight + 1) * scale, 9 * scale,
              faultBrush ?? new SolidColorBrush(node.Accent), r.Width - 12 * scale);
@@ -830,6 +925,15 @@ public class GraphView : Control
         }
 
         if (props.IsMiddleButtonPressed) { _panning = true; return; }
+
+        // The chevron is checked before selection, so folding a node does not also select it and
+        // throw away a selection somebody built up.
+        foreach (var candidate in _nodes.Values)
+        {
+            if (!HasFamily(candidate) || !ChevronRect(candidate).Contains(screen)) continue;
+            ToggleCollapse(candidate.Id, e.KeyModifiers.HasFlag(KeyModifiers.Control));
+            return;
+        }
 
         var port = PortAt(world);
         if (port != null) { _wiring = port; _wireTo = screen; return; }
@@ -964,8 +1068,12 @@ public class GraphView : Control
         const double Margin = 40;
         double wide = Math.Max(1, maxX - minX), tall = Math.Max(1, maxY - minY);
 
+        // The floor is there so the button cannot produce a zoom of zero, not to stop it fitting.
+        // It was 0.02, which was enough while the graph was 5,589 tall and not once the layout
+        // started placing families beside their parents: on a short viewport the clamp won and "fit
+        // all" framed something taller than the view and said it had framed it.
         _zoom = Math.Clamp(Math.Min((Bounds.Width - Margin * 2) / wide,
-                                    (Bounds.Height - Margin * 2) / tall), 0.02, 1.5);
+                                    (Bounds.Height - Margin * 2) / tall), 0.005, 1.5);
 
         // Centred rather than corner aligned. A graph wider than it is tall leaves a band of empty
         // canvas otherwise, and the thing being looked at sits against one edge of it.

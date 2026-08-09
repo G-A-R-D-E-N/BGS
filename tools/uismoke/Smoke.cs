@@ -324,6 +324,51 @@ public static class Smoke
                 CheckTrue($"{name}: the canvas draws the graph", drawn > 0);
             }
 
+            // Folding a branch. Two things have to be true and they fail separately: the right nodes
+            // go, and the room they were taking comes back. A fold that only stopped drawing them
+            // would leave a hole the size of the whole subtree, which is worse than not folding.
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                var canvas = Find<GraphView>(window).First();
+
+                // A branch in the middle rather than the root. Folding the root is a real case and
+                // a useless check: it takes the whole graph off and proves nothing about the rest of
+                // it staying put.
+                string parent = canvas.DrawnIds
+                    .Where(id => canvas.OwnedCount(id) >= 3 && canvas.OwnedCount(id) <= canvas.DrawnCount / 4)
+                    .OrderByDescending(canvas.OwnedCount)
+                    .FirstOrDefault() ?? "";
+                if (parent.Length > 0)
+                {
+                    int was = canvas.DrawnCount;
+                    int owned = canvas.OwnedCount(parent);
+                    double wasTall = canvas.Extent().Tall;
+
+                    canvas.ToggleCollapse(parent, false);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    Check($"{name}: folding takes exactly what the node owns off the canvas",
+                          was - owned, canvas.DrawnCount);
+                    Check($"{name}: and the count it reports is what it is holding", owned,
+                          canvas.HiddenCount);
+                    CheckTrue($"{name}: the node itself stays, it is what unfolds it",
+                              canvas.DrawnIds.Contains(parent));
+                    CheckTrue($"{name}: and the room it was taking comes back " +
+                              $"({canvas.Extent().Tall:0} against {wasTall:0})",
+                              canvas.Extent().Tall < wasTall);
+
+                    canvas.ToggleCollapse(parent, false);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    Check($"{name}: unfolding brings back exactly what it promised", was,
+                          canvas.DrawnCount);
+                    Check($"{name}: and nothing is left hidden", 0, canvas.HiddenCount);
+                    Check($"{name}: and the canvas is the height it was", wasTall.ToString("F0"),
+                          canvas.Extent().Tall.ToString("F0"));
+                }
+            }
+
             // The run panel: a graph file starts stepping, lights its active states, and moves them
             // when sent an event. A project or character file has no graph, so it must not pretend to
             // run one. This is the window half of #37; the reachability behind it is checked headless
