@@ -3503,6 +3503,8 @@ public static class Program
 
         int read = 0, noAnimation = 0, unreadable = 0;
         int withAnnotations = 0, withMotion = 0, withFloatTracks = 0;
+        int motionMatchesFrames = 0, motionDiffers = 0, motionUnreadable = 0, motionDurationDiffers = 0;
+        var motionSampleCounts = new SortedDictionary<int, int>();
         long annotationTracks = 0, annotations = 0;
         int annotationsPastEnd = 0, annotationsAtZero = 0;
         var byClass = new SortedDictionary<string, int>(StringComparer.Ordinal);
@@ -3537,12 +3539,37 @@ public static class Program
             int frames = objects.ReadInt(animation, "numFrames") ?? 0;
             if (frames > 0) frameCounts.Add(frames);
 
-            objects.ReadRef(animation, "extractedMotion", out bool motionNull);
-            if (!motionNull)
+            var motion = objects.ReadRef(animation, "extractedMotion", out bool motionNull);
+            if (!motionNull && motion != null)
             {
                 withMotion++;
-                if (motionExamples.Count < 6)
-                    motionExamples.Add($"{Short(file, target)}: {duration:F3}s, {frames} frame(s), carries extracted motion");
+
+                // Whether the root's travel is sampled once per animation frame decides how a cut
+                // treats it. One sample per frame means slicing the same index range as the frames.
+                // Anything else means resampling against time, which is a different and lossier job,
+                // so this is measured rather than assumed.
+                var samples = objects.ReadArray(motion, "referenceFrameSamples");
+                float motionDuration = objects.ReadFloat(motion, "duration") ?? 0;
+
+                if (samples == null) motionUnreadable++;
+                else if (samples.Count == frames) motionMatchesFrames++;
+                else
+                {
+                    motionDiffers++;
+                    motionSampleCounts.TryGetValue(samples.Count, out int had);
+                    motionSampleCounts[samples.Count] = had + 1;
+                    if (motionExamples.Count < 8)
+                        motionExamples.Add($"{Short(file, target)}: {samples.Count} motion sample(s) " +
+                                           $"against {frames} frame(s)");
+                }
+
+                if (samples != null && Math.Abs(motionDuration - duration) > 0.001f)
+                {
+                    motionDurationDiffers++;
+                    if (motionExamples.Count < 8)
+                        motionExamples.Add($"{Short(file, target)}: motion says {motionDuration:F3}s, " +
+                                           $"clip says {duration:F3}s");
+                }
             }
 
             var tracks = objects.ReadArray(animation, "annotationTracks");
@@ -3586,6 +3613,12 @@ public static class Program
         Console.WriteLine($"  of those annotations, {annotationsAtZero} sit at time zero and " +
                           $"{annotationsPastEnd} sit past the clip's own duration");
         Console.WriteLine($"carrying extracted motion, which a cut would desync: {withMotion} clip(s)");
+        Console.WriteLine($"  of those, {motionMatchesFrames} sample the root once per animation frame, " +
+                          $"{motionDiffers} do not, {motionUnreadable} could not be read");
+        Console.WriteLine($"  and {motionDurationDiffers} give the motion a duration different from the clip's");
+        if (motionSampleCounts.Count > 0)
+            Console.WriteLine("  the ones that do not match, by sample count: " +
+                              string.Join(", ", motionSampleCounts.Select(m => $"{m.Key} sample(s) x{m.Value}")));
         Console.WriteLine($"driving float tracks, which the writer already refuses: {withFloatTracks} clip(s)");
 
         if (frameCounts.Count > 0)
