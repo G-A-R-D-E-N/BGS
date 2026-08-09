@@ -21,15 +21,28 @@ public static class Tests
     public static readonly (string Name, Action Check)[] Cases =
     {
         ("DetachedSubtreeStaysDrawn", DetachedSubtreeStaysDrawn),
+        ("EveryDrawnNodeHasOneOwner", EveryDrawnNodeHasOneOwner),
+        ("OwnershipAnswersWhatMovesAndWhatHides", OwnershipAnswersWhatMovesAndWhatHides),
+        ("ASharedGeneratorBelongsToOneBranchOnly", ASharedGeneratorBelongsToOneBranchOnly),
+        ("ChildrenSitBesideTheParentThatOwnsThem", ChildrenSitBesideTheParentThatOwnsThem),
+        ("ACollidingFamilyMovesWhole", ACollidingFamilyMovesWhole),
+        ("APinnedNodeIsNeverMovedToMakeRoom", APinnedNodeIsNeverMovedToMakeRoom),
+        ("ASharedNodeIsPlacedOnceByItsOwner", ASharedNodeIsPlacedOnceByItsOwner),
+        ("SubtreesOfDifferentDepthsShareTheHeight", SubtreesOfDifferentDepthsShareTheHeight),
+        ("DepthOnOneSideCostsNothingOnTheOther", DepthOnOneSideCostsNothingOnTheOther),
         ("ReplacingLinkSaysWhatItDisplaced", ReplacingLinkSaysWhatItDisplaced),
         ("BlenderChildIsWrapped", BlenderChildIsWrapped),
         ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
+        ("AReferenceInsideAStructIsSeenByBothReaders", AReferenceInsideAStructIsSeenByBothReaders),
+        ("ADanglingReferenceIsReportedWhereverItSits", ADanglingReferenceIsReportedWhereverItSits),
+        ("AppendedStringsLandOnAnEvenOffset", AppendedStringsLandOnAnEvenOffset),
         ("StructuralObjectsAreProtected", StructuralObjectsAreProtected),
         ("PortTypesRefuseNonsense", PortTypesRefuseNonsense),
         ("BundledHkxPackIsFound", BundledHkxPackIsFound),
         ("Fo4CharacterListsItsAnimations", Fo4CharacterListsItsAnimations),
         ("MissingClipAnimationIsReported", MissingClipAnimationIsReported),
         ("RepackDriftNamesWhatMoved", RepackDriftNamesWhatMoved),
+        ("TransitionRowsCarryPriorityAndFlags", TransitionRowsCarryPriorityAndFlags),
         ("AnUnreachableStateIsReported", AnUnreachableStateIsReported),
         ("EventUsageSaysWhoSendsAndWhoListens", EventUsageSaysWhoSendsAndWhoListens),
         ("ScaleIsShownOnlyWhenItIsRealScale", ScaleIsShownOnlyWhenItIsRealScale),
@@ -122,6 +135,7 @@ public static class Tests
         ("ACutTakesTheClipsOwnTimeWithIt", ACutTakesTheClipsOwnTimeWithIt),
         ("ALinearTravelStaysTwoSamplesAfterACut", ALinearTravelStaysTwoSamplesAfterACut),
         ("ACutRefusesWhatIsNotAClip", ACutRefusesWhatIsNotAClip),
+        ("DurationCountsIntervalsNotFrames", DurationCountsIntervalsNotFrames),
         ("ARetimeMovesEverythingThatMeasuresTime", ARetimeMovesEverythingThatMeasuresTime),
         ("KeepingTheFramesCostsNothingAtAll", KeepingTheFramesCostsNothingAtAll),
         ("ARetimeSaysWhatTheResamplingCost", ARetimeSaysWhatTheResamplingCost),
@@ -222,6 +236,441 @@ public static class Tests
         CheckTrue("the clip under that state #94 is still drawn", drawn.Contains("94"));
     }
 
+    // Ownership is the rule the whole canvas hangs off: where a node is placed, whether a collapse
+    // hides it, and whether a drag moves it. It is not a new idea, it is a fact the walk already knew
+    // and threw away, so this pins it down before anything is built on it.
+    private static void EveryDrawnNodeHasOneOwner()
+    {
+        Console.WriteLine("\nevery drawn node has one owner");
+
+        var model = BehaviourGraphModel.Parse(BlenderGraph(0, 0, 1, 1));
+        var placed = GraphAuthor.Layout(model, 1000);
+
+        // Every object in the fixture except #130, the binding set, which nothing points at in this
+        // shape and which is not a node the canvas draws. Named and in order rather than counted,
+        // because the order is the walk and the walk is what decides ownership: breadth first, so
+        // the graph's own targets come before their children.
+        Check("the walk placed the graph, breadth first", "91, 110, 80, 111, 112, 81, 121, 122",
+              string.Join(", ", placed.Select(p => p.Node.Id)));
+
+        var owner = placed.ToDictionary(p => p.Node.Id, p => p.OwnerId);
+        Check("the root owns nothing above it", "", owner["91"]);
+        Check("the blender is owned by the graph that names it", "91", owner["110"]);
+        Check("and a blender child by the blender", "110", owner["111"]);
+
+        // Every node bar a walk root has exactly one owner, and following owners always ends.
+        foreach (var (node, _, ownerId) in placed)
+        {
+            if (ownerId.Length == 0) continue;
+            CheckTrue($"#{node.Id}'s owner is itself drawn", owner.ContainsKey(ownerId));
+
+            var seen = new HashSet<string>();
+            string at = node.Id;
+            while (owner.TryGetValue(at, out string? up) && up.Length > 0)
+            {
+                CheckTrue($"#{node.Id}'s owner chain does not loop", seen.Add(up));
+                at = up;
+            }
+        }
+    }
+
+    // The three questions the canvas asks about ownership, on a shape built so the shared case is the
+    // interesting one. A owns B and C; B owns D; C owns E which owns F.
+    private static void OwnershipAnswersWhatMovesAndWhatHides()
+    {
+        Console.WriteLine("\nownership answers what moves and what hides");
+
+        var tree = GraphOwnership.Of(new[]
+        {
+            ("A", ""), ("B", "A"), ("C", "A"), ("D", "B"), ("E", "C"), ("F", "E"),
+        });
+
+        Check("A owns two directly", "B, C", string.Join(", ", tree.Children("A")));
+        Check("and everything under it", "B, D, C, E, F", string.Join(", ", tree.Under("A")));
+        Check("D is owned by B and nobody else", "B", tree.Owner["D"]);
+        Check("a leaf owns nothing", 0, tree.Under("F").Count);
+
+        Check("F's chain runs nearest first", "E, C, A", string.Join(", ", tree.Chain("F")));
+        Check("and a root's chain is empty", 0, tree.Chain("A").Count);
+
+        var collapsed = new HashSet<string> { "B" };
+        CheckTrue("collapsing B hides what B owns", tree.Hidden(collapsed, "D"));
+        CheckTrue("and leaves the other branch alone", !tree.Hidden(collapsed, "E"));
+        CheckTrue("and does not hide B itself, which is what you click to undo it",
+            !tree.Hidden(collapsed, "B"));
+
+        Check("B's badge counts only what B hides", 1, tree.HiddenBy(collapsed, "B"));
+        Check("a node that is not collapsed hides nothing", 0, tree.HiddenBy(collapsed, "A"));
+
+        // Two collapses, one inside the other. The badge's promise is what it will bring back when
+        // clicked, so neither may count what the other is holding.
+        //
+        // E is hidden by A, so its own badge is not even on screen and claims nothing. A claims B, C,
+        // D and E: four, not five. F is left out because expanding A does not reveal F, E is still
+        // shut. A badge reading five here would promise a node it cannot produce.
+        var both = new HashSet<string> { "A", "E" };
+        Check("an inner collapse claims nothing already hidden", 0, tree.HiddenBy(both, "E"));
+        Check("and the outer one claims what it can actually bring back", 4, tree.HiddenBy(both, "A"));
+
+        // The dedupe that matters: E is selected in its own right and is also under A.
+        var moving = tree.Moving(new[] { "A", "E" });
+        Check("everything moves, once each", "A, B, C, D, E, F",
+            string.Join(", ", moving.OrderBy(m => m, StringComparer.Ordinal)));
+        Check("the set is a set", 6, moving.Count);
+
+        Check("a node nobody placed moves nothing", 0, tree.Moving(new[] { "Z" }).Count);
+    }
+
+    // The case ownership exists for, on a real graph rather than a made up map.
+    //
+    // Two states point at one clip. The canvas can only draw it in one place, so the first state to
+    // reach it owns it, and the second gets a wire to somewhere it does not control. Everything that
+    // could go wrong here goes wrong quietly: collapsing the second state must not hide the clip out
+    // from under the first, and dragging the second must not drag it away either.
+    private static void ASharedGeneratorBelongsToOneBranchOnly()
+    {
+        Console.WriteLine("\na shared generator belongs to one branch only");
+
+        var model = BehaviourGraphModel.Parse(SharedGeneratorGraph());
+        var placed = GraphAuthor.Layout(model, 1000);
+        var tree = GraphOwnership.Of(placed);
+
+        Check("both states point at the same clip", "#94",
+            model.Get("95")?.Ref("generator") is string g ? "#" + g : "none");
+
+        Check("the clip is drawn once", 1, placed.Count(p => p.Node.Id == "94"));
+        Check("and owned by the state that reached it first", "93", tree.Owner["94"]);
+        Check("the second state owns nothing", 0, tree.Under("95").Count);
+
+        // Hiding. The clip is under #93 and must not answer to #95.
+        var shutSecond = new HashSet<string> { "95" };
+        CheckTrue("collapsing the borrower does not hide the shared clip",
+            !tree.Hidden(shutSecond, "94"));
+        Check("and its badge claims nothing", 0, tree.HiddenBy(shutSecond, "95"));
+
+        var shutFirst = new HashSet<string> { "93" };
+        CheckTrue("collapsing the owner does hide it", tree.Hidden(shutFirst, "94"));
+        Check("and its badge says so", 1, tree.HiddenBy(shutFirst, "93"));
+
+        // Moving. Same rule, same reason.
+        Check("dragging the borrower moves only itself", "95",
+            string.Join(", ", tree.Moving(new[] { "95" })));
+        Check("dragging the owner takes the clip with it", "93, 94",
+            string.Join(", ", tree.Moving(new[] { "93" }).OrderBy(m => m, StringComparer.Ordinal)));
+    }
+
+    /// A parent, and the family it owns, for the layout checks. Every node the same height so the
+    /// numbers in the checks are readable rather than arithmetic.
+    private static GraphLayout.Item Node(string id, int column, string owner) =>
+        new(id, column, owner, 100);
+
+    /// Where the middle of a node sits, which is what a family is centred on.
+    private static double Centre(Dictionary<string, double> y, string id) => y[id] + 50;
+
+    // The defect this replaces: nodes were placed by depth into columns and stacked with one running
+    // Y counter per column, so nothing ever consulted the parent's position and a parent low on the
+    // canvas got its children put near the top. The long diagonal wires were that.
+    private static void ChildrenSitBesideTheParentThatOwnsThem()
+    {
+        Console.WriteLine("\nchildren sit beside the parent that owns them");
+
+        // Six children under P1 push P2 a long way down its column, which is the case that used to
+        // strand P2's own children at the top of the next column.
+        var items = new List<GraphLayout.Item> { Node("root", 0, "") };
+        items.Add(Node("P1", 1, "root"));
+        items.Add(Node("P2", 1, "root"));
+        for (int i = 0; i < 6; i++) items.Add(Node("a" + i, 2, "P1"));
+        items.Add(Node("b0", 2, "P2"));
+        items.Add(Node("b1", 2, "P2"));
+
+        var y = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+
+        CheckTrue($"the second parent really is far down ({y["P2"]:F0})", y["P2"] > 300);
+
+        // The whole point. Its children are beside it, not at the top of the column with P1's.
+        double drop = Math.Abs(Centre(y, "b0") - Centre(y, "P2"));
+        CheckTrue($"its children are beside it, not at the top ({y["b0"]:F0} against {y["P2"]:F0})",
+            drop < 200);
+        CheckTrue($"and nowhere near the other family ({y["b0"]:F0} against {y["a0"]:F0})",
+            y["b0"] > y["a0"] + 200);
+
+        // Centred on the parent rather than starting at it, so the wires fan out from both sides.
+        CheckTrue($"the family straddles its parent ({y["b0"]:F0}, {y["b1"]:F0})",
+            Centre(y, "b0") < Centre(y, "P2") + 1 && Centre(y, "b1") > Centre(y, "P2") - 1);
+
+        // Nothing overlaps anywhere.
+        foreach (var column in items.GroupBy(i => i.Column))
+        {
+            var sorted = column.OrderBy(i => y[i.Id]).ToList();
+            for (int i = 1; i < sorted.Count; i++)
+                CheckTrue($"{sorted[i - 1].Id} and {sorted[i].Id} do not overlap",
+                    y[sorted[i].Id] >= y[sorted[i - 1].Id] + sorted[i - 1].Height - 0.001);
+        }
+
+        // Same input, same answer, every time.
+        var again = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+        Check("the layout is deterministic", string.Join(",", y.OrderBy(p => p.Key).Select(p => $"{p.Key}={p.Value:F2}")),
+              string.Join(",", again.OrderBy(p => p.Key).Select(p => $"{p.Key}={p.Value:F2}")));
+    }
+
+    // A family is the unit a collision moves. Moving one member and not the rest is what splits a
+    // family, and a split family is what puts the long wires back.
+    private static void ACollidingFamilyMovesWhole()
+    {
+        Console.WriteLine("\ntwo families in a column never mix");
+
+        var items = new List<GraphLayout.Item>
+        {
+            Node("root", 0, ""),
+            Node("P1", 1, "root"),
+            Node("P2", 1, "root"),
+            Node("a0", 2, "P1"), Node("a1", 2, "P1"), Node("a2", 2, "P1"),
+            Node("b0", 2, "P2"), Node("b1", 2, "P2"), Node("b2", 2, "P2"),
+        };
+
+        var y = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+
+        // Spacing inside each family: 100 tall plus a 20 gap.
+        Check("the first family keeps its spacing", "120, 120",
+            $"{y["a1"] - y["a0"]:F0}, {y["a2"] - y["a1"]:F0}");
+        Check("and so does the second", "120, 120",
+            $"{y["b1"] - y["b0"]:F0}, {y["b2"] - y["b1"]:F0}");
+
+        // The invariant, checked by interleaving rather than by spacing. A family split by some
+        // future change would show up as one family's members appearing on both sides of the
+        // other's, which a spacing check would sail straight past.
+        var order = items.Where(i => i.Column == 2).OrderBy(i => y[i.Id])
+                         .Select(i => i.Id[0]).ToArray();
+        Check("each family is one unbroken run down the column", "aaabbb", new string(order));
+
+        CheckTrue($"and the two are clear of each other ({y["b0"]:F0} against {y["a2"]:F0})",
+            y["b0"] >= y["a2"] + 100 - 0.001);
+
+        // Each parent sits level with the middle of its own family, which is what stops the wires
+        // running the height of the canvas.
+        Check("the first parent is level with its family", Centre(y, "a1").ToString("F2"),
+              Centre(y, "P1").ToString("F2"));
+        Check("and so is the second", Centre(y, "b1").ToString("F2"),
+              Centre(y, "P2").ToString("F2"));
+    }
+
+    // A position the user chose by hand outranks anything the layout would rather do. It blocks, so
+    // a family is pushed past it, and it never moves itself.
+    private static void APinnedNodeIsNeverMovedToMakeRoom()
+    {
+        Console.WriteLine("\na pinned node is never moved to make room");
+
+        var items = new List<GraphLayout.Item>
+        {
+            Node("root", 0, ""),
+            Node("P", 1, "root"),
+            Node("a0", 2, "P"), Node("a1", 2, "P"),
+            Node("Held", 2, "root"),
+        };
+
+        // Pinned exactly where the family would naturally want to sit.
+        var loose = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+        double wanted = loose["a0"];
+
+        var pinned = new Dictionary<string, double> { ["Held"] = wanted };
+        var y = GraphLayout.Place(items, pinned, 20);
+
+        Check("the pinned node is exactly where it was put", wanted.ToString("F2"), y["Held"].ToString("F2"));
+        CheckTrue($"and the family went around it rather than through it ({y["a0"]:F0} against {y["Held"]:F0})",
+            y["a0"] >= y["Held"] + 100 || y["a0"] + 100 <= y["Held"]);
+        Check("the family that moved kept its spacing", 120d, Math.Round(y["a1"] - y["a0"]));
+
+        // Whitespace is the accepted price. The check is that nothing was moved that should not
+        // have been, not that the column is tight.
+        CheckTrue("the pin did not drag its neighbours with it", Math.Abs(y["Held"] - wanted) < 0.001);
+    }
+
+    // A node two parents point at is laid out once, by the parent that owns it. The borrower gets a
+    // wire to wherever the owner put it and no say in where that is.
+    private static void ASharedNodeIsPlacedOnceByItsOwner()
+    {
+        Console.WriteLine("\na shared node is placed once by its owner");
+
+        var model = BehaviourGraphModel.Parse(SharedGeneratorGraph());
+        var placed = GraphAuthor.Layout(model, 1000);
+        var tree = GraphOwnership.Of(placed);
+
+        var items = placed.Select(p => new GraphLayout.Item(p.Node.Id, p.Column, p.OwnerId, 100)).ToList();
+        var y = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+
+        Check("every node got exactly one position", items.Count, y.Count);
+
+        // #94 is owned by #93 and borrowed by #95. It sits with its owner.
+        Check("the shared clip is owned by the first state", "93", tree.Owner["94"]);
+        Check("and is centred on that state, not on the borrower",
+            Centre(y, "93").ToString("F2"), Centre(y, "94").ToString("F2"));
+
+        // The borrower is the case that would show a second placement: if #95 were allowed to lay
+        // #94 out again, #94 would land beside #95 instead.
+        CheckTrue($"the borrower did not drag it across ({y["94"]:F0} against {y["95"]:F0})",
+            Math.Abs(y["94"] - y["95"]) > 1);
+
+        var again = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+        Check("and placing it twice gives the same answer", y["94"].ToString("F2"), again["94"].ToString("F2"));
+    }
+
+    // What measuring a contour buys over measuring a total, which is the whole reason the first
+    // version of the layout was thrown away.
+    //
+    // Two sibling families with different depth profiles. The first is deep and narrow: a chain
+    // running out to column 5. The second is shallow and wide: eight children and nothing past
+    // column 2. Sizing a subtree by everything under it makes the second wait for the whole of the
+    // first, because a total has no idea the first is using columns the second never touches. A
+    // contour does, so the two share the height and only clear each other where they actually meet.
+    private static void SubtreesOfDifferentDepthsShareTheHeight()
+    {
+        Console.WriteLine("\nsubtrees of different depths share the height");
+
+        var items = new List<GraphLayout.Item>
+        {
+            Node("root", 0, ""),
+            Node("deep", 1, "root"),
+            Node("wide", 1, "root"),
+        };
+
+        // deep: one node per column, out to column 5.
+        items.Add(Node("d2", 2, "deep"));
+        items.Add(Node("d3", 3, "d2"));
+        items.Add(Node("d4", 4, "d3"));
+        items.Add(Node("d5", 5, "d4"));
+
+        // wide: eight children, all in column 2.
+        for (int i = 0; i < 8; i++) items.Add(Node("w" + i, 2, "wide"));
+
+        var y = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+
+        double tall = items.Max(i => y[i.Id] + i.Height) - items.Min(i => y[i.Id]);
+
+        // Sized by totals the two families cannot overlap at all, so the canvas is at least the deep
+        // family's four nodes plus the wide family's eight, 12 rows: 1420. Sized by contour they
+        // only have to clear each other in columns 1 and 2, so the deep family's columns 3 to 5 sit
+        // level with the wide family instead of below it.
+        CheckTrue($"the two families share the height rather than stacking ({tall:F0})", tall < 1300);
+
+        // The deep chain runs out past where the wide family stops, and every one of those nodes is
+        // level with its own parent because nothing is competing for that column.
+        Check("the chain stays level with itself", "0, 0, 0",
+            $"{y["d3"] - y["d2"]:F0}, {y["d4"] - y["d3"]:F0}, {y["d5"] - y["d4"]:F0}");
+
+        // The saving must not come from letting nodes overlap. Every column is still checked.
+        foreach (var column in items.GroupBy(i => i.Column))
+        {
+            var sorted = column.OrderBy(i => y[i.Id]).ToList();
+            for (int i = 1; i < sorted.Count; i++)
+                CheckTrue($"{sorted[i - 1].Id} and {sorted[i].Id} do not overlap in column {column.Key}",
+                    y[sorted[i].Id] >= y[sorted[i - 1].Id] + sorted[i - 1].Height - 0.001);
+        }
+
+        // And the families are still not interleaved where they do meet.
+        var order = items.Where(i => i.Column == 2).OrderBy(i => y[i.Id]).Select(i => i.Id[0]).ToArray();
+        Check("neither family is split by the other in the column they share", "dwwwwwwww",
+            new string(order));
+    }
+
+    // The defining property of contour packing, stated as the thing that must not happen: making one
+    // family deeper must cost the other family nothing in the columns it never reaches.
+    //
+    // Sized by totals this fails by construction, because a total counts every node under a subtree
+    // whatever column it sits in, so each node added to the deep chain pushes the wide family down by
+    // a row. Sized by contour the chain's columns 3 and beyond are its own business and the wide
+    // family never hears about them.
+    private static void DepthOnOneSideCostsNothingOnTheOther()
+    {
+        Console.WriteLine("\ndepth on one side costs nothing on the other");
+
+        Dictionary<string, double> WithChainOf(int levels)
+        {
+            var items = new List<GraphLayout.Item>
+            {
+                Node("root", 0, ""),
+                Node("deep", 1, "root"),
+                Node("wide", 1, "root"),
+            };
+
+            // One node per column, running out as far as asked.
+            string parent = "deep";
+            for (int level = 0; level < levels; level++)
+            {
+                string id = "d" + level;
+                items.Add(Node(id, 2 + level, parent));
+                parent = id;
+            }
+
+            // Twelve children, all in column 2, and nothing past it.
+            for (int i = 0; i < 12; i++) items.Add(Node($"w{i:00}", 2, "wide"));
+
+            return GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+        }
+
+        var shallow = WithChainOf(3);
+        var deeper = WithChainOf(9);
+
+        // The wide family does not move. Not "moves less", does not move.
+        var before = string.Join(", ", Enumerable.Range(0, 12).Select(i => $"{shallow[$"w{i:00}"]:F0}"));
+        var after = string.Join(", ", Enumerable.Range(0, 12).Select(i => $"{deeper[$"w{i:00}"]:F0}"));
+        Check("six more columns of depth move the wide family not at all", before, after);
+
+        // Nor does the column they share get any taller.
+        double sharedShallow = shallow["w11"] + 100 - Math.Min(shallow["d0"], shallow["w00"]);
+        double sharedDeeper = deeper["w11"] + 100 - Math.Min(deeper["d0"], deeper["w00"]);
+        Check("and the column they share is the same height", sharedShallow.ToString("F0"),
+              sharedDeeper.ToString("F0"));
+
+        // The chain really did get longer, so the check above is not passing because nothing changed.
+        // Counted by the chain's own names rather than by first letter, which also matches "deep".
+        int Links(Dictionary<string, double> laid) => laid.Keys.Count(k => k.Length > 1 && k[0] == 'd' && char.IsDigit(k[1]));
+        Check("while the chain really is six nodes longer", "3, 9", $"{Links(shallow)}, {Links(deeper)}");
+
+        // And the deep side stays a straight line, level with itself all the way out.
+        for (int level = 1; level < 9; level++)
+            CheckTrue($"d{level} is level with d{level - 1}",
+                Math.Abs(deeper["d" + level] - deeper["d" + (level - 1)]) < 0.001);
+    }
+
+    /// Two states whose generator is the same clip, which is the ordinary shape in a shipped file
+    /// rather than a contrived one: 3,624 of the corpus's 5,320 state infos share something.
+    private static string SharedGeneratorGraph() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraph" name="#91" signature="0xb1218f86">
+                    <hkparam name="name">Graph</hkparam>
+                    <hkparam name="rootGenerator">#92</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachine" name="#92" signature="0xa5896bcf">
+                    <hkparam name="name">Root</hkparam>
+                    <hkparam name="startStateId">0</hkparam>
+                    <hkparam name="wildcardTransitions">null</hkparam>
+                    <hkparam name="states" numelements="2">
+                        #93 #95
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#93" signature="0x39d76713">
+                    <hkparam name="name">First</hkparam>
+                    <hkparam name="stateId">0</hkparam>
+                    <hkparam name="generator">#94</hkparam>
+                    <hkparam name="transitions">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#94" signature="0xd4cc9f6">
+                    <hkparam name="name">Shared</hkparam>
+                    <hkparam name="animationName">shared.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#95" signature="0x39d76713">
+                    <hkparam name="name">Second</hkparam>
+                    <hkparam name="stateId">1</hkparam>
+                    <hkparam name="generator">#94</hkparam>
+                    <hkparam name="transitions">null</hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
+
     private static void ReplacingLinkSaysWhatItDisplaced()
     {
         Console.WriteLine("\na replacing connection reports what it displaced");
@@ -281,6 +730,187 @@ public static class Tests
         CheckTrue("no dangling reference remains", GraphValidator.Check(xml)
             .All(f => !f.What.Contains("not in this file")));
     }
+
+    /// A payload hung off a named struct is referenced, and both readers of "what points at this"
+    /// have to agree that it is.
+    ///
+    /// The shape is `BSRandomAlarmModifier.alarmEvent`, a named `hkbEventProperty` whose `payload`
+    /// names an object. Copied from DogmeatDefault.hkx rather than invented: six objects in that one
+    /// vanilla file are reachable this way and no other, so this is the ordinary case and not a
+    /// corner. `Unattached` already learned it, which is what its comment about every
+    /// hkbStringEventPayload reading as unreachable is a record of. `ReferencesTo` has not, and it
+    /// is the one guarding deletion.
+    private static void AReferenceInsideAStructIsSeenByBothReaders()
+    {
+        Console.WriteLine("\na reference held in a named struct counts as a reference");
+
+        var model = BehaviourGraphModel.Parse(StructReferenceGraph());
+
+        // First prove the fixture exercises the path it claims to. A nested hkobject lands in
+        // Structs only when it carries a name; without one the parser files it under StructLists,
+        // which both readers already walk, and the check below would prove nothing.
+        var holder = model.Get("98")!;
+        CheckTrue("the fixture really parsed alarmEvent as a struct",
+                  holder.Structs.ContainsKey("alarmEvent"));
+        Check("and the struct holds the payload reference", "#99",
+              holder.Structs["alarmEvent"].GetValueOrDefault("payload"));
+        CheckTrue("with nothing else in the file pointing at the payload",
+                  model.Objects.All(o => o.Scalars.Values.All(v => v != "#99")));
+
+        // Unattached reads Structs. Proved on the clip rather than on the payload: a payload is not
+        // a node class, so Unattached would leave it out whether it read structs or not, and
+        // asserting on it would pass for the wrong reason. The spare clip is a node, is named by
+        // nothing but a struct, and is therefore only invisible to Unattached because the struct is
+        // read. This arm is built to exercise that branch and is not copied from a vanilla file.
+        CheckTrue("Unattached reads structs, so a node held only by one is not called orphaned",
+                  GraphAuthor.Unattached(model).All(o => o.Id != "97"));
+
+        // ReferencesTo does not, so it reports the payload as pointed at by nothing. That is the
+        // answer Remove trusts before it deletes, and it is wrong.
+        Check("ReferencesTo names the modifier that holds it", 1,
+              GeneratorEditor.ReferencesTo(model, "99").Count);
+
+        // What the disagreement costs, driven through the path a user reaches rather than asserted.
+        // Remove without force is the guard against leaving a dangling reference behind.
+        string after = GeneratorEditor.Remove(StructReferenceGraph(), "99", force: false,
+                                              out var blockers);
+        Check("and Remove refuses to delete it", 1, blockers.Count);
+        CheckTrue("so the payload is still there", BehaviourGraphModel.Parse(after).Get("99") != null);
+
+        // Whether the link could be broken at all, which decided whether the finder could be widened
+        // or needed a writer built first. It can: SetParamAt already walks into a named inline struct
+        // with a dotted path. Kept because the design rested on it.
+        string cleared = HkxTextEdit.SetParamAt(StructReferenceGraph(), "98", "alarmEvent.payload", "null");
+        Check("a struct member can be cleared the way Detach would need to", "null",
+              BehaviourGraphModel.Parse(cleared).Get("98")?.Structs["alarmEvent"]
+                  .GetValueOrDefault("payload"));
+
+        // And that deleting for real goes through it. Finding the holder is worth nothing on its own:
+        // the previous time these two walks disagreed, the holder was found and then never cleared,
+        // and the file went out naming an object that was no longer in it.
+        string gone = GraphAuthor.DeleteNode(StructReferenceGraph(), "99", out string note);
+        var afterDelete = BehaviourGraphModel.Parse(gone);
+        Check("deleting the payload clears the struct member that held it", "null",
+              afterDelete.Get("98")?.Structs["alarmEvent"].GetValueOrDefault("payload"));
+        Check("the payload is gone", null, afterDelete.Get("99"));
+        CheckTrue("the note says which holder it cleared", note.Contains("#98"));
+
+        // This once passed whatever Detach did, because the validator kept its own walk and that
+        // walk did not read structs. It reads the shared one now, so it can fail for the reason its
+        // name gives.
+        CheckTrue("and no dangling reference is left behind",
+                  GraphValidator.Check(gone).All(f => !f.What.Contains("not in this file")));
+
+        // The other two kinds the shared walk carries. Both were unguarded: taking either arm out of
+        // HkReferences left the whole suite green, so consolidating them was being done without a
+        // net. A list element first, which is how a machine holds its states.
+        Check("a reference in a list element is found", 1,
+              GeneratorEditor.ReferencesTo(model, "93").Count);
+        string listCleared = GraphAuthor.DeleteNode(StructReferenceGraph(), "93", out _);
+        CheckTrue("and deleting it drops the element rather than nulling it",
+                  BehaviourGraphModel.Parse(listCleared).Get("92")!.Refs("states").Count == 0);
+
+        // Then a member inside an element of an array of structs, which is where a transition keeps
+        // the effect it plays. This is the case the clearing walk got wrong once before.
+        var blend = BehaviourGraphModel.Parse(TwoStateBlendGraph());
+        Check("a reference inside a struct list element is found", 1,
+              GeneratorEditor.ReferencesTo(blend, "102").Count);
+
+        string effectGone = GraphAuthor.DeleteNode(TwoStateBlendGraph(), "102", out _);
+        Check("and deleting it nulls the member, keeping the route", "null",
+              BehaviourGraphModel.Parse(effectGone).Get("101")!
+                  .StructLists["transitions"][0].GetValueOrDefault("transition"));
+        Check("the transition itself survives", 1,
+              BehaviourGraphModel.Parse(effectGone).Get("101")!.StructLists["transitions"].Count);
+    }
+
+    /// Check graph reports a reference to an object that is not there, whichever of the four kinds
+    /// of place holds it.
+    ///
+    /// The validator kept its own walk and read three of the four, so a struct naming a deleted
+    /// object was the one dangling reference it could not see. That is the check the delete path
+    /// leans on to say it left the file whole, so the gap made the reassurance worth less than it
+    /// looked.
+    private static void ADanglingReferenceIsReportedWhereverItSits()
+    {
+        Console.WriteLine("\na reference to something that is not there is reported wherever it sits");
+
+        foreach (var (kind, xml) in new[]
+                 {
+                     ("a scalar", SmallGraph().Replace(">#94<", ">#994<")),
+                     ("a list element", SmallGraph().Replace("#93 #95", "#993 #95")),
+                     ("a struct list member", TwoStateBlendGraph().Replace(">#102<", ">#902<")),
+                     ("a struct member", StructReferenceGraph().Replace(">#99<", ">#999<")),
+                 })
+        {
+            var dangling = GraphValidator.Check(xml)
+                .Where(f => f.What.Contains("not in this file", StringComparison.Ordinal)).ToList();
+
+            Check($"{kind} pointing at a missing object is reported", 1, dangling.Count);
+            CheckTrue($"{kind} finding names the object holding it",
+                      dangling.Count == 0 || dangling[0].Where.StartsWith('#'));
+        }
+    }
+
+    /// A modifier whose named `alarmEvent` struct is the only thing pointing at its payload, which
+    /// is how vanilla files are built.
+    private static string StructReferenceGraph() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraph" name="#91" signature="0xb1218f86">
+                    <hkparam name="name">Graph</hkparam>
+                    <hkparam name="rootGenerator">#92</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachine" name="#92" signature="0xa5896bcf">
+                    <hkparam name="name">Root</hkparam>
+                    <hkparam name="startStateId">0</hkparam>
+                    <hkparam name="wildcardTransitions">null</hkparam>
+                    <hkparam name="states" numelements="1">
+                        #93
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#93" signature="0x39d76713">
+                    <hkparam name="name">A</hkparam>
+                    <hkparam name="stateId">0</hkparam>
+                    <hkparam name="generator">#94</hkparam>
+                    <hkparam name="transitions">null</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#94" signature="0xd4cc9f6">
+                    <hkparam name="name">ClipA</hkparam>
+                    <hkparam name="animationName">a.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+                <hkobject class="BSRandomAlarmModifier" name="#98" signature="0x8e5f5f3c">
+                    <hkparam name="name">Alarm</hkparam>
+                    <hkparam name="enable">true</hkparam>
+                    <hkparam name="alarmEvent">
+                        <hkobject class="hkbEventProperty" name="alarmEvent" signature="0xdb38a15">
+                            <hkparam name="id">169</hkparam>
+                            <hkparam name="payload">#99</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStringEventPayload" name="#99" signature="0xed04256a">
+                    <hkparam name="data">AlarmPayload</hkparam>
+                </hkobject>
+                <hkobject class="hkbModifierList" name="#96" signature="0x1f81a3b8">
+                    <hkparam name="name">Holder</hkparam>
+                    <hkparam name="spare">
+                        <hkobject class="hkbEventProperty" name="spare" signature="0xdb38a15">
+                            <hkparam name="id">170</hkparam>
+                            <hkparam name="payload">#97</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#97" signature="0xd4cc9f6">
+                    <hkparam name="name">Spare</hkparam>
+                    <hkparam name="animationName">spare.hkx</hkparam>
+                    <hkparam name="triggers">null</hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
 
     private static void StructuralObjectsAreProtected()
     {
@@ -371,13 +1001,12 @@ public static class Tests
         while (queue.Count > 0)
         {
             var current = queue.Dequeue();
-            foreach (var slot in GraphLinks.OutSlots(model, current))
-                foreach (string target in slot.Targets)
-                {
-                    if (!seen.Add(target)) continue;
-                    var next = model.Get(target);
-                    if (next != null) queue.Enqueue(next);
-                }
+            foreach (string target in GraphAuthor.PointsAt(model, current))
+            {
+                if (!seen.Add(target)) continue;
+                var next = model.Get(target);
+                if (next != null) queue.Enqueue(next);
+            }
         }
         return seen.Count;
     }
@@ -507,15 +1136,182 @@ public static class Tests
         string reached = StateEditor.AddTransition(chained, "92", "93", 1, 0, "null");
         Check("wiring A to B makes C reachable too", 0, Unreachable(reached).Count);
 
+        string throughDisabled = StateEditor.AddState(driven, "92", "C", "#97", out _, out int afterDisabled);
+        throughDisabled = StateEditor.AddTransition(throughDisabled, "92", "95", afterDisabled, 0, "null");
+        throughDisabled = StateEditor.AddTransition(throughDisabled, "92", "93", 1, 0, "null")
+            .Replace("<hkparam name=\"name\">B</hkparam>",
+                     "<hkparam name=\"name\">B</hkparam><hkparam name=\"enable\">false</hkparam>");
+        var disabledRouteWarnings = Unreachable(throughDisabled);
+        Check("a disabled state cannot relay reachability", 1, disabledRouteWarnings.Count);
+        CheckTrue("the state beyond the disabled one stays unreachable",
+                  disabledRouteWarnings.Any(f => f.Where.Contains("'C'")));
+
         // A machine whose start state does not exist is already reported on its own, and treating
         // every state as unreachable on top of that would bury it.
         string noStart = driven.Replace("<hkparam name=\"startStateId\">0</hkparam>",
                                         "<hkparam name=\"startStateId\">9</hkparam>");
         Check("a broken startStateId is not turned into a flood", 0, Unreachable(noStart).Count);
+
+        const string Start = "<hkparam name=\"startStateId\">0</hkparam>";
+        string random = driven.Replace(Start, Start +
+            "<hkparam name=\"startStateMode\">START_STATE_MODE_RANDOM</hkparam>");
+        Check("a random-start machine can enter either enabled state", 0, Unreachable(random).Count);
+
+        string disabled = driven.Replace("<hkparam name=\"name\">B</hkparam>",
+            "<hkparam name=\"name\">B</hkparam><hkparam name=\"enable\">false</hkparam>");
+        Check("a disabled state is not reported as an entry problem", 0,
+              Unreachable(disabled).Count);
+
+        string synced = driven.Replace(Start, Start +
+            "<hkparam name=\"startStateMode\">START_STATE_MODE_SYNC</hkparam>");
+        Check("a synced machine does not claim its file chooses the entry", 0, Unreachable(synced).Count);
+
+        string syncedByVariable = driven.Replace(Start, Start +
+            "<hkparam name=\"syncVariableIndex\">3</hkparam>");
+        Check("a sync variable can choose a state outside the transition walk", 0,
+              Unreachable(syncedByVariable).Count);
+
+        string selected = driven.Replace(Start, Start +
+            "<hkparam name=\"startStateIdSelector\">#97</hkparam>");
+        Check("a selector can choose a state outside the transition walk", 0,
+              Unreachable(selected).Count);
+
+        foreach (string field in new[]
+                 {
+                     "transitionToNextHigherStateEventId",
+                     "transitionToNextLowerStateEventId",
+                 })
+        {
+            string stepped = driven.Replace(Start, Start + $"<hkparam name=\"{field}\">4</hkparam>");
+            Check($"{field} makes every state enterable", 0, Unreachable(stepped).Count);
+        }
+
+        string nested = NestedReachabilityGraph();
+        var nestedWarnings = Unreachable(nested);
+        Check("a flagged nested target of zero reaches only its child machine", 1,
+              nestedWarnings.Count);
+        CheckTrue("the child machine's nested state zero is reachable",
+                  !nestedWarnings.Any(f => f.Where.Contains("'Nested zero'")));
+        CheckTrue("an unrelated machine's state zero is still unreachable",
+                  nestedWarnings.Any(f => f.Where.Contains("'Unrelated zero'")));
+
+        string disabledEntered = nested.Replace("<hkparam name=\"name\">Outer B</hkparam>",
+            "<hkparam name=\"name\">Outer B</hkparam><hkparam name=\"enable\">false</hkparam>");
+        var disabledEnteredWarnings = Unreachable(disabledEntered);
+        Check("a disabled entered state cannot seed its child machine", 2,
+              disabledEnteredWarnings.Count);
+        CheckTrue("the nested target under it stays unreachable",
+                  disabledEnteredWarnings.Any(f => f.Where.Contains("'Nested zero'")));
+
+        string unreachableSource = nested.Replace("<hkparam name=\"startStateId\">0</hkparam>",
+                                                   "<hkparam name=\"startStateId\">1</hkparam>");
+        var sourceWarnings = Unreachable(unreachableSource);
+        Check("a transition from an unreachable outer state seeds nothing", 3,
+              sourceWarnings.Count);
+        CheckTrue("its nested target remains unreachable",
+                  sourceWarnings.Any(f => f.Where.Contains("'Nested zero'")));
+
+        string unflagged = nested.Replace("<hkparam name=\"flags\">8192</hkparam>",
+                                          "<hkparam name=\"flags\">0</hkparam>");
+        Check("an unflagged zero is not treated as a nested target", 2,
+              Unreachable(unflagged).Count);
+    }
+
+    // Losing these two fields made every consumer either guess at transition semantics or reread
+    // the raw struct dictionaries. The literal values are deliberately unlike the defaults, so a
+    // parser that drops either field cannot satisfy the checks by accident.
+    private static void TransitionRowsCarryPriorityAndFlags()
+    {
+        Console.WriteLine("\ntransition rows carry priority and flags");
+
+        string xml = StateEditor.AddTransition(SmallGraph(), "92", "93", 1, 0, "null")
+            .Replace("<hkparam name=\"priority\">0</hkparam>",
+                     "<hkparam name=\"priority\">7</hkparam>")
+            .Replace("<hkparam name=\"flags\">0</hkparam>",
+                     "<hkparam name=\"flags\">FLAG_TO_NESTED_STATE_ID_IS_VALID</hkparam>");
+        var row = StateEditor.Transitions(BehaviourGraphModel.Parse(xml), "92").Single();
+
+        Check("priority comes from its own transition element", 7, row.Priority);
+        Check("flags come from its own transition element", 8192, row.Flags);
+        CheckTrue("the nested-target validity bit is visible", row.HasFlag(0x2000));
+        CheckTrue("an unrelated flag is not invented", !row.HasFlag(0x1000));
     }
 
     private static List<GraphValidator.Finding> Unreachable(string xml) =>
         GraphValidator.Check(xml).Where(f => f.What.StartsWith("cannot be entered")).ToList();
+
+    private static string NestedReachabilityGraph() => """
+        <hkpackfile><hksection name="__data__">
+            <hkobject class="hkbStateMachine" name="#10">
+                <hkparam name="name">Outer</hkparam>
+                <hkparam name="startStateId">0</hkparam>
+                <hkparam name="wildcardTransitions">null</hkparam>
+                <hkparam name="states" numelements="2">#11 #13</hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#11">
+                <hkparam name="name">Outer A</hkparam><hkparam name="stateId">0</hkparam>
+                <hkparam name="generator">#12</hkparam><hkparam name="transitions">#40</hkparam>
+            </hkobject>
+            <hkobject class="hkbClipGenerator" name="#12"><hkparam name="name">Outer clip</hkparam></hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#13">
+                <hkparam name="name">Outer B</hkparam><hkparam name="stateId">1</hkparam>
+                <hkparam name="generator">#20</hkparam><hkparam name="transitions">null</hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachine" name="#20">
+                <hkparam name="name">Nested</hkparam>
+                <hkparam name="startStateId">1</hkparam>
+                <hkparam name="wildcardTransitions">null</hkparam>
+                <hkparam name="states" numelements="2">#21 #23</hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#21">
+                <hkparam name="name">Nested zero</hkparam><hkparam name="stateId">0</hkparam>
+                <hkparam name="generator">#22</hkparam><hkparam name="transitions">null</hkparam>
+            </hkobject>
+            <hkobject class="hkbClipGenerator" name="#22"><hkparam name="name">Nested zero clip</hkparam></hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#23">
+                <hkparam name="name">Nested one</hkparam><hkparam name="stateId">1</hkparam>
+                <hkparam name="generator">#24</hkparam><hkparam name="transitions">#41</hkparam>
+            </hkobject>
+            <hkobject class="hkbClipGenerator" name="#24"><hkparam name="name">Nested one clip</hkparam></hkobject>
+            <hkobject class="hkbStateMachine" name="#30">
+                <hkparam name="name">Unrelated</hkparam>
+                <hkparam name="startStateId">1</hkparam>
+                <hkparam name="wildcardTransitions">null</hkparam>
+                <hkparam name="states" numelements="2">#31 #33</hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#31">
+                <hkparam name="name">Unrelated zero</hkparam><hkparam name="stateId">0</hkparam>
+                <hkparam name="generator">#32</hkparam><hkparam name="transitions">null</hkparam>
+            </hkobject>
+            <hkobject class="hkbClipGenerator" name="#32"><hkparam name="name">Unrelated zero clip</hkparam></hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#33">
+                <hkparam name="name">Unrelated one</hkparam><hkparam name="stateId">1</hkparam>
+                <hkparam name="generator">#34</hkparam><hkparam name="transitions">#42</hkparam>
+            </hkobject>
+            <hkobject class="hkbClipGenerator" name="#34"><hkparam name="name">Unrelated one clip</hkparam></hkobject>
+            <hkobject class="hkbStateMachineTransitionInfoArray" name="#40">
+                <hkparam name="transitions" numelements="1"><hkobject>
+                    <hkparam name="eventId">0</hkparam><hkparam name="toStateId">1</hkparam>
+                    <hkparam name="toNestedStateId">0</hkparam><hkparam name="priority">7</hkparam>
+                    <hkparam name="flags">8192</hkparam>
+                </hkobject></hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachineTransitionInfoArray" name="#41">
+                <hkparam name="transitions" numelements="1"><hkobject>
+                    <hkparam name="eventId">1</hkparam><hkparam name="toStateId">1</hkparam>
+                    <hkparam name="toNestedStateId">0</hkparam><hkparam name="priority">0</hkparam>
+                    <hkparam name="flags">0</hkparam>
+                </hkobject></hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachineTransitionInfoArray" name="#42">
+                <hkparam name="transitions" numelements="1"><hkobject>
+                    <hkparam name="eventId">2</hkparam><hkparam name="toStateId">1</hkparam>
+                    <hkparam name="toNestedStateId">0</hkparam><hkparam name="priority">0</hkparam>
+                    <hkparam name="flags">0</hkparam>
+                </hkobject></hkparam>
+            </hkobject>
+        </hksection></hkpackfile>
+        """;
 
     private static string Fo4Character() => """
         <?xml version="1.0" encoding="ascii"?>
@@ -1972,6 +2768,48 @@ public static class Tests
                   sources.Count(s => s == nameField) == 1);
         Check("and the field that had none gained one, rather than the table being rebuilt", 2,
               sources.Count);
+    }
+
+    /// A string has to land on an even offset, because the lowest bit of the pointer to it is not
+    /// part of the address.
+    ///
+    /// A string member keeps an ownership flag in bit 0 of its pointer: set means the buffer belongs
+    /// to the object and goes when it does. Section data starts on a sixteen byte boundary, so an
+    /// offset's parity inside the section is the loaded address's parity, and a string landing on an
+    /// odd offset hands the game a pointer that claims to own memory inside the packfile image.
+    ///
+    /// Nothing else would notice. The file reads back, repacks identically and passes the validator.
+    /// The cost lands when the game releases the object.
+    ///
+    /// Measured rather than assumed: across 453 sample files, every one of 37,545 local fixup
+    /// destinations is even. 7,618 of those point at text, and only 6,278 are sixteen byte aligned,
+    /// so the rule Havok actually holds to is even, not aligned like an object.
+    private static void AppendedStringsLandOnAnEvenOffset()
+    {
+        Console.WriteLine("\nan appended string lands on an even offset");
+
+        var image = ClipInAPackfile("A.hkx", out _);
+        var objects = new PackfileObjects(image);
+        var clip = objects.Instances.Single();
+
+        // An even number of characters is an odd number of bytes once the terminator is on it, so
+        // the next append after this one starts on an odd offset unless something rounds up. Two
+        // string edits in one save is all it takes, and half of all names are an even length.
+        const string even = "Walk.hkx";
+        CheckTrue("a name of even length is accepted", objects.WriteString(clip, "animationName", even));
+        CheckTrue("and a second name after it", objects.WriteString(clip, "animationBundleName", "bundle"));
+
+        var landed = image.Section("__data__")!.Locals().Select(l => l.Destination).ToList();
+        Check("both names are pointed at", 2, landed.Count);
+        Check("and neither landed on an odd offset", 0, landed.Count(d => d % 2 != 0));
+
+        // The rounding must not cost the string itself. A pad written over the front of a name would
+        // satisfy the check above and lose the name.
+        var reread = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        var again = reread.Instances.Single();
+        Check("the first name still reads back", even, reread.ReadString(again, "animationName"));
+        Check("and so does the second", "bundle", reread.ReadString(again, "animationBundleName"));
+        Check("the value beside them is untouched", 2.5f, reread.ReadFloat(again, "playbackSpeed"));
     }
 
     /// A field wider than four bytes, and one that is several floats in a row. Both were being read
@@ -5425,6 +6263,23 @@ public static class Tests
             () => AnimationEdit.Trim(clip, null, 5, 25));
         CheckThrows("and a span running backwards likewise",
             () => AnimationEdit.Trim(clip, null, 12, 4));
+    }
+
+    // A clip's duration runs from its first frame to its last, so 337 frames at thirty frames a
+    // second last for 336 intervals: 11.2 seconds. Counting all 337 frames is the easy off by one
+    // that still writes a valid file but plays it slowly and shifts every annotation on it.
+    private static void DurationCountsIntervalsNotFrames()
+    {
+        Console.WriteLine("\nduration counts intervals, not frames");
+
+        var clip = MadeUpClip(337, 1);
+        var retimed = AnimationEdit.Retime(clip, null, 1f);
+        float expected = (retimed.Animation.NumFrames - 1) * retimed.Animation.FrameDuration;
+
+        CheckTrue($"337 frames at thirty fps last 11.2 seconds ({retimed.Animation.Duration:F4}s)",
+            Math.Abs(retimed.Animation.Duration - 11.2f) < 1e-4f);
+        CheckTrue("the written duration is exactly its number of intervals times frame duration",
+            Math.Abs(retimed.Animation.Duration - expected) < 1e-6f);
     }
 
     // A retime is a cut's four things again, stretched rather than sliced, and one of them fails in a

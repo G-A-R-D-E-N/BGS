@@ -2313,6 +2313,8 @@ public class MainWindow : Window
                            Ux.MutedBrush);
     }
 
+    /// Everything the clip list ever holds, so there is one answer to what is in it rather than one
+    /// per path that happens to reach it.
     private void BuildClipList(BehaviourGraphModel model)
     {
         _clips.Clear();
@@ -2324,6 +2326,35 @@ public class MainWindow : Window
                   .Colour(1, animation.Length > 0 ? Ux.CodeBrush : Ux.MutedBrush)
                   .Tag(clip.Id);
         }
+
+        if (_clips.RowCount == 0) ShowLoneAnimation();
+    }
+
+    /// The one row a file holding an animation and no clip generator gets.
+    ///
+    /// The list is built from clip generators, and an animation file has none, so it came up empty
+    /// and the Playback panel looked broken. It was not: there is genuinely nothing to pick, because
+    /// the animation is already the thing being played. Saying that costs a row and saves everyone
+    /// working out the distinction before they can use the tab.
+    ///
+    /// Gated on the list being empty rather than on the file failing to parse as a behaviour, which
+    /// was the obvious guess and cannot work. `ParseBehavior` documents why: an animation resolves a
+    /// root like anything else, so it takes the same path a behaviour does.
+    ///
+    /// Only ever called by `BuildClipList` on finding nothing to list, so the list has one filler and
+    /// the rule for when this row appears lives in one place.
+    private void ShowLoneAnimation()
+    {
+        if (_animationData is not { NumFrames: > 0 }) return;
+
+        // Deliberately untagged. The selection handler reads the tag as an object id and returns
+        // when it is not a string, so a row naming no object needs no guard added to it.
+        _clips.Add(null, Path.GetFileNameWithoutExtension(_hkxPath),
+                   $"{_animationData.Duration:F2}s, {_animationData.NumFrames} frames")
+              .Colour(0, Ux.TitleBrush)
+              .Colour(1, Ux.CodeBrush);
+
+        _clips.SelectFirst();
     }
 
     private void TogglePlay()
@@ -2608,6 +2639,10 @@ public class MainWindow : Window
     /// Read only, for the window checks.
     public HkGrid DiffGrid => _diff;
 
+    /// Read only, for the window checks. Named rather than found by position on the Playback tab,
+    /// which is one refactor away from being the wrong grid.
+    public HkGrid ClipGrid => _clips;
+
     private Control BuildSymbolsTab()
     {
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -2793,6 +2828,12 @@ public class MainWindow : Window
                 ? $"{Path.GetFileName(path)}   an animation, not a behaviour. See the Animation and Playback tabs."
                 : "Parsed as FO4 hkx, but no root object was resolved.", Ux.MutedBrush);
             SetStatus(_animationSummary.Text ?? "", _animationSummary.Foreground ?? Ux.MutedBrush);
+
+            // Nothing was read, so the list is built from nothing. It still runs, because a file with
+            // no objects can still hold an animation and that row is the only thing Playback would
+            // otherwise show. Handed an empty reading rather than skipped, so the clip list is filled
+            // from one place on every path that reaches it.
+            BuildClipList(new BehaviourGraphModel());
 
             // An animation opened on its own has no clip pointing at it, so the selection path never
             // fires. It is still the thing on screen, so it is what plays.

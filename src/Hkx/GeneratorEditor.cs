@@ -153,16 +153,13 @@ public static class GeneratorEditor
     // reference and the engine reads a null generator.
     public static List<string> ReferencesTo(BehaviourGraphModel model, string id)
     {
+        // One holder per object however many times it names the target, which is what the callers
+        // want: a list of things to go and clear, not a count of links. Object order is kept because
+        // the delete note names the first few and a shuffled list would reword it.
         var holders = new List<string>();
-        string token = "#" + id;
-
         foreach (var obj in model.Objects)
-        {
-            bool hit = obj.Scalars.Any(kv => kv.Value == token)
-                    || obj.Lists.Any(kv => kv.Value.Contains(token))
-                    || obj.StructLists.Any(kv => kv.Value.Any(row => row.Values.Contains(token)));
-            if (hit) holders.Add(obj.Id);
-        }
+            if (HkReferences.In(obj).Any(site => site.Target == id))
+                holders.Add(obj.Id);
         return holders;
     }
 

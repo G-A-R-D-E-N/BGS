@@ -11,6 +11,7 @@
     <Compile Include="Program.cs" />
     <Compile Include="Tests.cs" />
     <Compile Include="Png.cs" />
+    <Compile Include="GameDefaults.cs" />
     <Compile Include="../../src/Archive/*.cs" />
     <Compile Include="../../src/Hkx/*.cs" />
     <Compile Include="../../src/Nif/*.cs" />

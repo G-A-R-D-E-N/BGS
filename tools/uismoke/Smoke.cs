@@ -137,6 +137,15 @@ public static class Smoke
         Console.WriteLine($"{output}: {canvas.DrawnCount} node(s), {canvas.DrawableRouteCount} route(s), " +
                           $"{canvas.StartStateIds.Count} start state(s), zoom {zoom}" +
                           (focus.Length > 0 ? $", focused on #{focus}" : ""));
+
+        // How far the ownership wires run, which is what the layout is judged on. A picture at a zoom
+        // that fits the whole graph is far too small to tell whether the long diagonals stopped, so
+        // the distances are printed rather than left to the eye.
+        var drops = canvas.OwnershipWireDrops().OrderBy(d => d).ToList();
+        if (drops.Count > 0)
+            Console.WriteLine($"        wires: {drops.Count}, median {drops[drops.Count / 2]:0} tall, " +
+                              $"p90 {drops[(int)(drops.Count * 0.9)]:0}, worst {drops[^1]:0}, " +
+                              $"{drops.Count(d => d > 2000)} over 2000");
         return 0;
     }
 
@@ -313,6 +322,149 @@ public static class Smoke
                 int drawn = Find<GraphView>(window).First().DrawnIds.Count;
                 Console.WriteLine($"        canvas: {drawn} node(s) drawn");
                 CheckTrue($"{name}: the canvas draws the graph", drawn > 0);
+            }
+
+            // Folding a branch. Two things have to be true and they fail separately: the right nodes
+            // go, and the room they were taking comes back. A fold that only stopped drawing them
+            // would leave a hole the size of the whole subtree, which is worse than not folding.
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                var canvas = Find<GraphView>(window).First();
+
+                // A branch in the middle rather than the root. Folding the root is a real case and
+                // a useless check: it takes the whole graph off and proves nothing about the rest of
+                // it staying put.
+                string parent = canvas.DrawnIds
+                    .Where(id => canvas.OwnedCount(id) >= 3 && canvas.OwnedCount(id) <= canvas.DrawnCount / 4)
+                    .OrderByDescending(canvas.OwnedCount)
+                    .FirstOrDefault() ?? "";
+                if (parent.Length > 0)
+                {
+                    int was = canvas.DrawnCount;
+                    int owned = canvas.OwnedCount(parent);
+                    double wasTall = canvas.Extent().Tall;
+
+                    canvas.ToggleCollapse(parent, false);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    Check($"{name}: folding takes exactly what the node owns off the canvas",
+                          was - owned, canvas.DrawnCount);
+                    Check($"{name}: and the count it reports is what it is holding", owned,
+                          canvas.HiddenCount);
+                    CheckTrue($"{name}: the node itself stays, it is what unfolds it",
+                              canvas.DrawnIds.Contains(parent));
+                    CheckTrue($"{name}: and the room it was taking comes back " +
+                              $"({canvas.Extent().Tall:0} against {wasTall:0})",
+                              canvas.Extent().Tall < wasTall);
+
+                    canvas.ToggleCollapse(parent, false);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    Check($"{name}: unfolding brings back exactly what it promised", was,
+                          canvas.DrawnCount);
+                    Check($"{name}: and nothing is left hidden", 0, canvas.HiddenCount);
+                    Check($"{name}: and the canvas is the height it was", wasTall.ToString("F0"),
+                          canvas.Extent().Tall.ToString("F0"));
+                }
+            }
+
+            // Sharing is the ordinary case in a shipped behaviour, so a real file has to produce
+            // some. A check that passed because nothing was shared would be testing nothing.
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                var canvas = Find<GraphView>(window).First();
+
+                var shared = canvas.DrawnIds.Where(id => canvas.SharedBy(id).Count > 0).ToList();
+                Console.WriteLine($"        shared: {shared.Count} node(s) drawn in one of several " +
+                                  $"homes, e.g. {string.Join(", ", shared.Take(4).Select(id => "#" + id))}");
+                CheckTrue($"{name}: the file shares nodes, so the mark has something to say",
+                          shared.Count > 0);
+
+                foreach (string each in shared.Take(50))
+                {
+                    CheckTrue($"{name}: #{each}'s owner is not listed among its borrowers",
+                              !canvas.SharedBy(each).Contains(canvas.OwnerOf(each)));
+                    CheckTrue($"{name}: #{each} does not borrow itself",
+                              !canvas.SharedBy(each).Contains(each));
+                }
+
+                // A node with one parent is not marked, or the mark means nothing.
+                var only = canvas.DrawnIds.FirstOrDefault(id => canvas.SharedBy(id).Count == 0
+                                                             && canvas.OwnerOf(id).Length > 0);
+                CheckTrue($"{name}: a node with one parent carries no mark", only != null);
+
+                // The sentence is fixed, not whatever order an enumeration gives, and the owner
+                // leads because the node is sitting where the owner put it.
+                string one = shared[0];
+                string tip = canvas.SharedTip(one);
+                string ownerName = canvas.NameOf(canvas.OwnerOf(one));
+
+                CheckTrue($"{name}: the tip names the owner as the owner", tip.Contains("(owner)"));
+                CheckTrue($"{name}: and names it first",
+                          tip.Contains($": {ownerName} (owner)"));
+                Check($"{name}: it names every home once", canvas.SharedBy(one).Count + 1,
+                      tip.Split(", ").Length);
+
+                // Folding the branch a node is borrowed from must not make it look exclusive, and
+                // folding is a full rebuild, so this checks the sentence survives one too.
+                string borrower = canvas.SharedBy(one).FirstOrDefault(b => canvas.DrawnIds.Contains(b)) ?? "";
+                string branch = borrower.Length > 0 ? canvas.OwnerOf(borrower) : "";
+
+                if (branch.Length > 0 && canvas.DrawnIds.Contains(branch))
+                {
+                    canvas.ToggleCollapse(branch, false);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    CheckTrue($"{name}: folding a borrower away leaves the mark on",
+                              canvas.SharedBy(one).Count > 0);
+                    Check($"{name}: and the tip still names every home, word for word", tip,
+                          canvas.SharedTip(one));
+
+                    canvas.ToggleCollapse(branch, false);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    Check($"{name}: and unfolding leaves it unchanged", tip, canvas.SharedTip(one));
+                }
+            }
+
+            // Several nodes picked and dragged together. The failure this guards is a node that is
+            // both explicitly selected and reached through its parent moving twice, drifting away
+            // from its own family at double speed.
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                var canvas = Find<GraphView>(window).First();
+
+                string parent = canvas.DrawnIds.FirstOrDefault(id => canvas.OwnedCount(id) >= 2) ?? "";
+                if (parent.Length > 0)
+                {
+                    string child = canvas.OwnedIds(parent).First();
+                    var wasParent = canvas.PositionOf(parent)!.Value;
+                    var wasChild = canvas.PositionOf(child)!.Value;
+
+                    canvas.SelectForTest(new[] { parent, child });
+                    Check($"{name}: both are selected", 2, canvas.SelectedIds.Count);
+                    Check($"{name}: the primary is the first of them", parent, canvas.SelectedId);
+
+                    // The child is in the set once, not twice, even though it is reached both ways.
+                    var moving = canvas.MovementSet(parent);
+                    Check($"{name}: the movement set holds the child once",
+                          1, moving.Count(m => m == child));
+
+                    canvas.DragForTest(parent, 40, 25);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    var nowParent = canvas.PositionOf(parent)!.Value;
+                    var nowChild = canvas.PositionOf(child)!.Value;
+
+                    Check($"{name}: the node dragged moved by the drag", "40, 25",
+                          $"{nowParent.X - wasParent.X:F0}, {nowParent.Y - wasParent.Y:F0}");
+                    Check($"{name}: and the one reached twice moved once, not twice", "40, 25",
+                          $"{nowChild.X - wasChild.X:F0}, {nowChild.Y - wasChild.Y:F0}");
+
+                    canvas.SelectForTest(System.Array.Empty<string>());
+                }
             }
 
             // The run panel: a graph file starts stepping, lights its active states, and moves them
@@ -1068,10 +1220,53 @@ public static class Smoke
                       window.LoadedXml.Contains(typed, StringComparison.Ordinal));
         }
 
+        StandaloneAnimationFillsTheClipList();
+
         ArchiveBrowserBuilds();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
+    }
+
+    /// The clip list is built from clip generators and an animation file holds none, so Playback
+    /// opened on one with an empty panel. An empty panel reads as broken even when it is correct,
+    /// and every user pays for that once.
+    ///
+    /// Its own window rather than the one the loop above left behind, because the check counts rows
+    /// and a window that has held a behaviour has a list already filled from it.
+    private static void StandaloneAnimationFillsTheClipList()
+    {
+        const string path = "dist/examples/Dogmeat/Animations/IdleOutroDogmeatWalkForward.hkx";
+        if (!System.IO.File.Exists(path))
+        {
+            Console.WriteLine($"        clip list: skipped, {path} is not here");
+            return;
+        }
+
+        var window = new MainWindow();
+        window.Show();
+        window.Open(path);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        var tabs = Find<TabControl>(window)[0];
+        tabs.SelectedIndex = tabs.Items.OfType<TabItem>().ToList()
+                                 .FindIndex(t => t.Header?.ToString() == "Playback");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        Check("a standalone animation puts itself in the clip list", 1, window.ClipGrid.RowCount);
+
+        // Selected as well as listed, because the row exists to save the user a click they have no
+        // reason to know is needed: the animation is already the thing being played.
+        CheckTrue("and the row is picked, so Playback behaves as if a clip had been chosen",
+                  window.ClipGrid.HasSelection);
+
+        // What the row says, not merely that there is one. A row naming the wrong file or reading
+        // "0.00s, 0 frames" would pass a count and still tell the user nothing.
+        var said = Find<TextBlock>(window.ClipGrid).Select(t => t.Text ?? "").ToList();
+        CheckTrue("and it names the animation that is loaded",
+                  said.Contains("IdleOutroDogmeatWalkForward"));
+        CheckTrue($"and says how long it runs ({string.Join(" | ", said)})",
+                  said.Contains($"11.20s, {window.AnimationFrameCount} frames"));
     }
 
     /// The archive browser, built on a real archive written here rather than one from the game, so

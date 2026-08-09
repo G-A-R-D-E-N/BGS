@@ -996,7 +996,7 @@ public static class NativeSave
             var bytes = Encoding.UTF8.GetBytes(name);
             var withEnd = new byte[bytes.Length + 1];
             bytes.CopyTo(withEnd, 0);
-            wrote.Add(data.AppendData(withEnd));
+            wrote.Add(data.AppendAligned(withEnd, PackfileSection.StringAlignment));
         }
 
         data.AlignData(NativeAppend.Alignment);

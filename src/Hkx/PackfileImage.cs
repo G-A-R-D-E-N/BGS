@@ -210,18 +210,37 @@ public sealed class PackfileSection
         return at;
     }
 
+    /// What a string has to land on, and why it is two rather than sixteen.
+    ///
+    /// A string member keeps an ownership flag in the lowest bit of its pointer, so an odd address
+    /// reads as "this buffer belongs to me, release it with the object". Section data starts on a
+    /// sixteen byte boundary, so the parity of an offset is the parity of the loaded address, and a
+    /// string on an odd offset hands the game a pointer claiming to own memory inside the packfile.
+    ///
+    /// Two rather than sixteen because that is what the shipped files actually do. Every one of the
+    /// 37,545 local fixup destinations across the 453 sample files is even, but of the 7,618 that
+    /// point at text only 6,278 are sixteen byte aligned. Rounding to sixteen would be safe and
+    /// would stop matching Havok's own output.
+    public const int StringAlignment = 2;
+
+    /// Appends so the run begins on a multiple of `alignment`, padding with zeroes to get there.
+    ///
+    /// Here rather than at each caller because three places append a string and one appends an
+    /// object, and the last time a rule like this lived in four places, three of them had it wrong.
+    public int AppendAligned(byte[] bytes, int alignment)
+    {
+        int over = Data.Length % alignment;
+        if (over != 0) AppendData(new byte[alignment - over]);
+        return AppendData(bytes);
+    }
+
     /// Puts a new object's bytes at the end of this section, aligned the way every object in every
     /// vanilla file is.
     ///
     /// Measured rather than assumed: 24,788 objects across 120 behaviour files, every one of them on
     /// a sixteen byte boundary. Appending an object at whatever offset the data happens to end on
     /// would be the kind of thing that works until it does not.
-    public int AppendObject(byte[] bytes)
-    {
-        int over = Data.Length % 16;
-        if (over != 0) AppendData(new byte[16 - over]);
-        return AppendData(bytes);
-    }
+    public int AppendObject(byte[] bytes) => AppendAligned(bytes, 16);
 
     /// Adds the entry that says an object at this offset is an instance of the class whose name sits
     /// at that offset in `__classnames__`. Its position is put right by the reorder that follows.

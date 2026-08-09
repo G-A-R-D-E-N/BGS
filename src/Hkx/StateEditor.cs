@@ -22,6 +22,7 @@ public static class StateEditor
         public string Name = "";
         public string GeneratorRef = "";
         public string TransitionsRef = "";
+        public bool Enabled = true;
     }
 
     public sealed class TransitionRow
@@ -32,7 +33,11 @@ public static class StateEditor
         public int ToStateId = -1;
         public int ToNestedStateId;
         public int EventId = -1;
+        public int Priority;
+        public int Flags;
         public bool Wildcard;
+
+        public bool HasFlag(int flag) => (Flags & flag) == flag;
     }
 
     public static List<StateRow> States(BehaviourGraphModel model, string machineId)
@@ -52,6 +57,7 @@ public static class StateEditor
                 Name = info.Str("name"),
                 GeneratorRef = info.Str("generator"),
                 TransitionsRef = info.Str("transitions"),
+                Enabled = !string.Equals(info.Str("enable"), "false", StringComparison.OrdinalIgnoreCase),
             });
         }
         return rows;
@@ -72,6 +78,8 @@ public static class StateEditor
                 elements[i].TryGetValue("toStateId", out var to);
                 elements[i].TryGetValue("eventId", out var ev);
                 elements[i].TryGetValue("toNestedStateId", out var nested);
+                elements[i].TryGetValue("priority", out var priority);
+                elements[i].TryGetValue("flags", out var flags);
                 rows.Add(new TransitionRow
                 {
                     ArrayId = array.Id,
@@ -80,11 +88,28 @@ public static class StateEditor
                     ToStateId = int.TryParse(to, out int t) ? t : -1,
                     ToNestedStateId = int.TryParse(nested, out int n) ? n : 0,
                     EventId = int.TryParse(ev, out int e) ? e : -1,
+                    Priority = int.TryParse(priority, out int p) ? p : 0,
+                    Flags = TransitionFlags(flags),
                     Wildcard = wildcard,
                 });
             }
         }
         return rows;
+    }
+
+    private static int TransitionFlags(string? text)
+    {
+        text = text?.Trim() ?? "";
+        if (int.TryParse(text, out int number)) return number;
+
+        var declared = HavokClassTypes.Shipped
+            .Enum("hkbStateMachineTransitionInfo", "TransitionFlags");
+        if (declared == null) return 0;
+
+        int bits = 0;
+        foreach (string part in text.Split('|', StringSplitOptions.RemoveEmptyEntries))
+            if (declared.TryGetValue(part.Trim(), out long value)) bits |= (int)value;
+        return bits;
     }
 
     private static IEnumerable<(string Ref, bool Wildcard, int FromStateId)> Arrays(

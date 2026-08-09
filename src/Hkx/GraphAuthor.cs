@@ -87,25 +87,13 @@ public static class GraphAuthor
     // these are usually nodes the user meant to hook up and did not.
     public static List<HkObject> Unattached(BehaviourGraphModel model)
     {
-        var referenced = new HashSet<string>();
-        foreach (var obj in model.Objects)
-        {
-            foreach (var value in obj.Scalars.Values)
-                if (value.StartsWith('#')) referenced.Add(value[1..]);
-            foreach (var list in obj.Lists.Values)
-                foreach (string token in list)
-                    if (token.StartsWith('#')) referenced.Add(token[1..]);
-            foreach (var rows in obj.StructLists.Values)
-                foreach (var row in rows)
-                    foreach (var value in row.Values)
-                        if (value.StartsWith('#')) referenced.Add(value[1..]);
-            // Named nested objects, such as an event's payload, hold references too. Missing these
-            // reported every hkbStringEventPayload in a vanilla graph as unreachable.
-            foreach (var members in obj.Structs.Values)
-                foreach (var value in members.Values)
-                    if (value.StartsWith('#')) referenced.Add(value[1..]);
-        }
+        // Named nested objects, such as an event's payload, hold references too. Missing these
+        // reported every hkbStringEventPayload in a vanilla graph as unreachable. That is one of the
+        // reasons the walk moved to HkReferences: the lesson had been learned here and nowhere else.
+        var referenced = HkReferences.Targets(model);
 
+        // The class filter is this caller's business, not the walk's. Only nodes are drawn, so only
+        // a node going unreferenced is worth reporting to someone editing a graph.
         return model.Objects.Where(o => !referenced.Contains(o.Id) && IsNode(o.Class)).ToList();
     }
 
@@ -167,35 +155,38 @@ public static class GraphAuthor
     }
 
     // Clears every reference to target held by this one object, whichever shape it is in.
+    /// Clears every place this holder names the target.
+    ///
+    /// Which places those are is HkReferences' answer, so this can no longer disagree with the
+    /// search that found the holder in the first place. A pointer inside an element of an array of
+    /// structs, which is where a transition keeps the effect it plays, was once found by that search
+    /// and then never cleared here: deleting a blending transition effect took the object out of the
+    /// document and left every transition still naming it. Nothing said so, because the save went
+    /// out through hkxpack, which was handed a file naming an object that was not in it. Sharing the
+    /// walk is what stops that being possible rather than merely fixed.
+    ///
+    /// What differs per kind is the writing, which is this method's own business. A list element is
+    /// dropped. Everything else is set to null in place: a transition with no effect is a transition
+    /// that snaps, which the format allows and vanilla files do, so dropping the element would
+    /// silently delete a route between two states instead.
     private static string Detach(string xml, HkObject holder, string targetId)
     {
-        string token = "#" + targetId;
+        var sites = HkReferences.In(holder).Where(s => s.Target == targetId).ToList();
 
-        foreach (var (field, value) in holder.Scalars.Where(p => p.Value == token).ToList())
-            xml = HkxTextEdit.SetParam(xml, holder.Id, field, "null");
+        // A plain field keeps going through SetParam rather than the path writer. The two find the
+        // parameter differently, and this one has been writing scalars correctly for the whole life
+        // of the tool, so consolidating the search is not a reason to also change the write.
+        foreach (var site in sites.Where(s => s.How == HkReferences.Held.Scalar))
+            xml = HkxTextEdit.SetParam(xml, holder.Id, site.Field, "null");
 
-        foreach (var (field, list) in holder.Lists)
-        {
-            // Back to front, because removing an element renumbers the ones after it.
-            var indices = list.Select((v, i) => (v, i)).Where(p => p.v == token)
-                              .Select(p => p.i).OrderByDescending(i => i).ToList();
-            foreach (int index in indices)
-                xml = HkxTextEdit.ArrayRemoveAt(xml, holder.Id, field, index);
-        }
+        foreach (var site in sites.Where(s => s.How is HkReferences.Held.StructListMember
+                                                   or HkReferences.Held.StructMember))
+            xml = HkxTextEdit.SetParamAt(xml, holder.Id, site.Path(), "null");
 
-        // A pointer inside an element of an array of structs, which is where a transition keeps the
-        // effect it plays. These were found by the search for holders and then never cleared, so
-        // deleting a blending transition effect took the object out of the document and left every
-        // transition still naming it. Nothing said so: the save went out through hkxpack, which was
-        // handed a file naming an object that was not in it.
-        //
-        // Cleared to null rather than by dropping the element. A transition with no effect is a
-        // transition that snaps, which is a thing the format allows and vanilla files do; dropping
-        // the element would silently delete a route between two states instead.
-        foreach (var (field, rows) in holder.StructLists)
-            for (int row = 0; row < rows.Count; row++)
-                foreach (var (member, value) in rows[row].Where(p => p.Value == token).ToList())
-                    xml = HkxTextEdit.SetParamAt(xml, holder.Id, $"{field}[{row}].{member}", "null");
+        // Back to front, because removing an element renumbers the ones after it.
+        foreach (var site in sites.Where(s => s.How == HkReferences.Held.ListElement)
+                                  .OrderByDescending(s => s.Index))
+            xml = HkxTextEdit.ArrayRemoveAt(xml, holder.Id, site.Field, site.Index);
 
         return xml;
     }
@@ -209,10 +200,17 @@ public static class GraphAuthor
     // makes an entire subtree vanish the moment a link is dragged.
     //
     // So every detached subtree gets walked as well, from its own head.
-    public static List<(HkObject Node, int Column)> Layout(BehaviourGraphModel model, int max)
+    /// Every node the canvas will draw, with its depth from the root and the node that reached it
+    /// first.
+    ///
+    /// That last value is what makes the canvas work rather than a detail of the walk. A node can be
+    /// pointed at by several parents, and the picture has to put it in one place, hide it under one
+    /// collapse and move it with one drag. The walk already decides which parent gets there first,
+    /// because it skips a node it has placed; this stops throwing that answer away.
+    public static List<(HkObject Node, int Column, string OwnerId)> Layout(BehaviourGraphModel model, int max)
     {
         var placed = new Dictionary<string, int>();
-        var order = new List<(HkObject, int)>();
+        var order = new List<(HkObject, int, string)>();
 
         var root = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraph")
                    ?? model.Objects.FirstOrDefault(o => o.Class == "hkbStateMachine")
@@ -232,18 +230,21 @@ public static class GraphAuthor
     }
 
     private static int Walk(BehaviourGraphModel model, HkObject from, int column,
-                            Dictionary<string, int> placed, List<(HkObject, int)> order, int max)
+                            Dictionary<string, int> placed, List<(HkObject, int, string)> order, int max)
     {
         var queue = new Queue<(HkObject Node, int Column)>();
         queue.Enqueue((from, column));
         placed[from.Id] = column;
-        order.Add((from, column));
+
+        // A walk root is owned by nothing. There is one per detached subtree as well as the real
+        // root, and each is the top of its own family.
+        order.Add((from, column, ""));
         int deepest = column;
 
         while (queue.Count > 0 && order.Count < max)
         {
             var (current, depth) = queue.Dequeue();
-            foreach (string target in Targets(model, current))
+            foreach (string target in PointsAt(model, current))
             {
                 if (placed.ContainsKey(target)) continue;
                 var next = model.Get(target);
@@ -251,7 +252,7 @@ public static class GraphAuthor
 
                 placed[target] = depth + 1;
                 deepest = Math.Max(deepest, depth + 1);
-                order.Add((next, depth + 1));
+                order.Add((next, depth + 1, current.Id));
                 queue.Enqueue((next, depth + 1));
                 if (order.Count >= max) break;
             }
@@ -259,9 +260,15 @@ public static class GraphAuthor
         return deepest;
     }
 
-    // Everything the object points at, including references buried in array elements such as a
-    // transition's blend effect, which the port list does not carry.
-    private static IEnumerable<string> Targets(BehaviourGraphModel model, HkObject obj)
+    /// Everything the object points at, including references buried in array elements such as a
+    /// transition's blend effect, which the port list does not carry.
+    ///
+    /// Public because this is the definition of an edge on the canvas and more than one thing needs
+    /// it. The walk below uses it to decide ownership; anything asking how many parents a node has
+    /// has to ask the same question or it will disagree with where the node was put. Answering from
+    /// the port list alone under reports, because ownership can be settled through an array element
+    /// the ports never carried.
+    public static IEnumerable<string> PointsAt(BehaviourGraphModel model, HkObject obj)
     {
         foreach (var slot in GraphLinks.OutSlots(model, obj))
             foreach (string target in slot.Targets)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -94,6 +95,7 @@ public static class Program
             case "link": return Link(argv);
             case "draw": return Draw(argv);
             case "test": return Tests.Run();
+            case "defaults": return Defaults(argv);
             default: Usage(); return 1;
         }
     }
@@ -393,6 +395,12 @@ public static class Program
               Regression checks on graphs built in memory. No game install, no hkxpack, no JVM,
               so this one can be run on every change. Exits non zero on any failure.
 
+          dotnet run --project tools/symrm/symrm.csproj -- defaults <Fallout4.exe.unpacked.exe> <Fallout4_163_functions.txt> [class]
+              What the game says every field starts out as, read off the class registrations in the
+              executable, against what the class table believes. The table's own 625 defaults are
+              the gate: this has to reproduce all of them or it is reading the blob wrongly. Naming
+              a class prints everything the game says about it instead of gating.
+
           dotnet run --project tools/symrm/symrm.csproj -- door <SpecialCaseDoors Behavior.hkx> <out.hkx>
               The additive door edit: two new events and two new states that give a door a way to
               be placed already open or already closed without playing the transition, in the shape
@@ -415,6 +423,222 @@ public static class Program
     /// pointing one of these commands at a file that already sits in a directory of that name
     /// deletes the file being read. Found by doing it: a run of crosscheck against a file left in an
     /// earlier crosscheck's working directory took the file with it.
+    /// What the game says every field starts out as, against what the class table believes.
+    ///
+    /// The table is generated from hkxpack's database, which records a default for 625 members and
+    /// none at all for the ones whose value comes from a fixed set. The game registers every class at
+    /// startup and hands the constructor a blob of defaults, so it knows all of them.
+    ///
+    /// The 625 the table already has are the gate. If this cannot reproduce those exactly then it is
+    /// reading the blob wrongly and nothing it says about the rest is worth having.
+    private static int Defaults(string[] argv)
+    {
+        if (argv.Length < 3)
+        {
+            Console.Error.WriteLine(
+                "defaults <Fallout4.exe.unpacked.exe> <Fallout4_163_functions.txt>");
+            return 1;
+        }
+
+        var types = HavokClassTypes.Shipped;
+        var (read, refused) = GameDefaults.Of(argv[1], argv[2], types);
+
+        // Naming a class prints everything the game says about it, which is the shape a person wants
+        // when checking one field rather than gating the whole table.
+        string? only = argv.Skip(3).FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
+        if (only != null)
+        {
+            foreach (var one in read.Where(r => r.ClassName.Contains(only, StringComparison.OrdinalIgnoreCase)))
+            {
+                Console.WriteLine($"{one.ClassName}: {one.Members} member(s), {one.ObjectSize} bytes, version {one.Version}");
+                foreach (var member in types[one.ClassName]!.Declared)
+                {
+                    one.Defaults.TryGetValue(member.Name, out string? game);
+                    if (game == null && member.Default == null) continue;
+                    string mark = game == null ? "zero by omission" : game;
+                    Console.WriteLine($"    {member.Name,-40} {mark,-42} table {member.Default ?? "-"}");
+                }
+            }
+            return 0;
+        }
+
+        int agreed = 0, differed = 0, gained = 0, lost = 0, zeroed = 0;
+        var disagreements = new List<string>();
+        var lostOnes = new List<string>();
+        var gainedOnes = new List<string>();
+
+        foreach (var found in read)
+        {
+            foreach (var member in types[found.ClassName]!.Declared)
+            {
+                found.Defaults.TryGetValue(member.Name, out string? game);
+                string? table = member.Default;
+
+                if (table == null && game == null) continue;
+                if (table == null)
+                {
+                    gained++;
+                    if (found.ClassName.StartsWith("hkb", StringComparison.Ordinal) ||
+                        found.ClassName.StartsWith("BS", StringComparison.Ordinal))
+                        gainedOnes.Add($"{found.ClassName}.{member.Name} = {game}");
+                    continue;
+                }
+                if (game == null)
+                {
+                    // The blob only carries a default that is not zero. A field the game leaves out
+                    // starts as zero, which is what the table says for these, so the two agree.
+                    if (IsZero(table)) { zeroed++; continue; }
+                    lost++;
+                    lostOnes.Add($"{found.ClassName}.{member.Name} = {table}");
+                    continue;
+                }
+
+                if (SameDefault(table, game)) agreed++;
+                else
+                {
+                    differed++;
+                    disagreements.Add($"{found.ClassName}.{member.Name}: table {table}, game {game}");
+                }
+            }
+        }
+
+        Console.WriteLine($"{read.Count} class(es) read, {refused.Count} refused");
+        Console.WriteLine($"  the table already had  : {agreed + differed + lost}");
+        Console.WriteLine($"    agreeing             : {agreed}");
+        Console.WriteLine($"    disagreeing          : {differed}");
+        Console.WriteLine($"    zero, which the game stores by leaving out: {zeroed}");
+        Console.WriteLine($"    the game does not set and is not zero      : {lost}");
+        Console.WriteLine($"  the game adds          : {gained}");
+
+        foreach (var why in refused.Take(12)) Console.WriteLine("  refused: " + why);
+        if (refused.Count > 12) Console.WriteLine($"  ... and {refused.Count - 12} more");
+
+        foreach (string line in disagreements.Take(25)) Console.WriteLine("  differs: " + line);
+        if (disagreements.Count > 25) Console.WriteLine($"  ... and {disagreements.Count - 25} more");
+
+        foreach (string line in gainedOnes.Take(30)) Console.WriteLine("  the game says: " + line);
+        if (gainedOnes.Count > 30) Console.WriteLine($"  ... and {gainedOnes.Count - 30} more on behaviour classes");
+
+        foreach (string line in lostOnes.Take(10)) Console.WriteLine("  only in the table: " + line);
+        if (lostOnes.Count > 10) Console.WriteLine($"  ... and {lostOnes.Count - 10} more");
+
+        if (argv.Contains("--write"))
+        {
+            if (differed != 0 || lost != 0)
+            {
+                Console.Error.WriteLine(
+                    "Refusing to write: the two sources disagree somewhere, so the reading is not " +
+                    "trustworthy enough to fold in. Fix the disagreement first.");
+                return 1;
+            }
+            return WriteDefaults(read, types);
+        }
+
+        // The gate. Reading the blob wrongly shows up here first, because these are the values two
+        // independent sources both claim to know.
+        return differed == 0 ? 0 : 1;
+    }
+
+    /// Whether two spellings of the same default mean the same thing. The table spells a real as
+    /// `0.000000` and this spells it `0.0`, which is a difference in the writing and not the value.
+    /// Folds the defaults the game knows and the table does not into `HavokClassTypes.json`.
+    ///
+    /// Additive only. A default the table already has is left alone even though the two agree,
+    /// because the table is generated from hkxpack's database and keeping its own values means a
+    /// rebuild by `symrm classes` changes only what it should.
+    ///
+    /// Written the way `symrm classes` writes it, one class per line, so the diff is the members
+    /// that gained a default and nothing else. A class that gains nothing is re-emitted from its own
+    /// parsed form, which is the check that this is writing the same shape: if it were not, every
+    /// line would move.
+    private static int WriteDefaults(List<GameDefaults.Found> read, HavokClassTypes types)
+    {
+        string path = Path.Combine("src", "Hkx", "HavokClassTypes.json");
+        if (!File.Exists(path))
+        {
+            Console.Error.WriteLine($"{path} is not here, so run this from the top of the repository.");
+            return 1;
+        }
+
+        var doc = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        var classes = doc["classes"]!.AsObject();
+        var byName = read.ToDictionary(r => r.ClassName, StringComparer.Ordinal);
+
+        int added = 0, touched = 0;
+        foreach (var (className, node) in classes)
+        {
+            if (!byName.TryGetValue(className, out var found)) continue;
+
+            bool any = false;
+            foreach (var member in node!["members"]!.AsArray())
+            {
+                string name = member!["name"]!.GetValue<string>();
+                if (member["default"] != null && member["default"]!.GetValueKind() !=
+                    System.Text.Json.JsonValueKind.Null) continue;
+                if (!found.Defaults.TryGetValue(name, out string? game)) continue;
+
+                member["default"] = game;
+                added++;
+                any = true;
+            }
+            if (any) touched++;
+        }
+
+        var text = new System.Text.StringBuilder();
+        text.Append("{\n\"note\":");
+        text.Append(JsonSerializer.Serialize(TableNote));
+        text.Append(",\n\"havokVersion\":");
+        text.Append(JsonSerializer.Serialize(doc["havokVersion"]!.GetValue<string>()));
+        text.Append(",\n\"classes\":{\n");
+        text.Append(string.Join(",\n", classes.Select(c =>
+            JsonSerializer.Serialize(c.Key) + ":" + c.Value!.ToJsonString())));
+        text.Append("\n}\n}\n");
+
+        File.WriteAllText(path, text.ToString());
+
+        Console.WriteLine($"wrote {added} default(s) onto {touched} class(es) in {path}");
+        Console.WriteLine("  rerun without --write: everything should agree and nothing should be added");
+        return 0;
+    }
+
+    /// What the class table says about itself, in one place because two commands write the file and
+    /// a note that drifted would be worse than none: the whole point of it is telling the next
+    /// person that a rebuild alone loses the defaults read out of the game.
+    private static readonly string TableNote =
+        "What a Havok class is made of. The member types, which members are ever written to a " +
+        "file, the class of every inline struct and every enum's values come from the class " +
+        "database inside hkxpack's jar (MIT, see THIRD_PARTY_NOTICES.md), read out as a zip. " +
+        "The instance sizes come from HavokClassLayouts.json, which was read out of Fallout 4 " +
+        "itself. Rebuild with `symrm classes`, then run `symrm defaults --write` after it: that " +
+        "database records no default for a member whose value comes from a fixed set, and those " +
+        "are read out of the game's own class registrations. A rebuild on its own drops them.";
+
+    /// Whether a spelling means zero, in any of the shapes the table writes one.
+    private static bool IsZero(string value)
+    {
+        string t = value.Trim();
+        if (t == "false") return true;
+        if (float.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out float f)) return f == 0;
+        return t.Trim('(', ')', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .All(x => float.TryParse(x, NumberStyles.Float, CultureInfo.InvariantCulture, out float e) && e == 0);
+    }
+
+    private static bool SameDefault(string table, string game)
+    {
+        if (string.Equals(table.Trim(), game.Trim(), StringComparison.OrdinalIgnoreCase)) return true;
+
+        if (float.TryParse(table, NumberStyles.Float, CultureInfo.InvariantCulture, out float a) &&
+            float.TryParse(game, NumberStyles.Float, CultureInfo.InvariantCulture, out float b))
+        {
+            // Relative, because these run from 0 to 1.8e19 and a fixed tolerance calls the big ones
+            // different when only their spelling is.
+            float scale = Math.Max(Math.Abs(a), Math.Abs(b));
+            return Math.Abs(a - b) <= (scale > 1 ? scale * 1e-6f : 1e-6f);
+        }
+
+        return false;
+    }
+
     private static string WorkDirectory(string prefix, string file)
     {
         string work = Path.Combine(Path.GetTempPath(), prefix + Path.GetFileNameWithoutExtension(file));
@@ -1716,12 +1940,7 @@ public static class Program
 
         var text = new System.Text.StringBuilder();
         text.Append("{\n\"note\":");
-        text.Append(JsonSerializer.Serialize(
-            "What a Havok class is made of. The member types, which members are ever written to a " +
-            "file, the class of every inline struct and every enum's values come from the class " +
-            "database inside hkxpack's jar (MIT, see THIRD_PARTY_NOTICES.md), read out as a zip. " +
-            "The instance sizes come from HavokClassLayouts.json, which was read out of Fallout 4 " +
-            "itself. Rebuild with `symrm classes`."));
+        text.Append(JsonSerializer.Serialize(TableNote));
         text.Append(",\n\"havokVersion\":\"hk_2014.1.0-r1\",\n\"classes\":{\n");
         text.Append(string.Join(",\n", classes.Select(c => JsonSerializer.Serialize(c.Key) + ":" + c.Value)));
         text.Append("\n}\n}\n");
@@ -1880,6 +2099,7 @@ public static class Program
             : new[] { target };
 
         long transitions = 0, nestedTo = 0, nestedFrom = 0, wildcards = 0, danglingTarget = 0;
+        long nestedFlag = 0, nonzeroNestedWithoutFlag = 0, zeroNestedWithFlag = 0;
         long machines = 0, statesTotal = 0, nestedMachines = 0;
         long nestedResolves = 0, nestedUnresolved = 0, nestedNotAMachine = 0;
         long naiveWildcardLines = 0, fromMachineLines = 0;
@@ -1945,6 +2165,11 @@ public static class Program
                     transitions++;
                     if (row.Wildcard) wildcards++;
                     if (!known.Contains(row.ToStateId)) danglingTarget++;
+
+                    bool nestedIsValid = row.HasFlag(0x2000);
+                    if (nestedIsValid) nestedFlag++;
+                    if (row.ToNestedStateId != 0 && !nestedIsValid) nonzeroNestedWithoutFlag++;
+                    if (row.ToNestedStateId == 0 && nestedIsValid) zeroNestedWithFlag++;
                     if (row.ToNestedStateId == 0) continue;
 
                     nestedTo++;
@@ -2076,6 +2301,9 @@ public static class Program
         Console.WriteLine($"  {transitions,7} transition(s)");
         Console.WriteLine($"  {wildcards,7} of them wildcard, fired from any state ({Percent(wildcards, transitions)})");
         Console.WriteLine($"  {nestedTo,7} with a toNestedStateId, which one arrow cannot say ({Percent(nestedTo, transitions)})");
+        Console.WriteLine($"  {nestedFlag,7} carrying FLAG_TO_NESTED_STATE_ID_IS_VALID (0x2000)");
+        Console.WriteLine($"  {nonzeroNestedWithoutFlag,7} with a nonzero toNestedStateId without that flag");
+        Console.WriteLine($"  {zeroNestedWithFlag,7} with toNestedStateId zero and that flag");
         Console.WriteLine($"          {nestedResolves,7} of those name a real state of the machine inside the state entered");
         Console.WriteLine($"          {nestedUnresolved,7} name a state that machine does not have");
         Console.WriteLine($"          {nestedNotAMachine,7} where the state entered leads to no machine at all");
@@ -9301,12 +9529,7 @@ public static class Program
         while (queue.Count > 0)
         {
             var current = queue.Dequeue();
-            var targets = GraphLinks.OutSlots(model, current).SelectMany(s => s.Targets)
-                .Concat(current.StructLists.Values.SelectMany(rows => rows)
-                    .SelectMany(row => row.Values)
-                    .Where(v => v.StartsWith('#')).Select(v => v[1..]));
-
-            foreach (string target in targets)
+            foreach (string target in GraphAuthor.PointsAt(model, current))
             {
                 if (!seen.Add(target)) continue;
                 var next = model.Get(target);

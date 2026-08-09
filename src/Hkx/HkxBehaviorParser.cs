@@ -26,6 +26,17 @@ public class HkxBehaviorParser
     // hkxpack's XML for the same file; verified 322/322 and 4645/4645.
     public static List<BehaviorNode> LastObjects { get; private set; } = new();
 
+    /// The object a file should be read from, or null when nothing could be read at all.
+    ///
+    /// Null means the bytes were refused: missing, too short, wrong magic, wrong version, no section
+    /// header, or no objects. It does not mean the file holds no behaviour. A packfile with objects
+    /// in it always resolves a root, because the search falls back to the first object when it finds
+    /// no graph or machine to prefer. See the fallback below for why.
+    ///
+    /// So callers must not use `root == null` to tell an animation apart from a behaviour. That
+    /// condition is never observed for a populated packfile, and code written on it is dead. Ask
+    /// about the contents instead: an animation file lists no `hkbClipGenerator`, and
+    /// `HkxBinaryReader.TryReadAnimation` says whether an animation decoded.
     public static BehaviorNode? ParseBehavior(string filepath)
     {
         if (!File.Exists(filepath)) return null;
@@ -175,9 +186,19 @@ public class HkxBehaviorParser
         var rootNode = objects.FirstOrDefault(o => o.ClassName == "hkbBehaviorGraph") ??
                        objects.FirstOrDefault(o => o.ClassName == "hkbStateMachine");
 
+        // Plenty of files worth opening name neither a graph nor a machine: an animation, a skeleton,
+        // a character, a ragdoll. Returning null for those would make "could not read this file" and
+        // "this file is not a behaviour" the same answer, and the window needs to tell them apart to
+        // decide what to show. So anything with objects in it resolves a root and the caller reads
+        // what it actually found.
+        //
+        // The cost is that `root == null` stops being a test for anything except an unreadable file.
+        // It is intentionally never true here for a populated packfile, so do not reach for it to
+        // detect an animation. That mistake has been made once already and the branch it produced
+        // could never run. See the contract on ParseBehavior above.
         if (rootNode == null && objects.Count > 0)
         {
-            rootNode = objects[0]; // fallback
+            rootNode = objects[0];
         }
 
         return rootNode;
