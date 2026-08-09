@@ -404,6 +404,15 @@ dotnet run --project tools/symrm/symrm.csproj -- anims  <extracted Data folder>
 dotnet run --project tools/symrm/symrm.csproj -- repack <Data>/Meshes/Actors/Dogmeat/Behaviors/DogmeatDefault.hkx
 ```
 
+`cliptime` needs the same, and for the same reason: how long a clip plays for is in the animation file
+the project points at rather than in the behaviour, so it needs the folders around the file rather
+than a pile of loose ones. Extract with `--tree` and point it at the root:
+
+```
+dotnet run --project tools/symrm/symrm.csproj -- extract "<Data>/Fallout4 - Animations.ba2" "" /tmp/tree .hkx --tree
+dotnet run --project tools/symrm/symrm.csproj -- cliptime /tmp/tree
+```
+
 `corpus` writes 531 files. `unpack 4` takes every fourth, which is the 132 the numbers here come
 from; pass 1 for all of them, and expect it to take a while, because it runs one JVM at a time
 deliberately. `remove` is the round trip that proves a symbol removal renumbered everything it had
