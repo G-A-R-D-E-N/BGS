@@ -24,6 +24,10 @@ public static class Tests
         ("EveryDrawnNodeHasOneOwner", EveryDrawnNodeHasOneOwner),
         ("OwnershipAnswersWhatMovesAndWhatHides", OwnershipAnswersWhatMovesAndWhatHides),
         ("ASharedGeneratorBelongsToOneBranchOnly", ASharedGeneratorBelongsToOneBranchOnly),
+        ("ChildrenSitBesideTheParentThatOwnsThem", ChildrenSitBesideTheParentThatOwnsThem),
+        ("ACollidingFamilyMovesWhole", ACollidingFamilyMovesWhole),
+        ("APinnedNodeIsNeverMovedToMakeRoom", APinnedNodeIsNeverMovedToMakeRoom),
+        ("ASharedNodeIsPlacedOnceByItsOwner", ASharedNodeIsPlacedOnceByItsOwner),
         ("ReplacingLinkSaysWhatItDisplaced", ReplacingLinkSaysWhatItDisplaced),
         ("BlenderChildIsWrapped", BlenderChildIsWrapped),
         ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
@@ -339,6 +343,161 @@ public static class Tests
             string.Join(", ", tree.Moving(new[] { "95" })));
         Check("dragging the owner takes the clip with it", "93, 94",
             string.Join(", ", tree.Moving(new[] { "93" }).OrderBy(m => m, StringComparer.Ordinal)));
+    }
+
+    /// A parent, and the family it owns, for the layout checks. Every node the same height so the
+    /// numbers in the checks are readable rather than arithmetic.
+    private static GraphLayout.Item Node(string id, int column, string owner) =>
+        new(id, column, owner, 100);
+
+    /// Where the middle of a node sits, which is what a family is centred on.
+    private static double Centre(Dictionary<string, double> y, string id) => y[id] + 50;
+
+    // The defect this replaces: nodes were placed by depth into columns and stacked with one running
+    // Y counter per column, so nothing ever consulted the parent's position and a parent low on the
+    // canvas got its children put near the top. The long diagonal wires were that.
+    private static void ChildrenSitBesideTheParentThatOwnsThem()
+    {
+        Console.WriteLine("\nchildren sit beside the parent that owns them");
+
+        // Six children under P1 push P2 a long way down its column, which is the case that used to
+        // strand P2's own children at the top of the next column.
+        var items = new List<GraphLayout.Item> { Node("root", 0, "") };
+        items.Add(Node("P1", 1, "root"));
+        items.Add(Node("P2", 1, "root"));
+        for (int i = 0; i < 6; i++) items.Add(Node("a" + i, 2, "P1"));
+        items.Add(Node("b0", 2, "P2"));
+        items.Add(Node("b1", 2, "P2"));
+
+        var y = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+
+        CheckTrue($"the second parent really is far down ({y["P2"]:F0})", y["P2"] > 300);
+
+        // The whole point. Its children are beside it, not at the top of the column with P1's.
+        double drop = Math.Abs(Centre(y, "b0") - Centre(y, "P2"));
+        CheckTrue($"its children are beside it, not at the top ({y["b0"]:F0} against {y["P2"]:F0})",
+            drop < 200);
+        CheckTrue($"and nowhere near the other family ({y["b0"]:F0} against {y["a0"]:F0})",
+            y["b0"] > y["a0"] + 200);
+
+        // Centred on the parent rather than starting at it, so the wires fan out from both sides.
+        CheckTrue($"the family straddles its parent ({y["b0"]:F0}, {y["b1"]:F0})",
+            Centre(y, "b0") < Centre(y, "P2") + 1 && Centre(y, "b1") > Centre(y, "P2") - 1);
+
+        // Nothing overlaps anywhere.
+        foreach (var column in items.GroupBy(i => i.Column))
+        {
+            var sorted = column.OrderBy(i => y[i.Id]).ToList();
+            for (int i = 1; i < sorted.Count; i++)
+                CheckTrue($"{sorted[i - 1].Id} and {sorted[i].Id} do not overlap",
+                    y[sorted[i].Id] >= y[sorted[i - 1].Id] + sorted[i - 1].Height - 0.001);
+        }
+
+        // Same input, same answer, every time.
+        var again = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+        Check("the layout is deterministic", string.Join(",", y.OrderBy(p => p.Key).Select(p => $"{p.Key}={p.Value:F2}")),
+              string.Join(",", again.OrderBy(p => p.Key).Select(p => $"{p.Key}={p.Value:F2}")));
+    }
+
+    // A family is the unit a collision moves. Moving one member and not the rest is what splits a
+    // family, and a split family is what puts the long wires back.
+    private static void ACollidingFamilyMovesWhole()
+    {
+        Console.WriteLine("\ntwo families in a column never mix");
+
+        var items = new List<GraphLayout.Item>
+        {
+            Node("root", 0, ""),
+            Node("P1", 1, "root"),
+            Node("P2", 1, "root"),
+            Node("a0", 2, "P1"), Node("a1", 2, "P1"), Node("a2", 2, "P1"),
+            Node("b0", 2, "P2"), Node("b1", 2, "P2"), Node("b2", 2, "P2"),
+        };
+
+        var y = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+
+        // Spacing inside each family: 100 tall plus a 20 gap.
+        Check("the first family keeps its spacing", "120, 120",
+            $"{y["a1"] - y["a0"]:F0}, {y["a2"] - y["a1"]:F0}");
+        Check("and so does the second", "120, 120",
+            $"{y["b1"] - y["b0"]:F0}, {y["b2"] - y["b1"]:F0}");
+
+        // The invariant, checked by interleaving rather than by spacing. A family split by some
+        // future change would show up as one family's members appearing on both sides of the
+        // other's, which a spacing check would sail straight past.
+        var order = items.Where(i => i.Column == 2).OrderBy(i => y[i.Id])
+                         .Select(i => i.Id[0]).ToArray();
+        Check("each family is one unbroken run down the column", "aaabbb", new string(order));
+
+        CheckTrue($"and the two are clear of each other ({y["b0"]:F0} against {y["a2"]:F0})",
+            y["b0"] >= y["a2"] + 100 - 0.001);
+
+        // Each parent sits level with the middle of its own family, which is what stops the wires
+        // running the height of the canvas.
+        Check("the first parent is level with its family", Centre(y, "a1").ToString("F2"),
+              Centre(y, "P1").ToString("F2"));
+        Check("and so is the second", Centre(y, "b1").ToString("F2"),
+              Centre(y, "P2").ToString("F2"));
+    }
+
+    // A position the user chose by hand outranks anything the layout would rather do. It blocks, so
+    // a family is pushed past it, and it never moves itself.
+    private static void APinnedNodeIsNeverMovedToMakeRoom()
+    {
+        Console.WriteLine("\na pinned node is never moved to make room");
+
+        var items = new List<GraphLayout.Item>
+        {
+            Node("root", 0, ""),
+            Node("P", 1, "root"),
+            Node("a0", 2, "P"), Node("a1", 2, "P"),
+            Node("Held", 2, "root"),
+        };
+
+        // Pinned exactly where the family would naturally want to sit.
+        var loose = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+        double wanted = loose["a0"];
+
+        var pinned = new Dictionary<string, double> { ["Held"] = wanted };
+        var y = GraphLayout.Place(items, pinned, 20);
+
+        Check("the pinned node is exactly where it was put", wanted.ToString("F2"), y["Held"].ToString("F2"));
+        CheckTrue($"and the family went around it rather than through it ({y["a0"]:F0} against {y["Held"]:F0})",
+            y["a0"] >= y["Held"] + 100 || y["a0"] + 100 <= y["Held"]);
+        Check("the family that moved kept its spacing", 120d, Math.Round(y["a1"] - y["a0"]));
+
+        // Whitespace is the accepted price. The check is that nothing was moved that should not
+        // have been, not that the column is tight.
+        CheckTrue("the pin did not drag its neighbours with it", Math.Abs(y["Held"] - wanted) < 0.001);
+    }
+
+    // A node two parents point at is laid out once, by the parent that owns it. The borrower gets a
+    // wire to wherever the owner put it and no say in where that is.
+    private static void ASharedNodeIsPlacedOnceByItsOwner()
+    {
+        Console.WriteLine("\na shared node is placed once by its owner");
+
+        var model = BehaviourGraphModel.Parse(SharedGeneratorGraph());
+        var placed = GraphAuthor.Layout(model, 1000);
+        var tree = GraphOwnership.Of(placed);
+
+        var items = placed.Select(p => new GraphLayout.Item(p.Node.Id, p.Column, p.OwnerId, 100)).ToList();
+        var y = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+
+        Check("every node got exactly one position", items.Count, y.Count);
+
+        // #94 is owned by #93 and borrowed by #95. It sits with its owner.
+        Check("the shared clip is owned by the first state", "93", tree.Owner["94"]);
+        Check("and is centred on that state, not on the borrower",
+            Centre(y, "93").ToString("F2"), Centre(y, "94").ToString("F2"));
+
+        // The borrower is the case that would show a second placement: if #95 were allowed to lay
+        // #94 out again, #94 would land beside #95 instead.
+        CheckTrue($"the borrower did not drag it across ({y["94"]:F0} against {y["95"]:F0})",
+            Math.Abs(y["94"] - y["95"]) > 1);
+
+        var again = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+        Check("and placing it twice gives the same answer", y["94"].ToString("F2"), again["94"].ToString("F2"));
     }
 
     /// Two states whose generator is the same clip, which is the ordinary shape in a shipped file
