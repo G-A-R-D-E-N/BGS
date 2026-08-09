@@ -1133,9 +1133,14 @@ public class GraphView : Control
             // hazard #19 is about, so a second delete in the same breath would be aimed at whatever
             // moved into the number it remembered. Refused out loud rather than deleting one of
             // twelve and leaving the rest, which is the surprising version of the same limit.
+            //
+            // The message says what to do as well as why. A refusal that only explains itself leaves
+            // somebody stuck holding a selection with no idea what to change about it.
             if (_selected.Count > 1)
                 Refused?.Invoke($"{_selected.Count} nodes are selected. Deleting is one at a time, " +
-                                "because taking an object out renumbers the ones above it.");
+                                "because taking an object out renumbers the ones above it. " +
+                                "Click one node, or click empty canvas to clear the selection, " +
+                                "then delete.");
             else DeleteRequested?.Invoke(SelectedId);
 
             e.Handled = true;
