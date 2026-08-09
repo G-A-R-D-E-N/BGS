@@ -53,6 +53,13 @@ the game, with the evidence behind it, lives in the
   the toolbar says which slot that will be before you press it. With nothing selected the node is
   created unattached, and unattached nodes are drawn in a column of their own rather than vanishing.
   Delete refuses while anything still points at the node, and names what.
+- **Templates**: "Save as template" keeps the selected node and everything it owns, so the same shape
+  can be put into another file later. Pick one from the box and the line beside it says whether it
+  fits the file that is open before you apply anything, because a template carries the event and
+  variable names of the file it came from and is not self contained. A shape that shares an object
+  with the rest of its file is refused when you try to keep it rather than when you try to use it,
+  since it could never go into a different file. Templates are yours: they are lifted from your own
+  files into your own application data, and none ship with the tool.
 - **Symbols tab**: every variable and event with its index, type, initial value, and what references
   it. Add, rename, retype the value, bound it, or remove. Declaring one no longer needs Java: the
   array of names is written by appending a longer run, proved by declaring an event in each of the

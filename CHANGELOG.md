@@ -3,6 +3,33 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, a shape can be kept and used again
+
+Adding a node meant creating it and filling in every field by hand. A shape can now be lifted out of a
+real behaviour and kept, and put into another file later.
+
+**A template is a copy that outlives the session that made it**, not a format of our own. Nobody has
+designed one of those, and the machinery to copy a subtree correctly already exists, so applying a
+template goes down exactly the same path as pasting one rather than being a second implementation of
+it. What is kept on disk is the whole source file next to a readable description of what was lifted
+out of it, because a behaviour averages 20 KB and the paste wants a file to read the shape out of.
+
+**A shape that shares an object with the rest of its file is refused when the template is made**,
+rather than when somebody tries to use it. Such a shape can never go into a different file, because
+there is nothing there for the shared pointer to name, so keeping it would be keeping something that
+fails everywhere it is ever tried. `symrm template` counts how common that is, and it is the ordinary
+case for the shape this was most wanted for: 3,624 of the corpus's 5,320 state infos share something,
+usually a generator a second state also uses, against 23 of 3,740 clip generators.
+
+**A template is not self contained and the window says so.** It carries its source file's event and
+variable names, so the same template fits one file and not another. Choosing one now says which
+symbols the file it is going into would have to declare first, before anything is applied, because
+"declare these two on the symbols tab" is a useful sentence where "that failed" is not. 2,251 of the
+3,717 liftable clip shapes use at least one symbol, so this is the ordinary case rather than a corner.
+
+Nothing vanilla ships with the tool. A template is made by the person using it, out of their own game
+files, and lives in their own application data.
+
 ## 2026-08-08, a state can leave because its clip ended
 
 Time advanced a transition's blend but not a clip's own playback, so a state left on an event and

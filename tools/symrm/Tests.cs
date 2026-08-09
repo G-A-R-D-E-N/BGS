@@ -115,6 +115,10 @@ public static class Tests
         ("AClipLengthIsCroppedAndScaled", AClipLengthIsCroppedAndScaled),
         ("AnUntimedClipRaisesNothing", AnUntimedClipRaisesNothing),
         ("ALoopingClipKeepsFiringAndASinglePlayDoesNot", ALoopingClipKeepsFiringAndASinglePlayDoesNot),
+        ("ATemplateLiftedFromOneFileGoesIntoAnother", ATemplateLiftedFromOneFileGoesIntoAnother),
+        ("ATemplateRefusesToLiftWhatSharesItsFile", ATemplateRefusesToLiftWhatSharesItsFile),
+        ("ATemplateSaysWhatToDeclareRatherThanJustFailing", ATemplateSaysWhatToDeclareRatherThanJustFailing),
+        ("ATemplateDescriptionSurvivesAwkwardNames", ATemplateDescriptionSurvivesAwkwardNames),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -2498,6 +2502,59 @@ public static class Tests
     private static byte[] Pair(int source, int destination) =>
         BitConverter.GetBytes(source).Concat(BitConverter.GetBytes(destination)).ToArray();
 
+    /// Three clips where the first two both point at the third, so neither of the first two owns it.
+    ///
+    /// This is the shape that stops a subtree leaving its file, and it is the ordinary shape rather
+    /// than a contrived one: `symrm template` counts 3,624 of the corpus's 5,320 state infos sharing
+    /// something, usually a generator a second state also uses.
+    private static PackfileImage ThreeClipsSharingAChild(out int shared)
+    {
+        var classes = HavokClasses.Shipped;
+        int size = classes["hkbClipGenerator"]!.Size;
+        int binding = classes.Field("hkbClipGenerator", "variableBindingSet")!.Offset;
+
+        var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
+
+        int step = (size + 15) / 16 * 16;
+        int second = step, third = step * 2;
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = new byte[third + size],
+            GlobalFixups = Triple(binding, 1, third).Concat(Triple(second + binding, 1, third)).ToArray(),
+            VirtualFixups = Triple(0, 0, 5).Concat(Triple(second, 0, 5)).Concat(Triple(third, 0, 5)).ToArray(),
+        });
+
+        shared = NativeGraphModel.FirstId + 2;
+        return image;
+    }
+
+    /// A built image written where a template can be lifted out of it, since lifting reads a path.
+    private static string WriteImage(PackfileImage image, string folder, string name)
+    {
+        System.IO.Directory.CreateDirectory(folder);
+        string path = System.IO.Path.Combine(folder, name);
+        System.IO.File.WriteAllBytes(path, image.Rebuild());
+        return path;
+    }
+
+    /// A template folder of this test's own, so a run never reads or writes the one belonging to
+    /// whoever is running it.
+    private static string OwnTemplateFolder(string name)
+    {
+        string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "symrm-templates", name);
+        if (System.IO.Directory.Exists(folder)) System.IO.Directory.Delete(folder, true);
+        System.IO.Directory.CreateDirectory(folder);
+        TemplateStore.Folder = folder;
+        return folder;
+    }
+
     private static byte[] Triple(int source, int section, int destination) =>
         BitConverter.GetBytes(source)
             .Concat(BitConverter.GetBytes(section))
@@ -3485,6 +3542,199 @@ public static class Tests
         CheckTrue("and the refusal names what it shares",
                   refused.Contains("#" + held, StringComparison.Ordinal));
     }
+
+    // The point of a template: a shape lifted out of one file and put into a different one, after the
+    // session that lifted it has gone.
+    private static void ATemplateLiftedFromOneFileGoesIntoAnother()
+    {
+        Console.WriteLine("\na template lifted from one file goes into another");
+
+        string folder = OwnTemplateFolder("lift");
+        string work = System.IO.Path.Combine(folder, "work");
+
+        string from = WriteImage(TwoClipsOnePointingAtTheOther(out _), work, "From.hkx");
+        string into = WriteImage(TwoClipsOnePointingAtTheOther(out _), work, "Into.hkx");
+
+        var template = TemplateStore.Lift(from, NativeGraphModel.FirstId, "A Clip Pair", "for testing");
+        Check("the template carries both objects", 2, template.Objects);
+        Check("and knows what it was lifted from", "hkbClipGenerator", template.RootClass);
+        Check("and is named on disk by a readable slug", "a-clip-pair", template.Slug);
+
+        // The part that makes it a template rather than a copy: it is on disk and can be found again
+        // without the thing that made it.
+        var listed = TemplateStore.All();
+        Check("it is listed afterwards", 1, listed.Count);
+        Check("under the name it was given", "A Clip Pair", listed.FirstOrDefault()?.Name ?? "nothing listed");
+        Check("with its note kept", "for testing", listed.FirstOrDefault()?.Note ?? "nothing listed");
+
+        // Deliberately re-read rather than reusing the record above, because a template that only
+        // works while the object that made it is still in memory is not a template.
+        int before = new PackfileObjects(PackfileImage.Read(into)).Instances.Count;
+
+        var reloaded = TemplateStore.Get("a-clip-pair");
+        CheckTrue("the template can be found again by its slug", reloaded != null);
+        if (reloaded == null) return;
+
+        var result = TemplateStore.Apply(reloaded, into);
+        System.IO.File.WriteAllBytes(into, result.Bytes);
+
+        var after = new PackfileObjects(PackfileImage.Read(into));
+        Check("both objects arrive in the other file", before + 2, after.Instances.Count);
+        Check("and the applied root is the id reported", NativeGraphModel.FirstId + before, result.RootId);
+
+        // The same property the paste feature exists for. The arrival has to point at its own copy of
+        // the child, not back at the file it came from, and there is nothing in the target that could
+        // even be the original.
+        var root = after.Instances[result.RootId - NativeGraphModel.FirstId];
+        var child = after.ReadRef(root, "variableBindingSet", out _);
+        Check("and it points at its own copy of the child", after.Instances[^1].Offset, child?.Offset ?? -1);
+
+        // Removing it takes the kept file with it, so a template folder cannot fill up with orphans.
+        CheckTrue("a template can be forgotten", TemplateStore.Remove("a-clip-pair"));
+        Check("and is gone from the list", 0, TemplateStore.All().Count);
+        CheckTrue("along with its copy of the file",
+                  !System.IO.File.Exists(System.IO.Path.Combine(folder, "a-clip-pair.hkx")));
+    }
+
+    // The refusal that has to happen when the template is made rather than when it is used.
+    //
+    // A subtree sharing an object with the rest of its file can never be pasted into a different
+    // file, so keeping it as a template would be keeping something that fails everywhere it is ever
+    // tried. That is the common case for the shape this issue most wants: `symrm template` counts
+    // 3,624 of 5,320 state infos sharing something.
+    private static void ATemplateRefusesToLiftWhatSharesItsFile()
+    {
+        Console.WriteLine("\na template refuses to lift what shares its file");
+
+        string folder = OwnTemplateFolder("shares");
+        string work = System.IO.Path.Combine(folder, "work");
+        string from = WriteImage(ThreeClipsSharingAChild(out int shared), work, "Shared.hkx");
+
+        // The first clip points at the third, and so does the second, so the first does not own it.
+        var tree = NativePaste.Of(PackfileImage.Read(from), NativeGraphModel.FirstId);
+        Check("the root owns only itself", 1, tree.Ids.Count);
+        Check("and shares the object the other one also points at", 1, tree.Shared.Count);
+
+        string refused = "";
+        try { TemplateStore.Lift(from, NativeGraphModel.FirstId, "Cannot Leave"); }
+        catch (InvalidOperationException e) { refused = e.Message; }
+
+        CheckTrue("lifting it is refused", refused.Contains("shares", StringComparison.Ordinal));
+        CheckTrue("and the refusal names what it shares",
+                  refused.Contains("#" + shared, StringComparison.Ordinal));
+        CheckTrue("and says what to do instead",
+                  refused.Contains("owns everything below it", StringComparison.Ordinal));
+
+        Check("nothing was kept", 0, TemplateStore.All().Count);
+        CheckTrue("and no half written copy was left behind",
+                  !System.IO.File.Exists(System.IO.Path.Combine(folder, "cannot-leave.hkx")));
+    }
+
+    // A template inherits its source file's events and variables by name, so it is not self contained.
+    // That is not a fault to hide: it is a fact to report before somebody tries, because the same
+    // template is fine in one file and not in another. 2,251 of the corpus's 3,717 liftable clip
+    // subtrees use at least one symbol, so this is the ordinary case.
+    private static void ATemplateSaysWhatToDeclareRatherThanJustFailing()
+    {
+        Console.WriteLine("\na template says what to declare rather than just failing");
+
+        string folder = OwnTemplateFolder("symbols");
+        string work = System.IO.Path.Combine(folder, "work");
+        string from = WriteImage(TwoClipsOnePointingAtTheOther(out _), work, "From.hkx");
+        string into = WriteImage(TwoClipsOnePointingAtTheOther(out _), work, "Into.hkx");
+
+        var lifted = TemplateStore.Lift(from, NativeGraphModel.FirstId, "Plain");
+
+        // Neither file declares anything, and this template uses nothing, so it fits.
+        var plain = TemplateStore.Against(lifted, into);
+        CheckTrue("a template using no symbols fits a file declaring none", plain.Fits);
+        Check("and says so plainly", "everything this needs is already declared", plain.ToString());
+
+        // The same template described as needing symbols the target has not got. Built rather than
+        // lifted, because no fixture here declares symbols, and what is under test is the answer
+        // given about a target rather than the reading of the source.
+        var demanding = lifted with
+        {
+            Events = new[] { "StartOpen", "Opened" },
+            Variables = new[] { "bIsLocked" },
+        };
+
+        var fit = TemplateStore.Against(demanding, into);
+        CheckTrue("one needing undeclared symbols does not fit", !fit.Fits);
+        Check("both missing events are named", 2, fit.Events.Count);
+        Check("and the missing variable", 1, fit.Variables.Count);
+        CheckTrue("the message says what to declare rather than that something went wrong",
+                  fit.ToString().Contains("declare", StringComparison.Ordinal) &&
+                  fit.ToString().Contains("StartOpen", StringComparison.Ordinal) &&
+                  fit.ToString().Contains("bIsLocked", StringComparison.Ordinal));
+
+        // Applying anyway has to refuse with the same list, because Apply can be reached without
+        // anybody having looked at the fit first.
+        string refused = "";
+        try { TemplateStore.Apply(demanding, into); }
+        catch (InvalidOperationException e) { refused = e.Message; }
+
+        CheckTrue("applying it is refused", refused.Contains("does not declare", StringComparison.Ordinal));
+        CheckTrue("naming the symbols", refused.Contains("StartOpen", StringComparison.Ordinal));
+        CheckTrue("and pointing at where to declare them",
+                  refused.Contains("symbols tab", StringComparison.Ordinal));
+        CheckTrue("and it says nothing was added",
+                  refused.Contains("nothing was added", StringComparison.Ordinal));
+
+        Check("the target file was not touched", 2,
+              new PackfileObjects(PackfileImage.Read(into)).Instances.Count);
+    }
+
+    // The description file is one line per field, and two vanilla event names carry a literal carriage
+    // return. A name holding one would end its own line and take the rest of the description with it,
+    // and the file would parse into something that looked fine and was wrong.
+    //
+    // The corpus cannot catch this: it would need a template lifted from one of those two files and
+    // then read back, and nothing sweeps that. So the awkward values are written out here by hand.
+    private static void ATemplateDescriptionSurvivesAwkwardNames()
+    {
+        Console.WriteLine("\na template description survives awkward names");
+
+        foreach (string awkward in new[]
+                 {
+                     "Plain",
+                     "Has\rCarriageReturn",
+                     "Has\nNewline",
+                     "Has\\Backslash",
+                     "Ends\\",
+                     "Has\x1fSeparator",
+                     "Every\r\n\\\x1fOne",
+                     "",
+                 })
+        {
+            Check($"'{Readable(awkward)}' survives being written and read",
+                  awkward, TemplateStore.Decode(TemplateStore.Encode(awkward)));
+        }
+
+        // A backslash must not be un-escaped twice: "a\\b" encoded then decoded is "a\b", and a
+        // decoder taking the escapes in the wrong order turns it into an escape of whatever follows.
+        Check("an escaped backslash does not eat the character after it",
+              "a\\rb", TemplateStore.Decode(TemplateStore.Encode("a\\rb")));
+
+        // The whole way round through a real file, since the escaping is only worth having if the
+        // description writer and reader agree on it.
+        string folder = OwnTemplateFolder("names");
+        string work = System.IO.Path.Combine(folder, "work");
+        string from = WriteImage(TwoClipsOnePointingAtTheOther(out _), work, "From.hkx");
+
+        var lifted = TemplateStore.Lift(from, NativeGraphModel.FirstId, "Awkward", "note\rwith a return");
+        Check("a note holding a carriage return comes back whole", "note\rwith a return",
+              TemplateStore.Get(lifted.Slug)?.Note);
+
+        Check("and the description is still one line per field", 8,
+              System.IO.File.ReadAllLines(System.IO.Path.Combine(folder, lifted.Slug + ".template")).Length);
+    }
+
+    /// A string with its control characters shown, so a failing check names something readable.
+    private static string Readable(string text) =>
+        text.Replace("\r", "\\r", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal)
+            .Replace("\x1f", "\\u", StringComparison.Ordinal);
 
     private static void RemovingAnObjectIsRefusedAndOrphaningIsNot()
     {

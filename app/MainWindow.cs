@@ -149,6 +149,11 @@ public class MainWindow : Window
           TextWrapping = TextWrapping.Wrap, Margin = new Thickness(10, 0, 0, 0) };
     private Button _pasteButton = Ux.Primary("Paste subtree");
 
+    private readonly TextBox _templateName = Ux.Field("template name", 150);
+    private readonly ComboBox _templates = new()
+        { MinWidth = 210, MaxWidth = 300, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private Button _applyTemplate = Ux.Secondary("Apply template");
+
     private readonly Dictionary<int, int> _offsetToIndex = new();
     private HashSet<string> _emptyStates = new();
     private List<string> _objectIds = new();
@@ -529,8 +534,28 @@ public class MainWindow : Window
             Margin = new Thickness(0, 0, 8, 0),
         };
 
+        // Templates are the same copy, kept. Save takes whatever is selected, the same shape Copy
+        // takes, and writes it where it survives the session. Apply puts one back into whatever file
+        // is open, into the same slot the paste box chose, because a template is a paste and not a
+        // second way of adding objects.
+        var save = Ux.Secondary("Save as template");
+        ToolTip.SetTip(save, "Keep the selected node and everything it owns, so it can be used again " +
+                             "in another file later.");
+        save.Click += (_, _) => SaveTemplate();
+
+        _applyTemplate.Click += (_, _) => ApplyTemplate();
+        _applyTemplate.IsEnabled = false;
+        ToolTip.SetTip(_applyTemplate,
+            "Put a kept shape into this file and save it. The file is kept as .bak first.");
+
+        // Choosing one says whether it fits this file before anybody presses anything, because a
+        // template carries its source file's event and variable names and the answer depends on where
+        // it is going.
+        _templates.SelectionChanged += (_, _) => DescribeTemplate();
+
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        foreach (var control in new Control[] { copy, label, _pasteInto, _pasteButton })
+        foreach (var control in new Control[] { copy, label, _pasteInto, _pasteButton,
+                                                _templateName, save, _templates, _applyTemplate })
             left.Children.Add(control);
 
         var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 6), LastChildFill = true };
@@ -539,6 +564,7 @@ public class MainWindow : Window
         bar.Children.Add(_pasteSummary);
 
         RefreshPasteSlots();
+        RefreshTemplates();
         return bar;
     }
 
@@ -667,11 +693,180 @@ public class MainWindow : Window
         }
     }
 
+    /// Keeps the selected shape so it can be used in another file later.
+    ///
+    /// Refused when the shape shares an object with the rest of its file, because such a shape can
+    /// never be pasted into a different file and a template that only works where it came from is not
+    /// a template. That is the common case for a state: `symrm template` counts 3,624 of the corpus's
+    /// 5,320 state infos sharing something, usually a generator a second state also uses.
+    private void SaveTemplate()
+    {
+        if (_bytes == null || _hkxPath.Length == 0)
+        {
+            SetPasteSummary("Open a behaviour first.", Ux.MutedBrush);
+            return;
+        }
+
+        if (_selectedId.Length == 0 || !int.TryParse(_selectedId, out int id))
+        {
+            SetPasteSummary("Pick a node on the canvas or in the tree first.", Ux.MutedBrush);
+            return;
+        }
+
+        string name = _templateName.Text?.Trim() ?? "";
+        if (name.Length == 0)
+        {
+            SetPasteSummary("Give the template a name in the box first, so it can be told apart from " +
+                            "the others later.", Ux.MutedBrush);
+            return;
+        }
+
+        try
+        {
+            var kept = TemplateStore.Lift(_hkxPath, id, name, $"from #{id} of {Path.GetFileName(_hkxPath)}");
+            _templateName.Text = "";
+            RefreshTemplates();
+            _templates.SelectedItem = kept.Slug;
+
+            SetPasteSummary($"Kept '{kept.Name}': {kept.Objects} object(s) from #{id}. " +
+                            (kept.Events.Count + kept.Variables.Count > 0
+                                ? $"It uses {kept.Events.Count + kept.Variables.Count} symbol(s) by name, so a " +
+                                  "file it goes into has to declare them."
+                                : "It uses no events or variables, so it fits anywhere."),
+                            Ux.MetaBrush);
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("Nothing kept: " + e.Message, Ux.BadBrush);
+        }
+    }
+
+    /// Puts a kept shape into the file that is open, down the same path a paste takes.
+    private void ApplyTemplate()
+    {
+        if (_templates.SelectedItem as string is not { } slug || slug.Length == 0)
+        {
+            SetPasteSummary("Pick a template first.", Ux.MutedBrush);
+            return;
+        }
+
+        var template = TemplateStore.Get(slug);
+        if (template == null) { SetPasteSummary("That template is no longer there.", Ux.BadBrush); return; }
+
+        if (_readOnly) { SetPasteSummary("Not applied: " + _readOnlyWhy, Ux.BadBrush); return; }
+
+        // Same reason a paste refuses here: applying writes the file and reads it back, which would
+        // throw away anything typed and not yet saved.
+        if (_dirty)
+        {
+            SetPasteSummary("Save your other changes first. Applying a template writes the file and " +
+                            "reads it back, which would lose them.", Ux.BadBrush);
+            return;
+        }
+
+        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
+        if (blocked != null) { SetPasteSummary("Cannot apply: " + blocked, Ux.BadBrush); return; }
+
+        int attachTo = -1;
+        string field = "";
+        if (_pasteInto.SelectedItem as string is { } slot && slot != Unattached)
+        {
+            int dot = slot.IndexOf('.');
+            attachTo = int.Parse(slot[1..dot]);
+            field = slot[(dot + 1)..].TrimEnd('[', ']');
+        }
+
+        try
+        {
+            var written = TemplateStore.Apply(template, _hkxPath, attachTo, field);
+
+            string backup = _hkxPath + ".bak";
+            if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
+            ReplaceFile(_hkxPath, written.Bytes);
+
+            string said = $"Applied '{template.Name}'. {written.Note} " +
+                          $"The file before this is kept as {Path.GetFileName(backup)}.";
+
+            Load();
+            SelectObjectId(written.RootId.ToString());
+            SetPasteSummary(said, Ux.MetaBrush);
+            SetStatus(said, Ux.MetaBrush);
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("Nothing applied, and the file is untouched: " + e.Message, Ux.BadBrush);
+        }
+    }
+
+    /// The templates on disk, in the box.
+    private void RefreshTemplates()
+    {
+        var kept = TemplateStore.All();
+        _templates.ItemsSource = kept.Select(t => t.Slug).ToList();
+        _applyTemplate.IsEnabled = kept.Count > 0 && _bytes != null;
+        if (kept.Count > 0 && _templates.SelectedItem == null) _templates.SelectedIndex = 0;
+    }
+
+    /// Says whether the chosen template fits the file that is open, before anybody applies it.
+    ///
+    /// This is the whole reason the fit is worked out separately from applying. A template carries the
+    /// event and variable names of the file it was lifted from, so the same template is fine in one
+    /// file and refused in another, and "declare these two first" is a useful sentence where "that
+    /// failed" is not.
+    private void DescribeTemplate()
+    {
+        if (_templates.SelectedItem as string is not { } slug) return;
+
+        var template = TemplateStore.Get(slug);
+        if (template == null) return;
+
+        if (_bytes == null)
+        {
+            SetPasteSummary($"'{template.Name}': {template.Objects} object(s). Open a behaviour to put " +
+                            "it into one.", Ux.MutedBrush);
+            return;
+        }
+
+        try
+        {
+            var fit = TemplateStore.Against(template, _bytes);
+            SetPasteSummary($"'{template.Name}': {template.Objects} object(s) from {template.FromFile}. " +
+                            (fit.Fits ? "Everything it needs is already declared here."
+                                      : "Before this can go in, " + fit + " on the symbols tab."),
+                            fit.Fits ? Ux.MetaBrush : Ux.WarnBrush);
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("Could not tell whether that fits: " + e.Message, Ux.BadBrush);
+        }
+    }
+
     private void SetPasteSummary(string text, IBrush brush)
     {
         _pasteSummary.Text = text;
         _pasteSummary.Foreground = brush;
     }
+
+    /// Test hooks for the template path, so the headless smoke test can walk it too.
+    public IReadOnlyList<string> TemplateNames =>
+        (_templates.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
+    public bool CanApplyTemplate => _applyTemplate.IsEnabled;
+    public void SaveTemplateForTest(string name)
+    {
+        _templateName.Text = name;
+        SaveTemplate();
+    }
+    public void ChooseTemplateForTest(string slug)
+    {
+        if (!TemplateNames.Contains(slug)) return;
+
+        // Described explicitly rather than leaning on the selection changing. Saving a template
+        // already selects it, so setting the same item again raises nothing, and a check that read
+        // the line afterwards would be reading the message the save left behind.
+        _templates.SelectedItem = slug;
+        DescribeTemplate();
+    }
+    public void ApplyTemplateForTest() => ApplyTemplate();
 
     /// Test hooks, so the headless smoke test can walk the copy and paste path.
     public string ClipSummary => _clip == null ? "" : Held(_clip);
@@ -2645,6 +2840,10 @@ public class MainWindow : Window
             else _bytes = bytes;
         }
         catch (Exception) { _bytes = null; }
+
+        // Whether a template can go anywhere depends on there being a file open to put it in, so the
+        // list and its button follow the file rather than being settled once when the window is built.
+        RefreshTemplates();
 
         var classes = new HashSet<string>();
         int clips = 0;

@@ -1145,6 +1145,80 @@ public static class Smoke
         int now = new OpenCommonwealth.Services.Hkx.PackfileObjects(
             OpenCommonwealth.Services.Hkx.PackfileImage.Read(copy)).Instances.Count;
         CheckTrue($"{name}: and the file on disk holds more objects than it did ({was} to {now})", now > was);
+
+        TemplatesOnACopy(window, copy, name);
+    }
+
+    /// The template path through the window: keep the selected shape, then put it back.
+    ///
+    /// Walked here rather than only in `symrm test` because the wiring is the part that breaks. The
+    /// store can be right while the window never hands it the selection, never refreshes its list, or
+    /// leaves the button disabled, and none of that shows up in a check that calls the store directly.
+    private static void TemplatesOnACopy(MainWindow window, string copy, string name)
+    {
+        // A folder of this run's own, so a smoke test never reads or writes the templates belonging to
+        // whoever is running it.
+        string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-templates");
+        if (System.IO.Directory.Exists(folder)) System.IO.Directory.Delete(folder, true);
+        OpenCommonwealth.Services.Hkx.TemplateStore.Folder = folder;
+
+        // A clip rather than the state the paste checks used. A state usually shares its generator
+        // with another state and so cannot be lifted at all, which would leave this only ever walking
+        // the refusal and never the path the feature exists for. Clips are the shape that lifts:
+        // `symrm template` counts 3,717 of 3,740 liftable against 1,696 of 5,320 states.
+        string clip = OpenCommonwealth.Services.Hkx.HkxTextEdit
+            .IdsOfClass(window.LoadedXml, "hkbClipGenerator").FirstOrDefault() ?? "";
+        if (clip.Length == 0) return;
+
+        window.SelectNode(clip);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        window.SaveTemplateForTest("Smoke Shape");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        Console.WriteLine("        " + window.PasteAnswer);
+
+        // A shape sharing an object with the rest of its file cannot be lifted, and that is the
+        // ordinary answer for a state rather than a failure of this test, so both outcomes are
+        // allowed and only the wrong ones are not.
+        if (window.TemplateNames.Count == 0)
+        {
+            CheckTrue($"{name}: a shape that cannot leave its file says so and names what it shares",
+                      window.PasteAnswer.Contains("shares", StringComparison.Ordinal) &&
+                      window.PasteAnswer.Contains("owns everything below it", StringComparison.Ordinal));
+            return;
+        }
+
+        CheckTrue($"{name}: keeping a shape puts it in the template list", window.TemplateNames.Count == 1);
+        CheckTrue($"{name}: and offers to apply it", window.CanApplyTemplate);
+
+        window.ChooseTemplateForTest(window.TemplateNames[0]);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        Console.WriteLine("        " + window.PasteAnswer);
+
+        // Specifically the fit, which is the thing only this line can say. "N object(s)" alone would
+        // also match the message left behind by keeping it, so the check would pass without the fit
+        // ever being worked out.
+        CheckTrue($"{name}: choosing one says whether it fits this file before anything is applied",
+                  window.PasteAnswer.Contains("already declared here", StringComparison.Ordinal) ||
+                  window.PasteAnswer.Contains("Before this can go in", StringComparison.Ordinal));
+
+        int was = new OpenCommonwealth.Services.Hkx.PackfileObjects(
+            OpenCommonwealth.Services.Hkx.PackfileImage.Read(copy)).Instances.Count;
+
+        window.ApplyTemplateForTest();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        Console.WriteLine("        " + window.PasteAnswer);
+
+        int now = new OpenCommonwealth.Services.Hkx.PackfileObjects(
+            OpenCommonwealth.Services.Hkx.PackfileImage.Read(copy)).Instances.Count;
+
+        // Applying it into the file it came out of is the same file by name and a different one by
+        // history, so it goes down the ordinary path and must either land or say why not.
+        if (window.PasteAnswer.StartsWith("Applied", StringComparison.Ordinal))
+            CheckTrue($"{name}: applying a template adds objects to the file ({was} to {now})", now > was);
+        else
+            CheckTrue($"{name}: or says what to declare first and leaves the file alone",
+                      window.PasteAnswer.Contains("declare", StringComparison.Ordinal) && now == was);
     }
 
     private static void SaveOnACopy(MainWindow window, string path, string name)
