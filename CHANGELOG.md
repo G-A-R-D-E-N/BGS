@@ -3,6 +3,37 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, a state can leave because its clip ended
+
+Time advanced a transition's blend but not a clip's own playback, so a state left on an event and
+never on the animation it was playing running out. It does now, and the Step button on the Graph tab
+can move a state with nobody sending anything.
+
+**The mechanism is not the obvious one.** Nothing in a state machine says "leave when the clip ends".
+A clip carries a trigger array, a trigger raises an event at a point in the clip, and a trigger marked
+`relativeToEndOfClip` raises it when the animation finishes. So a clip ending is an ordinary event
+with an unusual sender, and it goes through the same path as one typed into the box. What was missing
+was the length to measure those points against, and that lives in the animation file rather than in
+the behaviour.
+
+**Counted before it was built**, with `symrm cliptime` over the 531 vanilla behaviours: 3,740 clips,
+1,891 carrying a trigger array, 2,886 triggers of which 2,148 are measured back from the end. Only 40
+clips set `enforcedDuration`, so the length nearly always has to be read off disk. 1,326 of the events
+those triggers raise are listened for by a transition in the same file, 1,191 of them at the end of a
+clip, which is the size of what could not be answered before.
+
+**The animation is found 3,695 times out of 3,740.** The 44 that are not are shared behaviours
+borrowing animations from characters that do not ship them. A clip whose length is unknown is recorded
+as a stop and raises nothing, so a missing animation holds the graph still rather than inventing
+transitions the game never fires.
+
+**Two gates, and each catches what the other cannot.** `symrm cliptime` sweeps the corpus; the checks
+in `symrm test` work on numbers no vanilla clip has. Breaking the code on purpose is how that was
+established rather than assumed: reading an end relative trigger as an absolute time is caught by
+both, a playback speed that multiplies instead of dividing only by the hand written answers, and a
+clip offering triggers without a length only by the corpus. A first attempt at the hand written checks
+caught none of them, because it built its own timing table and never exercised the reading.
+
 ## 2026-08-08, a transition's condition is read instead of assumed
 
 A transition can be gated on a variable, and the stepper did not read that gate. Every conditional

@@ -80,6 +80,7 @@ public static class Program
             case "editframe": return EditFrame(argv);
             case "run": return Run(argv);
             case "weights": return Weights(argv);
+            case "cliptime": return ClipTime(argv);
             case "crosscheck": return CrossCheck(argv);
             case "savecheck": return SaveCheck(argv);
             case "mesh": return Mesh(argv);
@@ -111,6 +112,14 @@ public static class Program
               that inside a machine the run entered it reaches at least what the validator's own
               per machine rule reaches, and that actually stepping never lands somewhere the
               reachability analysis calls impossible.
+
+          dotnet run --project tools/symrm/symrm.csproj -- cliptime <behaviourDir | behaviour.hkx>
+              How long every clip plays for and when the events it carries go out. Needs the corpus
+              extracted with --tree, because a clip's length is in the animation file the project
+              around the behaviour points at rather than in the behaviour. Checks that no trigger
+              resolves outside its own clip, that a trigger written as the end of the clip lands on
+              the clip's length, that a clip with no length offers no triggers at all, and that
+              running the clock never reaches a state the reachability analysis rules out.
 
           dotnet run --project tools/symrm/symrm.csproj -- splinestats <animDir | file.hkx>
               What the game's own compressor chose, counted across the animations it shipped:
@@ -3449,6 +3458,356 @@ public static class Program
     // off. A transition blend must start at nothing of the new state and reach all of it, and no
     // sooner than its own duration. Anything it cannot resolve, a parametric blender driven by a
     // variable or a child weight bound to one, is reported as driven and counted, not guessed.
+    // What a clip's own length would buy the stepper, counted before any of it is built.
+    //
+    // The stepper leaves a state when an event moves it and never when the clip it is playing runs
+    // out. The mechanism that would change that is not a state machine field at all: a clip carries a
+    // trigger array, and a trigger at a point in the clip raises an event. A trigger marked
+    // `relativeToEndOfClip` is the one that says "when this animation finishes", and its absolute time
+    // cannot be worked out without the animation file, because the length lives there.
+    //
+    // So this counts three separate things, and they are worth telling apart before designing
+    // anything: how many clips carry a trigger at all, how many of those triggers need a length that
+    // is not in the behaviour, and how many of the events they raise are actually listened for by a
+    // transition in the same file. The last is the one that says whether closing this gap moves any
+    // answer the tool gives, rather than only adding a number to it.
+    private static int ClipTime(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       // The same filter the corpus itself is built with, so the file count here is
+                       // the corpus's 531 rather than a subset of it that happens to sit in a folder
+                       // called Behaviors.
+                       .Where(f => f.Contains("behavior", StringComparison.OrdinalIgnoreCase))
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        int clips = 0, named = 0, withTriggers = 0, enforced = 0;
+        int triggers = 0, toEnd = 0, absolute = 0, annotations = 0;
+        int resolved = 0, durationRead = 0, perCharacter = 0;
+        int variantsAgree = 0, variantsDisagree = 0, singleCandidate = 0, rootless = 0;
+        int cropped = 0, offSpeed = 0, parked = 0, endAwayFromEnd = 0;
+        int stepped = 0, movedOnAClip = 0, timedTransitions = 0, outOfRange = 0, impossible = 0;
+        int atEnd = 0, endMisplaced = 0, exactlyAtEnd = 0, untimedTriggers = 0;
+        var stepComplaints = new List<string>();
+        var modes = new SortedDictionary<int, int>();
+        int listened = 0, listenedToEnd = 0;
+        var unresolvedExamples = new List<string>();
+        var missesBy = new Dictionary<string, int>(StringComparer.Ordinal);
+        var perCharacterExamples = new List<string>();
+        var listenedExamples = new List<string>();
+
+        // A chain is five files and resolving it reads three of them, so it is worked out once per
+        // project root rather than once per behaviour.
+        var rootOf = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var lengths = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+        var reader = new HkxBinaryReader();
+
+        foreach (string file in files)
+        {
+            PackfileObjects objects;
+            BehaviourGraphModel? model;
+            try
+            {
+                objects = new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)));
+                model = NativeGraphModel.From(objects);
+            }
+            catch (Exception) { continue; }
+            if (model == null) continue;
+
+            if (!rootOf.TryGetValue(file, out string? root))
+            {
+                try { root = ProjectChain.Resolve(file).Root; }
+                catch (Exception) { root = ""; }
+                rootOf[file] = root ?? "";
+            }
+
+            var events = SymbolEditor.EventNames(model);
+            var heard = StateRoutes.Of(model).Routes.Select(r => r.Event)
+                                   .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var clip in objects.OfClass("hkbClipGenerator"))
+            {
+                clips++;
+                string animation = objects.ReadString(clip, "animationName") ?? "";
+                if (animation.Length > 0) named++;
+                if ((objects.ReadFloat(clip, "enforcedDuration") ?? 0) > 0) enforced++;
+                if ((objects.ReadFloat(clip, "cropStartAmountLocalTime") ?? 0) != 0 ||
+                    (objects.ReadFloat(clip, "cropEndAmountLocalTime") ?? 0) != 0) cropped++;
+                float speed = objects.ReadFloat(clip, "playbackSpeed") ?? 1;
+                if (speed != 1) offSpeed++;
+                if (speed == 0) parked++;
+                int modeValue = (objects.ReadIntAt(clip.Offset + 190) ?? 0) & 0xff;
+                modes.TryGetValue(modeValue, out int seenMode);
+                modes[modeValue] = seenMode + 1;
+
+                ResolveLength(file, root ?? "", animation);
+
+                var array = objects.ReadRef(clip, "triggers", out _);
+                if (array == null) continue;
+                var elements = objects.ReadArray(array, "triggers");
+                if (elements == null || elements.Count == 0) continue;
+                withTriggers++;
+
+                int stride = HavokClassTypes.Shipped["hkbClipTrigger"]?.Size ?? 32;
+                for (int i = 0; i < elements.Count; i++)
+                {
+                    int at = elements.At + i * stride;
+                    triggers++;
+
+                    bool end = (objects.ReadIntAt(at + 24) & 0xff) != 0;
+                    bool annotation = (objects.ReadIntAt(at + 26) & 0xff) != 0;
+                    if (annotation) annotations++;
+                    if (end) toEnd++; else absolute++;
+                    if (end && Math.Abs(objects.ReadFloatAt(at) ?? 0) > 0.0001f) endAwayFromEnd++;
+
+                    int id = objects.ReadIntAt(at + 8) ?? -1;
+                    string name = id >= 0 && id < events.Count ? events[id] : "";
+                    if (name.Length == 0 || !heard.Contains(name)) continue;
+
+                    listened++;
+                    if (end) listenedToEnd++;
+                    if (listenedExamples.Count < 12)
+                        listenedExamples.Add($"{Path.GetFileName(file)}: '{objects.ReadString(clip, "name")}' " +
+                                             $"raises '{name}' {(end ? "at the end of its clip" : "part way through")}, " +
+                                             "and a transition listens for it");
+                }
+
+            }
+
+            // Running the clock on this file, which is the only way to see the feature do anything.
+            // Everything above counts what is written down; this checks that stepping it moves states
+            // and that it never steps somewhere the file's own reachability analysis rules out, which
+            // is the invariant the event driven half already holds itself to.
+            var run = GraphRun.Start(model);
+            if (run.RootId.Length == 0) continue;
+
+            var timed = ClipTiming.All(objects, events, name =>
+            {
+                if (string.IsNullOrEmpty(root)) return 0;
+                string path = ProjectChain.ResolvePath(root, name);
+                return File.Exists(path) ? Length(reader, lengths, path) : 0;
+            });
+
+            foreach (var clip in timed.Values)
+            {
+                // A clip whose length could not be worked out must offer no triggers at all. This is
+                // the safety rule the whole feature rests on: a trigger measured back from an end
+                // nobody knows would fire at an invented moment, and 44 of the corpus's clips name an
+                // animation that is not on disk, so the rule is exercised rather than theoretical.
+                if (!clip.Known) untimedTriggers += clip.Triggers.Count;
+
+                foreach (var trigger in clip.Triggers)
+                {
+                    if (trigger.At < 0 || trigger.At > clip.Seconds)
+                    {
+                        outOfRange++;
+                        if (stepComplaints.Count < 12)
+                            stepComplaints.Add($"{Path.GetFileName(file)}: '{clip.Name}' raises " +
+                                               $"'{trigger.Event}' at {trigger.At:F3}s of a {clip.Seconds:F3}s clip");
+                        continue;
+                    }
+
+                    // A trigger written as relative to the end with nothing subtracted is the clip
+                    // finishing, so it has to land on the clip's own length. This is the one shape of
+                    // the end relative reading the corpus can check for itself, and it is worth
+                    // checking because reading those triggers as absolute times leaves every one of
+                    // them inside its clip and breaks no other rule here.
+                    if (!trigger.RelativeToEnd) continue;
+                    atEnd++;
+                    if (Math.Abs(trigger.LocalTime) > 0.0001f) continue;
+
+                    exactlyAtEnd++;
+                    if (Math.Abs(trigger.At - clip.Seconds) > 0.0001f)
+                    {
+                        endMisplaced++;
+                        if (stepComplaints.Count < 12)
+                            stepComplaints.Add($"{Path.GetFileName(file)}: '{clip.Name}' ends at " +
+                                               $"{trigger.At:F3}s of a {clip.Seconds:F3}s clip");
+                    }
+                }
+            }
+
+            run.Time(timed);
+            stepped++;
+
+            var allowed = run.Reachable();
+            int firedHere = 0;
+
+            // Ten seconds a tenth at a time, which is longer than all but a handful of the corpus's
+            // clips and fine enough that a trigger cannot be stepped over.
+            for (int step = 0; step < 100; step++)
+                firedHere += run.Advance(0.1f).Count;
+
+            // Stepping from the start configuration alone barely touches this: a clip that ends a
+            // state can only do so while something is sitting in that state, and the states holding
+            // most of these clips are several events deep. So the graph is driven the way the
+            // conditions gate drives its variables, by sending each declared event and letting the
+            // clock run after it. The number that measures the reading is this one; the number from
+            // the start configuration measures only where the graph happens to begin.
+            foreach (string name in run.Events)
+            {
+                run.Send(name);
+                for (int step = 0; step < 100; step++) firedHere += run.Advance(0.1f).Count;
+            }
+
+            if (firedHere > 0) { movedOnAClip++; timedTransitions += firedHere; }
+
+            foreach (var active in run.Where())
+                if (allowed.Unreachable.Contains(active.StateId))
+                {
+                    impossible++;
+                    if (stepComplaints.Count < 12)
+                        stepComplaints.Add($"{Path.GetFileName(file)}: the clock reached #{active.StateId} " +
+                                           $"'{active.StateName}', which the analysis calls unreachable");
+                    break;
+                }
+        }
+
+        // The length itself, which is the environmental half: it is in the animation file, and that
+        // file is found through the project root rather than beside the behaviour. Every clip goes
+        // through this, not only the ones carrying a trigger, or the denominator is the wrong
+        // population and the resolution rate reads better than it is.
+        void ResolveLength(string file, string root, string animation)
+        {
+            if (animation.Length == 0) return;
+
+            // A behaviour with no project file above it has no root to resolve against. That is not a
+            // broken file: `Meshes\Actors\Shared` and `Meshes\GenericBehaviors` hold behaviours that
+            // several characters run, and the animations they name belong to whichever character is
+            // running them. Counted rather than skipped, because it is the population the phrase
+            // "per character" in the ticket is about.
+            if (string.IsNullOrEmpty(root)) { rootless++; return; }
+
+            string path = ProjectChain.ResolvePath(root, animation);
+            if (File.Exists(path))
+            {
+                resolved++;
+                if (Length(reader, lengths, path) > 0) durationRead++;
+                return;
+            }
+
+            // The path a clip names is not always a file. Dogmeat's character declares
+            // `Animations\WalkForward_B.hkt`, nothing of that name is on disk, and two files of that
+            // name sit in `Animations\Default\Neutral` and `Animations\Default\Sneak`. Those folders
+            // are variants the game swaps between while it runs, so the clip names a base and the
+            // running character decides which copy plays.
+            //
+            // That matters here only if the copies differ in length, so this counts the candidates and
+            // whether their durations agree. Where they agree the length is knowable without knowing
+            // the variant; where they do not, the honest answer is a range or a refusal rather than
+            // whichever copy was found first.
+            var candidates = Variants(root, animation);
+            if (candidates.Count == 0)
+            {
+                missesBy.TryGetValue(file, out int had);
+                missesBy[file] = had + 1;
+                if (unresolvedExamples.Count < 8)
+                    unresolvedExamples.Add($"{Path.GetFileName(file)}: {animation}");
+                return;
+            }
+
+            perCharacter++;
+            var spans = candidates.Select(c => Length(reader, lengths, c)).Where(s => s > 0).ToList();
+            if (spans.Count > 1 && spans.Max() - spans.Min() > 0.001f)
+            {
+                variantsDisagree++;
+                if (perCharacterExamples.Count < 8)
+                    perCharacterExamples.Add($"{Path.GetFileName(file)}: {animation} has " +
+                        $"{candidates.Count} copies lasting {spans.Min():F3}s to {spans.Max():F3}s");
+            }
+            else if (candidates.Count > 1) variantsAgree++;
+            else singleCandidate++;
+        }
+
+        Console.WriteLine($"\n{files.Length} behaviour file(s)");
+        Console.WriteLine($"clips: {clips}, {named} name an animation, {withTriggers} carry a trigger array");
+        Console.WriteLine($"triggers: {triggers}, {toEnd} relative to the end of the clip, {absolute} at an " +
+                          $"absolute time, {annotations} marked as annotations");
+        Console.WriteLine($"length already in the behaviour: {enforced} clip(s) set enforcedDuration");
+        Console.WriteLine($"what the shipped data never varies, which is where a corpus gate is blind: " +
+                          $"{cropped} clip(s) crop, {offSpeed} play at a speed other than 1, {parked} at zero " +
+                          $"speed, {endAwayFromEnd} end trigger(s) sit away from the end, " +
+                          $"{annotations} trigger(s) are annotations");
+        Console.WriteLine($"playback modes: {string.Join(", ", modes.Select(m => $"{ModeName(m.Key)} x{m.Value}"))}");
+        Console.WriteLine($"animation found on disk: {resolved} of {named}, length read for {durationRead}");
+        Console.WriteLine($"named a path that is not a file but has copies below it: {perCharacter}, " +
+                          $"of which {singleCandidate} have one copy, {variantsAgree} have several of the " +
+                          $"same length, and {variantsDisagree} have several of different lengths");
+        Console.WriteLine($"in a behaviour with no project of its own, so no root to resolve against: {rootless}");
+        Console.WriteLine($"nothing on disk to read at all: {named - resolved - perCharacter - rootless}");
+        Console.WriteLine($"raised events a transition in the same file listens for: {listened}, " +
+                          $"{listenedToEnd} of them at the end of a clip");
+        Console.WriteLine($"\nstepped: {stepped} file(s) run on the clock, {movedOnAClip} had a state " +
+                          $"leave because a clip ended, {timedTransitions} transition(s) fired that way");
+        Console.WriteLine($"triggers resolving outside their own clip: {outOfRange}");
+        Console.WriteLine($"triggers offered by a clip with no length, which must be none: {untimedTriggers}");
+        Console.WriteLine($"end relative triggers: {atEnd}, of which {exactlyAtEnd} carry no offset and " +
+                          $"so must land on the clip's own length; {endMisplaced} do not");
+        Console.WriteLine($"steps landing somewhere the reachability analysis calls impossible: {impossible}");
+        foreach (string line in stepComplaints) Console.WriteLine($"  {line}");
+        foreach (string line in listenedExamples) Console.WriteLine($"  {line}");
+        if (perCharacterExamples.Count > 0)
+        {
+            Console.WriteLine("  copies of different lengths, first few:");
+            foreach (string line in perCharacterExamples) Console.WriteLine($"    {line}");
+        }
+        if (missesBy.Count > 0)
+        {
+            Console.WriteLine($"  those misses come from {missesBy.Count} behaviour file(s), worst first:");
+            foreach (var pair in missesBy.OrderByDescending(p => p.Value).Take(12))
+                Console.WriteLine($"    {pair.Value,5}  {Path.GetFileName(pair.Key)}");
+        }
+        if (unresolvedExamples.Count > 0)
+        {
+            Console.WriteLine("  animations not found anywhere, first few:");
+            foreach (string line in unresolvedExamples) Console.WriteLine($"    {line}");
+        }
+
+        return outOfRange + impossible + endMisplaced + untimedTriggers == 0 ? 0 : 1;
+    }
+
+    /// A playback mode's name, so a count reads as a mode rather than as a number.
+    private static string ModeName(int mode) =>
+        HavokClassTypes.Shipped.Enum("hkbClipGenerator", "PlaybackMode")
+                       ?.FirstOrDefault(v => v.Value == mode).Key ?? $"mode {mode}";
+
+    /// Every file under the project that could be the animation a clip names, when the name itself is
+    /// not a file.
+    ///
+    /// Matched on the leaf name under the folder the clip points into, which is what the variant
+    /// folders differ in: `Animations\WalkForward_B.hkt` against
+    /// `Animations\Default\Neutral\WalkForward_B.hkx`. This is a measurement of how many copies exist
+    /// and whether they agree, not a rule for picking one. Picking one would be a guess about which
+    /// variant the character is in, and that is a runtime fact this tool does not have.
+    private static List<string> Variants(string root, string animation)
+    {
+        string cleaned = animation.Replace('\\', Path.DirectorySeparatorChar)
+                                  .Replace('/', Path.DirectorySeparatorChar);
+        string leaf = Path.GetFileNameWithoutExtension(cleaned);
+        string under = Path.GetDirectoryName(Path.Combine(root, cleaned)) ?? root;
+        if (leaf.Length == 0 || !Directory.Exists(under)) return new List<string>();
+
+        try
+        {
+            return Directory.GetFiles(under, leaf + ".hkx", SearchOption.AllDirectories)
+                            .OrderBy(f => f, StringComparer.Ordinal).ToList();
+        }
+        catch (Exception) { return new List<string>(); }
+    }
+
+    /// An animation's length, read once per file. Zero means it did not decode.
+    private static float Length(HkxBinaryReader reader, Dictionary<string, float> cache, string path)
+    {
+        if (cache.TryGetValue(path, out float seconds)) return seconds;
+        seconds = reader.TryReadAnimation(path, out var data) ? data.Duration : 0;
+        cache[path] = seconds;
+        return seconds;
+    }
+
     private static int Weights(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -3829,20 +4188,51 @@ public static class Program
     /// One file, optionally with a list of events to send.
     private static int RunOne(string file, string[] events)
     {
+        PackfileObjects objects;
         BehaviourGraphModel? model;
-        try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)))); }
+        try
+        {
+            objects = new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)));
+            model = NativeGraphModel.From(objects);
+        }
         catch (Exception e) { Console.WriteLine($"could not read {file}: {e.Message}"); return 1; }
         if (model == null) { Console.WriteLine("nothing to run in this file"); return 1; }
 
         var run = GraphRun.Start(model);
         if (run.RootId.Length == 0) { Console.WriteLine("this file has no generator to start from"); return 1; }
 
+        // The clip lengths, read out of the animation files the project around this behaviour points
+        // at. Handed over before anything is stepped, so a clip reaching its own end can raise what it
+        // carries from the first step rather than from the second.
+        var timed = ClipTiming.All(objects, SymbolEditor.EventNames(model), ClipTiming.FromDisk(file));
+        run.Time(timed);
+
         Console.WriteLine($"{Path.GetFileName(file)}: started at #{run.RootId}");
         foreach (var active in run.Where()) Console.WriteLine($"  {active}");
         foreach (var stop in run.Stops) Console.WriteLine($"  stop: {stop}");
 
+        int known = timed.Values.Count(c => c.Known);
+        Console.WriteLine($"  clips: {timed.Count}, {known} with a length, " +
+                          $"{timed.Values.Sum(c => c.Triggers.Count)} trigger(s) timed against it");
+        foreach (var (clip, at) in run.Playing().Take(8))
+            Console.WriteLine($"    playing '{clip.Name}' at {at:F2}s of " +
+                              (clip.Known ? $"{clip.Seconds:F2}s" : "an unknown length"));
+
         foreach (string name in events)
         {
+            // A step is written as a number of seconds rather than as an event name, so one command
+            // line can say "send this, then let a second pass, then send that".
+            if (float.TryParse(name, out float seconds) && seconds > 0)
+            {
+                var byTime = run.Advance(seconds);
+                Console.WriteLine($"\nwait {seconds}s: " +
+                                  (byTime.Count == 0 ? "nothing moved on its own"
+                                                     : $"{byTime.Count} transition(s) fired by a clip"));
+                foreach (var f in byTime) Console.WriteLine($"  {f}");
+                foreach (var active in run.Where()) Console.WriteLine($"    now {active}");
+                continue;
+            }
+
             if (!run.Declares(name))
             {
                 Console.WriteLine($"\nsend {name}: this graph declares no event of that name. " +

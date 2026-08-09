@@ -111,6 +111,10 @@ public static class Tests
         ("AParametricBlenderIsPickedNotMixed", AParametricBlenderIsPickedNotMixed),
         ("ADrivenBlendIsReportedNotGuessed", ADrivenBlendIsReportedNotGuessed),
         ("AnEditedFrameSurvivesReEncoding", AnEditedFrameSurvivesReEncoding),
+        ("AClipEndsAndTheStateLeavesWithoutAnEvent", AClipEndsAndTheStateLeavesWithoutAnEvent),
+        ("AClipLengthIsCroppedAndScaled", AClipLengthIsCroppedAndScaled),
+        ("AnUntimedClipRaisesNothing", AnUntimedClipRaisesNothing),
+        ("ALoopingClipKeepsFiringAndASinglePlayDoesNot", ALoopingClipKeepsFiringAndASinglePlayDoesNot),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -4640,6 +4644,255 @@ public static class Tests
         Check("and it is B", "B", done[0].StateName);
         CheckTrue("holding all of the pose", done[0].Weight > 0.999f);
         CheckTrue("with no blend still running", !run.Blending);
+    }
+
+    // A graph whose only state plays a clip and leaves when that clip says it has finished.
+    //
+    // Deliberately small and deliberately not vanilla. The corpus proves the reading works on the data
+    // the game ships; it cannot prove the arithmetic, because a value the shipped data never takes is
+    // a hole in the corpus rather than a fact about the format. Everything timed here uses numbers no
+    // vanilla clip has.
+    private static string ClipEndGraph() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraph" name="#90" signature="0xb1218f86">
+                    <hkparam name="name">Graph</hkparam>
+                    <hkparam name="rootGenerator">#92</hkparam>
+                    <hkparam name="data">#100</hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphStringData" name="#91" signature="0xc713064e">
+                    <hkparam name="eventNames" numelements="1">ClipDone</hkparam>
+                    <hkparam name="variableNames" numelements="0"></hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachine" name="#92" signature="0xa5896bcf">
+                    <hkparam name="name">Root</hkparam>
+                    <hkparam name="startStateId">0</hkparam>
+                    <hkparam name="states" numelements="2">#93 #96</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#93" signature="0x39d76713">
+                    <hkparam name="name">Playing</hkparam>
+                    <hkparam name="stateId">0</hkparam>
+                    <hkparam name="generator">#98</hkparam>
+                    <hkparam name="transitions">#94</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineTransitionInfoArray" name="#94" signature="0xe397b11e">
+                    <hkparam name="transitions" numelements="1">
+                        <hkobject>
+                            <hkparam name="eventId">0</hkparam>
+                            <hkparam name="toStateId">1</hkparam>
+                            <hkparam name="priority">10</hkparam>
+                            <hkparam name="condition">null</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#96" signature="0x39d76713">
+                    <hkparam name="name">Done</hkparam>
+                    <hkparam name="stateId">1</hkparam>
+                </hkobject>
+                <hkobject class="hkbClipGenerator" name="#98" signature="0x0d4cc9f6">
+                    <hkparam name="name">TheClip</hkparam>
+                    <hkparam name="animationName">Animations\Test.hkt</hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphData" name="#100" signature="0x95aca5d">
+                    <hkparam name="variableInfos" numelements="0"></hkparam>
+                    <hkparam name="eventInfos" numelements="1">
+                        <hkobject>
+                            <hkparam name="flags">0</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
+
+    /// The timing table the fixture's one clip gets, built by hand rather than read off a file.
+    private static Dictionary<string, ClipTiming.Clip> OneClip(float seconds, string mode,
+                                                               params ClipTiming.Trigger[] triggers) =>
+        new(StringComparer.Ordinal)
+        {
+            ["98"] = new ClipTiming.Clip("98", "TheClip", @"Animations\Test.hkt", seconds, triggers, mode),
+        };
+
+    // The whole of what this issue's last gap asked for: a state that leaves because its clip ended,
+    // with nobody sending anything.
+    private static void AClipEndsAndTheStateLeavesWithoutAnEvent()
+    {
+        Console.WriteLine("\na clip ends and the state leaves without an event");
+
+        var model = BehaviourGraphModel.Parse(ClipEndGraph());
+        var run = GraphRun.Start(model);
+
+        // 7.5 seconds with the trigger a second and a half before the end, so the moment it fires is a
+        // number that is neither the length nor zero and cannot come out right by accident.
+        run.Time(OneClip(7.5f, "MODE_SINGLE_PLAY",
+                         new ClipTiming.Trigger(6.0f, "ClipDone", RelativeToEnd: true, Acyclic: false)));
+
+        Check("it starts in the state holding the clip", "Playing", run.Where()[0].StateName);
+        Check("with the clip at its beginning", 0f, run.PlayingAt("98"));
+
+        var early = run.Advance(5.0f);
+        Check("five seconds in, nothing has fired", 0, early.Count);
+        Check("and it is still in the first state", "Playing", run.Where()[0].StateName);
+        Check("with the clip five seconds along", 5f, run.PlayingAt("98"));
+
+        var crossing = run.Advance(1.5f);
+        Check("crossing the trigger fires one transition", 1, crossing.Count);
+        Check("raised by the clip rather than by a caller",
+              "ClipDone", crossing.Count > 0 ? crossing[0].Event : "nothing fired");
+        Check("and the machine has left", "Done", run.Where()[0].StateName);
+
+        // The point of the whole feature, stated as the thing that was impossible before: no event was
+        // ever sent by hand and the state still moved.
+        CheckTrue("nothing was sent by hand at any point", true);
+    }
+
+    // The arithmetic that turns an animation's length into a clip's, on values the shipped data never
+    // takes together. 199 vanilla clips crop and 200 run at a speed other than one; none of them is a
+    // combination this checks, which is exactly why a corpus sweep cannot stand in for it.
+    private static void AClipLengthIsCroppedAndScaled()
+    {
+        Console.WriteLine("\na clip's length is cropped and scaled");
+
+        // When a trigger goes out, which is the half of this that a corpus sweep is blind to. Reading
+        // an end relative trigger as an absolute one leaves every trigger inside its own clip and
+        // every gate green, and only moves the moments the events come out.
+        Check("a trigger at an absolute time is at that time",
+              2f, ClipTiming.TriggerAt(2f, relativeToEnd: false, seconds: 10f));
+        Check("a trigger at the end is at the clip's length",
+              10f, ClipTiming.TriggerAt(0f, relativeToEnd: true, seconds: 10f));
+        Check("and one measured back from the end counts backwards",
+              7.5f, ClipTiming.TriggerAt(2.5f, relativeToEnd: true, seconds: 10f));
+        Check("the two readings differ, which is what makes the distinction worth having",
+              false, ClipTiming.TriggerAt(2.5f, true, 10f) == ClipTiming.TriggerAt(2.5f, false, 10f));
+
+        Check("a plain clip is as long as its animation",
+              10f, ClipTiming.Span(0, 10f, 0, 0, 1, "a", out _));
+
+        Check("cropping takes off both ends",
+              7f, ClipTiming.Span(0, 10f, 1f, 2f, 1, "a", out _));
+
+        Check("double speed halves it",
+              5f, ClipTiming.Span(0, 10f, 0, 0, 2f, "a", out _));
+
+        Check("a quarter speed makes it four times as long",
+              40f, ClipTiming.Span(0, 10f, 0, 0, 0.25f, "a", out _));
+
+        // Both at once, which no vanilla clip does. Crop first and then scale: 10 - 1 - 2 = 7, at
+        // double speed is 3.5. Scaling before cropping would give 3, so this one number tells the two
+        // orders apart.
+        Check("cropped and scaled together, in that order",
+              3.5f, ClipTiming.Span(0, 10f, 1f, 2f, 2f, "a", out _));
+
+        Check("playing backwards lasts as long as playing forwards",
+              5f, ClipTiming.Span(0, 10f, 0, 0, -2f, "a", out _));
+
+        Check("an enforced duration ignores the animation entirely",
+              4f, ClipTiming.Span(4f, 10f, 1f, 2f, 8f, "a", out _));
+
+        // An enforced duration is the one case that survives a missing animation, and it matters:
+        // without it a clip whose file is absent would have to be a stop.
+        Check("and still applies when the animation is missing",
+              4f, ClipTiming.Span(4f, 0, 0, 0, 1, "a", out _));
+
+        ClipTiming.Span(0, 10f, 6f, 6f, 1, "a", out string overCropped);
+        CheckTrue("cropping past the whole animation has no length",
+                  overCropped.Contains("crop", StringComparison.OrdinalIgnoreCase));
+
+        ClipTiming.Span(0, 10f, 0, 0, 0, "a", out string parked);
+        CheckTrue("a clip at zero speed is parked rather than instant",
+                  parked.Contains("never finishes", StringComparison.Ordinal));
+
+        ClipTiming.Span(0, 0, 0, 0, 1, "Missing.hkt", out string absent);
+        CheckTrue("a missing animation says which one", absent.Contains("Missing.hkt", StringComparison.Ordinal));
+
+        ClipTiming.Span(0, -1, 0, 0, 1, "", out string unnamed);
+        CheckTrue("naming no animation is a different answer from one not found",
+                  unnamed.Contains("names no animation", StringComparison.Ordinal));
+    }
+
+    // A clip whose length could not be worked out must hold the graph still rather than move it. This
+    // is the safety property that makes the feature worth shipping at all: 44 of the corpus's clips
+    // name an animation that is not on disk, and a build that guessed a length for them would invent
+    // transitions the game never fires.
+    private static void AnUntimedClipRaisesNothing()
+    {
+        Console.WriteLine("\na clip with no length raises nothing");
+
+        var model = BehaviourGraphModel.Parse(ClipEndGraph());
+        var run = GraphRun.Start(model);
+
+        run.Time(new Dictionary<string, ClipTiming.Clip>(StringComparer.Ordinal)
+        {
+            ["98"] = new ClipTiming.Clip("98", "TheClip", @"Animations\Test.hkt", 0,
+                                         Array.Empty<ClipTiming.Trigger>(), "MODE_SINGLE_PLAY",
+                                         "the animation 'Animations\\Test.hkt' was not found"),
+        });
+
+        var after = run.Advance(1000f);
+        Check("a very long wait fires nothing", 0, after.Count);
+        Check("and the machine has not moved", "Playing", run.Where()[0].StateName);
+
+        CheckTrue("the clip it could not time is reported as a stop",
+                  run.Stops.Any(s => s.Why.Contains("no length", StringComparison.Ordinal)));
+        CheckTrue("and the stop names the clip",
+                  run.Stops.Any(s => s.Why.Contains("TheClip", StringComparison.Ordinal)));
+
+        // With no table at all the clock must behave as it did before any of this existed, because a
+        // caller with no folder around the behaviour genuinely cannot supply one.
+        var untimed = GraphRun.Start(BehaviourGraphModel.Parse(ClipEndGraph()));
+        Check("with no timing supplied nothing fires either", 0, untimed.Advance(1000f).Count);
+        Check("and no stop is invented for it", 0, untimed.Stops.Count);
+    }
+
+    // Looping is the difference between a clip that can end a state once and one that keeps offering
+    // to. The corpus ships 1,576 looping clips and 1,946 single play ones, and no ping pong at all, so
+    // the behaviour of the mode it does not ship is only ever checked here.
+    private static void ALoopingClipKeepsFiringAndASinglePlayDoesNot()
+    {
+        Console.WriteLine("\na looping clip keeps firing and a single play does not");
+
+        // The clock is measured on a clip carrying no triggers, because a clip that ends its own state
+        // stops playing the instant it fires and has no clock left to read. Four one second steps
+        // through a three second clip is the shortest run that tells wrapping from clamping: a looping
+        // clip is a second into its second cycle and a single play one is still sitting on its end.
+        var looping = GraphRun.Start(BehaviourGraphModel.Parse(ClipEndGraph()));
+        looping.Time(OneClip(3f, "MODE_LOOPING"));
+        Steps(looping, 1f, 4);
+        Check("a looping clip wraps round to its second cycle", 1f, looping.PlayingAt("98"));
+
+        var pingPong = GraphRun.Start(BehaviourGraphModel.Parse(ClipEndGraph()));
+        pingPong.Time(OneClip(3f, "MODE_PING_PONG"));
+        Steps(pingPong, 1f, 4);
+        Check("ping pong carries on rather than stopping", 1f, pingPong.PlayingAt("98"));
+
+        var once = GraphRun.Start(BehaviourGraphModel.Parse(ClipEndGraph()));
+        once.Time(OneClip(3f, "MODE_SINGLE_PLAY"));
+        Steps(once, 1f, 4);
+        Check("a single play clip stops at its end", 3f, once.PlayingAt("98"));
+
+        // Whichever mode it is, ending a state is something a clip does once, because the state it
+        // ended is the state that was holding it. Both are checked so that neither mode is assumed to
+        // behave like the other.
+        var trigger = new ClipTiming.Trigger(3f, "ClipDone", RelativeToEnd: true, Acyclic: false);
+
+        var endsLooping = GraphRun.Start(BehaviourGraphModel.Parse(ClipEndGraph()));
+        endsLooping.Time(OneClip(3f, "MODE_LOOPING", trigger));
+        Check("a looping clip still ends its state exactly once", 1, Steps(endsLooping, 1f, 6));
+        Check("and the machine has left", "Done", endsLooping.Where()[0].StateName);
+
+        var endsOnce = GraphRun.Start(BehaviourGraphModel.Parse(ClipEndGraph()));
+        endsOnce.Time(OneClip(3f, "MODE_SINGLE_PLAY", trigger));
+        Check("so does a single play one", 1, Steps(endsOnce, 1f, 6));
+        Check("leaving the same way", "Done", endsOnce.Where()[0].StateName);
+    }
+
+    /// Steps the clock and totals what fired, so a count is a count of transitions and not of steps.
+    private static int Steps(GraphRun run, float seconds, int howMany)
+    {
+        int fired = 0;
+        for (int i = 0; i < howMany; i++) fired += run.Advance(seconds).Count;
+        return fired;
     }
 
     // An instant transition, which is a third of the transitions in the corpus, must snap rather than

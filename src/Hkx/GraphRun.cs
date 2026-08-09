@@ -114,6 +114,26 @@ public sealed class GraphRun
     /// the engine does.
     private readonly Dictionary<string, Blend> _blending = new(StringComparer.Ordinal);
 
+    /// How far into itself every clip currently playing has got, in clip local seconds.
+    ///
+    /// Keyed by clip rather than by machine, because more than one clip plays at once: a blender runs
+    /// all of its children and a layer generator runs all of its layers, so a character normally has
+    /// dozens going at the same time and they do not share a clock.
+    private readonly Dictionary<string, float> _playing = new(StringComparer.Ordinal);
+
+    /// Where each clip had got to before the current rebuild, so one still playing keeps its position
+    /// instead of starting again. Without this every event in the graph would restart every clip in
+    /// it, and a clip would never reach its own end while anything else was happening.
+    private Dictionary<string, float>? _wasPlaying;
+
+    /// Every clip's length and the times its triggers go out, or empty when nobody supplied any.
+    ///
+    /// Empty is the ordinary case rather than a degraded one: a clip's length lives in the animation
+    /// file, and a caller with no folder around the behaviour genuinely cannot know it. With no table
+    /// the clock advances blends and nothing else, which is exactly what this did before.
+    private IReadOnlyDictionary<string, ClipTiming.Clip> _clips =
+        new Dictionary<string, ClipTiming.Clip>(StringComparer.Ordinal);
+
     public IReadOnlyList<Stop> Stops => _stops;
     public string RootId { get; private set; } = "";
 
@@ -335,6 +355,16 @@ public sealed class GraphRun
             return;
         }
 
+        // A clip is a leaf: it carries nothing that runs, and it is the thing whose own length can end
+        // a state. Noted on the way past so the clock knows what is playing, keeping whatever position
+        // it already had if this walk is a rebuild that left it running.
+        if (node.Class == "hkbClipGenerator")
+        {
+            _playing[node.Id] = _wasPlaying != null && _wasPlaying.TryGetValue(node.Id, out float was) ? was : 0;
+            onPath.Remove(generatorId);
+            return;
+        }
+
         foreach (string next in Below(node)) Enter(next, depth + 1, onPath);
         onPath.Remove(generatorId);
     }
@@ -519,23 +549,93 @@ public sealed class GraphRun
         return fired;
     }
 
-    /// Advances the clock, which for now means moving every in-progress transition blend along.
+    /// Advances the clock: every in-progress transition blend, and every clip that is playing.
     ///
-    /// This is the whole of the timing model and it is deliberately narrow. What it does not advance
-    /// is a clip's own playback, because a clip's length lives in the animation file rather than in
-    /// the behaviour, and that file is not open here. So a state does not leave on its own when its
-    /// clip ends; it leaves when an event moves it. What this does answer is what a transition looks
-    /// like part way through, which is the thing that could not be read at all before and the thing a
-    /// blend is.
-    public void Advance(float seconds)
+    /// The second half is what lets a state leave because its clip ended rather than only because
+    /// somebody sent an event. It does not do that directly, and the indirection is the whole point:
+    /// nothing in a state machine says "leave when the clip finishes". A clip carries triggers, a
+    /// trigger raises an event at a point in the clip, and a trigger marked relative to the end raises
+    /// it when the animation runs out. So a clip ending is an ordinary event with an unusual sender,
+    /// and it goes through the same `Send` as one typed into the box.
+    ///
+    /// Returns what those triggers fired, so a caller can say a state moved on its own rather than
+    /// leaving the change to be noticed.
+    public IReadOnlyList<Fired> Advance(float seconds)
     {
-        if (seconds <= 0 || _blending.Count == 0) return;
+        var fired = new List<Fired>();
+        if (seconds <= 0) return fired;
 
         foreach (string machineId in _blending.Keys.ToList())
         {
             var blend = _blending[machineId] with { Elapsed = _blending[machineId].Elapsed + seconds };
             if (blend.Elapsed >= blend.Duration) _blending.Remove(machineId);
             else _blending[machineId] = blend;
+        }
+
+        if (_clips.Count == 0 || _playing.Count == 0) return fired;
+
+        // Which events this step crosses, gathered before any of them is sent. Sending inside the
+        // walk would move states while their own clips are still being read, so a clip could be
+        // stopped half way through deciding what it had raised, and the result would depend on
+        // dictionary order.
+        var raised = new List<string>();
+
+        foreach (string clipId in _playing.Keys.ToList())
+        {
+            if (!_clips.TryGetValue(clipId, out var clip) || !clip.Known) continue;
+
+            float from = _playing[clipId];
+            float to = from + seconds;
+
+            foreach (var trigger in clip.Triggers)
+            {
+                // Crossed during this step. Half open at the start so a trigger sitting exactly on
+                // the position the clip is already at does not fire twice on consecutive steps, and
+                // closed at the end so one sitting exactly on the clip's length does fire.
+                if (trigger.At > from && trigger.At <= to && !raised.Contains(trigger.Event))
+                    raised.Add(trigger.Event);
+            }
+
+            // A clip that runs off its end starts again, which is what MODE_LOOPING does and what the
+            // corpus's clips overwhelmingly are. A clip that does not loop would stay at its end
+            // instead, and telling the two apart is `mode`, which is read where the table is built
+            // rather than here.
+            _playing[clipId] = clip.Looping && to >= clip.Seconds
+                ? to % clip.Seconds
+                : Math.Min(to, clip.Seconds);
+        }
+
+        foreach (string name in raised) fired.AddRange(Send(name));
+        return fired;
+    }
+
+    /// How far into itself a clip has played, in clip local seconds, or null when it is not playing.
+    public float? PlayingAt(string clipId) => _playing.TryGetValue(clipId, out float at) ? at : null;
+
+    /// Every clip currently playing, with where it has got to and how long it lasts.
+    public IReadOnlyList<(ClipTiming.Clip Clip, float At)> Playing() =>
+        _playing.Where(p => _clips.ContainsKey(p.Key))
+                .Select(p => (_clips[p.Key], p.Value))
+                .OrderBy(p => p.Item1.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+    /// Gives the run the clip lengths it cannot work out for itself, and says what it could not time.
+    ///
+    /// A clip whose length is unknown is recorded as a stop rather than left silent. The run already
+    /// reports a generator that loads another file that way, and a clip whose animation is missing is
+    /// the same kind of thing: a place where the answer depends on something outside this file. Left
+    /// unreported it would look like a clip that simply never ends, which is a claim rather than an
+    /// absence.
+    public void Time(IReadOnlyDictionary<string, ClipTiming.Clip> clips)
+    {
+        _clips = clips;
+
+        foreach (var clip in clips.Values)
+        {
+            if (clip.Known || clip.Triggers.Count > 0) continue;
+            _stops.Add(new Stop(clip.ClipId, "hkbClipGenerator",
+                $"'{clip.Name}' has no length, so nothing it raises at a point in itself can be " +
+                $"timed: {clip.Why}"));
         }
     }
 
@@ -561,8 +661,11 @@ public sealed class GraphRun
 
         _in.Clear();
         _resume = keep;
+        _wasPlaying = new Dictionary<string, float>(_playing, StringComparer.Ordinal);
+        _playing.Clear();
         if (RootId.Length > 0) Enter(RootId, 0, new HashSet<string>(StringComparer.Ordinal));
         _resume = null;
+        _wasPlaying = null;
     }
 
     /// Where each machine was before the current rebuild, so one that is still running stays put.
