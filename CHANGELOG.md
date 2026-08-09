@@ -3,6 +3,48 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, a clip can be cut down to the frames worth keeping
+
+The save path could change what a frame held and could not change how many frames there were. It can
+now: `AnimationEdit.Trim` takes a span of frames, and `NativeAnimation.Recompress` takes the new
+length that comes with it.
+
+**A cut is four things changing together and only one of them is the frames.** A clip's own duration
+is a field on the animation, its annotations are a run of structs hanging off it, and the root's
+travel is a separate object reached by pointer, and all four measure the same timeline. A trim that
+sliced the frames alone would produce a clip that loads and plays the kept frames slowly, fires its
+annotations at the wrong moments, and walks the character somewhere the animation no longer goes.
+
+**Nothing is interpolated.** Whole frames are kept and whole frames are dropped, so every frame in the
+result is the frame that was there and the only error in it is the encoder's. Measured across the
+13,153 clips the gate cuts: worst 0.026 units of position and 0.0011 radians of rotation, against the
+same limits `savespline` already holds the codec to.
+
+**The travel is cut rather than refused,** because refusing it would refuse the feature: 13,543 of the
+14,370 shipped clips carry it. Two shapes, both measured rather than assumed. 11,882 clips sample the
+root once per animation frame and are sliced over the same index range as the frames. 1,661 carry
+exactly two samples whatever their frame count, which is a reference frame that is linear across the
+whole clip, so a cut reads the path at the new start and end and keeps two. The cut path is then
+rebased to start at the origin, which is where all 12,454 shipped clips carrying travel start theirs.
+
+**A save has been losing annotation text since it started dropping the animation it replaced**, and
+the trim gate is what caught it. The new animation's annotations were copied off the old one but
+shared its text, and laying the file out again gives a shared run to the first object that reaches it,
+so the text went out with the old object and its pointer was dropped as naming a byte that was no
+longer there. The file came back with the right number of annotations at the right times and every one
+of them blank. The copy now owns its text. `symrm savespline` checks the text and not only the count.
+
+That fix costs size, which is worth saying rather than burying: a saved clip goes from 80.8% of the
+size it shipped at to 89.1%, because the strings it used to drop are now written and laid out. Still
+smaller than the file it replaces, and the 80.8% was cheaper only because it was losing data.
+
+**Passing no cut keeps exactly the behaviour that was there,** and that was proved before the
+annotation fix rather than argued: with the cut plumbing in and nothing else changed,
+`symrm savespline` over the whole tree wrote a byte for byte identical 294,670,896 bytes across
+13,510 files, and `symrm editframe` reported the same 13,154 clips edited with the same worst drifts
+to five decimal places. `editframe` still reports exactly that after the annotation fix, which does
+not touch a frame.
+
 ## 2026-08-08, a shape can be kept and used again
 
 Adding a node meant creating it and filling in every field by hand. A shape can now be lifted out of a

@@ -119,6 +119,9 @@ public static class Tests
         ("ATemplateRefusesToLiftWhatSharesItsFile", ATemplateRefusesToLiftWhatSharesItsFile),
         ("ATemplateSaysWhatToDeclareRatherThanJustFailing", ATemplateSaysWhatToDeclareRatherThanJustFailing),
         ("ATemplateDescriptionSurvivesAwkwardNames", ATemplateDescriptionSurvivesAwkwardNames),
+        ("ACutTakesTheClipsOwnTimeWithIt", ACutTakesTheClipsOwnTimeWithIt),
+        ("ALinearTravelStaysTwoSamplesAfterACut", ALinearTravelStaysTwoSamplesAfterACut),
+        ("ACutRefusesWhatIsNotAClip", ACutRefusesWhatIsNotAClip),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -5324,5 +5327,99 @@ public static class Tests
         // checks the plainer path: the change is really in the bytes, not only in memory.
         CheckTrue("the change is not lost to the encoder",
             Math.Abs(back.Tracks[track].Translations[frame].X - edit.X) < 0.05f);
+    }
+
+    // A cut is four things changing together, and this is the check that all four move.
+    //
+    // The frames are the easy one and the one that would pass on its own. The other three are the
+    // ones a trim gets wrong quietly: the clip's own duration, the annotations that fire along it,
+    // and the root's travel sampled across it. A clip cut to half its frames and left with its old
+    // duration still loads and still plays; it just plays at half speed.
+    private static void ACutTakesTheClipsOwnTimeWithIt()
+    {
+        Console.WriteLine("\na cut takes the clip's own time with it");
+
+        var clip = MadeUpClip(61, 2);          // 61 frames at thirty, so exactly two seconds
+        clip.Annotations.Add(new HkxAnnotation { Time = 0.1f, Text = "before the cut" });
+        clip.Annotations.Add(new HkxAnnotation { Time = 1.0f, Text = "inside the cut" });
+        clip.Annotations.Add(new HkxAnnotation { Time = 1.9f, Text = "after the cut" });
+
+        // One sample per frame, walking straight down the y axis, which is the shape 11,882 of the
+        // shipped clips carry.
+        var motion = new RootMotion.Motion { Duration = clip.Duration };
+        for (int f = 0; f < clip.NumFrames; f++)
+            motion.Samples.Add(new RootMotion.Sample(new Vector3(0, f * 2f, 0), 0));
+
+        var cut = AnimationEdit.Trim(clip, motion, 15, 45);
+
+        Check("the frames it was told to keep", 31, cut.Animation.NumFrames);
+        CheckTrue($"and the length that many frames really are ({cut.Animation.Duration:F4}s)",
+            Math.Abs(cut.Animation.Duration - 1f) < 1e-4f);
+        Check("every track was cut, not just the first", 2, cut.Animation.Tracks.Count);
+        Check("and each holds the kept frames", 31, cut.Animation.Tracks[1].Translations.Count);
+
+        // Frame 0 of the cut is frame 15 of the original, exactly, because nothing here interpolates.
+        Check("frame zero of the cut is the frame it came from",
+            clip.Tracks[0].Translations[15], cut.Animation.Tracks[0].Translations[0]);
+        Check("and the last one likewise",
+            clip.Tracks[0].Translations[45], cut.Animation.Tracks[0].Translations[30]);
+
+        Check("the annotations outside the cut are gone", 1, cut.Animation.Annotations.Count);
+        Check("and this one was dropped from each end", 2, cut.AnnotationsDropped);
+        CheckTrue($"the one that survived moved back to where it now sits " +
+                  $"({cut.Animation.Annotations[0].Time:F4}s)",
+            Math.Abs(cut.Animation.Annotations[0].Time - 0.5f) < 1e-4f);
+        Check("carrying its own text", "inside the cut", cut.Animation.Annotations[0].Text);
+
+        Check("the travel was sliced the same way", 31, cut.Motion!.Samples.Count);
+        CheckTrue($"and says the clip's new length ({cut.Motion.Duration:F4}s)",
+            Math.Abs(cut.Motion.Duration - 1f) < 1e-4f);
+
+        // Rebased, because every shipped clip starts its travel at the origin: measured, 12,454 of
+        // 12,454 carrying travel across the corpus.
+        CheckTrue("it starts at the origin the way every shipped clip does",
+            cut.Motion.Samples[0].Position.Length() < 1e-4f);
+        CheckTrue($"while the distance it covers is untouched ({cut.Motion.Travel.Length():F2})",
+            Math.Abs(cut.Motion.Travel.Length() - 60f) < 1e-3f);
+    }
+
+    // The other travel shape the corpus carries, and it needs a different rule rather than a refusal.
+    //
+    // 1,661 shipped clips sample the root exactly twice whatever their frame count, which is a
+    // reference frame that is linear across the whole clip. Slicing an index range out of two samples
+    // would be nonsense, so a cut reads the path at the new start and end instead, which is exact for
+    // a linear frame rather than an approximation of one.
+    private static void ALinearTravelStaysTwoSamplesAfterACut()
+    {
+        Console.WriteLine("\na linear travel stays two samples after a cut");
+
+        var clip = MadeUpClip(41, 1);          // 41 frames at thirty, so a second and a third
+        var motion = new RootMotion.Motion { Duration = clip.Duration };
+        motion.Samples.Add(new RootMotion.Sample(Vector3.Zero, 0));
+        motion.Samples.Add(new RootMotion.Sample(new Vector3(0, 40f, 0), 0));
+
+        var cut = AnimationEdit.Trim(clip, motion, 10, 30);
+
+        Check("still two samples, not one per frame", 2, cut.Motion!.Samples.Count);
+        CheckTrue("still starting at the origin", cut.Motion.Samples[0].Position.Length() < 1e-4f);
+
+        // Frames 10 to 30 of 41 is half the clip, so half the travel.
+        CheckTrue($"covering the half of the path the cut kept ({cut.Motion.Travel.Length():F3})",
+            Math.Abs(cut.Motion.Travel.Length() - 20f) < 1e-2f);
+    }
+
+    // What a cut will not do, said out loud rather than produced wrongly.
+    private static void ACutRefusesWhatIsNotAClip()
+    {
+        Console.WriteLine("\na cut refuses what is not a clip");
+
+        var clip = MadeUpClip(20, 1);
+
+        CheckThrows("a single frame is not a clip, because a curve needs an interval",
+            () => AnimationEdit.Trim(clip, null, 5, 5));
+        CheckThrows("a span running past the end is refused rather than clamped",
+            () => AnimationEdit.Trim(clip, null, 5, 25));
+        CheckThrows("and a span running backwards likewise",
+            () => AnimationEdit.Trim(clip, null, 12, 4));
     }
 }
