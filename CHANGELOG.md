@@ -3,6 +3,34 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
+## 2026-08-08, a clip can be made longer or shorter
+
+The other half of changing a clip's length. `AnimationEdit.Retime` takes a scale and rebuilds the clip
+at it, and the writer takes the new length the same way it takes a cut's.
+
+**Two operations, not one, and it takes a switch rather than guessing.** Keeping the frame rate is
+what "play this at half speed" means: the clip gets more frames or fewer, each read between the frames
+that were there, and this is the one that interpolates. Keeping the frames instead changes how long
+each is shown for, which is exact and reads nothing between anything. Both are offered because both
+are the right answer to a different question.
+
+**Rotation is read along the arc.** A straight interpolation between two rotations is not a rotation,
+and normalising it afterwards gives one on the right path at the wrong speed.
+
+**The travel does not scale, and that is the mistake worth naming.** A clip played at half speed goes
+exactly as far, it just takes twice as long about it. What follows the frames is how many samples
+there are; the path itself is the same path. The gate checks the distance travelled came back
+unchanged, which nothing else in it would have caught.
+
+**What the resampling costs is measured on every retime and handed back, and nothing refuses on it by
+default.** Over the 13,155 shipped clips the gate sweeps, halving a clip costs a median of 0.37 units
+of position, 4.4 at the ninetieth, 37.2 at the ninety ninth and 445.7 at worst. That is what halving a
+clip is rather than a fault in doing it, so a default limit would refuse a third of ordinary requests
+and teach whoever hit it to turn the check off. Doubling a clip costs 0.0089 units at worst, which is
+the encoder and not the resampling, because every original frame lands on a new frame exactly.
+`AnimationEdit.Budget` exists for a caller who wants a limit, and `Budget.Tail` is the corpus's worst
+hundredth, to be passed rather than applied.
+
 ## 2026-08-08, a clip can be cut down to the frames worth keeping
 
 The save path could change what a frame held and could not change how many frames there were. It can

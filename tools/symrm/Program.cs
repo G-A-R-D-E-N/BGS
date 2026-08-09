@@ -80,6 +80,7 @@ public static class Program
             case "savespline": return SaveSpline(argv);
             case "editframe": return EditFrame(argv);
             case "trim": return Trim(argv);
+            case "retime": return Retime(argv);
             case "run": return Run(argv);
             case "weights": return Weights(argv);
             case "cliptime": return ClipTime(argv);
@@ -157,6 +158,12 @@ public static class Program
           dotnet run --project tools/symrm/symrm.csproj -- editframe <animDir | file.hkx> [everyNth]
               The frame editor's whole path: change a bone at one frame, save, and read back. Proves
               the edited frame comes back changed and no other frame moved.
+
+          dotnet run --project tools/symrm/symrm.csproj -- retime <animDir | file.hkx> [everyNth]
+              Makes every clip twice as long, half as long, and twice as long without resampling,
+              saves each, and reads it back. Checks the length, the frame count, the annotations and
+              the travel followed, and measures what the resampling cost against the frames it came
+              from, which is the number the error budget is set from.
 
           dotnet run --project tools/symrm/symrm.csproj -- trim <animDir | file.hkx> [everyNth]
               Cuts the middle half out of every clip, saves it, and reads it back. Checks the kept
@@ -4675,7 +4682,7 @@ public static class Program
             try
             {
                 written = NativeAnimation.Recompress(file, cut.Animation, null, true,
-                                                     NativeAnimation.Cut.Of(cut));
+                                                     NativeAnimation.Timeline.Of(cut));
             }
             catch (InvalidOperationException e)
             {
@@ -4810,6 +4817,294 @@ public static class Program
 
         return broke.Values.Sum() + threw + unreadable + refused == 0 ? 0 : 1;
     }
+
+    // Making a clip longer and shorter, saving it, and reading back everything that had to follow.
+    // The gate for #35's retime.
+    //
+    // A retime is the same four things a cut is, moved rather than sliced, plus one a cut does not
+    // have: error. A cut keeps whole frames, so the only error in it is the encoder's. A retime at a
+    // fixed frame rate reads between the frames that were there, and when it makes a clip shorter it
+    // throws frames away, which is information loss and not rounding. So the question this answers
+    // is not only whether a retimed clip is consistent with itself. It is how far the retimed clip is
+    // from the clip it came from, measured at the moments the original had frames at, which is what
+    // the error budget in `AnimationEdit.Budget` has to be set from rather than chosen.
+    //
+    // Three passes, because they fail differently:
+    //
+    //   twice as long        more frames read between the ones that were there. Every original frame
+    //                        lands on a new frame exactly, so this should cost nothing but the
+    //                        encoder, and a number here that is not tiny means the resampling is
+    //                        wrong rather than lossy.
+    //   half as long         half the frames, so the ones between them are gone for good. This is the
+    //                        pass the budget is measured from.
+    //   twice, same frames   the frames untouched and each shown for twice as long. Exact by
+    //                        construction, so it is checked pose for pose against the original.
+    private static int Retime(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        int everyNth = argv.Length > 2 && int.TryParse(argv[2], out int n) && n > 0 ? n : 1;
+        if (everyNth > 1) Console.WriteLine($"every {everyNth}th file");
+
+        const float positionLimit = 0.05f;
+        const float rotationLimit = 0.01f;
+
+        string work = Path.Combine(Path.GetTempPath(), "symrm-retime");
+        Directory.CreateDirectory(work);
+
+        var passes = new (string Name, float Scale, bool KeepRate)[]
+        {
+            ("twice as long", 2f, true),
+            ("half as long", 0.5f, true),
+            ("twice, same frames", 2f, false),
+        };
+
+        var checks = new[]
+        {
+            "frame count", "clip duration", "frame duration", "annotations kept",
+            "annotations keep their text", "annotations moved with the clip",
+            "annotations inside the clip", "motion carried over", "motion sample count",
+            "motion duration", "travels the same distance", "frames survive when nothing is resampled",
+        };
+
+        var held = new Dictionary<(string, string), int>();
+        var broke = new Dictionary<(string, string), int>();
+        var firstBreak = new Dictionary<(string, string), string>();
+        foreach (var pass in passes)
+            foreach (string check in checks) { held[(pass.Name, check)] = 0; broke[(pass.Name, check)] = 0; }
+
+        void Check(string pass, string name, bool ok, string file, string detail)
+        {
+            if (ok) { held[(pass, name)]++; return; }
+            broke[(pass, name)]++;
+            if (!firstBreak.ContainsKey((pass, name)))
+                firstBreak[(pass, name)] = $"{Path.GetFileName(file)}: {detail}";
+        }
+
+        var reader = new HkxBinaryReader();
+        var refusals = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        int done = 0, skipped = 0, refused = 0, threw = 0, unreadable = 0;
+
+        // What the resampling costs, kept per pass so the lossy direction can be told from the one
+        // that should cost nothing. These are the numbers the budget is set from.
+        var cost = passes.ToDictionary(p => p.Name, _ => new List<(float Position, float Rotation)>());
+        var overBudget = passes.ToDictionary(p => p.Name, _ => 0);
+
+        for (int i = 0; i < files.Length; i++)
+        {
+            if (i % everyNth != 0) continue;
+            string file = files[i];
+
+            HkxAnimationData was;
+            RootMotion.Motion motion;
+            try
+            {
+                if (!reader.TryReadAnimation(file, out was)) { skipped++; continue; }
+                if (was.AnimationClass != NativeAnimation.SplineClass) { skipped++; continue; }
+                if (was.NumFrames < 4 || was.Tracks.Count == 0) { skipped++; continue; }
+                if (was.Tracks[0].Translations.Count < was.NumFrames) { skipped++; continue; }
+                motion = RootMotion.Read(file);
+            }
+            catch (Exception) { skipped++; continue; }
+
+            done++;
+            float wasLength = (was.NumFrames - 1) * AnimationEdit.FrameDuration(was);
+
+            foreach (var (name, scale, keepRate) in passes)
+            {
+                AnimationEdit.Retimed made;
+
+                // Measured without a budget on purpose. Refusing here would leave the very clips the
+                // budget is meant to describe out of the measurement it is set from.
+                try { made = AnimationEdit.Retime(was, motion, scale, keepRate); }
+                catch (InvalidOperationException e)
+                {
+                    refused++;
+                    refusals[Head(e.Message)] = refusals.GetValueOrDefault(Head(e.Message)) + 1;
+                    continue;
+                }
+
+                cost[name].Add((made.PositionError, made.RotationError));
+                if (made.PositionError > AnimationEdit.Budget.Tail.Position ||
+                    made.RotationError > AnimationEdit.Budget.Tail.Rotation)
+                    overBudget[name]++;
+
+                NativeAnimation.Result written;
+                try
+                {
+                    written = NativeAnimation.Recompress(file, made.Animation, null, true,
+                                                         NativeAnimation.Timeline.Of(made, wasLength));
+                }
+                catch (InvalidOperationException e)
+                {
+                    refused++;
+                    refusals[Head(e.Message)] = refusals.GetValueOrDefault(Head(e.Message)) + 1;
+                    continue;
+                }
+                catch (Exception e)
+                {
+                    threw++;
+                    refusals[Head(e.Message)] = refusals.GetValueOrDefault(Head(e.Message)) + 1;
+                    continue;
+                }
+
+                string saved = Path.Combine(work, "retimed.hkx");
+                File.WriteAllBytes(saved, written.Bytes);
+
+                HkxAnimationData now;
+                RootMotion.Motion nowMotion;
+                try { now = reader.ReadAnimation(saved); nowMotion = RootMotion.Read(saved); }
+                catch (Exception) { unreadable++; continue; }
+
+                Check(name, "frame count", now.NumFrames == made.Animation.NumFrames, file,
+                      $"{now.NumFrames} frame(s) against {made.Animation.NumFrames}");
+                Check(name, "clip duration",
+                      MathF.Abs(now.Duration - made.Animation.Duration) <= 1e-3f, file,
+                      $"{now.Duration:F4}s against {made.Animation.Duration:F4}s");
+                Check(name, "frame duration",
+                      MathF.Abs(now.FrameDuration - made.Animation.FrameDuration) <= 1e-5f, file,
+                      $"{now.FrameDuration:F6} against {made.Animation.FrameDuration:F6}");
+
+                Check(name, "annotations kept",
+                      now.Annotations.Count == was.Annotations.Count, file,
+                      $"{now.Annotations.Count} annotation(s) against {was.Annotations.Count}");
+
+                var wanted = made.Animation.Annotations.Select(a => a.Text)
+                                .OrderBy(t => t, StringComparer.Ordinal);
+                var back = now.Annotations.Select(a => a.Text).OrderBy(t => t, StringComparer.Ordinal);
+                Check(name, "annotations keep their text",
+                      wanted.SequenceEqual(back, StringComparer.Ordinal), file,
+                      $"came back as [{string.Join(", ", back)}] against [{string.Join(", ", wanted)}]");
+
+                // The times as well as the count and the text. A retime that left every annotation
+                // where it was would pass both of those and fire every one of them at the wrong
+                // moment, which is the whole failure a retime has that a cut does not.
+                var wantTimes = made.Animation.Annotations.Select(a => a.Time).OrderBy(t => t).ToList();
+                var haveTimes = now.Annotations.Select(a => a.Time).OrderBy(t => t).ToList();
+                float moved = wantTimes.Count == haveTimes.Count && wantTimes.Count > 0
+                    ? Enumerable.Range(0, wantTimes.Count).Max(k => MathF.Abs(wantTimes[k] - haveTimes[k]))
+                    : 0;
+                Check(name, "annotations moved with the clip",
+                      wantTimes.Count == haveTimes.Count && moved <= 1e-3f, file,
+                      $"worst annotation is {moved:F4}s from where the retime put it");
+
+                float past = 0;
+                foreach (var note in now.Annotations) past = MathF.Max(past, note.Time - now.Duration);
+                Check(name, "annotations inside the clip", past <= 1f / 60f, file,
+                      $"an annotation sits {past:F3}s past the end of a {now.Duration:F3}s clip");
+
+                Check(name, "motion carried over", motion.Any == nowMotion.Any, file,
+                      motion.Any ? "the travel was lost" : "a travel object appeared from nowhere");
+
+                if (motion.Any)
+                {
+                    Check(name, "motion sample count",
+                          nowMotion.Samples.Count == made.Motion!.Samples.Count, file,
+                          $"{nowMotion.Samples.Count} sample(s) against {made.Motion.Samples.Count}");
+                    Check(name, "motion duration",
+                          MathF.Abs(nowMotion.Duration - made.Animation.Duration) <= 1e-3f, file,
+                          $"the travel says {nowMotion.Duration:F4}s and the clip says " +
+                          $"{made.Animation.Duration:F4}s");
+
+                    // A clip played slower goes exactly as far, it just takes longer about it. A
+                    // retime that scaled the samples as well as the duration would move the
+                    // character twice as far, which nothing else here would catch.
+                    float went = motion.Travel.Length(), goes = nowMotion.Travel.Length();
+                    Check(name, "travels the same distance",
+                          MathF.Abs(went - goes) <= MathF.Max(0.5f, went * 0.02f), file,
+                          $"travelled {went:F2} units and now travels {goes:F2}");
+                }
+
+                // Only the pass that resamples nothing can be asked this, and it is the pass where
+                // the answer has to be yes: the frames were not touched, so they have to come back.
+                if (keepRate) continue;
+
+                float pos = 0, rot = 0;
+                for (int t = 0; t < was.Tracks.Count && t < now.Tracks.Count; t++)
+                    for (int f = 0; f < was.NumFrames && f < now.Tracks[t].Translations.Count; f++)
+                    {
+                        pos = MathF.Max(pos, (was.Tracks[t].Translations[f] -
+                                              now.Tracks[t].Translations[f]).Length());
+                        rot = MathF.Max(rot, SplineQuat.AngleBetween(was.Tracks[t].Rotations[f],
+                                                                     now.Tracks[t].Rotations[f]));
+                    }
+
+                Check(name, "frames survive when nothing is resampled",
+                      pos <= positionLimit && rot <= rotationLimit, file,
+                      $"drifted {pos:F4} unit(s), {rot:F5} radian(s)");
+            }
+        }
+
+        Console.WriteLine($"\n{done} spline clip(s) retimed three ways and saved: {refused} refused, " +
+                          $"{threw} threw, {unreadable} could not be read back, " +
+                          $"{skipped} not clips this can retime");
+
+        Console.WriteLine("\nbreak matrix");
+        Console.WriteLine($"  {"check",-42}" + string.Concat(passes.Select(p => $"{p.Name,-24}")));
+        foreach (string check in checks)
+        {
+            string row = $"  {check,-42}";
+            foreach (var pass in passes)
+            {
+                var key = (pass.Name, check);
+                row += $"{held[key] + "/" + broke[key],-24}";
+            }
+            Console.WriteLine(row);
+        }
+
+        foreach (var pass in passes)
+            foreach (string check in checks)
+                if (firstBreak.TryGetValue((pass.Name, check), out string? example))
+                    Console.WriteLine($"  first break, {pass.Name}, {check}: {example}");
+
+        Console.WriteLine("\n(held/broke per pass)");
+
+        Console.WriteLine("\nwhat the resampling cost, against the frames it came from");
+        Console.WriteLine($"  {"pass",-30}{"clips",8}{"median",12}{"p90",12}{"p99",12}{"worst",12}" +
+                          "   over the budget");
+        foreach (var pass in passes)
+        {
+            var costs = cost[pass.Name];
+            if (costs.Count == 0) continue;
+
+            var position = costs.Select(c => c.Position).OrderBy(v => v).ToList();
+            var rotation = costs.Select(c => c.Rotation).OrderBy(v => v).ToList();
+
+            Console.WriteLine($"  {pass.Name + ", position",-30}{position.Count,8}" +
+                              $"{At(position, 0.5f),12:F4}{At(position, 0.9f),12:F4}" +
+                              $"{At(position, 0.99f),12:F4}{position[^1],12:F4}   {overBudget[pass.Name]}");
+            Console.WriteLine($"  {pass.Name + ", rotation",-30}{rotation.Count,8}" +
+                              $"{At(rotation, 0.5f),12:F5}{At(rotation, 0.9f),12:F5}" +
+                              $"{At(rotation, 0.99f),12:F5}{rotation[^1],12:F5}");
+        }
+
+        Console.WriteLine($"\nnothing refuses on error by default. The last column counts against " +
+                          $"AnimationEdit.Budget.Tail, {AnimationEdit.Budget.Tail}, which is a number " +
+                          "a caller can pass rather than one anything applies.");
+        Console.WriteLine("rotation error is the angle between two rotations, so it cannot read past " +
+                          "1.5708 radians however wrong the rotation is.");
+        Console.WriteLine($"pose limits for the pass that resamples nothing: position {positionLimit} " +
+                          $"unit(s), rotation {rotationLimit} radian(s)");
+
+        if (refusals.Count > 0)
+        {
+            Console.WriteLine("\nrefused, by reason");
+            foreach (var (reason, count) in refusals.OrderByDescending(r => r.Value))
+                Console.WriteLine($"  x{count,-6} {reason}");
+        }
+
+        return broke.Values.Sum() + threw + unreadable + refused == 0 ? 0 : 1;
+    }
+
+    /// A value at a fraction of the way through a sorted list.
+    private static float At(List<float> sorted, float fraction) =>
+        sorted.Count == 0 ? 0 : sorted[Math.Clamp((int)(fraction * (sorted.Count - 1)), 0, sorted.Count - 1)];
 
     /// The first sentence of a message, so counting reasons counts reasons rather than file names.
     private static string Head(string message)

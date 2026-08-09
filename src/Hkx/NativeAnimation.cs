@@ -206,17 +206,27 @@ public static class NativeAnimation
     /// So a caller that changed the frame count says so by handing this over, and a caller that did
     /// not hands over nothing and gets exactly the behaviour that was there before.
     ///
-    /// `FromTime` and `ToTime` are the span of the original clip's timeline that was kept. The
-    /// annotations in the file are still at their original times when they are copied, so the writer
-    /// is told which of them survive and how far back to move the ones that do, rather than being
-    /// handed a flat list that has lost which track each belonged to.
-    public sealed record Cut(float Duration, float FromTime, float ToTime, RootMotion.Motion? Motion)
+    /// It says what happened to the timeline rather than handing over a list of annotations, because
+    /// the annotations in the file are still on their tracks and still at their old times when they
+    /// are copied. A flat list would have lost which track each one belonged to. So the writer is
+    /// told the span that survived and what to multiply the times in it by, and it moves them where
+    /// they sit: an annotation at `t` survives when it is between `FromTime` and `ToTime` and comes
+    /// out at `(t - FromTime) * Scale`.
+    ///
+    /// Both operations are that one rule. A cut keeps a span and moves it back, so its `Scale` is
+    /// one. A retime keeps the whole clip and stretches it, so its span is the whole clip and its
+    /// `Scale` is the length it came out at over the length it went in at.
+    public sealed record Timeline(float Duration, float FromTime, float ToTime, float Scale,
+                                  RootMotion.Motion? Motion)
     {
-        public static Cut Of(AnimationEdit.Trimmed trimmed) =>
-            new(trimmed.Animation.Duration, trimmed.FromTime, trimmed.ToTime, trimmed.Motion);
+        public static Timeline Of(AnimationEdit.Trimmed trimmed) =>
+            new(trimmed.Animation.Duration, trimmed.FromTime, trimmed.ToTime, 1f, trimmed.Motion);
+
+        public static Timeline Of(AnimationEdit.Retimed retimed, float was) =>
+            new(retimed.Animation.Duration, 0f, was, retimed.Scale, retimed.Motion);
 
         public override string ToString() =>
-            $"{FromTime:F3}s to {ToTime:F3}s kept as a {Duration:F3}s clip, " +
+            $"{FromTime:F3}s to {ToTime:F3}s at {Scale:F3} times, as a {Duration:F3}s clip, " +
             (Motion is { Any: true } ? $"{Motion.Samples.Count} motion sample(s)" : "no new motion");
     }
 
@@ -245,12 +255,12 @@ public static class NativeAnimation
     /// motion, and every pointer that named the old animation is aimed at the new one. The old bytes
     /// stay where they are and go unreferenced, which is the same shape as every other write here.
     ///
-    /// Passing a `Cut` is what a clip that changed length needs, and passing nothing is what every
-    /// caller that was here before passes. The two paths are deliberately the same code with the
-    /// three values read from different places, so an in place frame edit cannot start behaving
-    /// differently because a cut was added beside it.
+    /// Passing a `Timeline` is what a clip that changed length needs, and passing nothing is what
+    /// every caller that was here before passes. The two paths are deliberately the same code with
+    /// the three values read from different places, so an in place frame edit cannot start behaving
+    /// differently because a cut or a retime was added beside it.
     public static Result Recompress(string hkxPath, HkxAnimationData decoded,
-        SplineEncoder.Options? options = null, bool dropReplaced = true, Cut? cut = null)
+        SplineEncoder.Options? options = null, bool dropReplaced = true, Timeline? cut = null)
     {
         var image = PackfileImage.Read(hkxPath);
         long was = new System.IO.FileInfo(hkxPath).Length;
@@ -416,7 +426,7 @@ public static class NativeAnimation
     /// annotation is a time and a pointer at a string, and the pointer is a fixup naming the slot it
     /// sits in. Moving an annotation up the array means its text has to be named from the slot it
     /// moved to, and the slots left over at the end have to stop naming anything at all.
-    private static void RebaseAnnotations(PackfileSection data, int run, int count, Cut cut)
+    private static void RebaseAnnotations(PackfileSection data, int run, int count, Timeline cut)
     {
         int trackStride = HavokClassTypes.Shipped["hkaAnnotationTrack"]?.Size ?? 24;
         int noteStride = HavokClassTypes.Shipped["hkaAnnotationTrackAnnotation"]?.Size ?? 16;
@@ -456,7 +466,7 @@ public static class NativeAnimation
             {
                 float when = BitConverter.ToSingle(data.Data, notes + n * noteStride);
                 if (when < cut.FromTime - Slack || when > cut.ToTime + Slack) continue;
-                kept.Add((Math.Clamp(when - cut.FromTime, 0, cut.Duration),
+                kept.Add((Math.Clamp((when - cut.FromTime) * cut.Scale, 0, cut.Duration),
                           Destination(notes + n * noteStride + 8)));
             }
 

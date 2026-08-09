@@ -122,6 +122,10 @@ public static class Tests
         ("ACutTakesTheClipsOwnTimeWithIt", ACutTakesTheClipsOwnTimeWithIt),
         ("ALinearTravelStaysTwoSamplesAfterACut", ALinearTravelStaysTwoSamplesAfterACut),
         ("ACutRefusesWhatIsNotAClip", ACutRefusesWhatIsNotAClip),
+        ("ARetimeMovesEverythingThatMeasuresTime", ARetimeMovesEverythingThatMeasuresTime),
+        ("KeepingTheFramesCostsNothingAtAll", KeepingTheFramesCostsNothingAtAll),
+        ("ARetimeSaysWhatTheResamplingCost", ARetimeSaysWhatTheResamplingCost),
+        ("ARotationIsReadAlongTheArcNotAcrossIt", ARotationIsReadAlongTheArcNotAcrossIt),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -5421,5 +5425,124 @@ public static class Tests
             () => AnimationEdit.Trim(clip, null, 5, 25));
         CheckThrows("and a span running backwards likewise",
             () => AnimationEdit.Trim(clip, null, 12, 4));
+    }
+
+    // A retime is a cut's four things again, stretched rather than sliced, and one of them fails in a
+    // way a cut cannot: an annotation left where it was still sits inside the clip, still has its
+    // text, and fires at the wrong moment.
+    private static void ARetimeMovesEverythingThatMeasuresTime()
+    {
+        Console.WriteLine("\na retime moves everything that measures time");
+
+        var clip = MadeUpClip(41, 2);          // 41 frames at thirty, so one and a third seconds
+        clip.Annotations.Add(new HkxAnnotation { Time = 0f, Text = "at the start" });
+        clip.Annotations.Add(new HkxAnnotation { Time = 0.6667f, Text = "halfway" });
+
+        var motion = new RootMotion.Motion { Duration = clip.Duration };
+        for (int f = 0; f < clip.NumFrames; f++)
+            motion.Samples.Add(new RootMotion.Sample(new Vector3(0, f * 3f, 0), 0));
+
+        var slow = AnimationEdit.Retime(clip, motion, 2f);
+
+        Check("twice as long is twice as many intervals", 81, slow.Animation.NumFrames);
+        CheckTrue($"and twice the length ({slow.Animation.Duration:F4}s)",
+            Math.Abs(slow.Animation.Duration - clip.Duration * 2) < 1e-4f);
+        CheckTrue($"at the rate it was already running at ({slow.Animation.FrameDuration:F5})",
+            Math.Abs(slow.Animation.FrameDuration - clip.FrameDuration) < 1e-6f);
+
+        Check("no annotation is lost, a retime drops nothing", 2, slow.Animation.Annotations.Count);
+        CheckTrue($"the one at the start stays there ({slow.Animation.Annotations[0].Time:F4}s)",
+            Math.Abs(slow.Animation.Annotations[0].Time) < 1e-4f);
+        CheckTrue($"and the one halfway is still halfway ({slow.Animation.Annotations[1].Time:F4}s)",
+            Math.Abs(slow.Animation.Annotations[1].Time - 1.3334f) < 1e-3f);
+
+        Check("the travel gets a sample per frame the same as before", 81, slow.Motion!.Samples.Count);
+        CheckTrue($"and says the new length ({slow.Motion.Duration:F4}s)",
+            Math.Abs(slow.Motion.Duration - slow.Animation.Duration) < 1e-4f);
+
+        // The one a retime gets wrong by scaling too much rather than too little. A clip played at
+        // half speed goes exactly as far, it just takes twice as long about it.
+        CheckTrue($"it travels the distance it always travelled ({slow.Motion.Travel.Length():F2})",
+            Math.Abs(slow.Motion.Travel.Length() - motion.Travel.Length()) < 1e-2f);
+
+        // Upsampling puts a new frame exactly on every old one, so the old frames have to come back
+        // as themselves rather than as something read near them.
+        CheckTrue($"every original frame is still exactly itself ({slow.PositionError:F5})",
+            slow.PositionError < 1e-3f);
+    }
+
+    // The other way to make a clip longer, and the reason it is a switch rather than a guess.
+    private static void KeepingTheFramesCostsNothingAtAll()
+    {
+        Console.WriteLine("\nkeeping the frames costs nothing at all");
+
+        var clip = MadeUpClip(41, 1);
+        var slow = AnimationEdit.Retime(clip, null, 2f, keepFrameRate: false);
+
+        Check("the frames are the frames that were there", 41, slow.Animation.NumFrames);
+        CheckTrue("so nothing was resampled", !slow.Resampled);
+        CheckTrue($"and it cost nothing ({slow.PositionError:F5})", slow.PositionError == 0);
+        CheckTrue($"each frame is shown for twice as long ({slow.Animation.FrameDuration:F5})",
+            Math.Abs(slow.Animation.FrameDuration - clip.FrameDuration * 2) < 1e-6f);
+        Check("frame ten is untouched", clip.Tracks[0].Translations[10],
+            slow.Animation.Tracks[0].Translations[10]);
+    }
+
+    // Halving a clip throws frames away and nothing can read them back out. The number saying so is
+    // the point: a retime that quietly lost a fast movement and reported nothing would be worse than
+    // one that refused.
+    private static void ARetimeSaysWhatTheResamplingCost()
+    {
+        Console.WriteLine("\na retime says what the resampling cost");
+
+        // A track that moves a long way between two frames and back, so halving the frame count is
+        // guaranteed to miss the peak rather than only round it.
+        var clip = MadeUpClip(21, 1);
+        for (int f = 0; f < clip.NumFrames; f++)
+            clip.Tracks[0].Translations[f] = new Vector3(f % 2 == 0 ? 0 : 40f, 0, 0);
+
+        var fast = AnimationEdit.Retime(clip, null, 0.5f);
+
+        Check("half as long is half the intervals", 11, fast.Animation.NumFrames);
+        CheckTrue("which means it resampled", fast.Resampled);
+        CheckTrue($"and it says what that cost rather than hiding it ({fast.PositionError:F2})",
+            fast.PositionError > 10f);
+
+        CheckThrows("and refuses when a caller sets a budget it cannot meet",
+            () => AnimationEdit.Retime(clip, null, 0.5f, true, new AnimationEdit.Budget(1f, 0.01f)));
+
+        // The budget is opt in. The same retime without one is written, because losing detail is what
+        // making a clip shorter is rather than a fault in doing it.
+        var anyway = AnimationEdit.Retime(clip, null, 0.5f);
+        Check("without a budget the same retime is produced", 11, anyway.Animation.NumFrames);
+    }
+
+    // A straight interpolation between two rotations is not a rotation, and normalising it afterwards
+    // gives one on the right path at the wrong speed. Halfway between two rotations ninety degrees
+    // apart has to be forty five degrees from each, and the cheap version is not.
+    private static void ARotationIsReadAlongTheArcNotAcrossIt()
+    {
+        Console.WriteLine("\na rotation is read along the arc rather than across it");
+
+        var frames = new List<Quaternion>
+        {
+            Quaternion.Identity,
+            Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2),
+        };
+
+        var half = AnimationEdit.Turned(frames, 0.5f);
+        float toFirst = SplineQuat.AngleBetween(half, frames[0]);
+        float toSecond = SplineQuat.AngleBetween(half, frames[1]);
+
+        CheckTrue($"halfway is the same distance from each end ({toFirst:F4} and {toSecond:F4})",
+            Math.Abs(toFirst - toSecond) < 1e-3f);
+        // Written against the arc itself rather than against a number worked out by hand, because
+        // the measure is the angle between two quaternions and that is half the angle between the
+        // rotations they stand for. Comparing to the whole arc's own reading cannot get that wrong.
+        float arc = SplineQuat.AngleBetween(frames[0], frames[1]);
+        CheckTrue($"and that distance is half the arc ({toFirst:F4} against {arc / 2:F4})",
+            Math.Abs(toFirst - arc / 2) < 1e-3f);
+
+        Check("an end is still itself", frames[1], AnimationEdit.Turned(frames, 1f));
     }
 }
