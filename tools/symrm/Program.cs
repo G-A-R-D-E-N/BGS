@@ -82,6 +82,7 @@ public static class Program
             case "run": return Run(argv);
             case "weights": return Weights(argv);
             case "cliptime": return ClipTime(argv);
+            case "cliptrim": return ClipTrim(argv);
             case "crosscheck": return CrossCheck(argv);
             case "savecheck": return SaveCheck(argv);
             case "mesh": return Mesh(argv);
@@ -113,6 +114,12 @@ public static class Program
               that inside a machine the run entered it reaches at least what the validator's own
               per machine rule reaches, and that actually stepping never lands somewhere the
               reachability analysis calls impossible.
+
+          dotnet run --project tools/symrm/symrm.csproj -- cliptrim <animDir | animation.hkx>
+              What cutting or retiming a clip would have to deal with: how many carry annotations that
+              would move or be dropped, how many carry extracted motion, which is the root's travel in
+              a separate object and would desync from frames that were cut, and the frame count and
+              duration spread. Counts rather than checks; it is the measurement step of that work.
 
           dotnet run --project tools/symrm/symrm.csproj -- template <behaviourDir> [everyNth]
               What a kept shape could be, and whether keeping one works. Counts how many clip
@@ -3468,6 +3475,133 @@ public static class Program
     // off. A transition blend must start at nothing of the new state and reach all of it, and no
     // sooner than its own duration. Anything it cannot resolve, a parametric blender driven by a
     // variable or a child weight bound to one, is reported as driven and counted, not guessed.
+    // What trimming or retiming a clip would have to deal with, counted before any of it is built.
+    //
+    // Step one of #35's remaining half. The frame operation itself is the easy part; the save path is
+    // the part that cannot express either operation today, because `NativeAnimation.Recompress` takes
+    // a clip's duration from the original file rather than from the decoded data and copies the
+    // annotation run wholesale. Both are right for an in place frame edit, where neither changes, and
+    // wrong for a cut or a retime, where both do.
+    //
+    // So this counts the three populations that decide how much work that is: how many clips carry
+    // annotations that would have to move or be dropped, how many carry extracted motion, which is
+    // the root's travel held in a separate object and would desync from frames that were cut, and
+    // what the frame counts and durations actually look like.
+    //
+    // Counted here rather than by grepping `symrm frames`, which in sweep mode prints a per file
+    // summary only for the files it has a complaint about, so counting its output measures the
+    // problems and not the corpus.
+    private static int ClipTrim(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string target = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(target)
+            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(f => f, StringComparer.Ordinal).ToArray()
+            : new[] { target };
+
+        int read = 0, noAnimation = 0, unreadable = 0;
+        int withAnnotations = 0, withMotion = 0, withFloatTracks = 0;
+        long annotationTracks = 0, annotations = 0;
+        int annotationsPastEnd = 0, annotationsAtZero = 0;
+        var byClass = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var frameCounts = new List<int>();
+        var durations = new List<float>();
+        var examples = new List<string>();
+        var motionExamples = new List<string>();
+
+        foreach (string file in files)
+        {
+            PackfileObjects objects;
+            try { objects = new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)), HavokClasses.Shipped); }
+            catch (Exception) { unreadable++; continue; }
+
+            var animation = objects.Instances.FirstOrDefault(
+                i => i.ClassName.StartsWith("hka", StringComparison.Ordinal) &&
+                     i.ClassName.EndsWith("Animation", StringComparison.Ordinal));
+            if (animation == null) { noAnimation++; continue; }
+
+            read++;
+            byClass[animation.ClassName] = byClass.GetValueOrDefault(animation.ClassName) + 1;
+
+            float duration = objects.ReadFloat(animation, "duration") ?? 0;
+            durations.Add(duration);
+
+            int floats = objects.ReadInt(animation, "numberOfFloatTracks") ?? 0;
+            if (floats > 0) withFloatTracks++;
+
+            // Frames live on the concrete class rather than on hkaAnimation, and only the spline one
+            // names them directly, so a clip that is not spline compressed contributes no frame count
+            // rather than a made up one.
+            int frames = objects.ReadInt(animation, "numFrames") ?? 0;
+            if (frames > 0) frameCounts.Add(frames);
+
+            objects.ReadRef(animation, "extractedMotion", out bool motionNull);
+            if (!motionNull)
+            {
+                withMotion++;
+                if (motionExamples.Count < 6)
+                    motionExamples.Add($"{Short(file, target)}: {duration:F3}s, {frames} frame(s), carries extracted motion");
+            }
+
+            var tracks = objects.ReadArray(animation, "annotationTracks");
+            if (tracks == null || tracks.Count == 0) continue;
+
+            annotationTracks += tracks.Count;
+            int here = 0;
+            int trackStride = HavokClassTypes.Shipped["hkaAnnotationTrack"]?.Size ?? 24;
+            int noteStride = HavokClassTypes.Shipped["hkaAnnotationTrackAnnotation"]?.Size ?? 16;
+
+            for (int t = 0; t < tracks.Count; t++)
+            {
+                var notes = objects.ArrayAt(tracks.At + t * trackStride + 8);
+                if (notes == null || notes.Count == 0) continue;
+
+                for (int n = 0; n < notes.Count; n++)
+                {
+                    float when = objects.ReadFloatAt(notes.At + n * noteStride) ?? 0;
+                    here++;
+                    if (Math.Abs(when) < 0.0001f) annotationsAtZero++;
+                    if (when > duration + 0.0001f) annotationsPastEnd++;
+                }
+            }
+
+            if (here == 0) continue;
+            annotations += here;
+            withAnnotations++;
+            if (examples.Count < 8)
+                examples.Add($"{Short(file, target)}: {here} annotation(s) across {tracks.Count} track(s), " +
+                             $"clip is {duration:F3}s");
+        }
+
+        frameCounts.Sort();
+        durations.Sort();
+
+        Console.WriteLine($"\n{files.Length} file(s) looked at: {read} hold an animation, " +
+                          $"{noAnimation} hold none, {unreadable} could not be read");
+        Console.WriteLine("by class: " + string.Join(", ", byClass.Select(c => $"{c.Key} x{c.Value}")));
+        Console.WriteLine($"carrying annotations: {withAnnotations} clip(s), {annotations} annotation(s) " +
+                          $"across {annotationTracks} track(s)");
+        Console.WriteLine($"  of those annotations, {annotationsAtZero} sit at time zero and " +
+                          $"{annotationsPastEnd} sit past the clip's own duration");
+        Console.WriteLine($"carrying extracted motion, which a cut would desync: {withMotion} clip(s)");
+        Console.WriteLine($"driving float tracks, which the writer already refuses: {withFloatTracks} clip(s)");
+
+        if (frameCounts.Count > 0)
+            Console.WriteLine($"frames, over the {frameCounts.Count} clip(s) that name a count: " +
+                              $"least {frameCounts[0]}, median {frameCounts[frameCounts.Count / 2]}, " +
+                              $"most {frameCounts[^1]}");
+        if (durations.Count > 0)
+            Console.WriteLine($"duration: shortest {durations[0]:F3}s, median " +
+                              $"{durations[durations.Count / 2]:F3}s, longest {durations[^1]:F3}s");
+
+        foreach (string line in examples) Console.WriteLine($"  {line}");
+        foreach (string line in motionExamples) Console.WriteLine($"  {line}");
+
+        return 0;
+    }
+
     // What a clip's own length would buy the stepper, counted before any of it is built.
     //
     // The stepper leaves a state when an event moves it and never when the clip it is playing runs
