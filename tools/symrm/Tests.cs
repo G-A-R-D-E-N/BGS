@@ -808,13 +808,12 @@ public static class Tests
         while (queue.Count > 0)
         {
             var current = queue.Dequeue();
-            foreach (var slot in GraphLinks.OutSlots(model, current))
-                foreach (string target in slot.Targets)
-                {
-                    if (!seen.Add(target)) continue;
-                    var next = model.Get(target);
-                    if (next != null) queue.Enqueue(next);
-                }
+            foreach (string target in GraphAuthor.PointsAt(model, current))
+            {
+                if (!seen.Add(target)) continue;
+                var next = model.Get(target);
+                if (next != null) queue.Enqueue(next);
+            }
         }
         return seen.Count;
     }

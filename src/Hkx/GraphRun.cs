@@ -277,7 +277,7 @@ public sealed class GraphRun
             // whole character. Falling back to a machine nothing points at is a guess, so it is
             // recorded as one.
             var pointedAt = model.Objects
-                .SelectMany(o => GraphLinks.OutSlots(model, o).SelectMany(s => s.Targets))
+                .SelectMany(o => GraphAuthor.PointsAt(model, o))
                 .ToHashSet(StringComparer.Ordinal);
 
             var loose = model.Objects.FirstOrDefault(o => o.Class == "hkbStateMachine" && !pointedAt.Contains(o.Id));
@@ -438,6 +438,10 @@ public sealed class GraphRun
     /// because a machine's states are entered one at a time and not all together.
     private IEnumerable<string> Below(HkObject node)
     {
+        // Deliberately narrower than GraphAuthor.PointsAt, which is every reference the file holds.
+        // This is what the runtime descends into, and a machine's states are entered one at a time
+        // rather than all together, so following every edge here would light up states the graph is
+        // not in.
         Carries.TryGetValue(node.Class, out var fields);
 
         foreach (var slot in GraphLinks.OutSlots(_model, node))

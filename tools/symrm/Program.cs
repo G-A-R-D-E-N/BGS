@@ -8559,12 +8559,7 @@ public static class Program
         while (queue.Count > 0)
         {
             var current = queue.Dequeue();
-            var targets = GraphLinks.OutSlots(model, current).SelectMany(s => s.Targets)
-                .Concat(current.StructLists.Values.SelectMany(rows => rows)
-                    .SelectMany(row => row.Values)
-                    .Where(v => v.StartsWith('#')).Select(v => v[1..]));
-
-            foreach (string target in targets)
+            foreach (string target in GraphAuthor.PointsAt(model, current))
             {
                 if (!seen.Add(target)) continue;
                 var next = model.Get(target);

@@ -389,6 +389,9 @@ public class GraphView : Control
 
         foreach (var (obj, column, ownerId) in showing)
         {
+            // Ports, not edges. This asks what rows the node shows and how tall it is, which is a
+            // different question from what it points at: a reference buried in an array element is a
+            // real edge and has no port of its own. GraphAuthor.PointsAt answers the other one.
             var slots = GraphLinks.OutSlots(model, obj);
             var wildcards = wildcardsInto.GetValueOrDefault(obj.Id) ?? new List<string>();
             double height = HeaderHeight + Math.Max(1, slots.Count) * RowHeight

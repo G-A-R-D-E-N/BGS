@@ -73,6 +73,10 @@ public static class ConsumerDiff
     }
 
     /// Every node's outgoing wires, which is the canvas.
+    ///
+    /// Ports rather than GraphAuthor.PointsAt on purpose: this compares what two readings of a file
+    /// would draw, so it has to walk what is drawn. The edges that have no port are covered by
+    /// Referrers below, which asks the same question from the other end.
     private static string Wiring(BehaviourGraphModel model) =>
         Lines(model.Objects.SelectMany(o => GraphLinks.OutSlots(model, o)
                                                       .Select(s => $"#{o.Id} {o.Class} {s} -> " +
