@@ -324,6 +324,42 @@ public static class Smoke
                 CheckTrue($"{name}: the canvas draws the graph", drawn > 0);
             }
 
+            // The graph is the primary workspace. The optional legend and details areas must start
+            // closed, while properties remain ready for the first selected node. The test drives the
+            // same state changes as the pane buttons, rather than inspecting layout implementation
+            // details, so a later layout implementation can keep this contract.
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                CheckTrue($"{name}: the legend pane starts collapsed", !window.GraphLeftPaneOpen);
+                CheckTrue($"{name}: the properties pane starts open", window.GraphRightPaneOpen);
+                CheckTrue($"{name}: the details drawer starts collapsed", !window.GraphDrawerOpen);
+                CheckTrue($"{name}: collapsed details do not paint over the graph", !window.GraphDrawerContentsVisible);
+                CheckTrue($"{name}: the graph keeps a usable minimum width", window.GraphCenterMinWidth >= 720);
+
+                window.SetGraphLeftPaneOpen(true);
+                window.ResizeGraphLeftPaneForTest(300);
+                CheckTrue($"{name}: the legend pane can open and resize",
+                          window.GraphLeftPaneOpen && window.GraphLeftPaneWidth == 300);
+
+                window.SetGraphRightPaneOpen(false);
+                CheckTrue($"{name}: the properties pane can collapse", !window.GraphRightPaneOpen);
+                window.SetGraphRightPaneOpen(true);
+                window.ResizeGraphRightPaneForTest(340);
+                CheckTrue($"{name}: the properties pane can reopen and resize",
+                          window.GraphRightPaneOpen && window.GraphRightPaneWidth == 340);
+
+                window.SetGraphDrawerOpen(true);
+                window.ResizeGraphDrawerForTest(250);
+                CheckTrue($"{name}: the details drawer can open and resize",
+                          window.GraphDrawerOpen && window.GraphDrawerHeight == 250);
+
+                window.SetGraphLeftPaneOpen(false);
+                window.SetGraphDrawerOpen(false);
+                CheckTrue($"{name}: closing details hides their contents again", !window.GraphDrawerContentsVisible);
+            }
+
             // Folding a branch. Two things have to be true and they fail separately: the right nodes
             // go, and the room they were taking comes back. A fold that only stopped drawing them
             // would leave a hole the size of the whole subtree, which is worse than not folding.

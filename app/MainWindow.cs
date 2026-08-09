@@ -26,6 +26,29 @@ public class MainWindow : Window
     private readonly Inspector _treeProps = new(340);
     private readonly Inspector _graphProps = new(360);
     private readonly GraphView _graph = new();
+    private readonly ColumnDefinition _graphLeftColumn = new(new GridLength(0, GridUnitType.Pixel))
+        { MinWidth = 0, MaxWidth = 340 };
+    private readonly ColumnDefinition _graphLeftSplitterColumn = new(new GridLength(0, GridUnitType.Pixel));
+    private readonly ColumnDefinition _graphCenterColumn = new(new GridLength(1, GridUnitType.Star)) { MinWidth = 720 };
+    private readonly ColumnDefinition _graphRightSplitterColumn = new(new GridLength(6, GridUnitType.Pixel));
+    private readonly ColumnDefinition _graphRightColumn = new(new GridLength(320, GridUnitType.Pixel))
+        { MinWidth = 260, MaxWidth = 420 };
+    private readonly RowDefinition _graphDrawerSplitterRow = new(new GridLength(0, GridUnitType.Pixel));
+    private readonly RowDefinition _graphDrawerRow = new(new GridLength(0, GridUnitType.Pixel))
+        { MaxHeight = 360 };
+    private GridSplitter? _graphLeftSplitter;
+    private GridSplitter? _graphRightSplitter;
+    private GridSplitter? _graphDrawerSplitter;
+    private Control? _graphDrawer;
+    private Button? _legendButton;
+    private Button? _propertiesButton;
+    private Button? _drawerButton;
+    private bool _graphLeftOpen;
+    private bool _graphRightOpen = true;
+    private bool _graphDrawerOpen;
+    private double _graphLeftWidth = 260;
+    private double _graphRightWidth = 320;
+    private double _graphDrawerHeight = 220;
     private readonly Button _saveButton;
     private readonly Button _undoButton;
     private readonly Button _redoButton;
@@ -325,14 +348,13 @@ public class MainWindow : Window
         return grid;
     }
 
-    // The problem list sits under the canvas rather than in a dialog, because the point of it is to
-    // be read while looking at the node it is about.
+    // The graph owns the middle of the workspace. Supporting information keeps its own pane instead
+    // of claiming height until somebody asks for it, so a behaviour stays readable at ordinary window
+    // sizes. The existing controls are deliberately moved, not redesigned, in this first layout pass.
     private Control BuildGraphTab()
     {
         _problems.Height = 150;
         _problems.SelectionChanged += OnProblemSelected;
-
-        var splitter = new GridSplitter { Width = 6, Background = Brushes.Transparent };
 
         // The canvas draws six node colours, three kinds of line and two badges, and none of them
         // says what it means. That is a lot to hold in your head on a graph with eight hundred boxes
@@ -340,12 +362,11 @@ public class MainWindow : Window
         _legend = BuildLegend();
         _legend.IsVisible = false;
 
-        var legendButton = Ux.Secondary("Legend");
-        legendButton.Click += (_, _) =>
-        {
-            _legend.IsVisible = !_legend.IsVisible;
-            legendButton.Content = _legend.IsVisible ? "Hide legend" : "Legend";
-        };
+        _legendButton = Ux.Secondary("Legend");
+        _legendButton.Click += (_, _) => SetGraphLeftPaneOpen(!_graphLeftOpen);
+
+        _propertiesButton = Ux.Secondary("Hide properties");
+        _propertiesButton.Click += (_, _) => SetGraphRightPaneOpen(!_graphRightOpen);
 
         // A behaviour lays out several screens across. Without a way back to the whole of it, being
         // anywhere in particular means being lost, and the answer to a graph feeling overwhelming is
@@ -369,7 +390,7 @@ public class MainWindow : Window
         };
 
         var top = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-        foreach (var button in new[] { legendButton, fitAll, fitPicked })
+        foreach (var button in new[] { _legendButton, _propertiesButton, fitAll, fitPicked })
         {
             button.Margin = new Thickness(0, 0, 8, 0);
             DockPanel.SetDock(button, Dock.Left);
@@ -380,37 +401,76 @@ public class MainWindow : Window
         var runBar = BuildRunControls();
         var pasteBar = BuildPasteControls();
 
-        var panel = new DockPanel { LastChildFill = true };
-        DockPanel.SetDock(top, Dock.Top);
-        DockPanel.SetDock(runBar, Dock.Top);
-        DockPanel.SetDock(pasteBar, Dock.Top);
-        DockPanel.SetDock(_problemBar, Dock.Bottom);
-        DockPanel.SetDock(_problems, Dock.Bottom);
-        DockPanel.SetDock(_runStops, Dock.Bottom);
-        DockPanel.SetDock(_runHeldBack, Dock.Bottom);
-        DockPanel.SetDock(_running, Dock.Bottom);
-        DockPanel.SetDock(_graphProps, Dock.Right);
-        DockPanel.SetDock(splitter, Dock.Right);
-        DockPanel.SetDock(_legend, Dock.Left);
-        panel.Children.Add(top);
-        panel.Children.Add(runBar);
-        panel.Children.Add(pasteBar);
-        panel.Children.Add(_problemBar);
-        panel.Children.Add(_problems);
-        panel.Children.Add(_runStops);
-        panel.Children.Add(_runHeldBack);
-        panel.Children.Add(_running);
-        panel.Children.Add(_graphProps);
-        panel.Children.Add(splitter);
-        panel.Children.Add(_legend);
-        panel.Children.Add(Framed(_graph));
+        _graphLeftSplitter = new GridSplitter { Width = 6, Background = Brushes.Transparent,
+            ResizeDirection = GridResizeDirection.Columns, IsVisible = false };
+        _graphRightSplitter = new GridSplitter { Width = 6, Background = Brushes.Transparent,
+            ResizeDirection = GridResizeDirection.Columns };
+
+        var workspace = new Grid();
+        workspace.ColumnDefinitions.Add(_graphLeftColumn);
+        workspace.ColumnDefinitions.Add(_graphLeftSplitterColumn);
+        workspace.ColumnDefinitions.Add(_graphCenterColumn);
+        workspace.ColumnDefinitions.Add(_graphRightSplitterColumn);
+        workspace.ColumnDefinitions.Add(_graphRightColumn);
+        Grid.SetColumn(_legend, 0);
+        Grid.SetColumn(_graphLeftSplitter, 1);
+        var canvas = Framed(_graph);
+        Grid.SetColumn(canvas, 2);
+        Grid.SetColumn(_graphRightSplitter, 3);
+        Grid.SetColumn(_graphProps, 4);
+        workspace.Children.Add(_legend);
+        workspace.Children.Add(_graphLeftSplitter);
+        workspace.Children.Add(canvas);
+        workspace.Children.Add(_graphRightSplitter);
+        workspace.Children.Add(_graphProps);
+
+        var drawer = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 6), IsVisible = false };
+        _graphDrawer = drawer;
+        DockPanel.SetDock(_problemBar, Dock.Top);
+        DockPanel.SetDock(_runStops, Dock.Top);
+        DockPanel.SetDock(_runHeldBack, Dock.Top);
+        DockPanel.SetDock(_running, Dock.Top);
+        drawer.Children.Add(_problemBar);
+        drawer.Children.Add(_runStops);
+        drawer.Children.Add(_runHeldBack);
+        drawer.Children.Add(_running);
+        drawer.Children.Add(_problems);
+
+        _drawerButton = Ux.Secondary("Show details");
+        _drawerButton.Click += (_, _) => SetGraphDrawerOpen(!_graphDrawerOpen);
+        ToolTip.SetTip(_drawerButton, "Show validation findings and simulation details below the graph.");
+        var drawerBar = new DockPanel { Margin = new Thickness(0, 6, 0, 0) };
+        DockPanel.SetDock(_drawerButton, Dock.Left);
+        drawerBar.Children.Add(_drawerButton);
+        drawerBar.Children.Add(Ux.Label("Problems and runtime details"));
+
+        _graphDrawerSplitter = new GridSplitter { Height = 6, Background = Brushes.Transparent,
+            ResizeDirection = GridResizeDirection.Rows, IsVisible = false };
+
+        var graphWorkspace = new Grid();
+        graphWorkspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        graphWorkspace.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
+        graphWorkspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        graphWorkspace.RowDefinitions.Add(_graphDrawerSplitterRow);
+        graphWorkspace.RowDefinitions.Add(_graphDrawerRow);
+        var commands = Rows((top, false), (runBar, false), (pasteBar, false));
+        Grid.SetRow(commands, 0);
+        Grid.SetRow(workspace, 1);
+        Grid.SetRow(drawerBar, 2);
+        Grid.SetRow(_graphDrawerSplitter, 3);
+        Grid.SetRow(drawer, 4);
+        graphWorkspace.Children.Add(commands);
+        graphWorkspace.Children.Add(workspace);
+        graphWorkspace.Children.Add(drawerBar);
+        graphWorkspace.Children.Add(_graphDrawerSplitter);
+        graphWorkspace.Children.Add(drawer);
 
         _problems.IsVisible = false;
         _problemBar.IsVisible = false;
         _running.IsVisible = false;
         _runStops.IsVisible = false;
         _runHeldBack.IsVisible = false;
-        return panel;
+        return graphWorkspace;
     }
 
     /// The controls that step the graph: pick an event, send it, and see which states go active.
@@ -1288,6 +1348,70 @@ public class MainWindow : Window
     public string LoadedXml => _xmlText;
     public Inspector GraphProperties => _graphProps;
     public GraphView Canvas => _graph;
+
+    // The workspace state is exposed to the headless smoke checks so they can exercise the real pane
+    // buttons' behavior. These are layout controls only: the graph and every existing data panel stay
+    // responsible for their own content.
+    public bool GraphLeftPaneOpen => _graphLeftOpen;
+    public bool GraphRightPaneOpen => _graphRightOpen;
+    public bool GraphDrawerOpen => _graphDrawerOpen;
+    public double GraphLeftPaneWidth => _graphLeftColumn.Width.Value;
+    public double GraphRightPaneWidth => _graphRightColumn.Width.Value;
+    public double GraphDrawerHeight => _graphDrawerRow.Height.Value;
+    public double GraphCenterMinWidth => _graphCenterColumn.MinWidth;
+    public bool GraphDrawerContentsVisible => _graphDrawer?.IsVisible ?? false;
+
+    public void SetGraphLeftPaneOpen(bool open)
+    {
+        _graphLeftOpen = open;
+        _legend.IsVisible = open;
+        _graphLeftColumn.Width = Pixels(open ? _graphLeftWidth : 0);
+        _graphLeftSplitterColumn.Width = Pixels(open ? 6 : 0);
+        if (_graphLeftSplitter != null) _graphLeftSplitter.IsVisible = open;
+        if (_legendButton != null) _legendButton.Content = open ? "Hide legend" : "Legend";
+    }
+
+    public void SetGraphRightPaneOpen(bool open)
+    {
+        _graphRightOpen = open;
+        _graphProps.IsVisible = open;
+        _graphRightColumn.MinWidth = open ? 260 : 0;
+        _graphRightColumn.Width = Pixels(open ? _graphRightWidth : 0);
+        _graphRightSplitterColumn.Width = Pixels(open ? 6 : 0);
+        if (_graphRightSplitter != null) _graphRightSplitter.IsVisible = open;
+        if (_propertiesButton != null) _propertiesButton.Content = open ? "Hide properties" : "Properties";
+    }
+
+    public void SetGraphDrawerOpen(bool open)
+    {
+        _graphDrawerOpen = open;
+        _graphDrawerRow.MinHeight = open ? 130 : 0;
+        _graphDrawerRow.Height = Pixels(open ? _graphDrawerHeight : 0);
+        _graphDrawerSplitterRow.Height = Pixels(open ? 6 : 0);
+        if (_graphDrawer != null) _graphDrawer.IsVisible = open;
+        if (_graphDrawerSplitter != null) _graphDrawerSplitter.IsVisible = open;
+        if (_drawerButton != null) _drawerButton.Content = open ? "Hide details" : "Show details";
+    }
+
+    public void ResizeGraphLeftPaneForTest(double width)
+    {
+        _graphLeftWidth = Math.Clamp(width, 220, 340);
+        if (_graphLeftOpen) _graphLeftColumn.Width = Pixels(_graphLeftWidth);
+    }
+
+    public void ResizeGraphRightPaneForTest(double width)
+    {
+        _graphRightWidth = Math.Clamp(width, 260, 420);
+        if (_graphRightOpen) _graphRightColumn.Width = Pixels(_graphRightWidth);
+    }
+
+    public void ResizeGraphDrawerForTest(double height)
+    {
+        _graphDrawerHeight = Math.Clamp(height, 130, 360);
+        if (_graphDrawerOpen) _graphDrawerRow.Height = Pixels(_graphDrawerHeight);
+    }
+
+    private static GridLength Pixels(double value) => new(value, GridUnitType.Pixel);
 
     /// Read-only hooks for the window checks, so the run panel can be exercised headless.
     public bool RunReady => _run != null;
