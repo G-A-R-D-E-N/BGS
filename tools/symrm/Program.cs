@@ -424,9 +424,10 @@ public static class Program
 
         // Naming a class prints everything the game says about it, which is the shape a person wants
         // when checking one field rather than gating the whole table.
-        if (argv.Length > 3)
+        string? only = argv.Skip(3).FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
+        if (only != null)
         {
-            foreach (var one in read.Where(r => r.ClassName.Contains(argv[3], StringComparison.OrdinalIgnoreCase)))
+            foreach (var one in read.Where(r => r.ClassName.Contains(only, StringComparison.OrdinalIgnoreCase)))
             {
                 Console.WriteLine($"{one.ClassName}: {one.Members} member(s), {one.ObjectSize} bytes, version {one.Version}");
                 foreach (var member in types[one.ClassName]!.Declared)
@@ -500,6 +501,18 @@ public static class Program
         foreach (string line in lostOnes.Take(10)) Console.WriteLine("  only in the table: " + line);
         if (lostOnes.Count > 10) Console.WriteLine($"  ... and {lostOnes.Count - 10} more");
 
+        if (argv.Contains("--write"))
+        {
+            if (differed != 0 || lost != 0)
+            {
+                Console.Error.WriteLine(
+                    "Refusing to write: the two sources disagree somewhere, so the reading is not " +
+                    "trustworthy enough to fold in. Fix the disagreement first.");
+                return 1;
+            }
+            return WriteDefaults(read, types);
+        }
+
         // The gate. Reading the blob wrongly shows up here first, because these are the values two
         // independent sources both claim to know.
         return differed == 0 ? 0 : 1;
@@ -507,6 +520,78 @@ public static class Program
 
     /// Whether two spellings of the same default mean the same thing. The table spells a real as
     /// `0.000000` and this spells it `0.0`, which is a difference in the writing and not the value.
+    /// Folds the defaults the game knows and the table does not into `HavokClassTypes.json`.
+    ///
+    /// Additive only. A default the table already has is left alone even though the two agree,
+    /// because the table is generated from hkxpack's database and keeping its own values means a
+    /// rebuild by `symrm classes` changes only what it should.
+    ///
+    /// Written the way `symrm classes` writes it, one class per line, so the diff is the members
+    /// that gained a default and nothing else. A class that gains nothing is re-emitted from its own
+    /// parsed form, which is the check that this is writing the same shape: if it were not, every
+    /// line would move.
+    private static int WriteDefaults(List<GameDefaults.Found> read, HavokClassTypes types)
+    {
+        string path = Path.Combine("src", "Hkx", "HavokClassTypes.json");
+        if (!File.Exists(path))
+        {
+            Console.Error.WriteLine($"{path} is not here, so run this from the top of the repository.");
+            return 1;
+        }
+
+        var doc = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        var classes = doc["classes"]!.AsObject();
+        var byName = read.ToDictionary(r => r.ClassName, StringComparer.Ordinal);
+
+        int added = 0, touched = 0;
+        foreach (var (className, node) in classes)
+        {
+            if (!byName.TryGetValue(className, out var found)) continue;
+
+            bool any = false;
+            foreach (var member in node!["members"]!.AsArray())
+            {
+                string name = member!["name"]!.GetValue<string>();
+                if (member["default"] != null && member["default"]!.GetValueKind() !=
+                    System.Text.Json.JsonValueKind.Null) continue;
+                if (!found.Defaults.TryGetValue(name, out string? game)) continue;
+
+                member["default"] = game;
+                added++;
+                any = true;
+            }
+            if (any) touched++;
+        }
+
+        var text = new System.Text.StringBuilder();
+        text.Append("{\n\"note\":");
+        text.Append(JsonSerializer.Serialize(TableNote));
+        text.Append(",\n\"havokVersion\":");
+        text.Append(JsonSerializer.Serialize(doc["havokVersion"]!.GetValue<string>()));
+        text.Append(",\n\"classes\":{\n");
+        text.Append(string.Join(",\n", classes.Select(c =>
+            JsonSerializer.Serialize(c.Key) + ":" + c.Value!.ToJsonString())));
+        text.Append("\n}\n}\n");
+
+        File.WriteAllText(path, text.ToString());
+
+        Console.WriteLine($"wrote {added} default(s) onto {touched} class(es) in {path}");
+        Console.WriteLine("  rerun without --write: everything should agree and nothing should be added");
+        return 0;
+    }
+
+    /// What the class table says about itself, in one place because two commands write the file and
+    /// a note that drifted would be worse than none: the whole point of it is telling the next
+    /// person that a rebuild alone loses the defaults read out of the game.
+    private static readonly string TableNote =
+        "What a Havok class is made of. The member types, which members are ever written to a " +
+        "file, the class of every inline struct and every enum's values come from the class " +
+        "database inside hkxpack's jar (MIT, see THIRD_PARTY_NOTICES.md), read out as a zip. " +
+        "The instance sizes come from HavokClassLayouts.json, which was read out of Fallout 4 " +
+        "itself. Rebuild with `symrm classes`, then run `symrm defaults --write` after it: that " +
+        "database records no default for a member whose value comes from a fixed set, and those " +
+        "are read out of the game's own class registrations. A rebuild on its own drops them.";
+
     /// Whether a spelling means zero, in any of the shapes the table writes one.
     private static bool IsZero(string value)
     {
@@ -1834,12 +1919,7 @@ public static class Program
 
         var text = new System.Text.StringBuilder();
         text.Append("{\n\"note\":");
-        text.Append(JsonSerializer.Serialize(
-            "What a Havok class is made of. The member types, which members are ever written to a " +
-            "file, the class of every inline struct and every enum's values come from the class " +
-            "database inside hkxpack's jar (MIT, see THIRD_PARTY_NOTICES.md), read out as a zip. " +
-            "The instance sizes come from HavokClassLayouts.json, which was read out of Fallout 4 " +
-            "itself. Rebuild with `symrm classes`."));
+        text.Append(JsonSerializer.Serialize(TableNote));
         text.Append(",\n\"havokVersion\":\"hk_2014.1.0-r1\",\n\"classes\":{\n");
         text.Append(string.Join(",\n", classes.Select(c => JsonSerializer.Serialize(c.Key) + ":" + c.Value)));
         text.Append("\n}\n}\n");
