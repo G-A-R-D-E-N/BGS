@@ -28,6 +28,7 @@ public static class Tests
         ("ACollidingFamilyMovesWhole", ACollidingFamilyMovesWhole),
         ("APinnedNodeIsNeverMovedToMakeRoom", APinnedNodeIsNeverMovedToMakeRoom),
         ("ASharedNodeIsPlacedOnceByItsOwner", ASharedNodeIsPlacedOnceByItsOwner),
+        ("SubtreesOfDifferentDepthsShareTheHeight", SubtreesOfDifferentDepthsShareTheHeight),
         ("ReplacingLinkSaysWhatItDisplaced", ReplacingLinkSaysWhatItDisplaced),
         ("BlenderChildIsWrapped", BlenderChildIsWrapped),
         ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
@@ -498,6 +499,64 @@ public static class Tests
 
         var again = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
         Check("and placing it twice gives the same answer", y["94"].ToString("F2"), again["94"].ToString("F2"));
+    }
+
+    // What measuring a contour buys over measuring a total, which is the whole reason the first
+    // version of the layout was thrown away.
+    //
+    // Two sibling families with different depth profiles. The first is deep and narrow: a chain
+    // running out to column 5. The second is shallow and wide: eight children and nothing past
+    // column 2. Sizing a subtree by everything under it makes the second wait for the whole of the
+    // first, because a total has no idea the first is using columns the second never touches. A
+    // contour does, so the two share the height and only clear each other where they actually meet.
+    private static void SubtreesOfDifferentDepthsShareTheHeight()
+    {
+        Console.WriteLine("\nsubtrees of different depths share the height");
+
+        var items = new List<GraphLayout.Item>
+        {
+            Node("root", 0, ""),
+            Node("deep", 1, "root"),
+            Node("wide", 1, "root"),
+        };
+
+        // deep: one node per column, out to column 5.
+        items.Add(Node("d2", 2, "deep"));
+        items.Add(Node("d3", 3, "d2"));
+        items.Add(Node("d4", 4, "d3"));
+        items.Add(Node("d5", 5, "d4"));
+
+        // wide: eight children, all in column 2.
+        for (int i = 0; i < 8; i++) items.Add(Node("w" + i, 2, "wide"));
+
+        var y = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
+
+        double tall = items.Max(i => y[i.Id] + i.Height) - items.Min(i => y[i.Id]);
+
+        // Sized by totals the two families cannot overlap at all, so the canvas is at least the deep
+        // family's four nodes plus the wide family's eight, 12 rows: 1420. Sized by contour they
+        // only have to clear each other in columns 1 and 2, so the deep family's columns 3 to 5 sit
+        // level with the wide family instead of below it.
+        CheckTrue($"the two families share the height rather than stacking ({tall:F0})", tall < 1300);
+
+        // The deep chain runs out past where the wide family stops, and every one of those nodes is
+        // level with its own parent because nothing is competing for that column.
+        Check("the chain stays level with itself", "0, 0, 0",
+            $"{y["d3"] - y["d2"]:F0}, {y["d4"] - y["d3"]:F0}, {y["d5"] - y["d4"]:F0}");
+
+        // The saving must not come from letting nodes overlap. Every column is still checked.
+        foreach (var column in items.GroupBy(i => i.Column))
+        {
+            var sorted = column.OrderBy(i => y[i.Id]).ToList();
+            for (int i = 1; i < sorted.Count; i++)
+                CheckTrue($"{sorted[i - 1].Id} and {sorted[i].Id} do not overlap in column {column.Key}",
+                    y[sorted[i].Id] >= y[sorted[i - 1].Id] + sorted[i - 1].Height - 0.001);
+        }
+
+        // And the families are still not interleaved where they do meet.
+        var order = items.Where(i => i.Column == 2).OrderBy(i => y[i.Id]).Select(i => i.Id[0]).ToArray();
+        Check("neither family is split by the other in the column they share", "dwwwwwwww",
+            new string(order));
     }
 
     /// Two states whose generator is the same clip, which is the ordinary shape in a shipped file

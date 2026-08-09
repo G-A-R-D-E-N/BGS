@@ -12,8 +12,8 @@ namespace OpenCommonwealth.Services.Hkx;
 // diagonal wires across the whole canvas were that layout telling the truth about where it had put
 // things.
 //
-// Every node gets a band as tall as everything under it, bands never overlap, and a node sits
-// centred in its own band, which puts it level with the middle of its family.
+// A node is placed level with the middle of the family it owns, and two families never mix in a
+// column. Both of those are what stops a wire running the height of the canvas.
 //
 // Centring children on their parent is not enough on its own, and finding that out is why this is
 // written the way it is. Two parents 120 apart, one with six children and one with two, gives the
@@ -21,9 +21,19 @@ namespace OpenCommonwealth.Services.Hkx;
 // from the parent it belongs to, and the long wire is back. A parent's position has to account for
 // how tall its family is, which means measuring the family before placing the parent.
 //
-// So this is two passes. Deepest first to measure what each subtree needs, then outermost first to
-// hand each one a band and centre its owner in it. Nothing collides, because siblings get bands that
-// do not overlap, so there is no packing step that could split a family in the first place.
+// What a family needs is measured as a contour rather than a total. The first version of this gave
+// every subtree a band as tall as everything under it, which is correct and far too tall: it gives
+// every leaf in the graph its own row even when leaves at different depths could share one. On
+// Dogmeat's behaviour that was 23,689 pixels against 5,589 for the layout it replaced.
+//
+// A contour is the top and bottom this subtree occupies in each column separately. Two sibling
+// subtrees only have to clear each other in the columns they both use, so a deep narrow family and a
+// shallow wide one can sit alongside each other rather than one below the other. Nodes in the same
+// column keep their spacing and one family is still never split by another at that depth, because
+// what is compared is the subtree's outer contour rather than each node.
+//
+// So this is two passes. Deepest first to measure each subtree's contour and stack its children
+// against each other, then outermost first to turn those relative offsets into positions.
 //
 // Two things outrank all of that, and only two. A node the user dragged never moves, because a
 // position somebody chose by hand beats one worked out here. And a shared node is laid out once,
@@ -62,50 +72,104 @@ public static class GraphLayout
         foreach (var item in items)
             kids[item.Id] = tree.Children(item.Id).Where(byId.ContainsKey).ToList();
 
-        // How much room each subtree needs, deepest first so a node is measured after everything
-        // under it. An explicit stack rather than recursion, because a chain of a few thousand nodes
-        // is a shape this has to survive and the walk producing these is not depth limited.
-        var extent = new Dictionary<string, double>(StringComparer.Ordinal);
+        // Deepest first, so a node is measured after everything under it. An explicit stack rather
+        // than recursion, because a chain of a few thousand nodes is a shape this has to survive and
+        // the walk producing these is not depth limited.
+        //
+        // `shape` is what the subtree occupies per column, `own` is where the node itself sits inside
+        // its own subtree, and `under` is where each child's subtree starts inside its parent's. All
+        // three are relative, and the pass below turns them into positions.
+        var shape = new Dictionary<string, Dictionary<int, (double Top, double Bottom)>>(StringComparer.Ordinal);
+        var own = new Dictionary<string, double>(StringComparer.Ordinal);
+        var under = new Dictionary<string, double>(StringComparer.Ordinal);
+
         foreach (string id in DeepestFirst(roots, kids))
         {
-            double inner = -rowGap;
-            foreach (string child in kids[id]) inner += extent[child] + rowGap;
-            extent[id] = Math.Max(byId[id].Height, Math.Max(inner, 0));
+            var children = kids[id];
+            int column = byId[id].Column;
+            double height = byId[id].Height;
+
+            if (children.Count == 0)
+            {
+                own[id] = 0;
+                shape[id] = new Dictionary<int, (double, double)> { [column] = (0, height) };
+                continue;
+            }
+
+            var stacked = new Dictionary<int, (double Top, double Bottom)>();
+
+            foreach (string child in children)
+            {
+                // As high as this child can go without meeting what is already stacked, in the
+                // columns they both use. Never above where the previous sibling started, so the
+                // family keeps the order the walk gave it.
+                double offset = 0;
+                foreach (var (col, span) in shape[child])
+                    if (stacked.TryGetValue(col, out var taken))
+                        offset = Math.Max(offset, taken.Bottom + rowGap - span.Top);
+
+                under[child] = offset;
+
+                foreach (var (col, span) in shape[child])
+                {
+                    double top = span.Top + offset, bottom = span.Bottom + offset;
+                    stacked[col] = stacked.TryGetValue(col, out var had)
+                        ? (Math.Min(had.Top, top), Math.Max(had.Bottom, bottom))
+                        : (top, bottom);
+                }
+            }
+
+            // Level with the middle of the family: halfway between the first child and the last.
+            string first = children[0], last = children[^1];
+            double firstCentre = under[first] + own[first] + byId[first].Height / 2;
+            double lastCentre = under[last] + own[last] + byId[last].Height / 2;
+
+            own[id] = (firstCentre + lastCentre) / 2 - height / 2;
+            stacked[column] = (own[id], own[id] + height);
+
+            // Pulled back so a subtree always starts at zero, which keeps the numbers small and lets
+            // roots be stacked by the same rule as siblings.
+            double lift = stacked.Values.Min(s => s.Top);
+            if (Math.Abs(lift) > 0.001)
+            {
+                own[id] -= lift;
+                foreach (string child in children) under[child] -= lift;
+                foreach (var col in stacked.Keys.ToList())
+                    stacked[col] = (stacked[col].Top - lift, stacked[col].Bottom - lift);
+            }
+
+            shape[id] = stacked;
         }
 
-        // Outermost first, handing each subtree a band of its own. Bands do not overlap, so two
-        // families cannot collide and nothing has to be pushed apart afterwards.
+        // Roots stacked against each other by the same contour rule, then outermost first to turn
+        // every relative offset into a position.
         var todo = new Queue<(string Id, double Top)>();
+        var laid = new Dictionary<int, (double Top, double Bottom)>();
 
-        double nextRoot = 0;
         foreach (string root in roots)
         {
-            todo.Enqueue((root, nextRoot));
-            nextRoot += extent[root] + rowGap;
+            double offset = 0;
+            foreach (var (col, span) in shape[root])
+                if (laid.TryGetValue(col, out var taken))
+                    offset = Math.Max(offset, taken.Bottom + rowGap - span.Top);
+
+            foreach (var (col, span) in shape[root])
+            {
+                double top = span.Top + offset, bottom = span.Bottom + offset;
+                laid[col] = laid.TryGetValue(col, out var had)
+                    ? (Math.Min(had.Top, top), Math.Max(had.Bottom, bottom))
+                    : (top, bottom);
+            }
+
+            todo.Enqueue((root, offset));
         }
 
         while (todo.Count > 0)
         {
             var (id, top) = todo.Dequeue();
+            y[id] = top + own[id];
 
-            // The node sits in the middle of its own band, which is the middle of its family.
-            y[id] = top + (extent[id] - byId[id].Height) / 2;
-
-            var children = kids[id];
-            if (children.Count == 0) continue;
-
-            double inner = -rowGap;
-            foreach (string child in children) inner += extent[child] + rowGap;
-
-            // A node taller than everything under it leaves its family centred inside the band
-            // rather than pinned to the top of it.
-            double at = top + (extent[id] - inner) / 2;
-
-            foreach (string child in children)
-            {
-                todo.Enqueue((child, at));
-                at += extent[child] + rowGap;
-            }
+            foreach (string child in kids[id]) todo.Enqueue((child, top + under[child]));
         }
 
         // Anything the walk never reached still needs a number rather than a missing key.
