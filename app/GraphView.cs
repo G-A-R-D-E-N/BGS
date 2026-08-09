@@ -29,6 +29,9 @@ public class GraphView : Control
     {
         public string Id = "";
         public string Class = "";
+        /// The parent that reached this node first, which is the one that decides where it is drawn.
+        /// Empty for a walk root. See GraphOwnership for why there is exactly one.
+        public string OwnerId = "";
         public string Name = "";
         public string Animation = "";
         public Rect Bounds;
@@ -50,6 +53,11 @@ public class GraphView : Control
     private readonly List<string> _order = new();
     private readonly Dictionary<string, Point> _placed = new();
     private BehaviourGraphModel? _model;
+
+    /// Who owns what, rebuilt with the nodes. Every question about where a node is placed goes
+    /// through this rather than being worked out again, and collapsing and dragging will read the
+    /// same answers rather than each deciding for themselves.
+    private GraphOwnership.Tree _own = GraphOwnership.Of(Array.Empty<(string, string)>());
 
     /// Which event moves which state to which state. Held apart from the nodes because it is not
     /// drawn from them: a route joins two states that hold no reference to each other, and the
@@ -280,41 +288,57 @@ public class GraphView : Control
             if (!events.Contains(route.Event)) events.Add(route.Event);
         }
 
-        var nextY = new Dictionary<int, double>();
-        foreach (var (obj, column, _) in GraphAuthor.Layout(model, MaxNodes))
+        // Measuring is separate from placing, because a family is centred on its parent and that
+        // cannot be worked out until every node's height is known. A node is as tall as its slot
+        // count, so this is not a constant anyone can assume.
+        var placed = GraphAuthor.Layout(model, MaxNodes);
+        _own = GraphOwnership.Of(placed);
+
+        var measured = new List<GraphLayout.Item>();
+        var slotsOf = new Dictionary<string, List<GraphLinks.Slot>>(StringComparer.Ordinal);
+        var wildcardsOf = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var heightOf = new Dictionary<string, double>(StringComparer.Ordinal);
+
+        foreach (var (obj, column, ownerId) in placed)
         {
             var slots = GraphLinks.OutSlots(model, obj);
             var wildcards = wildcardsInto.GetValueOrDefault(obj.Id) ?? new List<string>();
             double height = HeaderHeight + Math.Max(1, slots.Count) * RowHeight
                             + Math.Min(wildcards.Count, WildcardRows) * RowHeight + 8;
 
-            // A node the user has dragged stays where they put it across rebuilds.
-            nextY.TryGetValue(column, out double y);
-            Point at;
-            if (_placed.TryGetValue(obj.Id, out var kept))
-            {
-                at = kept;
-            }
-            else
-            {
-                at = new Point(column * ColumnGap, y);
-                nextY[column] = y + height + RowGap;
-            }
+            slotsOf[obj.Id] = slots;
+            wildcardsOf[obj.Id] = wildcards;
+            heightOf[obj.Id] = height;
+            measured.Add(new GraphLayout.Item(obj.Id, column, ownerId, height));
+        }
+
+        // A node the user has dragged stays exactly where they put it across rebuilds, and blocks,
+        // so a family is pushed past it rather than over it.
+        var pinned = new Dictionary<string, double>(StringComparer.Ordinal);
+        foreach (var (id, at) in _placed)
+            if (heightOf.ContainsKey(id)) pinned[id] = at.Y;
+
+        var y = GraphLayout.Place(measured, pinned, RowGap);
+
+        foreach (var (obj, column, ownerId) in placed)
+        {
+            double x = _placed.TryGetValue(obj.Id, out var kept) ? kept.X : column * ColumnGap;
 
             _order.Add(obj.Id);
             _nodes[obj.Id] = new Node
             {
                 Id = obj.Id,
                 Class = obj.Class,
+                OwnerId = ownerId,
                 Name = obj.Str("name"),
                 Animation = obj.Str("animationName"),
-                Slots = slots,
+                Slots = slotsOf[obj.Id],
                 Accent = Ux.ForClass(obj.Class),
                 Empty = empty.Contains(obj.Id),
                 Start = _routes.StartStates.Contains(obj.Id),
-                Wildcards = wildcards,
+                Wildcards = wildcardsOf[obj.Id],
                 Problem = _problems.TryGetValue(obj.Id, out var level) ? level : null,
-                Bounds = new Rect(at.X, at.Y, NodeWidth, height),
+                Bounds = new Rect(x, y[obj.Id], NodeWidth, heightOf[obj.Id]),
             };
         }
 
@@ -323,6 +347,24 @@ public class GraphView : Control
         RebuildRelated();
         RebuildMatched();
         InvalidateVisual();
+    }
+
+    /// How far each ownership wire has to travel down the canvas, in world units.
+    ///
+    /// This is the number the layout is judged on and it is worth being able to read rather than
+    /// squint at. A wire from a parent to a child it owns should be short: the whole complaint about
+    /// the old layout was that these ran the height of the canvas, and a picture at a zoom that fits
+    /// the graph on screen is too small to tell whether that stopped.
+    public IEnumerable<double> OwnershipWireDrops()
+    {
+        foreach (var node in _nodes.Values)
+        {
+            if (node.OwnerId.Length == 0) continue;
+            if (!_nodes.TryGetValue(node.OwnerId, out var owner)) continue;
+
+            yield return Math.Abs((node.Bounds.Y + node.Bounds.Height / 2)
+                                  - (owner.Bounds.Y + owner.Bounds.Height / 2));
+        }
     }
 
     public int DrawnCount => _nodes.Count;

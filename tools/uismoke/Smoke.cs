@@ -137,6 +137,15 @@ public static class Smoke
         Console.WriteLine($"{output}: {canvas.DrawnCount} node(s), {canvas.DrawableRouteCount} route(s), " +
                           $"{canvas.StartStateIds.Count} start state(s), zoom {zoom}" +
                           (focus.Length > 0 ? $", focused on #{focus}" : ""));
+
+        // How far the ownership wires run, which is what the layout is judged on. A picture at a zoom
+        // that fits the whole graph is far too small to tell whether the long diagonals stopped, so
+        // the distances are printed rather than left to the eye.
+        var drops = canvas.OwnershipWireDrops().OrderBy(d => d).ToList();
+        if (drops.Count > 0)
+            Console.WriteLine($"        wires: {drops.Count}, median {drops[drops.Count / 2]:0} tall, " +
+                              $"p90 {drops[(int)(drops.Count * 0.9)]:0}, worst {drops[^1]:0}, " +
+                              $"{drops.Count(d => d > 2000)} over 2000");
         return 0;
     }
 
