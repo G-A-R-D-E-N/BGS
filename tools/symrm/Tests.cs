@@ -132,6 +132,13 @@ public static class Tests
         ("ATemplateRefusesToLiftWhatSharesItsFile", ATemplateRefusesToLiftWhatSharesItsFile),
         ("ATemplateSaysWhatToDeclareRatherThanJustFailing", ATemplateSaysWhatToDeclareRatherThanJustFailing),
         ("ATemplateDescriptionSurvivesAwkwardNames", ATemplateDescriptionSurvivesAwkwardNames),
+        ("ACutTakesTheClipsOwnTimeWithIt", ACutTakesTheClipsOwnTimeWithIt),
+        ("ALinearTravelStaysTwoSamplesAfterACut", ALinearTravelStaysTwoSamplesAfterACut),
+        ("ACutRefusesWhatIsNotAClip", ACutRefusesWhatIsNotAClip),
+        ("ARetimeMovesEverythingThatMeasuresTime", ARetimeMovesEverythingThatMeasuresTime),
+        ("KeepingTheFramesCostsNothingAtAll", KeepingTheFramesCostsNothingAtAll),
+        ("ARetimeSaysWhatTheResamplingCost", ARetimeSaysWhatTheResamplingCost),
+        ("ARotationIsReadAlongTheArcNotAcrossIt", ARotationIsReadAlongTheArcNotAcrossIt),
     };
 
     /// Runs one case in isolation and returns how many of its checks failed. The counters are static,
@@ -6161,5 +6168,218 @@ public static class Tests
         // checks the plainer path: the change is really in the bytes, not only in memory.
         CheckTrue("the change is not lost to the encoder",
             Math.Abs(back.Tracks[track].Translations[frame].X - edit.X) < 0.05f);
+    }
+
+    // A cut is four things changing together, and this is the check that all four move.
+    //
+    // The frames are the easy one and the one that would pass on its own. The other three are the
+    // ones a trim gets wrong quietly: the clip's own duration, the annotations that fire along it,
+    // and the root's travel sampled across it. A clip cut to half its frames and left with its old
+    // duration still loads and still plays; it just plays at half speed.
+    private static void ACutTakesTheClipsOwnTimeWithIt()
+    {
+        Console.WriteLine("\na cut takes the clip's own time with it");
+
+        var clip = MadeUpClip(61, 2);          // 61 frames at thirty, so exactly two seconds
+        clip.Annotations.Add(new HkxAnnotation { Time = 0.1f, Text = "before the cut" });
+        clip.Annotations.Add(new HkxAnnotation { Time = 1.0f, Text = "inside the cut" });
+        clip.Annotations.Add(new HkxAnnotation { Time = 1.9f, Text = "after the cut" });
+
+        // One sample per frame, walking straight down the y axis, which is the shape 11,882 of the
+        // shipped clips carry.
+        var motion = new RootMotion.Motion { Duration = clip.Duration };
+        for (int f = 0; f < clip.NumFrames; f++)
+            motion.Samples.Add(new RootMotion.Sample(new Vector3(0, f * 2f, 0), 0));
+
+        var cut = AnimationEdit.Trim(clip, motion, 15, 45);
+
+        Check("the frames it was told to keep", 31, cut.Animation.NumFrames);
+        CheckTrue($"and the length that many frames really are ({cut.Animation.Duration:F4}s)",
+            Math.Abs(cut.Animation.Duration - 1f) < 1e-4f);
+        Check("every track was cut, not just the first", 2, cut.Animation.Tracks.Count);
+        Check("and each holds the kept frames", 31, cut.Animation.Tracks[1].Translations.Count);
+
+        // Frame 0 of the cut is frame 15 of the original, exactly, because nothing here interpolates.
+        Check("frame zero of the cut is the frame it came from",
+            clip.Tracks[0].Translations[15], cut.Animation.Tracks[0].Translations[0]);
+        Check("and the last one likewise",
+            clip.Tracks[0].Translations[45], cut.Animation.Tracks[0].Translations[30]);
+
+        Check("the annotations outside the cut are gone", 1, cut.Animation.Annotations.Count);
+        Check("and this one was dropped from each end", 2, cut.AnnotationsDropped);
+        CheckTrue($"the one that survived moved back to where it now sits " +
+                  $"({cut.Animation.Annotations[0].Time:F4}s)",
+            Math.Abs(cut.Animation.Annotations[0].Time - 0.5f) < 1e-4f);
+        Check("carrying its own text", "inside the cut", cut.Animation.Annotations[0].Text);
+
+        Check("the travel was sliced the same way", 31, cut.Motion!.Samples.Count);
+        CheckTrue($"and says the clip's new length ({cut.Motion.Duration:F4}s)",
+            Math.Abs(cut.Motion.Duration - 1f) < 1e-4f);
+
+        // Rebased, because every shipped clip starts its travel at the origin: measured, 12,454 of
+        // 12,454 carrying travel across the corpus.
+        CheckTrue("it starts at the origin the way every shipped clip does",
+            cut.Motion.Samples[0].Position.Length() < 1e-4f);
+        CheckTrue($"while the distance it covers is untouched ({cut.Motion.Travel.Length():F2})",
+            Math.Abs(cut.Motion.Travel.Length() - 60f) < 1e-3f);
+    }
+
+    // The other travel shape the corpus carries, and it needs a different rule rather than a refusal.
+    //
+    // 1,661 shipped clips sample the root exactly twice whatever their frame count, which is a
+    // reference frame that is linear across the whole clip. Slicing an index range out of two samples
+    // would be nonsense, so a cut reads the path at the new start and end instead, which is exact for
+    // a linear frame rather than an approximation of one.
+    private static void ALinearTravelStaysTwoSamplesAfterACut()
+    {
+        Console.WriteLine("\na linear travel stays two samples after a cut");
+
+        var clip = MadeUpClip(41, 1);          // 41 frames at thirty, so a second and a third
+        var motion = new RootMotion.Motion { Duration = clip.Duration };
+        motion.Samples.Add(new RootMotion.Sample(Vector3.Zero, 0));
+        motion.Samples.Add(new RootMotion.Sample(new Vector3(0, 40f, 0), 0));
+
+        var cut = AnimationEdit.Trim(clip, motion, 10, 30);
+
+        Check("still two samples, not one per frame", 2, cut.Motion!.Samples.Count);
+        CheckTrue("still starting at the origin", cut.Motion.Samples[0].Position.Length() < 1e-4f);
+
+        // Frames 10 to 30 of 41 is half the clip, so half the travel.
+        CheckTrue($"covering the half of the path the cut kept ({cut.Motion.Travel.Length():F3})",
+            Math.Abs(cut.Motion.Travel.Length() - 20f) < 1e-2f);
+    }
+
+    // What a cut will not do, said out loud rather than produced wrongly.
+    private static void ACutRefusesWhatIsNotAClip()
+    {
+        Console.WriteLine("\na cut refuses what is not a clip");
+
+        var clip = MadeUpClip(20, 1);
+
+        CheckThrows("a single frame is not a clip, because a curve needs an interval",
+            () => AnimationEdit.Trim(clip, null, 5, 5));
+        CheckThrows("a span running past the end is refused rather than clamped",
+            () => AnimationEdit.Trim(clip, null, 5, 25));
+        CheckThrows("and a span running backwards likewise",
+            () => AnimationEdit.Trim(clip, null, 12, 4));
+    }
+
+    // A retime is a cut's four things again, stretched rather than sliced, and one of them fails in a
+    // way a cut cannot: an annotation left where it was still sits inside the clip, still has its
+    // text, and fires at the wrong moment.
+    private static void ARetimeMovesEverythingThatMeasuresTime()
+    {
+        Console.WriteLine("\na retime moves everything that measures time");
+
+        var clip = MadeUpClip(41, 2);          // 41 frames at thirty, so one and a third seconds
+        clip.Annotations.Add(new HkxAnnotation { Time = 0f, Text = "at the start" });
+        clip.Annotations.Add(new HkxAnnotation { Time = 0.6667f, Text = "halfway" });
+
+        var motion = new RootMotion.Motion { Duration = clip.Duration };
+        for (int f = 0; f < clip.NumFrames; f++)
+            motion.Samples.Add(new RootMotion.Sample(new Vector3(0, f * 3f, 0), 0));
+
+        var slow = AnimationEdit.Retime(clip, motion, 2f);
+
+        Check("twice as long is twice as many intervals", 81, slow.Animation.NumFrames);
+        CheckTrue($"and twice the length ({slow.Animation.Duration:F4}s)",
+            Math.Abs(slow.Animation.Duration - clip.Duration * 2) < 1e-4f);
+        CheckTrue($"at the rate it was already running at ({slow.Animation.FrameDuration:F5})",
+            Math.Abs(slow.Animation.FrameDuration - clip.FrameDuration) < 1e-6f);
+
+        Check("no annotation is lost, a retime drops nothing", 2, slow.Animation.Annotations.Count);
+        CheckTrue($"the one at the start stays there ({slow.Animation.Annotations[0].Time:F4}s)",
+            Math.Abs(slow.Animation.Annotations[0].Time) < 1e-4f);
+        CheckTrue($"and the one halfway is still halfway ({slow.Animation.Annotations[1].Time:F4}s)",
+            Math.Abs(slow.Animation.Annotations[1].Time - 1.3334f) < 1e-3f);
+
+        Check("the travel gets a sample per frame the same as before", 81, slow.Motion!.Samples.Count);
+        CheckTrue($"and says the new length ({slow.Motion.Duration:F4}s)",
+            Math.Abs(slow.Motion.Duration - slow.Animation.Duration) < 1e-4f);
+
+        // The one a retime gets wrong by scaling too much rather than too little. A clip played at
+        // half speed goes exactly as far, it just takes twice as long about it.
+        CheckTrue($"it travels the distance it always travelled ({slow.Motion.Travel.Length():F2})",
+            Math.Abs(slow.Motion.Travel.Length() - motion.Travel.Length()) < 1e-2f);
+
+        // Upsampling puts a new frame exactly on every old one, so the old frames have to come back
+        // as themselves rather than as something read near them.
+        CheckTrue($"every original frame is still exactly itself ({slow.PositionError:F5})",
+            slow.PositionError < 1e-3f);
+    }
+
+    // The other way to make a clip longer, and the reason it is a switch rather than a guess.
+    private static void KeepingTheFramesCostsNothingAtAll()
+    {
+        Console.WriteLine("\nkeeping the frames costs nothing at all");
+
+        var clip = MadeUpClip(41, 1);
+        var slow = AnimationEdit.Retime(clip, null, 2f, keepFrameRate: false);
+
+        Check("the frames are the frames that were there", 41, slow.Animation.NumFrames);
+        CheckTrue("so nothing was resampled", !slow.Resampled);
+        CheckTrue($"and it cost nothing ({slow.PositionError:F5})", slow.PositionError == 0);
+        CheckTrue($"each frame is shown for twice as long ({slow.Animation.FrameDuration:F5})",
+            Math.Abs(slow.Animation.FrameDuration - clip.FrameDuration * 2) < 1e-6f);
+        Check("frame ten is untouched", clip.Tracks[0].Translations[10],
+            slow.Animation.Tracks[0].Translations[10]);
+    }
+
+    // Halving a clip throws frames away and nothing can read them back out. The number saying so is
+    // the point: a retime that quietly lost a fast movement and reported nothing would be worse than
+    // one that refused.
+    private static void ARetimeSaysWhatTheResamplingCost()
+    {
+        Console.WriteLine("\na retime says what the resampling cost");
+
+        // A track that moves a long way between two frames and back, so halving the frame count is
+        // guaranteed to miss the peak rather than only round it.
+        var clip = MadeUpClip(21, 1);
+        for (int f = 0; f < clip.NumFrames; f++)
+            clip.Tracks[0].Translations[f] = new Vector3(f % 2 == 0 ? 0 : 40f, 0, 0);
+
+        var fast = AnimationEdit.Retime(clip, null, 0.5f);
+
+        Check("half as long is half the intervals", 11, fast.Animation.NumFrames);
+        CheckTrue("which means it resampled", fast.Resampled);
+        CheckTrue($"and it says what that cost rather than hiding it ({fast.PositionError:F2})",
+            fast.PositionError > 10f);
+
+        CheckThrows("and refuses when a caller sets a budget it cannot meet",
+            () => AnimationEdit.Retime(clip, null, 0.5f, true, new AnimationEdit.Budget(1f, 0.01f)));
+
+        // The budget is opt in. The same retime without one is written, because losing detail is what
+        // making a clip shorter is rather than a fault in doing it.
+        var anyway = AnimationEdit.Retime(clip, null, 0.5f);
+        Check("without a budget the same retime is produced", 11, anyway.Animation.NumFrames);
+    }
+
+    // A straight interpolation between two rotations is not a rotation, and normalising it afterwards
+    // gives one on the right path at the wrong speed. Halfway between two rotations ninety degrees
+    // apart has to be forty five degrees from each, and the cheap version is not.
+    private static void ARotationIsReadAlongTheArcNotAcrossIt()
+    {
+        Console.WriteLine("\na rotation is read along the arc rather than across it");
+
+        var frames = new List<Quaternion>
+        {
+            Quaternion.Identity,
+            Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2),
+        };
+
+        var half = AnimationEdit.Turned(frames, 0.5f);
+        float toFirst = SplineQuat.AngleBetween(half, frames[0]);
+        float toSecond = SplineQuat.AngleBetween(half, frames[1]);
+
+        CheckTrue($"halfway is the same distance from each end ({toFirst:F4} and {toSecond:F4})",
+            Math.Abs(toFirst - toSecond) < 1e-3f);
+        // Written against the arc itself rather than against a number worked out by hand, because
+        // the measure is the angle between two quaternions and that is half the angle between the
+        // rotations they stand for. Comparing to the whole arc's own reading cannot get that wrong.
+        float arc = SplineQuat.AngleBetween(frames[0], frames[1]);
+        CheckTrue($"and that distance is half the arc ({toFirst:F4} against {arc / 2:F4})",
+            Math.Abs(toFirst - arc / 2) < 1e-3f);
+
+        Check("an end is still itself", frames[1], AnimationEdit.Turned(frames, 1f));
     }
 }
