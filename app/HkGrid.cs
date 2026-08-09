@@ -64,6 +64,10 @@ public sealed class HkGrid : Border
     /// for holding what it claims to rather than taken on trust.
     public int RowCount { get; private set; }
 
+    /// Whether anything is picked at all. `SelectedTag` cannot answer this: a row naming no object
+    /// carries no tag, so it reads the same selected as not selected.
+    public bool HasSelection => _tree.SelectedItem != null;
+
     public void Clear()
     {
         _tree.ItemsSource = null;
@@ -87,6 +91,15 @@ public sealed class HkGrid : Border
         foreach (var item in _tree.Items)
             if (Select(item as TreeViewItem, tag)) return true;
         return false;
+    }
+
+    /// Picks the first row, for a list with one thing in it worth looking at. `SelectByTag` cannot
+    /// do this job because the row it is for names no object and therefore carries no tag.
+    public bool SelectFirst()
+    {
+        if (_tree.Items.Count == 0) return false;
+        _tree.SelectedItem = _tree.Items[0] as TreeViewItem;
+        return true;
     }
 
     private bool Select(TreeViewItem? item, object tag)

@@ -1220,10 +1220,53 @@ public static class Smoke
                       window.LoadedXml.Contains(typed, StringComparison.Ordinal));
         }
 
+        StandaloneAnimationFillsTheClipList();
+
         ArchiveBrowserBuilds();
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
+    }
+
+    /// The clip list is built from clip generators and an animation file holds none, so Playback
+    /// opened on one with an empty panel. An empty panel reads as broken even when it is correct,
+    /// and every user pays for that once.
+    ///
+    /// Its own window rather than the one the loop above left behind, because the check counts rows
+    /// and a window that has held a behaviour has a list already filled from it.
+    private static void StandaloneAnimationFillsTheClipList()
+    {
+        const string path = "dist/examples/Dogmeat/Animations/IdleOutroDogmeatWalkForward.hkx";
+        if (!System.IO.File.Exists(path))
+        {
+            Console.WriteLine($"        clip list: skipped, {path} is not here");
+            return;
+        }
+
+        var window = new MainWindow();
+        window.Show();
+        window.Open(path);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        var tabs = Find<TabControl>(window)[0];
+        tabs.SelectedIndex = tabs.Items.OfType<TabItem>().ToList()
+                                 .FindIndex(t => t.Header?.ToString() == "Playback");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        Check("a standalone animation puts itself in the clip list", 1, window.ClipGrid.RowCount);
+
+        // Selected as well as listed, because the row exists to save the user a click they have no
+        // reason to know is needed: the animation is already the thing being played.
+        CheckTrue("and the row is picked, so Playback behaves as if a clip had been chosen",
+                  window.ClipGrid.HasSelection);
+
+        // What the row says, not merely that there is one. A row naming the wrong file or reading
+        // "0.00s, 0 frames" would pass a count and still tell the user nothing.
+        var said = Find<TextBlock>(window.ClipGrid).Select(t => t.Text ?? "").ToList();
+        CheckTrue("and it names the animation that is loaded",
+                  said.Contains("IdleOutroDogmeatWalkForward"));
+        CheckTrue($"and says how long it runs ({string.Join(" | ", said)})",
+                  said.Contains($"11.20s, {window.AnimationFrameCount} frames"));
     }
 
     /// The archive browser, built on a real archive written here rather than one from the game, so
