@@ -95,10 +95,30 @@ public class GraphView : Control
     private Point _lastPointer;
     private bool _panning;
     private Node? _dragNode;
+    private Point? _marqueeFrom;
+    private Rect _marquee;
     private (Node Node, int Slot)? _wiring;
     private Point _wireTo;
 
-    public string SelectedId { get; private set; } = "";
+    private readonly List<string> _selected = new();
+
+    /// Everything picked. A marquee or ctrl click can pick several, and a drag moves all of them.
+    public IReadOnlyList<string> SelectedIds => _selected;
+
+    /// The one the properties panel is looking at, which is the first of the selection.
+    ///
+    /// Kept because most of what asks about the selection wants exactly one node and always did:
+    /// which node to hang a new child off, whose paths to highlight, what to describe. Those are not
+    /// selection wide operations that were never written, they are single node operations, so they
+    /// go on asking for one node and get the primary.
+    public string SelectedId => _selected.Count > 0 ? _selected[0] : "";
+
+    /// Replaces the selection with one node, or clears it.
+    private void Select(string id)
+    {
+        _selected.Clear();
+        if (id.Length > 0) _selected.Add(id);
+    }
 
     public Action<string>? Selected;
     public Action<string>? Activated;
@@ -243,7 +263,7 @@ public class GraphView : Control
     {
         if (!_nodes.TryGetValue(id, out var node)) return false;
 
-        SelectedId = id;
+        Select(id);
         var centre = node.Bounds.Center;
         _pan = new Point(Bounds.Width / 2 - centre.X * _zoom, Bounds.Height / 2 - centre.Y * _zoom);
         InvalidateVisual();
@@ -270,7 +290,7 @@ public class GraphView : Control
         _needle = "";
         _matched.Clear();
         _active.Clear();
-        SelectedId = "";
+        _selected.Clear();
         _zoom = 0.9;
         _pan = new Point(40, 40);
     }
@@ -363,7 +383,9 @@ public class GraphView : Control
             };
         }
 
-        if (SelectedId.Length > 0 && !_nodes.ContainsKey(SelectedId)) SelectedId = "";
+        // The whole selection is pruned, not just the primary. Folding a branch takes its nodes off
+        // the canvas, and a selection still naming them would drag things nobody can see.
+        _selected.RemoveAll(id => !_nodes.ContainsKey(id));
         if (_highlight.Length > 0 && !_nodes.ContainsKey(_highlight)) _highlight = "";
         RebuildRelated();
         RebuildMatched();
@@ -401,6 +423,29 @@ public class GraphView : Control
     public int HiddenCount => Math.Max(0, _placedCount - _nodes.Count);
 
     public bool IsCollapsed(string id) => _collapsed.Contains(id);
+
+    /// Selection and drag driven directly, for the window checks. Injected clicks are not reliable
+    /// enough on this platform to build a regression on, and what is worth testing is what the
+    /// movement set does rather than whether a synthetic click landed on a node.
+    public void SelectForTest(IEnumerable<string> ids)
+    {
+        _selected.Clear();
+        foreach (string id in ids) if (_nodes.ContainsKey(id)) _selected.Add(id);
+        InvalidateVisual();
+    }
+
+    public void DragForTest(string id, double byX, double byY)
+    {
+        if (_nodes.TryGetValue(id, out var from)) Move(from, byX, byY);
+        InvalidateVisual();
+    }
+
+    /// What a drag from this node would move, which is the set the delta is applied to once each.
+    public IReadOnlyCollection<string> MovementSet(string id)
+    {
+        var picked = _selected.Contains(id) ? (IEnumerable<string>)_selected : new[] { id };
+        return _own.Moving(picked).Where(_nodes.ContainsKey).ToList();
+    }
 
     /// Folds a node shut or open, and lays the graph out again so the space comes back.
     ///
@@ -531,6 +576,8 @@ public class GraphView : Control
             if (!Dimmed(node.Id)) DrawNode(ctx, node);
             else using (ctx.PushOpacity(0.4)) DrawNode(ctx, node);
         }
+
+        DrawMarquee(ctx);
     }
 
     /// Which routes get drawn, which depends on whether a state has been picked out.
@@ -751,12 +798,25 @@ public class GraphView : Control
         ctx.DrawGeometry(null, pen, geometry);
     }
 
+    /// The selection box, drawn over everything so it reads as a thing being dragged now rather than
+    /// part of the picture.
+    private void DrawMarquee(DrawingContext ctx)
+    {
+        if (_marquee.Width < 1 && _marquee.Height < 1) return;
+
+        var box = new Rect(ToScreen(_marquee.TopLeft),
+                           new Size(_marquee.Width * _zoom, _marquee.Height * _zoom));
+
+        ctx.DrawRectangle(new SolidColorBrush(Ux.RouteColour, 0.10),
+                          new Pen(new SolidColorBrush(Ux.RouteColour, 0.7), 1), box);
+    }
+
     private void DrawNode(DrawingContext ctx, Node node)
     {
         var r = new Rect(ToScreen(node.Bounds.TopLeft), new Size(node.Bounds.Width * _zoom, node.Bounds.Height * _zoom));
         if (!r.Intersects(new Rect(Bounds.Size))) return;
 
-        bool selected = node.Id == SelectedId;
+        bool selected = _selected.Contains(node.Id);
         var body = new SolidColorBrush(selected ? Ux.CardHover : Ux.Card);
 
         // A node the check faulted is outlined in its level's colour rather than its class colour,
@@ -892,6 +952,23 @@ public class GraphView : Control
         ctx.DrawText(formatted, new Point(rightAlign ? x + maxWidth - formatted.Width : x, y));
     }
 
+    /// Moves a node, everything picked with it, and everything each of those owns.
+    ///
+    /// The set is a set because the two overlap all the time. Select a parent and one of its own
+    /// children and the child is reached twice, once in its own right and once through its owner,
+    /// and applying the delta twice would send it off at double speed and out of its family.
+    private void Move(Node from, double byX, double byY)
+    {
+        var picked = _selected.Contains(from.Id) ? (IEnumerable<string>)_selected : new[] { from.Id };
+
+        foreach (string id in _own.Moving(picked))
+        {
+            if (!_nodes.TryGetValue(id, out var node)) continue;
+            node.Bounds = node.Bounds.WithX(node.Bounds.X + byX).WithY(node.Bounds.Y + byY);
+            _placed[id] = node.Bounds.TopLeft;
+        }
+    }
+
     private Node? NodeAt(Point world) =>
         _nodes.Values.LastOrDefault(n => n.Bounds.Contains(world));
 
@@ -917,7 +994,7 @@ public class GraphView : Control
         if (props.IsRightButtonPressed)
         {
             var hit = NodeAt(world);
-            SelectedId = hit?.Id ?? "";
+            Select(hit?.Id ?? "");
             Selected?.Invoke(SelectedId);
             AddRequested?.Invoke("", "", world);
             InvalidateVisual();
@@ -941,8 +1018,15 @@ public class GraphView : Control
         var node = NodeAt(world);
         if (node != null)
         {
-            SelectedId = node.Id;
-            Selected?.Invoke(node.Id);
+            if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
+            {
+                if (!_selected.Remove(node.Id)) _selected.Add(node.Id);
+            }
+            // Dragging something outside the selection takes just that node, rather than carrying a
+            // selection the user has visibly moved on from.
+            else if (!_selected.Contains(node.Id)) Select(node.Id);
+
+            Selected?.Invoke(SelectedId);
             // A second click opens the fields rather than starting a drag, so the node does not
             // shift by a pixel on the way to editing it.
             if (e.ClickCount >= 2) Activated?.Invoke(node.Id);
@@ -950,8 +1034,11 @@ public class GraphView : Control
         }
         else
         {
-            SelectedId = "";
-            _panning = true;
+            // Left drag on empty canvas draws a marquee. Panning stays on the middle button, which
+            // already worked and is where it lives in every tool of this kind.
+            _selected.Clear();
+            _marqueeFrom = world;
+            _marquee = new Rect(world, world);
             Selected?.Invoke("");
         }
         InvalidateVisual();
@@ -965,11 +1052,16 @@ public class GraphView : Control
 
         if (_wiring != null) { _wireTo = screen; InvalidateVisual(); return; }
 
+        if (_marqueeFrom is { } from)
+        {
+            _marquee = new Rect(from, ToWorld(screen));
+            InvalidateVisual();
+            return;
+        }
+
         if (_dragNode != null)
         {
-            _dragNode.Bounds = _dragNode.Bounds.WithX(_dragNode.Bounds.X + delta.X / _zoom)
-                                               .WithY(_dragNode.Bounds.Y + delta.Y / _zoom);
-            _placed[_dragNode.Id] = _dragNode.Bounds.TopLeft;
+            Move(_dragNode, delta.X / _zoom, delta.Y / _zoom);
             InvalidateVisual();
             return;
         }
@@ -979,6 +1071,23 @@ public class GraphView : Control
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
+        if (_marqueeFrom != null)
+        {
+            _marqueeFrom = null;
+
+            // Intersecting rather than wholly inside, so a node hanging off the edge of the view can
+            // be caught without zooming out far enough to fit all of it in the box.
+            foreach (string id in _order)
+                if (_nodes.TryGetValue(id, out var node) && node.Bounds.Intersects(_marquee))
+                    _selected.Add(id);
+
+            Selected?.Invoke(SelectedId);
+            _marquee = default;
+            _dragNode = null;
+            InvalidateVisual();
+            return;
+        }
+
         if (_wiring is { } w)
         {
             var target = NodeAt(ToWorld(e.GetPosition(this)));
@@ -1020,7 +1129,15 @@ public class GraphView : Control
     {
         if (e.Key == Key.Delete && SelectedId.Length > 0)
         {
-            DeleteRequested?.Invoke(SelectedId);
+            // One at a time on purpose. Deleting an object renumbers every id above it, which is the
+            // hazard #19 is about, so a second delete in the same breath would be aimed at whatever
+            // moved into the number it remembered. Refused out loud rather than deleting one of
+            // twelve and leaving the rest, which is the surprising version of the same limit.
+            if (_selected.Count > 1)
+                Refused?.Invoke($"{_selected.Count} nodes are selected. Deleting is one at a time, " +
+                                "because taking an object out renumbers the ones above it.");
+            else DeleteRequested?.Invoke(SelectedId);
+
             e.Handled = true;
         }
 

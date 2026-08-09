@@ -369,6 +369,45 @@ public static class Smoke
                 }
             }
 
+            // Several nodes picked and dragged together. The failure this guards is a node that is
+            // both explicitly selected and reached through its parent moving twice, drifting away
+            // from its own family at double speed.
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                var canvas = Find<GraphView>(window).First();
+
+                string parent = canvas.DrawnIds.FirstOrDefault(id => canvas.OwnedCount(id) >= 2) ?? "";
+                if (parent.Length > 0)
+                {
+                    string child = canvas.OwnedIds(parent).First();
+                    var wasParent = canvas.PositionOf(parent)!.Value;
+                    var wasChild = canvas.PositionOf(child)!.Value;
+
+                    canvas.SelectForTest(new[] { parent, child });
+                    Check($"{name}: both are selected", 2, canvas.SelectedIds.Count);
+                    Check($"{name}: the primary is the first of them", parent, canvas.SelectedId);
+
+                    // The child is in the set once, not twice, even though it is reached both ways.
+                    var moving = canvas.MovementSet(parent);
+                    Check($"{name}: the movement set holds the child once",
+                          1, moving.Count(m => m == child));
+
+                    canvas.DragForTest(parent, 40, 25);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    var nowParent = canvas.PositionOf(parent)!.Value;
+                    var nowChild = canvas.PositionOf(child)!.Value;
+
+                    Check($"{name}: the node dragged moved by the drag", "40, 25",
+                          $"{nowParent.X - wasParent.X:F0}, {nowParent.Y - wasParent.Y:F0}");
+                    Check($"{name}: and the one reached twice moved once, not twice", "40, 25",
+                          $"{nowChild.X - wasChild.X:F0}, {nowChild.Y - wasChild.Y:F0}");
+
+                    canvas.SelectForTest(System.Array.Empty<string>());
+                }
+            }
+
             // The run panel: a graph file starts stepping, lights its active states, and moves them
             // when sent an event. A project or character file has no graph, so it must not pretend to
             // run one. This is the window half of #37; the reachability behind it is checked headless
