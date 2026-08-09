@@ -135,6 +135,7 @@ public static class Tests
         ("ACutTakesTheClipsOwnTimeWithIt", ACutTakesTheClipsOwnTimeWithIt),
         ("ALinearTravelStaysTwoSamplesAfterACut", ALinearTravelStaysTwoSamplesAfterACut),
         ("ACutRefusesWhatIsNotAClip", ACutRefusesWhatIsNotAClip),
+        ("DurationCountsIntervalsNotFrames", DurationCountsIntervalsNotFrames),
         ("ARetimeMovesEverythingThatMeasuresTime", ARetimeMovesEverythingThatMeasuresTime),
         ("KeepingTheFramesCostsNothingAtAll", KeepingTheFramesCostsNothingAtAll),
         ("ARetimeSaysWhatTheResamplingCost", ARetimeSaysWhatTheResamplingCost),
@@ -6262,6 +6263,23 @@ public static class Tests
             () => AnimationEdit.Trim(clip, null, 5, 25));
         CheckThrows("and a span running backwards likewise",
             () => AnimationEdit.Trim(clip, null, 12, 4));
+    }
+
+    // A clip's duration runs from its first frame to its last, so 337 frames at thirty frames a
+    // second last for 336 intervals: 11.2 seconds. Counting all 337 frames is the easy off by one
+    // that still writes a valid file but plays it slowly and shifts every annotation on it.
+    private static void DurationCountsIntervalsNotFrames()
+    {
+        Console.WriteLine("\nduration counts intervals, not frames");
+
+        var clip = MadeUpClip(337, 1);
+        var retimed = AnimationEdit.Retime(clip, null, 1f);
+        float expected = (retimed.Animation.NumFrames - 1) * retimed.Animation.FrameDuration;
+
+        CheckTrue($"337 frames at thirty fps last 11.2 seconds ({retimed.Animation.Duration:F4}s)",
+            Math.Abs(retimed.Animation.Duration - 11.2f) < 1e-4f);
+        CheckTrue("the written duration is exactly its number of intervals times frame duration",
+            Math.Abs(retimed.Animation.Duration - expected) < 1e-6f);
     }
 
     // A retime is a cut's four things again, stretched rather than sliced, and one of them fails in a
