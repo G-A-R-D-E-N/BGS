@@ -350,6 +350,26 @@ public static class Smoke
                         CheckTrue($"{name}: the canvas stays lit after sending events", canvas.ActiveIds.Count > 0);
                         Console.WriteLine($"        run: sending events {(moved ? "moved a state" : "moved nothing, which some graphs do")}");
 
+                        // A behaviour opened out of a real project folder gets its clip lengths from
+                        // the animation files beside it, which is what lets a state leave because its
+                        // clip ended. Checked through the window rather than through the reader,
+                        // because the wiring is the part that breaks: the reader can be right while
+                        // the window never hands it the folder it is sitting in.
+                        // Only asserted when there are animations to read. A behaviour pulled out of
+                        // the archive on its own has no folder around it and correctly gets no
+                        // lengths, so requiring them everywhere would fail on the honest case.
+                        string root = System.IO.Path.GetDirectoryName(
+                                          System.IO.Path.GetDirectoryName(path) ?? "") ?? "";
+                        bool hasAnimations = root.Length > 0 &&
+                                             System.IO.Directory.Exists(System.IO.Path.Combine(root, "Animations"));
+
+                        if (hasAnimations)
+                            CheckTrue($"{name}: clips are timed from the animations beside the behaviour",
+                                      window.TimedClipCount > 0);
+
+                        Console.WriteLine($"        run: {window.TimedClipCount} clip(s) playing with a " +
+                                          "length read from the animation beside the behaviour");
+
                         // If any send left a transition blending, stepping the clock has to move it
                         // along and, given enough steps, finish it. A blend that never settles would
                         // leave two states lit forever.

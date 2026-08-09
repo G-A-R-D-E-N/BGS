@@ -432,7 +432,19 @@ public class MainWindow : Window
         _step.Click += (_, _) =>
         {
             if (_run == null) return;
-            _run.Advance(0.1f);
+
+            // A step now moves clips as well as blends, so it can move a state on its own: a clip
+            // reaching a point in itself raises the event it carries, and a transition listening for
+            // that event fires without anybody sending anything. That is the thing worth saying out
+            // loud, because a state changing with no event typed in otherwise reads as a bug.
+            var byTime = _run.Advance(0.1f);
+            if (byTime.Count > 0)
+            {
+                RefreshRun($"Stepped 0.1s. {byTime.Count} transition(s) fired because a clip reached " +
+                           $"a point in itself: {string.Join(", ", byTime.Select(f => f.Event).Distinct())}.");
+                return;
+            }
+
             RefreshRun(_run.Blending ? "Stepped 0.1s, still blending." : "Stepped 0.1s, blend finished.");
         };
 
@@ -703,6 +715,23 @@ public class MainWindow : Window
             SetRunSummary("This is a project or character file rather than a graph, so there is " +
                           "nothing in it to run.", Ux.MutedBrush);
             return;
+        }
+
+        // The clip lengths, read out of the animation files the project around this behaviour points
+        // at. Without them the clock moves blends and nothing else, which is what it did before, so a
+        // file opened on its own with no project folder around it still runs rather than refusing.
+        if (_bytes != null && _hkxPath.Length > 0)
+        {
+            try
+            {
+                _run.Time(ClipTiming.All(_bytes, SymbolEditor.EventNames(model),
+                                         ClipTiming.FromDisk(_hkxPath)));
+            }
+            catch (Exception)
+            {
+                // A file this build cannot lay out is already reported everywhere else in the window,
+                // and a run without clip lengths is worth more than no run at all.
+            }
         }
 
         _runEvents.ItemsSource = _run.Events;
@@ -1073,6 +1102,10 @@ public class MainWindow : Window
 
     /// Advances the clock, the way the Step button does.
     public void StepForTest(float seconds) { _run?.Advance(seconds); RefreshRun("stepped"); }
+
+    /// How many clips the run found a length for, so a check can tell a graph that was given clip
+    /// timing from one that was opened without a project folder around it and got none.
+    public int TimedClipCount => _run?.Playing().Count(p => p.Clip.Known) ?? 0;
     public int RunningCount => _running.RowCount;
     public bool RunningVisible => _running.IsVisible;
 
