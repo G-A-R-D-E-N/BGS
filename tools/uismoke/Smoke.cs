@@ -369,6 +369,33 @@ public static class Smoke
                 }
             }
 
+            // Sharing is the ordinary case in a shipped behaviour, so a real file has to produce
+            // some. A check that passed because nothing was shared would be testing nothing.
+            {
+                tabs[0].SelectedIndex = 1;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                var canvas = Find<GraphView>(window).First();
+
+                var shared = canvas.DrawnIds.Where(id => canvas.SharedBy(id).Count > 0).ToList();
+                Console.WriteLine($"        shared: {shared.Count} node(s) drawn in one of several " +
+                                  $"homes, e.g. {string.Join(", ", shared.Take(4).Select(id => "#" + id))}");
+                CheckTrue($"{name}: the file shares nodes, so the mark has something to say",
+                          shared.Count > 0);
+
+                foreach (string one in shared.Take(50))
+                {
+                    CheckTrue($"{name}: #{one}'s owner is not listed among its borrowers",
+                              !canvas.SharedBy(one).Contains(canvas.OwnerOf(one)));
+                    CheckTrue($"{name}: #{one} does not borrow itself",
+                              !canvas.SharedBy(one).Contains(one));
+                }
+
+                // A node with one parent is not marked, or the mark means nothing.
+                var only = canvas.DrawnIds.FirstOrDefault(id => canvas.SharedBy(id).Count == 0
+                                                             && canvas.OwnerOf(id).Length > 0);
+                CheckTrue($"{name}: a node with one parent carries no mark", only != null);
+            }
+
             // Several nodes picked and dragged together. The failure this guards is a node that is
             // both explicitly selected and reached through its parent moving twice, drifting away
             // from its own family at double speed.

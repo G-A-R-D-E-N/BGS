@@ -65,6 +65,23 @@ public class GraphView : Control
     /// holding.
     private int _placedCount;
 
+    /// Which other nodes point at a node without owning it, and what to call them.
+    ///
+    /// Derived here rather than asked of GraphOwnership, which answers who owns what and has no
+    /// business knowing that the answer is about to be drawn. This is the same fact read for a
+    /// different purpose: ownership decides where a shared node goes, and this says that the place
+    /// it went is only one of its homes.
+    ///
+    /// Built over every node the file has rather than only the visible ones, so folding the branch a
+    /// node is borrowed from does not quietly make it look exclusive.
+    private readonly Dictionary<string, List<string>> _sharedBy = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _nameOf = new(StringComparer.Ordinal);
+
+    public IReadOnlyList<string> SharedBy(string id) =>
+        _sharedBy.TryGetValue(id, out var by) ? by : Array.Empty<string>();
+
+    public string OwnerOf(string id) => _own.Owner.TryGetValue(id, out string? owner) ? owner : "";
+
     private BehaviourGraphModel? _model;
 
     /// Who owns what, rebuilt with the nodes. Every question about where a node is placed goes
@@ -284,6 +301,8 @@ public class GraphView : Control
         _placed.Clear();
         _collapsed.Clear();
         _placedCount = 0;
+        _sharedBy.Clear();
+        _nameOf.Clear();
         _problems.Clear();
         _highlight = "";
         _related.Clear();
@@ -330,6 +349,27 @@ public class GraphView : Control
         _own = GraphOwnership.Of(placed);
 
         _placedCount = placed.Count;
+
+        _sharedBy.Clear();
+        _nameOf.Clear();
+
+        foreach (var (obj, _, _) in placed)
+        {
+            string name = obj.Str("name");
+            _nameOf[obj.Id] = name.Length > 0 ? name : "#" + obj.Id;
+        }
+
+        foreach (var (obj, _, _) in placed)
+            foreach (var slot in GraphLinks.OutSlots(model, obj))
+                foreach (string target in slot.Targets)
+                {
+                    if (target == obj.Id) continue;
+                    if (!_own.Owner.TryGetValue(target, out string? owner) || owner == obj.Id) continue;
+
+                    if (!_sharedBy.TryGetValue(target, out var by))
+                        _sharedBy[target] = by = new List<string>();
+                    if (!by.Contains(obj.Id)) by.Add(obj.Id);
+                }
 
         // A folded branch is left out here rather than drawn and skipped, so the contour it would
         // have reserved is never measured and the space it was holding comes back.
@@ -845,6 +885,17 @@ public class GraphView : Control
         var borderColour = node.Active ? Ux.RouteColour : fault ?? node.Accent;
         var edge = new Pen(new SolidColorBrush(borderColour), node.Active ? 3 : fault != null ? 2.5 : selected ? 2 : 1);
         ctx.DrawRectangle(body, edge, r, 4, 4);
+
+        // A second outline one step in, so a node drawn in only one of its homes reads as doubled at
+        // a glance. No icon and no header space, so it survives zooming out and does not compete
+        // with the wildcard rows.
+        //
+        // Dimmer again when the node is selected. Which node you picked matters more in the moment
+        // than which nodes are borrowed, so a selected shared node has to read as selected first.
+        if (_sharedBy.ContainsKey(node.Id))
+            ctx.DrawRectangle(null,
+                new Pen(new SolidColorBrush(borderColour, selected ? 0.28 : 0.45), 1),
+                r.Deflate(3), 3, 3);
         ctx.DrawRectangle(new SolidColorBrush(borderColour, node.Active ? 0.30 : fault != null ? 0.22 : 0.35), null,
             new Rect(r.X, r.Y, r.Width, HeaderHeight * _zoom), 4, 4);
 
@@ -969,6 +1020,33 @@ public class GraphView : Control
         }
     }
 
+    /// Names the parents that borrow the node under the pointer.
+    ///
+    /// Which ones, not only how many: "shared" on its own leaves somebody hunting the canvas for the
+    /// other end. The owner is named too and named first, because the node is sitting where the
+    /// owner put it and that is the part the picture is otherwise silent about.
+    ///
+    /// Only touched when the node under the pointer changes. Setting a tip on every mouse move is a
+    /// layout pass per pixel.
+    private void Hovering(Node? node)
+    {
+        string over = node?.Id ?? "";
+        if (over == _hovered) return;
+        _hovered = over;
+
+        var borrowers = over.Length > 0 ? SharedBy(over) : Array.Empty<string>();
+        if (borrowers.Count == 0) { ToolTip.SetTip(this, null); return; }
+
+        string owner = OwnerOf(over);
+        var homes = new List<string>();
+        if (owner.Length > 0) homes.Add(_nameOf.GetValueOrDefault(owner, "#" + owner) + " (owner)");
+        foreach (string by in borrowers) homes.Add(_nameOf.GetValueOrDefault(by, "#" + by));
+
+        ToolTip.SetTip(this, $"Shared by {homes.Count} parents: {string.Join(", ", homes)}");
+    }
+
+    private string _hovered = "";
+
     private Node? NodeAt(Point world) =>
         _nodes.Values.LastOrDefault(n => n.Bounds.Contains(world));
 
@@ -1049,6 +1127,8 @@ public class GraphView : Control
         var screen = e.GetPosition(this);
         var delta = screen - _lastPointer;
         _lastPointer = screen;
+
+        Hovering(NodeAt(ToWorld(screen)));
 
         if (_wiring != null) { _wireTo = screen; InvalidateVisual(); return; }
 
