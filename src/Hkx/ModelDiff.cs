@@ -40,7 +40,7 @@ public static class ModelDiff
 
         public override string ToString() =>
             $"{Objects} object(s), {Compared} field(s) compared, {Total} disagreement(s)" +
-            (Strided == 0 ? "" : $", {Strided} where hkxpack strides a padded struct wrongly");
+            (Strided == 0 ? "" : $", {Strided} where a reference formatter strides padded structs differently");
     }
 
 

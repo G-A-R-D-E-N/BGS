@@ -12,6 +12,9 @@ This README covers what the tool is and how to use it. What we have worked out a
 the game, with the evidence behind it, lives in the
 [wiki](https://git.nomadicinteractive.dev/nomadic-interactive/behaviortoolstandalone/-/wikis/home).
 
+The supported application path is entirely native C#. It does not require Java, a JAR, or hkxpack.
+The implementation timeline later in this document is historical context only.
+
 ## What it does
 
 - Opens any FO4 behaviour, character or project `.hkx` and shows the object graph.
@@ -454,7 +457,7 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   is printed by `symrm notes` rather than left as an impression. The rest say nothing: a plausible
   sentence written from a field's name would read with exactly the authority of a measured one, and
   nobody could tell them apart. No installed reference establishes the rest of those meanings.
-- **Java is no longer needed for anything the window does.** The graph, the tree, the properties,
+- **Historical validation before retirement.** The graph, the tree, the properties,
   the symbols, what each event is used for, and the whole checker are read from the file's own bytes,
   and the text form an edit is made through is written from those bytes as well rather than unpacked.
   That text was set against hkxpack's own line by line over every vanilla behaviour: **of the 370
@@ -466,10 +469,9 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   with Java and hkxpack both hidden: 4 links, 100 animations, 65 bones, 4 behaviours checked, none
   unread. The window's own smoke test now runs 129 checks either way, where without Java it used to
   run 120.
-  What still needs Java: packing a file back after an edit this cannot express in bytes. That list is
-  now a class that has gained or lost a field, or a file whose objects have been renumbered. Neither
-  is something the editor does; both are the guards that catch two documents that are not the same
-  file. Every edit the editor can actually make goes into the bytes: values, wide values, pointers,
+  Before retirement, edits outside the native writer's supported set used the former external path.
+  The current application refuses unsupported edits without modifying the original. Supported edits
+  go into the bytes: values, wide values, pointers,
   arrays of children, arrays of struct elements, arrays of names, arrays of numbers, strings, adding
   an object and deleting one. See #32 and #34.
 - **The wide fixed width fields are written where they sit.** A `vector4` is sixteen bytes wherever
@@ -487,7 +489,7 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
 - **The class table is not just self consistent, it agrees with the game.** Every offset written into
   a file comes from `HavokClassTypes.json`, which was built from hkxpack's class data. Fallout 4's
   own startup initializers carry the same information, read out of the binary rather than out of any
-  tool, and `symrm classcheck` sets the two against each other: **900 classes in both, every size
+  tool, and the historical class check set the two against each other: **900 classes in both, every size
   agreeing, 7,062 of 7,080 members at the same offset and none disagreeing.** The 18 unmatched
   members and the 8 classes only this build carries are physics and container templates that appear
   in no vanilla behaviour file, checked rather than assumed.
@@ -505,12 +507,12 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   permanently half open exactly as the edit asked, with no interaction needed. The edit was three
   scalar values on one existing sequence generator. The file kept the same object count, state count,
   event count, and byte size. So what the engine has accepted is a **field value edit on an existing object**, written
-  by this tool and repacked by hkxpack. That is the first time anything here has been proven against
+  by this tool before the external packer was retired. That is the first time anything here was proven against
   the engine rather than against hkxpack, and it moves the tool from "the file reads back correctly"
   to "the game accepted at least one of these".
   It says nothing about structural editing. Rewiring a pointer, resizing an array of children,
   appending an object, attaching one and orphaning one are all written into the file's own bytes now,
-  and all of them are proved through hkxpack on real vanilla files. **None of them has been put in
+  and all of them were historically checked against the former packer on real vanilla files. **None of them has been put in
   front of the game.** Neither has renumbering a symbol, and `symrm door`'s additive edit in
   particular has not. Everything else has been round tripped through hkxpack and read back from the
   binary and no further, and hkxpack accepting a file is still not the engine accepting it. Keep the

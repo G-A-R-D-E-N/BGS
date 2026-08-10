@@ -186,7 +186,7 @@ public sealed class HavokClassTypes
 
 
 
-    public bool PaddedBeyondHkxPack(string className)
+    public bool HasTrailingPadding(string className)
     {
         if (this[className]?.Size is not int size) return false;
 

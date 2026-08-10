@@ -1,5 +1,8 @@
 # Retire hkxpack Implementation Plan
 
+Historical planning record. Phase B is complete; references to the retired JAR, Java, or fallback
+below describe the pre-retirement state only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the native C# HKX pipeline the only supported application path, then permanently remove the external packer only after corpus lifecycle proof.

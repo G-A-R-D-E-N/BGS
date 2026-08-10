@@ -35,7 +35,7 @@ public static class FieldRender
 
 
 
-    public static readonly Real LikeHkxPack = HkxNumber.Text;
+    public static readonly Real ReferenceText = HkxNumber.Text;
 
 
 

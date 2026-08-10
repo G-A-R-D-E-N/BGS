@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -30,115 +29,6 @@ public static class HkxTextEdit
     private static readonly Regex SimpleParam =
         new(@"^(?<indent>[ \t]*)<hkparam name=""(?<name>[^""]+)""(?:\s*/>|>(?<value>[^<\r\n]*)</hkparam>)[ \t]*\r?$",
             RegexOptions.Compiled | RegexOptions.Multiline);
-
-    public static string? FindJava(string configured)
-    {
-        if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return configured;
-
-        var candidates = new List<string>();
-        string? home = Environment.GetEnvironmentVariable("JAVA_HOME");
-        if (!string.IsNullOrEmpty(home))
-        {
-            candidates.Add(Path.Combine(home, "bin", "java.exe"));
-            candidates.Add(Path.Combine(home, "bin", "java"));
-        }
-        string user = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        candidates.Add(Path.Combine(user, ".local", "jdk", "bin", "java"));
-
-        foreach (var c in candidates)
-            if (File.Exists(c)) return c;
-
-        string pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
-        foreach (var entry in pathVar.Split(Path.PathSeparator))
-        {
-
-
-
-            string dir = entry.Trim().Trim('"');
-            if (dir.Length == 0) continue;
-
-            foreach (var exe in new[] { "java", "java.exe" })
-            {
-
-                try
-                {
-                    string full = Path.Combine(dir, exe);
-                    if (File.Exists(full)) return full;
-                }
-                catch (ArgumentException)
-                {
-                }
-            }
-        }
-        return null;
-    }
-
-
-
-
-    public static string? WhyNotJava(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path)) return "No file was picked.";
-        if (!File.Exists(path)) return $"{path} does not exist.";
-
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = path,
-                Arguments = "-version",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-
-            using var p = Process.Start(psi);
-            if (p == null) return $"{Path.GetFileName(path)} would not start.";
-
-
-            string banner = p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
-            if (!p.WaitForExit(15000)) { try { p.Kill(true); } catch { } return $"{Path.GetFileName(path)} did not answer -version."; }
-            if (p.ExitCode != 0) return $"{Path.GetFileName(path)} -version failed ({p.ExitCode}).";
-            if (banner.IndexOf("version", StringComparison.OrdinalIgnoreCase) < 0)
-                return $"{Path.GetFileName(path)} ran, but did not report a Java version. Pick java or java.exe from a JDK or JRE bin folder.";
-            return null;
-        }
-        catch (Exception e)
-        {
-            return $"{Path.GetFileName(path)} could not be run: {e.Message.Split('\n')[0]}";
-        }
-    }
-
-
-    public static string JavaVersion(string path)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = path,
-                Arguments = "-version",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            using var p = Process.Start(psi)!;
-            string banner = p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
-            p.WaitForExit(15000);
-            foreach (string line in banner.Split('\n'))
-                if (line.Trim().Length > 0) return line.Trim();
-        }
-        catch
-        {
-        }
-        return "";
-    }
-
-
-
-
 
     public static void ResetDirectory(string path)
     {
@@ -182,65 +72,11 @@ public static class HkxTextEdit
         }
     }
 
-
-
-
-    public static string AppDirectory = "";
-
-    public static bool LegacyPackerEnabled =>
-        string.Equals(Environment.GetEnvironmentVariable("BGS_ENABLE_LEGACY_PACKER"), "1",
-                      StringComparison.Ordinal);
-
-    public static string? FindHkxPack(string configured, string projectRoot)
-    {
-        if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return configured;
-
-        string[] relative =
-        {
-            Path.Combine("tools", "hkxpack-cli.jar"),
-        };
-        foreach (var root in new[] { AppDirectory, projectRoot })
-        {
-            if (string.IsNullOrWhiteSpace(root)) continue;
-            foreach (var rel in relative)
-            {
-                string full = Path.GetFullPath(Path.Combine(root, rel));
-                if (File.Exists(full)) return full;
-            }
-        }
-        return null;
-    }
-
-
-
-
     public static string ReadXml(string path) =>
         File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r", "\n");
 
-    public static string Unpack(string java, string jar, string hkxPath, string workDir)
-    {
-        Directory.CreateDirectory(workDir);
-        string localHkx = Path.Combine(workDir, Path.GetFileName(hkxPath));
-        File.Copy(hkxPath, localHkx, true);
 
-        Run(java, $"-jar \"{jar}\" unpack \"{Path.GetFileName(hkxPath)}\"", workDir);
 
-        string xml = Path.ChangeExtension(localHkx, ".xml");
-        if (!File.Exists(xml))
-            throw new IOException($"hkxpack produced no XML for {Path.GetFileName(hkxPath)}");
-        return xml;
-    }
-
-    public static string Repack(string java, string jar, string xmlPath)
-    {
-        string dir = Path.GetDirectoryName(xmlPath)!;
-        Run(java, $"-jar \"{jar}\" pack .", dir);
-
-        string outHkx = Path.Combine(dir, "out", Path.GetFileNameWithoutExtension(xmlPath) + ".hkx");
-        if (!File.Exists(outHkx))
-            throw new IOException("hkxpack produced no .hkx; the XML was probably rejected");
-        return outHkx;
-    }
 
 
 
@@ -272,24 +108,7 @@ public static class HkxTextEdit
 
         }
 
-        return LegacyTextOf(hkxPath);
-    }
-
-    public static string TextOf(string hkxPath, string? java, string? jar) => TextOf(hkxPath);
-
-    public static string LegacyTextOf(string hkxPath)
-    {
-        if (!LegacyPackerEnabled) return "";
-
-        string? java = Environment.GetEnvironmentVariable("BGS_LEGACY_JAVA");
-        string? jar = Environment.GetEnvironmentVariable("BGS_LEGACY_HKXPACK");
-        if (string.IsNullOrWhiteSpace(java) || string.IsNullOrWhiteSpace(jar) ||
-            !File.Exists(java) || !File.Exists(jar)) return "";
-
-        string work = Path.Combine(Path.GetTempPath(), "bgs_text",
-                                   Path.GetFileNameWithoutExtension(hkxPath));
-        ResetDirectory(work);
-        return ReadXml(Unpack(java, jar, hkxPath, work));
+        return "";
     }
 
     public static List<string> ObjectIds(string xmlText)
@@ -779,25 +598,4 @@ public static class HkxTextEdit
         return result;
     }
 
-    private static void Run(string exe, string args, string workDir)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = exe,
-            Arguments = args,
-            WorkingDirectory = workDir,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-
-        using var p = Process.Start(psi) ?? throw new IOException($"could not start {exe}");
-        string stdout = p.StandardOutput.ReadToEnd();
-        string stderr = p.StandardError.ReadToEnd();
-        p.WaitForExit(120000);
-
-        if (p.ExitCode != 0)
-            throw new IOException($"{Path.GetFileName(exe)} {args} failed ({p.ExitCode})\n{stdout}\n{stderr}");
-    }
 }

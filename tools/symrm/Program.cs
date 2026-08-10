@@ -15,8 +15,6 @@ namespace BehaviourStudio.Tools;
 
 public static class Program
 {
-    private static string _java = "";
-    private static string _jar = "";
     private static string _root = "";
 
     public static int Main(string[] argv)
@@ -28,12 +26,9 @@ public static class Program
         switch (argv[0])
         {
             case "corpus": return Corpus(argv);
-            case "unpack": return Unpack(argv);
             case "check": return Check(argv);
             case "states": return States(argv);
             case "events": return Events(argv);
-            case "anims": return Anims(argv);
-            case "repack": return Repack(argv);
             case "frames": return Frames(argv);
             case "scale": return Scale(argv);
             case "skeleton": return Skeleton(argv);
@@ -41,7 +36,6 @@ public static class Program
             case "extract": return Extract(argv);
             case "ba2": return Ba2Browse(argv);
             case "motion": return Motion(argv);
-            case "xml": return Xml(argv);
             case "pose": return Pose(argv);
             case "channels": return Channels(argv);
             case "packfile": return Packfile(argv);
@@ -58,24 +52,14 @@ public static class Program
             case "saveevent": return SaveEvent(argv);
             case "savewide": return SaveWide(argv);
             case "savenumbers": return SaveNumbers(argv);
-            case "model": return Model(argv);
-            case "consumers": return Consumers(argv);
-            case "symbols": return Symbols(argv);
             case "walk": return Walk(argv);
-            case "append": return Append(argv);
-            case "orphan": return Orphan(argv);
-            case "classes": return Classes(argv);
-            case "fields": return Fields(argv);
             case "signatures": return Signatures(argv);
-            case "panel": return Panel(argv);
             case "paths": return Paths(argv);
             case "elements": return Elements(argv);
             case "nesting": return Nesting(argv);
             case "objects": return Objects(argv);
             case "capacity": return Capacity(argv);
-            case "grow": return Grow(argv);
             case "qstransform": return QsTransform(argv);
-            case "interleave": return Interleave(argv);
             case "splinestats": return SplineStats(argv);
             case "spline": return Spline(argv);
             case "savespline": return SaveSpline(argv);
@@ -86,14 +70,9 @@ public static class Program
             case "weights": return Weights(argv);
             case "cliptime": return ClipTime(argv);
             case "cliptrim": return ClipTrim(argv);
-            case "crosscheck": return CrossCheck(argv);
-            case "savecheck": return SaveCheck(argv);
             case "mesh": return Mesh(argv);
             case "meshpng": return DrawMesh(argv);
-            case "remove": return Remove(argv);
-            case "door": return Door(argv);
-            case "link": return Link(argv);
-            case "draw": return Draw(argv);
+            case "lifecycle": return Lifecycle(argv);
             case "test": return Tests.Run();
             case "defaults": return Defaults(argv);
             default: Usage(); return 1;
@@ -101,311 +80,16 @@ public static class Program
     }
 
     private static void Usage() => Console.WriteLine("""
-        symrm, the verification harness for Behaviour Graph Studio.
+        symrm, the native verification harness for Behaviour Graph Studio.
 
-          dotnet run --project tools/symrm/symrm.csproj -- corpus <Fallout4 - Animations.ba2> <outDir> [pathFilter]
-              Pull every vanilla behaviour .hkx out of the archive. 531 of them. The filter is a
-              path substring and defaults to "behavior"; pass "" to pull the animation clips as
-              well, which is what the spline gate measures against.
+          lifecycle <hkxDir | file.hkx>
+              Native open, edit, save, reload, validate, and render gate for supported files.
 
-          dotnet run --project tools/symrm/symrm.csproj -- run <behaviour.hkx> [event...]
-              Step the graph. With no events it reports where the graph starts, which machines are
-              running, and which states any sequence of events can reach. With events it sends them
-              in order and says what moved.
+          test
+              Regression checks that use native code only.
 
-          dotnet run --project tools/symrm/symrm.csproj -- run <behaviourDir>
-              The same over the corpus. Reports what it refuses to guess at, and checks two things:
-              that inside a machine the run entered it reaches at least what the validator's own
-              per machine rule reaches, and that actually stepping never lands somewhere the
-              reachability analysis calls impossible.
-
-          dotnet run --project tools/symrm/symrm.csproj -- cliptrim <animDir | animation.hkx>
-              What cutting or retiming a clip would have to deal with: how many carry annotations that
-              would move or be dropped, how many carry extracted motion, which is the root's travel in
-              a separate object and would desync from frames that were cut, and the frame count and
-              duration spread. Counts rather than checks; it is the measurement step of that work.
-
-          dotnet run --project tools/symrm/symrm.csproj -- template <behaviourDir> [everyNth]
-              What a kept shape could be, and whether keeping one works. Counts how many clip
-              generators, blenders and state infos could leave their file at all, how many share an
-              object and so cannot, and how many carry event or variable names a file they land in
-              would have to declare. Then lifts every Nth of them, applies it into a separate copy of
-              its own file, and checks the objects arrive. Also checks that every Nth shape which does
-              share is refused, since otherwise the sweep would only ever exercise the shapes that
-              were going to work. everyNth defaults to 37.
-
-          dotnet run --project tools/symrm/symrm.csproj -- cliptime <behaviourDir | behaviour.hkx>
-              How long every clip plays for and when the events it carries go out. Needs the corpus
-              extracted with --tree, because a clip's length is in the animation file the project
-              around the behaviour points at rather than in the behaviour. Checks that no trigger
-              resolves outside its own clip, that a trigger written as the end of the clip lands on
-              the clip's length, that a clip with no length offers no triggers at all, and that
-              running the clock never reaches a state the reachability analysis rules out.
-
-          dotnet run --project tools/symrm/symrm.csproj -- splinestats <animDir | file.hkx>
-              What the game's own compressor chose, counted across the animations it shipped:
-              quantisation formats, channel flags, curve degree, frames per block. This is where
-              the encoder's fixed choices come from, so it is what to rerun before changing one.
-
-          dotnet run --project tools/symrm/symrm.csproj -- spline <animDir | file.hkx> [everyNth]
-              The spline codec on its own. Decode a vanilla clip, encode those frames again, decode
-              the result, and compare. Reports the worst bone in the corpus rather than an average,
-              and the size against what the game shipped.
-
-          dotnet run --project tools/symrm/symrm.csproj -- savespline <animDir | file.hkx> [everyNth]
-              The same trip through a real file: written into the packfile, rebuilt, and read back
-              with the ordinary reader. Covers the header fields, the four arrays and the pointer
-              retargeting that the codec check cannot see.
-
-          dotnet run --project tools/symrm/symrm.csproj -- editframe <animDir | file.hkx> [everyNth]
-              The frame editor's whole path: change a bone at one frame, save, and read back. Proves
-              the edited frame comes back changed and no other frame moved.
-
-          dotnet run --project tools/symrm/symrm.csproj -- retime <animDir | file.hkx> [everyNth]
-              Makes every clip twice as long, half as long, and twice as long without resampling,
-              saves each, and reads it back. Checks the length, the frame count, the annotations and
-              the travel followed, and measures what the resampling cost against the frames it came
-              from, which is the number the error budget is set from.
-
-          dotnet run --project tools/symrm/symrm.csproj -- trim <animDir | file.hkx> [everyNth]
-              Cuts the middle half out of every clip, saves it, and reads it back. Checks the kept
-              frames came back pose for pose, the header carries the new length, no annotation sits
-              past it, and the root's travel was cut by the rule the corpus was measured against.
-              Prints a break matrix of every check against every way it can fail.
-
-          dotnet run --project tools/symrm/symrm.csproj -- unpack <hkxDir> [everyNth] [outDir]
-              Run hkxpack over them, writing to <hkxDir>/xml unless told otherwise. One JVM at a
-              time on purpose; running these in parallel will bury a six core machine. everyNth
-              defaults to 4, so 132 of the 531.
-
-          dotnet run --project tools/symrm/symrm.csproj -- check <xmlDir>
-              GraphValidator over every unpacked file. It should report zero errors: anything it
-              says about vanilla data is a false alarm in the checker, not a fault in the game.
-
-          dotnet run --project tools/symrm/symrm.csproj -- states <xmlDir>
-              Every state in the corpus and what its generator resolves to, by class. This is the
-              measurement behind the reading claim in the README, so the number there can be
-              rechecked rather than taken on trust. Unpack with everyNth 1 first or the count is
-              of whatever subset was unpacked.
-
-          dotnet run --project tools/symrm/symrm.csproj -- events <xmlDir | file.xml>
-              What each declared event is used for: raised here, listened for here, or written
-              somewhere this does not recognise. Reports no verdict, because an event with
-              listeners and no sender in the file is the ordinary case. Over a directory it
-              prints the totals and every class member pair it saw, which is how the role table
-              was built.
-
-          dotnet run --project tools/symrm/symrm.csproj -- anims <behaviour.hkx | Data folder>
-              The full validator, including the checks that need the folder around the file: every
-              clip whose animation is not on disk, or that the character does not declare. Point it
-              at a directory and it sweeps every project root beneath it. Needs real project
-              folders, not loose files.
-
-          dotnet run --project tools/symrm/symrm.csproj -- repack <behaviour.hkx>
-              Unpack, repack, unpack again, and compare the object count and the multiset of class
-              names. hkxpack renumbers, so ids are expected to change and nothing else is.
-
-          dotnet run --project tools/symrm/symrm.csproj -- frames <animation.hkx | Data folder> [tracks]
-              What the binary reader gets out of an animation: duration, frame count, per bone
-              track lengths, the first few frames of each, annotations, and which frame a given
-              userControlledTimeFraction lands on. Point it at a directory to read every animation
-              under it and report how many decode to nothing.
-
-          dotnet run --project tools/symrm/symrm.csproj -- scale <animation.hkx | Data folder>
-              Every animation whose scale is not the identity, with the range it spans and whether
-              any of it is zero. 130 of the 13133 vanilla spline animations scale something; all 856
-              lossless ones leave scale empty, which is why that branch is still unproven.
-
-          dotnet run --project tools/symrm/symrm.csproj -- skeleton <skeleton.hkx> [bone]
-              Bone names, parents, and a chain composed from the root, to see where the reference
-              pose actually puts things. Defaults to a bone matching "Hand".
-
-          dotnet run --project tools/symrm/symrm.csproj -- rig <skeleton.hkx | Data folder> [out.json]
-              Emits the skeleton as JSON for an importer to build a rig from, and reads it straight
-              back to prove the bone count, names and parents survived. A directory sweeps every
-              skeleton under CharacterAssets and reports which roots fork.
-
-          dotnet run --project tools/symrm/symrm.csproj -- extract <archive.ba2> <substring> <outDir> [.ext] [--tree]
-              Anything from a BA2 whose path contains the substring, which is how a corpus for the
-              commands here gets built without a mod manager in the way. Flat by default, because 531
-              files called Behavior.hkx would otherwise overwrite each other; --tree keeps the
-              archive's folders, which is what resolving a project chain afterwards needs.
-
-          dotnet run --project tools/symrm/symrm.csproj -- objects <file.hkx> [class]
-              Every object in a file and what class it is, or with a class named, that class's
-              fields read straight out of the bytes. Also reports how many objects are of a class
-              whose field layout we do not have, which is the number worth watching.
-
-          dotnet run --project tools/symrm/symrm.csproj -- capacity <file.hkx | hkxDir>
-              What the top bits of every array's capacity word hold, split by whether the array is
-              empty, since growing one means writing a capacity for it and the flag is what tells
-              the game whether it owns the memory.
-
-          dotnet run --project tools/symrm/symrm.csproj -- grow <file.hkx | hkxDir>
-              Bounds the last variable, which lengthens an array of structs, then writes the file,
-              reads it back and checks that the bound is what was asked for and nothing else moved.
-              With a Java runtime the read back goes through hkxpack, which is a second
-              implementation; without one it goes through our own reader, which is what proves the
-              edit needs no Java.
-
-          dotnet run --project tools/symrm/symrm.csproj -- interleave <animation.hkx | animDir>
-              Writes an animation's frames back out uncompressed, then decodes the file it produced
-              and checks every frame of every track against what went in, along with the bone names,
-              the annotations and the duration. Then moves one frame of one track by a known amount
-              and checks that exactly that moved and nothing else did. With Java it also asks
-              hkxpack, which is a second implementation, whether the file holds what it should.
-
-          dotnet run --project tools/symrm/symrm.csproj -- qstransform <skeleton.hkx | hkxDir>
-              What the fourth lane of a transform's translation and scale holds across the game's own
-              skeletons. Writing a transform means writing that lane, and it is the one nobody can
-              look up, so it is counted rather than reasoned about.
-
-          dotnet run --project tools/symrm/symrm.csproj -- crosscheck <file.hkx>
-              Reads every field it can out of the bytes and compares it against what hkxpack says
-              the same field holds. Two independent readings of one file, ours by byte offset and
-              hkxpack's by its own schema, so agreement across a whole file is what says the offsets
-              are right rather than plausible. Needs Java and the jar. Exits non zero on any
-              disagreement.
-
-          dotnet run --project tools/symrm/symrm.csproj -- elements <file.hkx | folder>
-              The line the panel puts at the head of each transition, so they can be read against
-              the file's own XML. Needs no Java.
-
-          dotnet run --project tools/symrm/symrm.csproj -- nesting <file.hkx | folder>
-              How much of a machine's routing an arrow from one state to another can carry: how
-              many transitions are wildcard, how many carry a nested state id, how many
-              transitions a machine holds, and whether a nested id resolves to a real state of the
-              machine under the state being entered. This is the measurement behind drawing
-              transitions on the canvas, so the decision can be rechecked rather than taken on
-              trust. Needs no Java.
-
-          dotnet run --project tools/symrm/symrm.csproj -- paths <file.hkx | folder>
-              Writes a sentinel through every field the panel shows, addressed by where the field
-              sits, and checks that exactly that field moved. The panel's boxes line up with the
-              file's values by position, and a name does not preserve that: an array of structs
-              repeats every name once per element, so a write by name lands on the first of them.
-              Reports how many fields sit inside an element and how many of those a name alone
-              would have missed, which is the size of what this fixes. Needs no Java.
-
-          dotnet run --project tools/symrm/symrm.csproj -- packfile <file.hkx | folder>
-              Takes a .hkx apart and puts it back together, and reports whether the result is the
-              same file. This is the gate on writing .hkx bytes without hkxpack in the way: every
-              offset in a packfile is derived from the sizes of what precedes it, so a byte for byte
-              match means the derivation is right. Exits non zero on any file that differs or cannot
-              be read. Needs no game and no Java.
-
-          dotnet run --project tools/symrm/symrm.csproj -- delete <file.hkx | folder> [id]
-              Takes one object out of each file for real, not by orphaning it, and checks the result
-              reads back with exactly that object gone, fully accounted for, and no pointer left
-              aiming into the hole. Defaults to the last object in the file, orphaned first so
-              nothing points at it. Changes nothing on disk. Needs no game and no Java.
-
-          dotnet run --project tools/symrm/symrm.csproj -- conditions <file.hkx | folder>
-              Reads every transition condition and every expression modifier line in the files, and
-              reports what the language actually contains. Then checks each condition parses, that
-              every variable it names is one the file declares, and that its answer changes as its
-              variables are driven through a spread of values, which is what tells a condition being
-              read from one being ignored. Exits non zero on a condition it cannot read or one that
-              never changes its mind. Changes nothing on disk. Needs no game and no Java.
-
-          dotnet run --project tools/symrm/symrm.csproj -- paste <file.hkx | folder>
-              Copies a subtree out of each file and pastes it back, then reads the result and checks
-              that no pointer inside the copy still names the object it was copied from, that every
-              one lands on a real object, that the copy is the same shape as the original, that
-              deleting exactly what was pasted gives the file back, and that a state pasted into a
-              machine gets a number nothing else in that machine has. Then pastes each file's subtree
-              into the next file along, where a missing event or a shared object is refused by name.
-              Changes nothing on disk. Needs no game and no Java.
-
-          dotnet run --project tools/symrm/symrm.csproj -- savenumbers <file.hkx | folder>
-              Gives an array of plain numbers one more element than it had and checks it reads back
-              at the new length with the old values still in front of the new one. The last kind of
-              array that had to go out through a rebuild.
-
-          dotnet run --project tools/symrm/symrm.csproj -- savewide <file.hkx | folder>
-              Changes a vector through the document, the way the window would, and checks it reads
-              back and that the file is exactly as long as it was. These are fixed width and moved
-              nothing, and were refused anyway because nothing parsed the spelling back.
-
-          dotnet run --project tools/symrm/symrm.csproj -- saveevent <file.hkx | folder> [out.hkx]
-              Declares an event the way the window does, all the way to the bytes, and checks the
-              file comes back holding it. Adding one lengthens an array of strings, which used to be
-              the last edit that forced a save out through hkxpack. Needs no Java.
-
-          dotnet run --project tools/symrm/symrm.csproj -- notes <file.hkx | folder>
-              How much the properties panel can say about the fields it shows. Every field gets a
-              description of what it is, from the class table. Only the handful this project has
-              established get a sentence about what they mean, and this prints which ones, so the
-              gap is a number rather than an impression.
-
-          dotnet run --project tools/symrm/symrm.csproj -- chain <behaviour.hkx>
-              The project around a file: its character, its skeleton, the animations it declares and
-              the bones it has. Reads the other files the same way it reads this one. Run it once
-              with Java on PATH and once under tools/no-java.sh and the output has to match.
-
-          dotnet run --project tools/symrm/symrm.csproj -- classcheck <hkclass-field-layouts.txt>
-              Sets this build's class table against Fallout 4's own account of itself, read out of
-              the startup initializers rather than out of any tool. Every offset written into a file
-              comes from that table, so this is the check that it is right rather than merely
-              self consistent. Exits non zero on any size or offset that disagrees.
-
-          dotnet run --project tools/symrm/symrm.csproj -- savedelete <file.hkx | folder> [out.hkx]
-              (out.hkx only when pointed at a single file, and the only time anything is written)
-              Deletes a node the way the window does, all the way to the bytes: text written from
-              the file's own bytes, the node taken out and everything pointing at it detached, the
-              change worked out and written. Checks the result reads back with the right objects in
-              it and no pointer aiming at nothing. Writes nothing to disk, and needs no Java, which
-              is half the point.
-
-          dotnet run --project tools/symrm/symrm.csproj -- relayout <file.hkx | folder>
-              Throws the data section away and writes it again from nothing, then checks the result
-              is the file it started as. This is the gate on removing an object: removing one moves
-              every object after it, so nothing can be removed until a file can be laid out rather
-              than edited. Exits non zero on any file that differs or that the walk cannot account
-              for. Needs no game and no Java.
-
-          dotnet run --project tools/symrm/symrm.csproj -- layout <file.hkx | folder>
-              The next gate after that one. `packfile` keeps the data section's bytes as it found
-              them and only recomputes the offsets around them, which is why removing an object is
-              still refused: removing one moves every object after it. This works out where every
-              object and every run it points at would go if the file were laid out from nothing,
-              and says how many land where they actually are. Also prints where each kind of thing
-              starts within a sixteen byte boundary, which is how the alignment rule was found
-              rather than guessed. Exits non zero on any disagreement. Needs no game and no Java.
-
-          dotnet run --project tools/symrm/symrm.csproj -- channels <skeleton.hkx> <animation.hkx | folder>
-              How many bone tracks leave each channel undriven, and for the undriven translations,
-              how far the skeleton's reference pose puts that bone from its parent. Havok treats an
-              undriven channel as zero translation and unit scale, so a track that leaves a bone's
-              translation undriven while the rig places that bone away from zero is the case where
-              the two readings disagree and one of them moves the bone.
-
-          dotnet run --project tools/symrm/symrm.csproj -- pose <skeleton.hkx> <animation.hkx> [frame]
-              The pose the viewport draws, printed: which bones a track drives, how far the last
-              frame is from the first, and every bone's world position at a frame. Same
-              AnimationPose call the window makes, so a shape that looks wrong on screen can be read
-              as numbers here.
-
-          dotnet run --project tools/symrm/symrm.csproj -- remove <behaviour.hkx>
-              The symbol removal round trip. Adds a variable and an event, refuses to remove one
-              that is in use, removes ones that are not, repacks, reads the binary back, and
-              confirms every binding and transition still resolves to the same name as before.
-
-          dotnet run --project tools/symrm/symrm.csproj -- test
-              Regression checks on graphs built in memory. No game install, no hkxpack, no JVM,
-              so this one can be run on every change. Exits non zero on any failure.
-
-          dotnet run --project tools/symrm/symrm.csproj -- defaults <Fallout4.exe.unpacked.exe> <Fallout4_163_functions.txt> [class]
-              What the game says every field starts out as, read off the class registrations in the
-              executable, against what the class table believes. The table's own 625 defaults are
-              the gate: this has to reproduce all of them or it is reading the blob wrongly. Naming
-              a class prints everything the game says about it instead of gating.
-
-          dotnet run --project tools/symrm/symrm.csproj -- door <door behaviour.hkx> <out.hkx>
-              The additive door edit: two new events and two new states that give a door a way to
-              be placed already open or already closed without playing the transition, in the shape
-              its script already drives. Touches no existing transition. Repacks, reads the
-              binary back and runs the validator over the result.
+          Other commands inspect or validate native HKX data. Run a command with no arguments for
+          its required input. The retired Java packer commands are intentionally unavailable.
         """);
 
 
@@ -607,11 +291,10 @@ public static class Program
     private static readonly string TableNote =
         "What a Havok class is made of. The member types, which members are ever written to a " +
         "file, the class of every inline struct and every enum's values come from the class " +
-        "database inside hkxpack's jar (MIT, see THIRD_PARTY_NOTICES.md), read out as a zip. " +
+        "published class-description metadata (MIT, see THIRD_PARTY_NOTICES.md). " +
         "The instance sizes come from HavokClassLayouts.json, which was read out of Fallout 4 " +
-        "itself. Rebuild with `symrm classes`, then run `symrm defaults --write` after it: that " +
-        "database records no default for a member whose value comes from a fixed set, and those " +
-        "are read out of the game's own class registrations. A rebuild on its own drops them.";
+        "itself. The table is checked in and maintained with the native source. Its defaults come " +
+        "from the game's own class registrations.";
 
 
     private static bool IsZero(string value)
@@ -650,12 +333,7 @@ public static class Program
             : work;
     }
 
-    private static void NeedHkxPack()
-    {
-        _java = HkxTextEdit.FindJava("") ?? throw new InvalidOperationException("no java on PATH or in JAVA_HOME");
-        _jar = HkxTextEdit.FindHkxPack("", _root) ?? throw new InvalidOperationException(
-            "hkxpack-cli.jar not found; put it in tools/ or next to the FO4AnimForge checkout");
-    }
+
 
     private static int Corpus(string[] argv)
     {
@@ -671,87 +349,13 @@ public static class Program
         return 0;
     }
 
-    private static int Anims(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
-
-        string target = Path.GetFullPath(argv[1]);
-        return Directory.Exists(target) ? AnimsSweep(target) : AnimsOne(target);
-    }
 
 
 
-    private static int AnimsSweep(string root)
-    {
-        var roots = Directory.EnumerateDirectories(root, "Behaviors", SearchOption.AllDirectories)
-                             .Select(d => Path.GetDirectoryName(d)!)
-                             .OrderBy(d => d).ToList();
 
-        int files = 0, errorCount = 0, warningCount = 0, chainless = 0;
-        var byKind = new Dictionary<string, int>();
 
-        foreach (string project in roots)
-        {
-            var chain = ProjectChain.Resolve(Path.Combine(project, "Behaviors"));
-            if (chain.Animations.Count == 0)
-            {
-                chainless++;
-                Console.WriteLine($"  no animation list  {project[(root.Length + 1)..]}" +
-                                  (chain.Problems.Count > 0 ? "  (" + chain.Problems[0] + ")" : ""));
-            }
 
-            foreach (string hkx in Directory.EnumerateFiles(Path.Combine(project, "Behaviors"), "*.hkx").OrderBy(f => f))
-            {
-                List<GraphValidator.Finding> findings;
-                try
-                {
-                    string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, hkx, Work("sweep")));
-                    findings = GraphValidator.Check(xml, chain);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"  THREW {Path.GetFileName(hkx)}: {ex.Message.Split('\n')[0]}");
-                    continue;
-                }
 
-                files++;
-                foreach (var f in findings)
-                {
-                    if (f.Level == GraphValidator.Level.Error) errorCount++; else warningCount++;
-                    Console.WriteLine($"  {Path.GetFileName(hkx),-46} {f}");
-                    string kind = f.Level + ": " + f.What.Split(',')[0].Split('\'')[0].Trim();
-                    byKind[kind] = byKind.GetValueOrDefault(kind) + 1;
-                }
-            }
-        }
-
-        Console.WriteLine($"\n{roots.Count} project roots, {files} behaviours");
-        Console.WriteLine($"{chainless} roots whose character declares no animations");
-        Console.WriteLine($"{errorCount} errors, {warningCount} warnings");
-        foreach (var kv in byKind.OrderByDescending(k => k.Value))
-            Console.WriteLine($"  {kv.Value,5}  {kv.Key}");
-
-        return errorCount == 0 ? 0 : 1;
-    }
-
-    private static int AnimsOne(string hkx)
-    {
-        var chain = ProjectChain.Resolve(hkx);
-
-        Console.WriteLine($"project root  {chain.Root}");
-        Console.WriteLine($"{chain.Animations.Count} animations declared by the character");
-        foreach (string anim in chain.Animations) Console.WriteLine("    " + anim);
-        foreach (string problem in chain.Problems) Console.WriteLine("  problem  " + problem);
-
-        string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, hkx, Work("anims")));
-        var findings = GraphValidator.Check(xml, chain);
-        foreach (var f in findings) Console.WriteLine("  " + f);
-
-        int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
-        Console.WriteLine($"\n{errors} errors, {findings.Count - errors} warnings");
-        return errors == 0 ? 0 : 1;
-    }
 
 
 
@@ -790,23 +394,7 @@ public static class Program
         return noGenerator + dangling == 0 ? 0 : 1;
     }
 
-    private static int Repack(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
 
-        string hkx = Path.GetFullPath(argv[1]);
-        string xmlPath = HkxTextEdit.Unpack(_java, _jar, hkx, Work("repack_in"));
-        var before = RepackCheck.Take(HkxTextEdit.ReadXml(xmlPath));
-
-        string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
-        var after = RepackCheck.Take(HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, packed, Work("repack_out"))));
-
-        var drift = RepackCheck.Compare(before, after);
-        Console.WriteLine($"{Path.GetFileName(hkx)}: {drift}");
-        Console.WriteLine(drift.Clean ? "clean" : "DRIFT");
-        return drift.Clean ? 0 : 1;
-    }
 
 
 
@@ -939,17 +527,31 @@ public static class Program
 
     private static HkxSkeleton? SiblingSkeleton(string animationPath)
     {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(animationPath)) ?? "");
-        for (int up = 0; up < 4 && dir != null; up++, dir = dir.Parent)
-        {
-            string assets = Path.Combine(dir.FullName, "CharacterAssets");
-            if (!Directory.Exists(assets)) continue;
+        string? assets = SiblingSkeletonFolder(animationPath);
+        if (assets == null) return null;
 
-            foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
+        foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
+        {
+            try { return new HkxBinaryReader().ReadSkeleton(file); }
+            catch { }
+        }
+        return null;
+    }
+
+    private static string? SiblingSkeletonFolder(string animationPath)
+    {
+        var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(animationPath)) ?? "");
+        while (dir != null)
+        {
+            if (dir.Name.Equals("Animations", StringComparison.OrdinalIgnoreCase))
             {
-                try { return new HkxBinaryReader().ReadSkeleton(file); }
-                catch { }
+                var characterRoot = dir.Parent;
+                if (characterRoot == null) return null;
+
+                string assets = Path.Combine(characterRoot.FullName, "CharacterAssets");
+                return Directory.Exists(assets) ? assets : null;
             }
+            dir = dir.Parent;
         }
         return null;
     }
@@ -1119,98 +721,7 @@ public static class Program
 
 
 
-    private static int Xml(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
 
-        string file = Path.GetFullPath(argv[1]);
-        string work = WorkDirectory("symrm-xml-", file);
-        HkxTextEdit.ResetDirectory(work);
-
-        string theirs = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
-        string ours = NativeXml.From(File.ReadAllBytes(file));
-
-
-
-        string beside = Path.Combine(work, "ours.xml");
-        File.WriteAllText(beside, ours);
-        Console.WriteLine($"ours written to {beside}");
-
-        var mine = ours.Replace("\r\n", "\n").Split('\n');
-        var them = theirs.Replace("\r\n", "\n").Split('\n');
-
-
-
-
-
-
-
-
-
-        var strided = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (_, className) in new PackfileObjects(PackfileImage.Read(file)).ClassNames())
-            foreach (var member in HavokClassTypes.Shipped.Members(className))
-                if (member.CType != null && HavokClassTypes.Shipped.PaddedBeyondHkxPack(member.CType))
-                    strided.Add(member.CType);
-
-        var edits = Diff(them, mine);
-        int differ = edits.Count;
-
-
-
-        var theirFields = new HashSet<string>(StringComparer.Ordinal);
-        foreach (string className in strided)
-            foreach (var member in HavokClassTypes.Shipped.Members(className))
-                theirFields.Add(member.Name);
-
-
-
-
-        bool Excused(string line)
-        {
-            var m = System.Text.RegularExpressions.Regex.Match(
-                line, "<hkparam name=\"(\\w+)\"|<!-- (\\w+) SERIALIZE_IGNORED -->");
-            if (!m.Success) return false;
-
-            string name = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
-            return theirFields.Contains(name);
-        }
-
-
-
-
-        bool Boundary(string line) =>
-            strided.Count > 0 && (line.Trim() == "<hkobject>" || line.Trim() == "</hkobject>");
-
-        int excused = edits.Count(e => Excused(e.Line));
-        int boundaries = edits.Count(e => !Excused(e.Line) && Boundary(e.Line));
-        differ -= excused + boundaries;
-        int shown = 0;
-
-        foreach (var (side, at, line) in edits)
-        {
-            if (Excused(line) || Boundary(line)) continue;
-            if (shown++ >= 16) break;
-            Console.WriteLine(side == '-' ? $"  hkxpack line {at + 1} has, and we do not:\n    {line}"
-                                          : $"  we have at line {at + 1}, and hkxpack does not:\n    {line}");
-        }
-
-        if (differ > shown) Console.WriteLine($"  and {differ - shown} more");
-
-        Console.WriteLine($"\n{Path.GetFileName(file)}: {them.Length} lines from hkxpack, " +
-                          $"{mine.Length} from us, {differ} line(s) differing" +
-                          (excused > 0 ? $", and {excused} where hkxpack strides a padded struct wrongly"
-                                       : "") +
-                          (boundaries > 0 ? $" with {boundaries} element boundary line(s) around them" : ""));
-
-
-
-
-
-        Console.WriteLine(strided.Count > 0 ? "COMPARABLE=no" : "COMPARABLE=yes");
-        return differ == 0 ? 0 : 1;
-    }
 
 
 
@@ -1398,119 +909,7 @@ public static class Program
 
 
 
-    private static int SaveCheck(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
 
-        string file = Path.GetFullPath(argv[1]);
-
-
-
-
-        string work = WorkDirectory("symrm-savecheck-", file);
-        if (Directory.Exists(work)) Directory.Delete(work, true);
-
-        string xmlFile = HkxTextEdit.Unpack(_java, _jar, file, work);
-        string original = HkxTextEdit.ReadXml(xmlFile);
-
-        if (!NullSaveIsByteIdentical(file, original)) return 1;
-        if (!GrowingAnArrayOfStringsWorks(file, original)) return 1;
-
-        var edits = Invent(original);
-        if (edits.Count == 0)
-        {
-            Console.WriteLine($"{Path.GetFileName(file)}: nothing here to change, skipped");
-            return 0;
-        }
-
-        string edited = original;
-        foreach (var (was, now) in edits) edited = ReplaceFirst(edited, was, now);
-
-
-
-
-        var host = System.Text.RegularExpressions.Regex.Match(
-            original, "<hkobject class=\"hkbClipGenerator\" name=\"#[0-9]+\" " +
-                      "signature=\"(?<sig>0x[0-9a-f]+)\">");
-
-        var lastGenerator = System.Text.RegularExpressions.Regex
-            .Matches(edited, "<hkparam name=\"generator\">#[0-9]+</hkparam>")
-            .LastOrDefault();
-
-        if (host.Success && lastGenerator != null)
-        {
-            edited = HkxTextEdit.AddObject(
-                edited, "hkbClipGenerator", host.Groups["sig"].Value,
-                "            <hkparam name=\"userPartitionMask\">7</hkparam>", out string added);
-
-            string pointer = $"<hkparam name=\"generator\">#{added}</hkparam>";
-            edited = edited.Remove(lastGenerator.Index, lastGenerator.Length)
-                           .Insert(lastGenerator.Index, pointer);
-
-
-            edits.Add(("", $"name=\"#{added}\""));
-            edits.Add(("", pointer));
-        }
-
-        var plan = NativeSave.Compare(original, edited);
-        if (!plan.Possible)
-        {
-            Console.WriteLine($"{Path.GetFileName(file)}: refused, {plan.Refusal}");
-            return 1;
-        }
-
-        byte[] saved = NativeSave.Apply(file, plan);
-        string savedPath = Path.Combine(work, "saved-" + Path.GetFileName(file));
-        File.WriteAllBytes(savedPath, saved);
-
-        byte[] before = File.ReadAllBytes(file);
-        bool sameSize = before.Length == saved.Length;
-        int changedBytes = Enumerable.Range(0, Math.Min(before.Length, saved.Length))
-                                     .Count(i => before[i] != saved[i]);
-
-
-
-
-
-
-
-        int cleared = plan.Changes.Count(c => c.Ref && c.Value == "null");
-        bool shrankAsExpected = cleared > 0 && before.Length > saved.Length
-                                            && before.Length - saved.Length <= 16 * cleared;
-
-        string size = sameSize
-            ? $"{changedBytes} bytes differ from the original"
-            : plan.Grows && saved.Length > before.Length
-                ? $"{before.Length} bytes to {saved.Length}, as appending text does, " +
-                  $"{changedBytes} of the original bytes differ"
-                : shrankAsExpected
-                    ? $"{before.Length} bytes to {saved.Length}, as dropping {cleared} pointer " +
-                      $"entr{(cleared == 1 ? "y" : "ies")} does, {changedBytes} of the original " +
-                      "bytes differ"
-                    : $"BUT THE FILE CHANGED SIZE WITHOUT APPENDING ANYTHING, {before.Length} to {saved.Length}";
-
-        Console.WriteLine($"{Path.GetFileName(file)}: {plan.Changes.Count} value(s) changed, {size}");
-        foreach (var change in plan.Changes.Take(5)) Console.WriteLine("    " + change);
-
-        if (!sameSize && !(plan.Grows && saved.Length > before.Length) && !shrankAsExpected) return 1;
-        if (!OnlyAppended(before, saved, plan)) return 1;
-
-
-
-
-        int verdict = CrossCheck(new[] { "crosscheck", savedPath });
-
-
-
-        string savedXml = HkxTextEdit.ReadXml(
-            HkxTextEdit.Unpack(_java, _jar, savedPath, Path.Combine(work, "reread")));
-
-        int landed = edits.Count(e => savedXml.Contains(e.Now, StringComparison.Ordinal));
-        Console.WriteLine($"  {landed} of {edits.Count} edited value(s) present in the saved file");
-
-        return verdict == 0 && landed == edits.Count ? 0 : 1;
-    }
 
 
 
@@ -1849,115 +1248,7 @@ public static class Program
 
 
 
-    private static int Classes(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
 
-        string output = Path.GetFullPath(argv[^1]);
-        string? jar = argv.Length > 2 ? Path.GetFullPath(argv[1]) : HkxTextEdit.FindHkxPack("", _root);
-
-        if (jar == null || !File.Exists(jar))
-        {
-            Console.WriteLine("No hkxpack-cli.jar to read the class database out of. " +
-                              "Pass its path: symrm classes <jar> <out.json>");
-            return 1;
-        }
-
-        var sizes = HavokClasses.Shipped;
-        var classes = new SortedDictionary<string, string>(StringComparer.Ordinal);
-        int members = 0, ignored = 0, structs = 0, enums = 0, values = 0, sized = 0, fixedArrays = 0;
-
-        using (var zip = System.IO.Compression.ZipFile.OpenRead(jar))
-        {
-            foreach (var item in zip.Entries.Where(e => e.FullName.StartsWith("classxml/", StringComparison.Ordinal)
-                                                        && e.FullName.EndsWith(".xml", StringComparison.Ordinal)))
-            {
-                using var stream = item.Open();
-                var root = System.Xml.Linq.XDocument.Load(stream).Root!;
-                string name = root.Attribute("name")!.Value;
-
-                var declared = new List<object>();
-                foreach (var m in root.Element("members")?.Elements("member")
-                                  ?? Enumerable.Empty<System.Xml.Linq.XElement>())
-                {
-
-
-                    string flags = (m.Attribute("flags")?.Value ?? "").Trim();
-                    bool written = !flags.Split('|').Any(f => f.Trim() == "SERIALIZE_IGNORED");
-                    int size = int.Parse(m.Attribute("arrsize")?.Value ?? "0");
-
-                    members++;
-                    if (!written) ignored++;
-                    if (m.Attribute("ctype") != null) structs++;
-                    if (size > 0) fixedArrays++;
-
-                    declared.Add(new Dictionary<string, object?>
-                    {
-                        ["name"] = m.Attribute("name")?.Value,
-                        ["offset"] = int.Parse(m.Attribute("offset")!.Value),
-                        ["vtype"] = m.Attribute("vtype")?.Value,
-                        ["vsub"] = m.Attribute("vsubtype")?.Value,
-                        ["ctype"] = m.Attribute("ctype")?.Value,
-                        ["etype"] = m.Attribute("etype")?.Value,
-                        ["arrsize"] = size,
-                        ["written"] = written,
-                        ["default"] = m.Attribute("default")?.Value,
-                    });
-                }
-
-                var declaredEnums = new SortedDictionary<string, object>(StringComparer.Ordinal);
-                foreach (var e in root.Element("enums")?.Elements("enum")
-                                  ?? Enumerable.Empty<System.Xml.Linq.XElement>())
-                {
-                    var items = new SortedDictionary<string, long>(StringComparer.Ordinal);
-                    foreach (var i in e.Elements("enumitem"))
-                        items[i.Attribute("name")!.Value] = long.Parse(i.Attribute("value")!.Value);
-
-                    declaredEnums[e.Attribute("name")!.Value] = items;
-                    enums++;
-                    values += items.Count;
-                }
-
-                int? size2 = sizes[name]?.Size;
-                if (size2 != null) sized++;
-
-                classes[name] = JsonSerializer.Serialize(new Dictionary<string, object?>
-                {
-                    ["parent"] = root.Attribute("parent")?.Value,
-                    ["signature"] = root.Attribute("signature")?.Value,
-                    ["size"] = size2,
-                    ["members"] = declared,
-                    ["enums"] = declaredEnums,
-                });
-            }
-        }
-
-        if (classes.Count == 0)
-        {
-            Console.WriteLine($"{Path.GetFileName(jar)} holds no classxml/ entries.");
-            return 1;
-        }
-
-        var text = new System.Text.StringBuilder();
-        text.Append("{\n\"note\":");
-        text.Append(JsonSerializer.Serialize(TableNote));
-        text.Append(",\n\"havokVersion\":\"hk_2014.1.0-r1\",\n\"classes\":{\n");
-        text.Append(string.Join(",\n", classes.Select(c => JsonSerializer.Serialize(c.Key) + ":" + c.Value)));
-        text.Append("\n}\n}\n");
-
-        File.WriteAllText(output, text.ToString());
-
-        Console.WriteLine($"{classes.Count} classes, {members} members, {sized} with an instance size");
-        Console.WriteLine($"  {ignored} members the engine never writes out");
-        Console.WriteLine($"  {structs} members naming the class of a struct");
-        Console.WriteLine($"  {fixedArrays} members that are a fixed length array");
-        Console.WriteLine($"  {values} values across {enums} enums");
-        Console.WriteLine($"written to {output}, {new FileInfo(output).Length / 1024} KB");
-
-        var reread = HavokClassTypes.Parse(File.OpenRead(output));
-        Console.WriteLine($"reads back as {reread.Count} classes");
-        return reread.Count == classes.Count ? 0 : 1;
-    }
 
 
 
@@ -2006,62 +1297,7 @@ public static class Program
 
 
 
-    private static int Fields(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
 
-        string target = Path.GetFullPath(argv[1]);
-        var files = Directory.Exists(target)
-            ? Directory.GetFiles(target, "*.hkx").OrderBy(f => f, StringComparer.Ordinal).ToArray()
-            : new[] { target };
-
-        int exact = 0, wrong = 0, unresolved = 0, skipped = 0;
-        var examples = new List<string>();
-
-        foreach (string file in files)
-        {
-            string work = Path.Combine(Path.GetTempPath(), "symrm-fields");
-            string xml;
-            try
-            {
-                HkxTextEdit.ResetDirectory(work);
-                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
-            }
-            catch (Exception e)
-            {
-                skipped++;
-                if (examples.Count < 8) examples.Add($"{Path.GetFileName(file)}: {e.Message.Split('\n')[0]}");
-                continue;
-            }
-
-            var objects = new PackfileObjects(PackfileImage.Read(file));
-            var ids = HkxTextEdit.ObjectIds(xml);
-            if (ids.Count != objects.Instances.Count) { skipped++; continue; }
-
-            for (int i = 0; i < ids.Count; i++)
-            {
-                var predicted = ClassFields.NamesOf(objects, objects.Instances[i]);
-                if (predicted == null) { unresolved++; continue; }
-
-                var seen = HkxTextEdit.ReadParams(xml, ids[i]).Select(p => p.Name).ToList();
-                if (predicted.SequenceEqual(seen, StringComparer.Ordinal)) { exact++; continue; }
-
-                wrong++;
-                if (examples.Count < 8)
-                    examples.Add($"{Path.GetFileName(file)} #{ids[i]} {objects.Instances[i].ClassName}\n" +
-                                 $"      from the table: {string.Join(" ", predicted.Take(20))}\n" +
-                                 $"      from hkxpack  : {string.Join(" ", seen.Take(20))}");
-            }
-        }
-
-        Console.WriteLine($"{files.Length} file(s): {exact} object(s) whose field list the table " +
-                          $"predicts exactly, {wrong} wrong, {unresolved} it could not work out, " +
-                          $"{skipped} file(s) skipped");
-        foreach (string line in examples) Console.WriteLine("   " + line);
-
-        return wrong == 0 && unresolved == 0 && exact > 0 ? 0 : 1;
-    }
 
 
 
@@ -2543,74 +1779,18 @@ public static class Program
         return wrong == 0 ? 0 : 1;
     }
 
-    private static int Panel(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
 
 
 
 
-        string target = Path.GetFullPath(argv[1]);
-        if (Directory.Exists(target))
-        {
-            int clean = 0, bad = 0;
-            foreach (string each in Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
-                                             .OrderBy(f => f, StringComparer.Ordinal))
-            {
-                var carried = new[] { argv[0], each }.Concat(argv.Skip(2)).ToArray();
-                if (Panel(carried) == 0) clean++; else bad++;
-            }
 
-            Console.WriteLine($"\n{clean} file(s) with nothing wrong on the panel, {bad} not");
-            return bad == 0 ? 0 : 1;
-        }
 
-        string file = target;
-        string work = WorkDirectory("symrm-panel-", file);
-        if (Directory.Exists(work)) Directory.Delete(work, true);
 
-        string xmlText = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
-        var ids = HkxTextEdit.ObjectIds(xmlText);
-        var objects = new PackfileObjects(PackfileImage.Read(file));
 
-        if (ids.Count != objects.Instances.Count)
-        {
-            Console.WriteLine($"{Path.GetFileName(file)}: the window would refuse this file, " +
-                              $"{objects.Instances.Count} objects in the bytes against {ids.Count} in the xml");
-            return 1;
-        }
 
-        string Reference(PackfileObjects.Instance? target, bool wasNull)
-        {
-            if (wasNull) return "null";
-            if (target == null) return "";
-            int at = objects.IndexOf(target);
-            return at >= 0 && at < ids.Count ? "#" + ids[at] : "";
-        }
 
-        int shown = 0, fromBytes = 0, fell = 0, agreed = 0, strided = 0, offered = 0;
-        var byClassFallback = new SortedDictionary<string, int>(StringComparer.Ordinal);
-        var stridedClasses = new SortedDictionary<string, int>(StringComparer.Ordinal);
-        var disagreements = new List<string>();
 
-        for (int i = 0; i < ids.Count; i++)
-        {
-            var xml = HkxTextEdit.ReadParams(xmlText, ids[i])
-                                 .Select(p => (p.Name, p.Value)).ToList();
-            var fields = PanelFields.For(objects, objects.Instances[i], xml, Reference);
 
-            for (int f = 0; f < fields.Count; f++)
-            {
-                shown++;
-                if (fields[f].Options.Count > 0) offered++;
-                if (fields[f].From == PanelFields.Source.Fallback)
-                {
-                    fell++;
-                    string what = objects.Instances[i].ClassName + "." + fields[f].Name;
-                    byClassFallback[what] = byClassFallback.GetValueOrDefault(what) + 1;
-                }
-                else fromBytes++;
 
 
 
@@ -2619,14 +1799,8 @@ public static class Program
 
 
 
-                string theirs = System.Net.WebUtility.HtmlDecode(xml[f].Value);
 
 
-                if (Same(fields[f].Raw, theirs) || Same(fields[f].Value, theirs))
-                {
-                    agreed++;
-                    continue;
-                }
 
 
 
@@ -2634,36 +1808,11 @@ public static class Program
 
 
 
-                if (fields[f].Owner.Length > 0 &&
-                    HavokClassTypes.Shipped.PaddedBeyondHkxPack(fields[f].Owner))
-                {
-                    strided++;
-                    stridedClasses[fields[f].Owner] = stridedClasses.GetValueOrDefault(fields[f].Owner) + 1;
-                    continue;
-                }
 
-                if (disagreements.Count < 20)
-                    disagreements.Add($"#{ids[i]} {objects.Instances[i].ClassName}.{fields[f].Name} " +
-                                      $"({fields[f].From}): panel shows '{fields[f].Value}', " +
-                                      $"hkxpack says '{theirs}'");
-            }
-        }
 
-        Console.WriteLine($"{Path.GetFileName(file)}: {shown} values on the panel, " +
-                          $"{fromBytes} from the bytes, {fell} fallen back to hkxpack, " +
-                          $"{agreed} agreeing, {shown - agreed - strided} not" +
-                          (strided > 0 ? $", {strided} where hkxpack strides a padded struct wrongly" : "") +
-                          $", {offered} offered as a list of declared values");
 
-        foreach (var (cls, count) in stridedClasses.OrderByDescending(c => c.Value))
-            Console.WriteLine($"  hkxpack mis-strides {cls} x{count}");
 
-        foreach (var (what, count) in byClassFallback.OrderByDescending(f => f.Value).Take(8))
-            Console.WriteLine($"  fell back: {what} x{count}");
-        foreach (string line in disagreements) Console.WriteLine("  " + line);
 
-        return shown == agreed + strided ? 0 : 1;
-    }
 
 
 
@@ -2673,351 +1822,6 @@ public static class Program
 
 
 
-    private static int Model(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
-
-        string target = Path.GetFullPath(argv[1]);
-        var files = Directory.Exists(target)
-            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
-                       .OrderBy(f => f, StringComparer.Ordinal).ToList()
-            : new List<string> { target };
-
-        int clean = 0, bad = 0, unreadable = 0, objects = 0, compared = 0, disagreements = 0, strided = 0;
-        var stridedBy = new Dictionary<string, int>(StringComparer.Ordinal);
-        bool one = files.Count == 1;
-
-        foreach (string file in files)
-        {
-            string work = WorkDirectory("symrm-model-", file);
-            string xml;
-            try
-            {
-                HkxTextEdit.ResetDirectory(work);
-                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message.Split('\n')[0]}");
-                continue;
-            }
-
-            var first = BehaviourGraphModel.Parse(xml);
-            var second = SecondReading(xml, file);
-
-
-
-
-
-            if (second == null)
-            {
-                unreadable++;
-                Console.WriteLine($"{Path.GetFileName(file)}: no reading, the class table does not " +
-                                  "describe every class in it");
-                continue;
-            }
-
-            var result = ModelDiff.Compare(first, second, 40, MisStrided);
-
-            objects += result.Objects;
-            compared += result.Compared;
-            disagreements += result.Total;
-            strided += result.Strided;
-            foreach (var (field, count) in result.StridedBy)
-                stridedBy[field] = stridedBy.GetValueOrDefault(field) + count;
-            if (result.Clean) clean++; else bad++;
-
-            if (one || !result.Clean)
-            {
-                Console.WriteLine($"{Path.GetFileName(file)}: {result}");
-                foreach (var difference in result.Shown) Console.WriteLine("  " + difference);
-                if (result.Total > result.Shown.Count)
-                    Console.WriteLine($"  and {result.Total - result.Shown.Count} more");
-            }
-        }
-
-        Console.WriteLine($"\n{clean} file(s) agreeing, {bad} not, {unreadable} without a reading, " +
-                          $"{objects} object(s), {compared} field(s) compared, " +
-                          $"{disagreements} disagreement(s), {strided} where hkxpack strides a " +
-                          "padded struct wrongly");
-
-        foreach (var (field, count) in stridedBy.OrderByDescending(f => f.Value))
-            Console.WriteLine($"  strided: {field} x{count}");
-
-        return bad == 0 ? 0 : 1;
-    }
-
-
-
-
-
-
-
-
-    private static int Consumers(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
-
-        string target = Path.GetFullPath(argv[1]);
-        var files = Directory.Exists(target)
-            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
-                       .OrderBy(f => f, StringComparer.Ordinal).ToList()
-            : new List<string> { target };
-
-        int clean = 0, bad = 0, unreadable = 0, compared = 0, differing = 0;
-        int roleLines = 0, roleAgreeing = 0, roleDiffering = 0;
-        bool one = files.Count == 1;
-
-        foreach (string file in files)
-        {
-            string work = WorkDirectory("symrm-consumers-", file);
-            string xml;
-            try
-            {
-                HkxTextEdit.ResetDirectory(work);
-                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message.Split('\n')[0]}");
-                continue;
-            }
-
-            var objects = new PackfileObjects(PackfileImage.Read(file));
-            var second = NativeGraphModel.From(objects);
-            if (second == null)
-            {
-                unreadable++;
-                Console.WriteLine($"{Path.GetFileName(file)}: no reading from the bytes");
-                continue;
-            }
-
-
-
-
-
-
-            var told = Roles(EventUsage.ByEvent(xml));
-            var read = Roles(EventUsage.ByEvent(objects));
-            roleLines += Math.Max(told.Count, read.Count);
-
-            for (int i = 0; i < Math.Max(told.Count, read.Count); i++)
-            {
-                string fromText = i < told.Count ? told[i] : "(nothing)";
-                string fromBytes = i < read.Count ? read[i] : "(nothing)";
-
-                if (string.Equals(fromText, fromBytes, StringComparison.Ordinal)) roleAgreeing++;
-                else
-                {
-                    roleDiffering++;
-                    if (roleDiffering <= 10)
-                        Console.WriteLine($"{Path.GetFileName(file)} roles: {fromText}\n" +
-                                          $"  against {fromBytes}");
-                }
-            }
-
-            var result = ConsumerDiff.Compare(BehaviourGraphModel.Parse(xml), second);
-            compared += result.Compared;
-            differing += result.Differences.Count;
-            if (result.Clean) clean++; else bad++;
-
-            if (one || !result.Clean)
-            {
-                Console.WriteLine($"{Path.GetFileName(file)}: {result}");
-                foreach (var difference in result.Differences) Console.WriteLine("  " + difference);
-            }
-        }
-
-        Console.WriteLine($"\n{clean} file(s) behaving the same, {bad} not, {unreadable} without a " +
-                          $"reading, {compared} output(s) compared, {differing} differing");
-        Console.WriteLine($"event roles: {roleLines} line(s) compared, {roleAgreeing} agreeing, " +
-                          $"{roleDiffering} not");
-
-        return bad == 0 && roleDiffering == 0 ? 0 : 1;
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-    private static int Append(string[] argv)
-    {
-        if (argv.Length < 3) { Usage(); return 1; }
-        NeedHkxPack();
-
-        string file = Path.GetFullPath(argv[1]);
-        string className = argv[2];
-
-
-
-        var original = File.ReadAllBytes(file);
-        if (!PackfileImage.Read(original).Rebuild().SequenceEqual(original))
-        {
-            Console.WriteLine("the file does not survive a save that changes nothing, so nothing " +
-                              "below would mean anything");
-            return 1;
-        }
-        Console.WriteLine($"{Path.GetFileName(file)}: a save with no changes is byte identical");
-
-        string work = WorkDirectory("symrm-append-", file);
-        HkxTextEdit.ResetDirectory(work);
-        var told = Numbered(HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work)));
-
-        var image = PackfileImage.Read(original);
-        var added = NativeAppend.Object(image, className);
-        Console.WriteLine($"appended {className} as {added}");
-
-
-
-
-        string attachTo = argv.Length > 4 ? argv[4] : "";
-        int attachFrom = argv.Length > 3 && int.TryParse(argv[3], out int f) ? f : -1;
-
-        if (attachFrom >= 0 && attachTo.Length > 0)
-        {
-            NativeAppend.Attach(image, attachFrom, attachTo, added.Id);
-            Console.WriteLine($"attached: #{attachFrom}.{attachTo} now points at #{added.Id}");
-        }
-
-        string written = Path.Combine(work, "appended.hkx");
-        image.Save(written);
-
-
-
-        var reloaded = new PackfileObjects(PackfileImage.Read(written));
-        Console.WriteLine($"reloaded from disk: {reloaded.Instances.Count} object(s), " +
-                          $"last is {reloaded.Instances[^1].ClassName}");
-
-        string second = WorkDirectory("symrm-append-out-", written);
-        HkxTextEdit.ResetDirectory(second);
-        var read = Numbered(HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, written, second)));
-
-        int moved = 0;
-        foreach (var (id, was) in told)
-            if (!read.TryGetValue(id, out string? now) || now != was)
-            {
-                if (moved < 8)
-                    Console.WriteLine($"  #{id} was {was} and is now {(now ?? "absent")}");
-                moved++;
-            }
-
-        bool numbered = read.TryGetValue(added.Id, out string? newClass) && newClass == className;
-
-
-
-        bool wired = attachFrom < 0 || attachTo.Length == 0;
-        if (!wired)
-        {
-            string after2 = HkxTextEdit.ReadXml(Path.Combine(second,
-                                Path.GetFileNameWithoutExtension(written) + ".xml"));
-            var block = HkxTextEdit.ReadParams(after2, attachFrom.ToString());
-            string held = block.FirstOrDefault(p => p.Name == attachTo)?.Value ?? "(absent)";
-            wired = held == "#" + added.Id;
-            Console.WriteLine($"hkxpack reads #{attachFrom}.{attachTo} as {held}, " +
-                              $"expected #{added.Id}");
-        }
-
-
-
-
-
-        string viaSave = Path.Combine(work, "via-save.hkx");
-        File.WriteAllBytes(viaSave, original);
-
-        var plan = new NativeSave.Plan(
-            new List<NativeSave.Change> { new(className, 0, "", "#" + added.Id, Added: true) }, null);
-
-        var saved = PackfileImage.Read(NativeSave.Apply(viaSave, plan));
-        var savedObjects = new PackfileObjects(saved);
-
-
-
-
-        bool agrees = savedObjects.Instances.Count == reloaded.Instances.Count &&
-                      savedObjects.Instances[^1].ClassName == className &&
-                      saved.Section("__classnames__")!.Data
-                           .SequenceEqual(PackfileImage.Read(written).Section("__classnames__")!.Data);
-
-        Console.WriteLine($"the save path adds it too: {savedObjects.Instances.Count} object(s), " +
-                          $"last is {savedObjects.Instances[^1].ClassName}, name table " +
-                          (agrees ? "identical to the append path" : "DIFFERENT from the append path"));
-
-        Console.WriteLine($"\nhkxpack read {told.Count} object(s) before and {read.Count} after, " +
-                          $"{moved} of the original numbers holding something else, " +
-                          $"the new one is {(numbered ? $"#{added.Id} {className} as predicted" : "not where it was predicted")}");
-
-        return moved == 0 && numbered && wired && agrees && read.Count == told.Count + 1 ? 0 : 1;
-    }
-
-
-
-
-
-
-
-
-
-    private static int Orphan(string[] argv)
-    {
-        if (argv.Length < 3) { Usage(); return 1; }
-        NeedHkxPack();
-
-        string file = Path.GetFullPath(argv[1]);
-        int id = int.Parse(argv[2]);
-
-        var original = File.ReadAllBytes(file);
-        if (!PackfileImage.Read(original).Rebuild().SequenceEqual(original))
-        {
-            Console.WriteLine("the file does not survive a save that changes nothing");
-            return 1;
-        }
-
-        string work = WorkDirectory("symrm-orphan-", file);
-        HkxTextEdit.ResetDirectory(work);
-        string beforeXml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
-        var told = Numbered(beforeXml);
-
-        int pointedAt = References(beforeXml, id);
-        Console.WriteLine($"{Path.GetFileName(file)}: #{id} is a {told.GetValueOrDefault(id, "?")}, " +
-                          $"reached from {pointedAt} place(s)");
-
-        var image = PackfileImage.Read(original);
-        var result = NativeRemove.Orphan(image, id);
-        Console.WriteLine($"orphaned {result}");
-
-        string written = Path.Combine(work, "orphaned.hkx");
-        image.Save(written);
-
-        string second = WorkDirectory("symrm-orphan-out-", written);
-        HkxTextEdit.ResetDirectory(second);
-        string afterXml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, written, second));
-        var read = Numbered(afterXml);
-
-        int moved = told.Count(p => !read.TryGetValue(p.Key, out string? now) || now != p.Value);
-        int left = References(afterXml, id);
-        bool present = read.ContainsKey(id) && read[id] == told.GetValueOrDefault(id);
-
-
-
-        int nullsBefore = Nulls(beforeXml), nullsAfter = Nulls(afterXml);
-
-        Console.WriteLine($"\nhkxpack read {told.Count} object(s) before and {read.Count} after, " +
-                          $"{moved} of the original numbers holding something else, " +
-                          $"#{id} is {(present ? "still there" : "gone")} and now reached from " +
-                          $"{left} place(s), null children {nullsBefore} before and {nullsAfter} after");
-
-        return moved == 0 && present && left == 0 && read.Count == told.Count
-               && nullsAfter == nullsBefore ? 0 : 1;
-    }
 
 
 
@@ -3128,104 +1932,7 @@ public static class Program
 
 
 
-    private static int Symbols(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
 
-        string target = Path.GetFullPath(argv[1]);
-        var files = Directory.Exists(target)
-            ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
-                       .OrderBy(f => f, StringComparer.Ordinal).ToList()
-            : new List<string> { target };
-
-        int clean = 0, bad = 0, compared = 0, differing = 0;
-        bool one = files.Count == 1;
-
-        foreach (string file in files)
-        {
-            string work = WorkDirectory("symrm-symbols-", file);
-            string xml;
-            try
-            {
-                HkxTextEdit.ResetDirectory(work);
-                xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine($"  {Path.GetFileName(file)}: skipped, {e.Message.Split('\n')[0]}");
-                continue;
-            }
-
-            var objects = new PackfileObjects(PackfileImage.Read(file));
-            var problems = new List<string>();
-
-            foreach (bool events in new[] { true, false })
-            {
-                var text = SymbolIndexFixup.Usages(xml, events);
-                var bytes = SymbolIndexFixup.Usages(objects, events);
-                compared += text.Count;
-
-                string what = events ? "events" : "variables";
-                if (text.Count != bytes.Count)
-                {
-                    problems.Add($"{what}: {text.Count} usage(s) in the text against {bytes.Count}");
-                    continue;
-                }
-
-                for (int i = 0; i < text.Count; i++)
-                    if (!Same(text[i], bytes[i]))
-                    {
-                        problems.Add($"{what} {i}: {Spell(text[i])} against {Spell(bytes[i])}");
-                        if (problems.Count > 8) break;
-                    }
-            }
-
-
-
-
-            var rowsText = EventUsage.ByEvent(xml);
-            var rowsBytes = EventUsage.ByEvent(objects);
-            compared += rowsText.Sum(e => e.Value.Count);
-
-            if (rowsText.Count != rowsBytes.Count)
-                problems.Add($"events with usage: {rowsText.Count} in the text against {rowsBytes.Count}");
-            else
-                foreach (var (index, lines) in rowsText.OrderBy(e => e.Key))
-                {
-                    if (!rowsBytes.TryGetValue(index, out var mine))
-                    {
-                        problems.Add($"event {index}: {lines.Count} line(s) in the text against none");
-                        continue;
-                    }
-                    if (EventUsage.Summarise(lines) != EventUsage.Summarise(mine))
-                        problems.Add($"event {index}: \"{EventUsage.Summarise(lines)}\" against " +
-                                     $"\"{EventUsage.Summarise(mine)}\"");
-                }
-
-            var unknownText = SymbolIndexFixup.UnknownIndexFields(xml);
-            var unknownBytes = SymbolIndexFixup.UnknownIndexFields(objects);
-            compared++;
-            if (!unknownText.SequenceEqual(unknownBytes, StringComparer.Ordinal))
-                problems.Add($"unrecognised index fields: {unknownText.Count} in the text " +
-                             $"against {unknownBytes.Count}");
-
-            differing += problems.Count;
-            if (problems.Count == 0) clean++; else bad++;
-
-            if (one || problems.Count > 0)
-            {
-                Console.WriteLine($"{Path.GetFileName(file)}: {compared} usage(s) compared, " +
-                                  $"{problems.Count} differing");
-                foreach (string problem in problems) Console.WriteLine("  " + problem);
-            }
-        }
-
-        Console.WriteLine($"\n{clean} file(s) agreeing, {bad} not, {compared} usage(s) compared, " +
-                          $"{differing} differing");
-
-        return bad == 0 ? 0 : 1;
-    }
 
     private static bool Same(SymbolIndexFixup.Usage a, SymbolIndexFixup.Usage b) =>
         a.Index == b.Index && a.Owner == b.Owner && a.Member == b.Member &&
@@ -3254,7 +1961,7 @@ public static class Program
         var types = HavokClassTypes.Shipped;
         foreach (var member in types.Members(owningClass))
             if (member.Name == field)
-                return member.CType != null && types.PaddedBeyondHkxPack(member.CType);
+                return member.CType != null && types.HasTrailingPadding(member.CType);
 
         return false;
     }
@@ -3264,148 +1971,7 @@ public static class Program
     private static BehaviourGraphModel? SecondReading(string xml, string hkxPath) =>
         NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(hkxPath)));
 
-    private static int CrossCheck(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
 
-        NeedHkxPack();
-
-
-
-        string target = Path.GetFullPath(argv[1]);
-        if (Directory.Exists(target))
-        {
-            int clean = 0, bad = 0;
-            foreach (string each in Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
-                                             .OrderBy(f => f, StringComparer.Ordinal))
-            {
-                var carried = new[] { argv[0], each }.Concat(argv.Skip(2)).ToArray();
-                if (CrossCheck(carried) == 0) clean++; else bad++;
-            }
-
-            Console.WriteLine($"\n{clean} file(s) where every value agrees, {bad} not");
-            return bad == 0 ? 0 : 1;
-        }
-
-        string file = target;
-        string work = WorkDirectory("symrm-crosscheck-", file);
-        if (Directory.Exists(work)) Directory.Delete(work, true);
-
-        string xmlFile = HkxTextEdit.Unpack(_java, _jar, file, work);
-
-        var document = System.Xml.Linq.XDocument.Load(xmlFile);
-        var objects = new PackfileObjects(PackfileImage.Read(file));
-
-
-
-
-
-
-
-        var named = document.Descendants("hkobject")
-                            .Where(e => e.Attribute("name")?.Value.StartsWith('#') == true).ToList();
-        bool idsLineUp = named.Count == objects.Instances.Count &&
-                         named.Select((e, i) => e.Attribute("class")?.Value == objects.Instances[i].ClassName)
-                              .All(matched => matched);
-
-        if (!idsLineUp)
-        {
-            int at = named.Zip(objects.Instances)
-                          .TakeWhile(p => p.First.Attribute("class")?.Value == p.Second.ClassName)
-                          .Count();
-            Console.WriteLine($"  the two orderings differ: hkxpack has {named.Count} named objects, " +
-                              $"we have {objects.Instances.Count}, first differing at {at}" +
-                              (at < named.Count && at < objects.Instances.Count
-                                   ? $" where hkxpack says {named[at].Attribute("class")?.Value} " +
-                                     $"and we say {objects.Instances[at].ClassName}"
-                                   : ""));
-        }
-
-        var indexOfId = new Dictionary<string, int>(StringComparer.Ordinal);
-        for (int i = 0; i < named.Count; i++) indexOfId[named[i].Attribute("name")!.Value] = i;
-
-        var indexOf = new Dictionary<PackfileObjects.Instance, int>();
-        for (int i = 0; i < objects.Instances.Count; i++) indexOf[objects.Instances[i]] = i;
-
-        string Reference(string id) =>
-            idsLineUp && indexOfId.TryGetValue(id, out int at) ? "@" + at : id;
-
-        var byClass = new Dictionary<string, List<Dictionary<string, string>>>(StringComparer.Ordinal);
-        foreach (var element in document.Descendants("hkobject"))
-        {
-            string? cls = element.Attribute("class")?.Value;
-            if (cls == null) continue;
-
-            var fields = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var p in element.Elements("hkparam"))
-            {
-                string? name = p.Attribute("name")?.Value;
-                if (name != null) fields[name] = Canonical(p, Reference);
-            }
-            if (!byClass.TryGetValue(cls, out var list)) byClass[cls] = list = new();
-            list.Add(fields);
-        }
-
-        int compared = 0, agreed = 0;
-        var disagreements = new List<string>();
-        var unread = new SortedDictionary<string, int>(StringComparer.Ordinal);
-        int countedOnly = 0;
-
-        foreach (var group in objects.Instances.GroupBy(i => i.ClassName))
-        {
-            if (!byClass.TryGetValue(group.Key, out var theirs)) continue;
-            var ours = group.ToList();
-            if (ours.Count != theirs.Count)
-            {
-                disagreements.Add($"{group.Key}: we see {ours.Count}, hkxpack sees {theirs.Count}");
-                continue;
-            }
-
-            var members = HavokClasses.Shipped.Members(group.Key);
-            for (int i = 0; i < ours.Count; i++)
-            {
-                foreach (var member in members)
-                {
-                    if (!theirs[i].TryGetValue(member.Name, out string? expected)) continue;
-
-                    string? actual = Rendered(objects, ours[i], member, indexOf, expected);
-                    if (actual == null)
-                    {
-
-
-                        unread[member.Type] = unread.GetValueOrDefault(member.Type) + 1;
-                        continue;
-                    }
-
-                    compared++;
-
-
-
-
-                    if (member.Type == "array of struct") countedOnly++;
-                    if (Same(actual, expected)) { agreed++; continue; }
-                    if (disagreements.Count < 12)
-                        disagreements.Add($"{group.Key}[{i}].{member.Name} (+{member.Offset}): " +
-                                          $"we read {actual}, hkxpack says {expected}");
-                }
-            }
-        }
-
-        Console.WriteLine($"{Path.GetFileName(file)}: {compared} field values compared against hkxpack, " +
-                          $"{agreed} agreed, {compared - agreed} did not");
-        foreach (string line in disagreements) Console.WriteLine("  " + line);
-
-        if (countedOnly > 0)
-            Console.WriteLine($"  of those, {countedOnly} are arrays of inline structs, where only " +
-                              "the element count is read and not the elements");
-
-        if (unread.Count > 0)
-            Console.WriteLine("  still needing hkxpack to read: " +
-                              string.Join(", ", unread.OrderByDescending(u => u.Value)
-                                                      .Select(u => $"{u.Key} x{u.Value}")));
-
-        return compared > 0 && compared == agreed && disagreements.Count == 0 ? 0 : 1;
-    }
 
 
 
@@ -3563,114 +2129,7 @@ public static class Program
 
 
 
-    private static int Grow(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
 
-
-
-
-
-
-
-        bool java = false;
-        try { NeedHkxPack(); java = true; }
-        catch (InvalidOperationException) { }
-
-        Console.WriteLine(java
-            ? "reading and checking through hkxpack"
-            : "no Java runtime, so reading and checking through our own reader");
-
-        var files = Directory.Exists(argv[1])
-            ? Directory.EnumerateFiles(argv[1], "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToList()
-            : new List<string> { Path.GetFullPath(argv[1]) };
-
-        int done = 0, refused = 0, wrong = 0;
-
-        foreach (string file in files)
-        {
-            string work = WorkDirectory("symrm-grow-", file);
-            HkxTextEdit.ResetDirectory(work);
-            Directory.CreateDirectory(work);
-
-            string xml;
-            try
-            {
-                xml = java ? HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work))
-                           : NativeXml.From(File.ReadAllBytes(file));
-            }
-            catch (Exception e) { Console.WriteLine($"{Path.GetFileName(file),-46} unreadable: {e.Message}"); continue; }
-
-            var model = BehaviourGraphModel.Parse(xml);
-            var names = SymbolEditor.VariableNames(model);
-            if (names.Count == 0) { Console.WriteLine($"{Path.GetFileName(file),-46} no variables"); continue; }
-
-            int had = SymbolEditor.Audit(model).Bounds;
-            int target = names.Count - 1;
-            if (had > target) { Console.WriteLine($"{Path.GetFileName(file),-46} bounds already reach the last variable"); continue; }
-
-            const string low = "-1", high = "7";
-            string bounded = SymbolEditor.SetVariableBounds(xml, target, low, high);
-            var plan = NativeSave.Compare(xml, bounded);
-
-            Console.WriteLine($"\nFILE {Path.GetFileName(file)}");
-            Console.WriteLine($"  variableBounds {had} -> {names.Count} for {names.Count} variable(s), " +
-                              $"bounding '{names[target]}' from {low} to {high}");
-
-            if (!plan.Possible)
-            {
-                Console.WriteLine($"  REFUSED  {plan.Refusal}");
-                refused++;
-                continue;
-            }
-
-            Console.WriteLine($"  planned: {plan.Changes.Count} change(s), grows={plan.Grows}");
-
-            byte[] written;
-            try { written = NativeSave.Apply(file, plan); }
-            catch (Exception e) { Console.WriteLine($"  THREW  {e.Message}"); wrong++; continue; }
-
-            string grownPath = Path.Combine(work, "grown.hkx");
-            File.WriteAllBytes(grownPath, written);
-
-            string reread;
-            if (java)
-            {
-                string back = Path.Combine(work, "back");
-                HkxTextEdit.ResetDirectory(back);
-                reread = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, grownPath, back));
-            }
-            else reread = NativeXml.From(written);
-
-
-
-
-            var wanted = RepackCheck.Take(bounded);
-            var got = RepackCheck.Take(reread);
-
-            int compared = Math.Min(wanted.InOrder.Count, got.InOrder.Count);
-            var differing = new List<string>();
-            for (int o = 0; o < compared; o++)
-                if (wanted.InOrder[o].Body != got.InOrder[o].Body)
-                    differing.Add($"#{wanted.InOrder[o].Id} {wanted.InOrder[o].Class}");
-
-            string readBack = BoundAt(reread, target);
-            bool right = readBack == $"{low} to {high}" && differing.Count == 0 &&
-                         wanted.Objects == got.Objects;
-
-            Console.WriteLine($"  bound {target} reads back as {readBack}");
-            Console.WriteLine($"  {wanted.Objects} object(s) asked for, {got.Objects} in the written " +
-                              $"file, {differing.Count} whose values differ" +
-                              (differing.Count > 0 ? ": " + string.Join(", ", differing.Take(4)) : ""));
-            Console.WriteLine($"  file grew by {written.Length - new FileInfo(file).Length} bytes");
-            Console.WriteLine("  " + (right ? "GOOD" : "WRONG"));
-
-            if (right) done++; else wrong++;
-        }
-
-        Console.WriteLine($"\nGROW written={done} refused={refused} wrong={wrong}");
-        return wrong == 0 ? 0 : 1;
-    }
 
 
 
@@ -5846,158 +4305,7 @@ public static class Program
         return $"{decoded} file(s), {values} value(s), {hash:x16}";
     }
 
-    private static int Interleave(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
 
-        var files = Directory.Exists(argv[1])
-            ? Directory.EnumerateFiles(argv[1], "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToList()
-            : new List<string> { Path.GetFullPath(argv[1]) };
-
-        string work = Path.Combine(Path.GetTempPath(), "symrm-interleave");
-        Directory.CreateDirectory(work);
-
-
-
-
-        bool java = false;
-        try { NeedHkxPack(); java = true; }
-        catch (InvalidOperationException) { }
-
-        Console.WriteLine(java ? "checking the written files with hkxpack as well"
-                               : "no Java runtime, so checking with our own reader only");
-
-        int done = 0, refused = 0, wrong = 0, skipped = 0;
-        var reader = new HkxBinaryReader();
-
-        foreach (string file in files)
-        {
-            HkxAnimationData before;
-            try
-            {
-                if (!reader.TryReadAnimation(file, out before)) { skipped++; continue; }
-                if (before.NumFrames <= 0 || before.NumTracks <= 0) { skipped++; continue; }
-                if (Array.IndexOf(NativeAnimation.Compressed, before.AnimationClass) < 0) { skipped++; continue; }
-            }
-            catch (Exception) { skipped++; continue; }
-
-            Console.WriteLine($"\nFILE {Path.GetFileName(file)}");
-            Console.WriteLine($"  {before.AnimationClass}: {before.NumFrames} frame(s) of " +
-                              $"{before.NumTracks} track(s), {before.Duration:F4}s, " +
-                              $"{before.Annotations.Count} annotation(s)");
-
-            NativeAnimation.Result written;
-            try { written = NativeAnimation.Interleave(file, before); }
-            catch (InvalidOperationException e) { Console.WriteLine($"  REFUSED  {e.Message}"); refused++; continue; }
-            catch (Exception e) { Console.WriteLine($"  THREW  {e.Message}"); wrong++; continue; }
-
-            string outPath = Path.Combine(work, Path.GetFileNameWithoutExtension(file) + "-plain.hkx");
-            File.WriteAllBytes(outPath, written.Bytes);
-
-            HkxAnimationData after;
-            try { after = reader.ReadAnimation(outPath); }
-            catch (Exception e) { Console.WriteLine($"  UNREADABLE  {e.Message}"); wrong++; continue; }
-
-            if (after.AnimationClass != NativeAnimation.InterleavedClass)
-            {
-                Console.WriteLine($"  WRONG CLASS  came back as {after.AnimationClass}");
-                wrong++;
-                continue;
-            }
-
-
-            float worstT = 0, worstR = 0, worstS = 0;
-            int compared = 0;
-            string mismatch = "", worstWhere = "";
-
-            if (after.NumFrames != before.NumFrames || after.NumTracks != before.NumTracks)
-                mismatch = $"came back as {after.NumFrames} frame(s) of {after.NumTracks} track(s)";
-
-            if (mismatch.Length == 0)
-                for (int t = 0; t < before.NumTracks; t++)
-                {
-                    var a = before.Tracks[t];
-                    var b = after.Tracks[t];
-                    for (int f = 0; f < before.NumFrames; f++)
-                    {
-                        worstT = Math.Max(worstT, (a.Translations[f] - b.Translations[f]).Length());
-                        worstS = Math.Max(worstS, (a.Scales[f] - b.Scales[f]).Length());
-
-                        float turn = Angle(a.Rotations[f], b.Rotations[f]);
-                        if (turn > worstR)
-                        {
-                            worstR = turn;
-                            worstWhere = $"track {t} frame {f}: {a.Rotations[f]} became {b.Rotations[f]}";
-                        }
-                        compared++;
-                    }
-                }
-
-            string second = "not asked";
-            if (java)
-            {
-                try
-                {
-                    string checkDir = Path.Combine(work, "check");
-                    HkxTextEdit.ResetDirectory(checkDir);
-                    string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, outPath, checkDir));
-
-                    var held = System.Text.RegularExpressions.Regex.Match(
-                        xml, "class=\"" + NativeAnimation.InterleavedClass + "\"");
-                    var count = System.Text.RegularExpressions.Regex.Match(
-                        xml, "name=\"transforms\" numelements=\"(\\d+)\"");
-
-                    second = !held.Success ? "does not hold one"
-                        : !count.Success ? "holds one with no transforms"
-                        : count.Groups[1].Value == (before.NumFrames * before.NumTracks).ToString()
-                            ? $"reads {count.Groups[1].Value} transform(s)"
-                            : $"reads {count.Groups[1].Value} transform(s), not " +
-                              $"{before.NumFrames * before.NumTracks}";
-                }
-                catch (Exception e) { second = "could not read it: " + e.Message.Split('\n')[0]; }
-            }
-
-            bool secondAgrees = !java ||
-                second == $"reads {before.NumFrames * before.NumTracks} transform(s)";
-
-            bool sameNames = before.BoneNames.SequenceEqual(after.BoneNames);
-            bool sameAnnotations = before.Annotations.Count == after.Annotations.Count &&
-                before.Annotations.Zip(after.Annotations).All(p => p.First.Text == p.Second.Text &&
-                                                                   Math.Abs(p.First.Time - p.Second.Time) < 1e-6f);
-            bool sameDuration = Math.Abs(before.Duration - after.Duration) < 1e-6f;
-
-
-
-
-            const float Place = 0.001f, Degree = 0.01f;
-            bool right = mismatch.Length == 0 && worstT < Place && worstS < Place && worstR < Degree &&
-                         sameNames && sameAnnotations && sameDuration && secondAgrees;
-
-            Console.WriteLine(mismatch.Length > 0
-                ? $"  {mismatch}"
-                : $"  read back: {compared} frame(s) compared, worst translation {worstT:E2}, " +
-                  $"scale {worstS:E2}, rotation {worstR:F5} degrees");
-            Console.WriteLine($"  bone names {(sameNames ? "identical" : "DIFFERENT")}, " +
-                              $"annotations {(sameAnnotations ? "identical" : "DIFFERENT")}, " +
-                              $"duration {(sameDuration ? "identical" : "DIFFERENT")}");
-            if (java) Console.WriteLine($"  hkxpack {second}");
-            Console.WriteLine($"  file grew by {written.Grew} bytes");
-            if (!right && worstWhere.Length > 0) Console.WriteLine("  worst rotation at " + worstWhere);
-
-
-
-
-
-            if (right) right = Nudged(reader, file, before, work, ref mismatch);
-
-            Console.WriteLine("  " + (right ? "GOOD" : "WRONG"));
-
-            if (right) done++; else wrong++;
-        }
-
-        Console.WriteLine($"\nINTERLEAVE written={done} refused={refused} wrong={wrong} skipped={skipped}");
-        return wrong == 0 ? 0 : 1;
-    }
 
 
 
@@ -6632,6 +4940,195 @@ public static class Program
 
 
 
+
+    private static int Lifecycle(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string root = Path.GetFullPath(argv[1]);
+        var files = Directory.Exists(root)
+            ? Directory.EnumerateFiles(root, "*.hkx", SearchOption.AllDirectories)
+                       .OrderBy(path => path, StringComparer.Ordinal).ToList()
+            : new List<string> { root };
+
+        int graphs = 0, animations = 0, skeletons = 0, skipped = 0, failed = 0;
+        foreach (string file in files)
+        {
+            try
+            {
+                string xml;
+                try { xml = HkxTextEdit.TextOf(file); }
+                catch (Exception ex)
+                {
+                    skipped++;
+                    Console.WriteLine($"SKIP {file}: native XML unavailable ({ex.Message.Split('\n')[0]})");
+                    continue;
+                }
+                if (xml.Length == 0) { skipped++; Console.WriteLine($"SKIP {file}: native XML unavailable"); continue; }
+                var reader = new HkxBinaryReader();
+                if (Path.GetFileName(file).Equals("skeleton.hkx", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        var skeleton = reader.ReadSkeleton(file);
+                        var pose = AnimationPose.ReferencePose(skeleton);
+                        if (pose.Bones.Count == 0) throw new InvalidOperationException("reference pose is empty");
+                        skeletons++;
+                        Console.WriteLine($"PASS skeleton {file}: open validate render (not editable by this tool)");
+                    }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        Console.WriteLine($"FAIL skeleton {file}: {ex.Message.Split('\n')[0]}");
+                    }
+                    continue;
+                }
+
+                BehaviourGraphModel model;
+                try { model = BehaviourGraphModel.Parse(xml); }
+                catch (InvalidDataException ex) when (ex.Message.Contains("Missing __classnames__", StringComparison.Ordinal))
+                {
+                    skipped++;
+                    Console.WriteLine($"SKIP {file}: not an editable HKX packfile");
+                    continue;
+                }
+
+                if (model.Objects.Any(o => o.Class == "hkbBehaviorGraph"))
+                {
+                    if (!LifecycleGraph(file, xml, model, out string reason))
+                    {
+                        failed++;
+                        Console.WriteLine($"FAIL graph {file}: {reason}");
+                    }
+                    else
+                    {
+                        graphs++;
+                        Console.WriteLine($"PASS graph {file}: open edit save reload validate render");
+                    }
+                    continue;
+                }
+
+                if (reader.TryReadAnimation(file, out var animation))
+                {
+                    if (!LifecycleAnimation(reader, file, animation, out string reason))
+                    {
+                        failed++;
+                        Console.WriteLine($"FAIL animation {file}: {reason}");
+                    }
+                    else
+                    {
+                        animations++;
+                        Console.WriteLine($"PASS animation {file}: open edit save reload validate render");
+                    }
+                    continue;
+                }
+
+                skipped++;
+                Console.WriteLine($"SKIP {file}: not a supported editable graph or animation");
+            }
+            catch (Exception ex) when (ex.Message.Contains("Missing __classnames__", StringComparison.Ordinal))
+            {
+                skipped++;
+                Console.WriteLine($"SKIP {file}: not an editable HKX packfile");
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                Console.WriteLine($"FAIL {file}: {ex.Message.Split('\n')[0]}");
+            }
+        }
+
+        Console.WriteLine($"LIFECYCLE graph={graphs} animation={animations} skeleton={skeletons} skipped={skipped} failed={failed}");
+        return graphs > 0 && animations > 0 && failed == 0 ? 0 : 1;
+    }
+
+    private static bool LifecycleGraph(string file, string xml, BehaviourGraphModel model, out string reason)
+    {
+        reason = "";
+        if (!TryLifecycleEdit(xml, out string edited, out var plan))
+        {
+            reason = "no supported native userData edit";
+            return false;
+        }
+
+        byte[] written = NativeSave.Apply(file, plan);
+        string reread = NativeXml.From(written);
+        var after = BehaviourGraphModel.Parse(reread);
+        if (after.Objects.Count != model.Objects.Count) { reason = "object count changed after reload"; return false; }
+        if (GraphValidator.Check(reread).Any(f => f.Level == GraphValidator.Level.Error))
+        {
+            reason = "validator reported an error after reload";
+            return false;
+        }
+        if (GraphAuthor.Layout(after, 10000).Count == 0) { reason = "graph produced no render nodes"; return false; }
+        if (reread == xml || edited == xml) { reason = "edit did not change the native document"; return false; }
+        return true;
+    }
+
+    private static bool TryLifecycleEdit(string xml, out string edited, out NativeSave.Plan plan)
+    {
+        edited = xml;
+        plan = new NativeSave.Plan(new List<NativeSave.Change>(), "no native edit was attempted");
+        foreach (string id in HkxTextEdit.ObjectIds(xml))
+        {
+            foreach (var param in HkxTextEdit.ReadParams(xml, id).Where(p => p.Name == "userData"))
+            {
+                string value = param.Value.Trim() == "0" ? "1" : "0";
+                string candidate;
+                try { candidate = HkxTextEdit.SetParamAt(xml, id, "userData", value); }
+                catch { continue; }
+
+                var candidatePlan = NativeSave.Compare(xml, candidate);
+                if (!candidatePlan.Possible || candidatePlan.Empty) continue;
+                edited = candidate;
+                plan = candidatePlan;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool LifecycleAnimation(HkxBinaryReader reader, string file, HkxAnimationData before,
+                                           out string reason)
+    {
+        reason = "";
+        if (before.NumTracks == 0 || before.NumFrames == 0) { reason = "no editable animation frames"; return false; }
+
+        var edited = reader.ReadAnimation(file);
+        int track = edited.NumTracks / 2;
+        int frame = edited.NumFrames / 2;
+        edited.Tracks[track].Translations[frame] += new System.Numerics.Vector3(1.5f, -2.25f, 0.75f);
+
+        var written = NativeAnimation.Interleave(file, edited);
+        string work = WorkDirectory("symrm-lifecycle-", file);
+        HkxTextEdit.ResetDirectory(work);
+        string output = Path.Combine(work, Path.GetFileNameWithoutExtension(file) + "-native.hkx");
+        File.WriteAllBytes(output, written.Bytes);
+        var after = reader.ReadAnimation(output);
+        if (after.NumTracks != before.NumTracks || after.NumFrames != before.NumFrames)
+        {
+            reason = "animation shape changed after reload";
+            return false;
+        }
+
+        var skeleton = LifecycleSkeleton(file, reader);
+        if (skeleton == null) { reason = "no sibling skeleton to compose a pose"; return false; }
+        if (AnimationPose.At(skeleton, after, frame).Bones.Count == 0)
+        {
+            reason = "animation produced no pose bones";
+            return false;
+        }
+        return true;
+    }
+
+    private static HkxSkeleton? LifecycleSkeleton(string file, HkxBinaryReader reader)
+    {
+        string? assets = SiblingSkeletonFolder(file);
+        string? candidate = assets == null ? null : Path.Combine(assets, "skeleton.hkx");
+        if (candidate == null || !File.Exists(candidate)) return null;
+        try { return reader.ReadSkeleton(candidate); }
+        catch { return null; }
+    }
 
     private static int SaveNumbers(string[] argv)
     {
@@ -9263,30 +7760,7 @@ public static class Program
         return dir;
     }
 
-    private static int Unpack(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
 
-        int everyNth = argv.Length > 2 ? int.Parse(argv[2]) : 4;
-
-
-        string outDir = argv.Length > 3 ? argv[3] : Path.Combine(argv[1], "xml");
-        Directory.CreateDirectory(outDir);
-
-        var files = Directory.GetFiles(argv[1], "*.hkx").OrderBy(f => f).ToList();
-        int done = 0, failed = 0;
-
-        for (int i = 0; i < files.Count; i++)
-        {
-            if (i % everyNth != 0) continue;
-            try { HkxTextEdit.Unpack(_java, _jar, files[i], outDir); done++; }
-            catch (Exception ex) { failed++; Console.WriteLine($"  failed {Path.GetFileName(files[i])}: {ex.Message.Split('\n')[0]}"); }
-        }
-
-        Console.WriteLine($"unpacked {done} of {files.Count} into {outDir}, {failed} failed");
-        return failed == 0 ? 0 : 1;
-    }
 
     private static int Check(string[] argv)
     {
@@ -9325,180 +7799,14 @@ public static class Program
         return errorCount == 0 ? 0 : 1;
     }
 
-    private static int Remove(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
-
-        string work = Path.Combine(Path.GetTempPath(), "symrm", Path.GetFileNameWithoutExtension(argv[1]));
-        HkxTextEdit.ResetDirectory(work);
-        Directory.CreateDirectory(work);
-
-        string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
-        Console.WriteLine("FILE " + Path.GetFileName(argv[1]));
-        Report("BEFORE", xml);
-        var before = Resolved(xml);
-
-
-
-
-
-        {
-            var names0 = SymbolEditor.VariableNames(BehaviourGraphModel.Parse(xml));
-            if (names0.Count > 0)
-            {
-                int last = names0.Count - 1;
-                int had = SymbolEditor.Audit(BehaviourGraphModel.Parse(xml)).Bounds;
-
-                string bounded = SymbolEditor.SetVariableBounds(xml, last, "-1", "7");
-                var lined = SymbolEditor.Audit(BehaviourGraphModel.Parse(bounded));
-
-                Console.WriteLine($"\n--- bound variable {last} '{names0[last]}' from -1 to 7 ---");
-                Console.WriteLine($"  bounds array {had} -> {lined.Bounds} for {lined.Names} variable(s), " +
-                                  $"parallel={lined.BoundsAreParallel}");
-
-                var plan = NativeSave.Compare(xml, bounded);
-                Console.WriteLine(plan.Possible
-                    ? $"  written into the bytes: {plan.Changes.Count} change(s), grows={plan.Grows}"
-                    : $"  needs hkxpack: {plan.Refusal}");
-
-
-
-                if (had > 0)
-                {
-                    string edited = SymbolEditor.SetVariableBounds(xml, 0, "-2", "9");
-                    var inPlace = NativeSave.Compare(xml, edited);
-                    Console.WriteLine(inPlace.Possible
-                        ? $"  changing a bound already there: written into the bytes, " +
-                          $"{inPlace.Changes.Count} change(s)"
-                        : $"  changing a bound already there: needs hkxpack, {inPlace.Refusal}");
-
-
-
-
-                    if (inPlace.Possible)
-                    {
-                        byte[] written = NativeSave.Apply(argv[1], inPlace);
-
-                        string boundedPath = Path.Combine(work, "bounded.hkx");
-                        File.WriteAllBytes(boundedPath, written);
-
-                        string check = WorkDirectory("symrm-bounded-", boundedPath);
-                        HkxTextEdit.ResetDirectory(check);
-                        string reread = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, boundedPath, check));
-
-
-
-
-                        Console.WriteLine($"  read back through hkxpack: bound 0 is " +
-                                          $"{FirstBound(reread, "min")} to {FirstBound(reread, "max")}");
-
-
-
-
-                        var wanted = RepackCheck.Take(edited);
-                        var got = RepackCheck.Take(reread);
-
-                        int differ = 0;
-                        int compared = Math.Min(wanted.InOrder.Count, got.InOrder.Count);
-                        for (int o = 0; o < compared; o++)
-                            if (wanted.InOrder[o].Body != got.InOrder[o].Body) differ++;
-
-                        Console.WriteLine($"  {wanted.Objects} object(s) asked for, {got.Objects} in " +
-                                          $"the written file, {differ} whose values differ");
-                        Console.WriteLine($"  file grew by {written.Length - new FileInfo(argv[1]).Length} bytes");
-                    }
-                }
-            }
-        }
-
-        Console.WriteLine("\n--- add a variable and an event ---");
-        xml = SymbolEditor.AddVariable(xml, "fSymrmProbe", SymbolEditor.VariableType.Real, out int newVar);
-        xml = SymbolEditor.AddEvent(xml, "SymrmProbeEvent", out int newEvent);
-        var counts = SymbolEditor.Audit(BehaviourGraphModel.Parse(xml));
-        Console.WriteLine($"  variable index {newVar}, event index {newEvent}");
-        Console.WriteLine($"  {counts}   consistent={counts.VariablesConsistent && counts.EventsConsistent}");
-
-        var names = SymbolEditor.VariableNames(BehaviourGraphModel.Parse(xml));
-        int inUse = FirstMatching(xml, events: false, wanted: true);
-        if (inUse >= 0)
-        {
-            Console.WriteLine($"\n--- refuse to remove variable {inUse} '{names[inUse]}', which is in use ---");
-            string untouched = SymbolEditor.RemoveVariable(xml, inUse, force: false, out var blockers);
-            Console.WriteLine($"  blockers {blockers.Count}: {string.Join(", ", blockers.Distinct().Take(3))}");
-            Console.WriteLine($"  file unchanged: {untouched == xml}");
-        }
-
-        int freeVar = FirstMatching(xml, events: false, wanted: false);
-        string removedVar = freeVar >= 0 ? names[freeVar] : "";
-        if (freeVar >= 0)
-        {
-            Console.WriteLine($"\n--- remove variable {freeVar} '{removedVar}', which nothing references ---");
-            Console.WriteLine($"  references above it that must shift: {CountAbove(xml, events: false, freeVar)}");
-            xml = SymbolEditor.RemoveVariable(xml, freeVar, force: false, out _);
-        }
-
-        var events = SymbolEditor.EventNames(BehaviourGraphModel.Parse(xml));
-        int freeEvent = FirstMatching(xml, events: true, wanted: false);
-        string removedEvent = freeEvent >= 0 ? events[freeEvent] : "";
-        if (freeEvent >= 0)
-        {
-            Console.WriteLine($"--- remove event {freeEvent} '{removedEvent}', which nothing references ---");
-            Console.WriteLine($"  references above it that must shift: {CountAbove(xml, events: true, freeEvent)}");
-            xml = SymbolEditor.RemoveEvent(xml, freeEvent, force: false, out _);
-        }
-
-        string packedDir = Path.Combine(work, "repack");
-        Directory.CreateDirectory(packedDir);
-        string xmlPath = Path.Combine(packedDir, "edited.xml");
-        File.WriteAllText(xmlPath, xml);
-        string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
-        Console.WriteLine($"\nrepacked to {new FileInfo(packed).Length} bytes, reading the binary back");
-        string back = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, packed, Path.Combine(packedDir, "back")));
-
-        Report("AFTER, ROUND TRIPPED", back);
-        var after = Resolved(back);
-
-        bool ok = Compare("bindings", before.Bindings, after.Bindings, "fSymrmProbe", removedVar)
-                & Compare("transitions", before.Transitions, after.Transitions, "SymrmProbeEvent", removedEvent);
-
-        Console.WriteLine("\n--- validator on the round tripped file ---");
-        var findings = GraphValidator.Check(back);
-        int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
-        Console.WriteLine($"  {errors} errors, {findings.Count - errors} warnings");
-        foreach (var f in findings.Take(8)) Console.WriteLine("   " + f);
-
-        return ok && errors == 0 ? 0 : 1;
-    }
 
 
 
 
 
 
-    private static int Draw(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
 
-        string work = Path.Combine(Path.GetTempPath(), "symrm", "draw");
-        HkxTextEdit.ResetDirectory(work);
-        Directory.CreateDirectory(work);
 
-        string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
-        Console.WriteLine($"FILE {Path.GetFileName(argv[1])}");
-        Show("before any edit", xml);
-
-        var model = BehaviourGraphModel.Parse(xml);
-        var graph = model.Objects.First(o => o.Class == "hkbBehaviorGraph");
-        var leaf = model.Objects.First(o => o.Class == "hkbClipGenerator");
-
-        Console.WriteLine($"\n--- drag #{graph.Id}.rootGenerator onto clip #{leaf.Id}, which replaces what it held ---");
-        xml = GraphLinks.Connect(xml, graph.Id, "rootGenerator", leaf.Id, out string note);
-        Console.WriteLine("  " + note);
-        Show("after the retarget", xml);
-        return 0;
-    }
 
     private static void Show(string label, string xml)
     {
@@ -9535,88 +7843,6 @@ public static class Program
 
 
 
-    private static int Link(string[] argv)
-    {
-        if (argv.Length < 2) { Usage(); return 1; }
-        NeedHkxPack();
-
-        string work = Path.Combine(Path.GetTempPath(), "symrm", "link");
-        HkxTextEdit.ResetDirectory(work);
-        Directory.CreateDirectory(work);
-
-        string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
-        var model = BehaviourGraphModel.Parse(xml);
-        Console.WriteLine($"FILE {Path.GetFileName(argv[1])}   {model.Objects.Count} objects");
-
-        Console.WriteLine("\n--- ports the canvas offers, which is a port per link the class may hold ---");
-        foreach (var obj in model.Objects.Take(60))
-        {
-            var slots = GraphLinks.OutSlots(model, obj);
-            if (slots.Count == 0) continue;
-            Console.WriteLine($"  #{obj.Id,-4} {obj.Class,-34} {string.Join("  ", slots.Select(s => $"{s}({s.Targets.Count})"))}");
-        }
-
-        string machine = model.Objects.First(o => o.Class == "hkbStateMachine").Id;
-        var blender = model.Objects.FirstOrDefault(o => o.Class == "hkbBlenderGenerator");
-        var state = model.Objects.First(o => o.Class == "hkbStateMachineStateInfo");
-
-        Console.WriteLine("\n--- create a clip with nothing pointing at it, the way a drag to empty canvas does ---");
-        xml = GeneratorEditor.Add(xml, "clip", "SymrmLinkClip", "Meshes\\Probe\\link.hkx", "", out string clip);
-        Console.WriteLine($"  clip is #{clip}");
-
-        if (blender != null)
-        {
-            xml = GraphLinks.Connect(xml, blender.Id, "children", clip, out string note);
-            Console.WriteLine($"  drag blender.children  -> {note}");
-        }
-
-        xml = GraphLinks.Connect(xml, machine, "states", clip, out string stateNote);
-        Console.WriteLine($"  drag machine.states    -> {stateNote}");
-
-        xml = GraphLinks.Connect(xml, state.Id, "generator", clip, out string genNote);
-        Console.WriteLine($"  drag state.generator   -> {genNote}");
-
-        string back = RoundTripTo(xml, Path.Combine(work, "wired"));
-        var wired = BehaviourGraphModel.Parse(back);
-        Console.WriteLine($"\nAFTER ROUND TRIP: {wired.Objects.Count} objects");
-
-        var clipAfter = wired.Objects.First(o => o.Class == "hkbClipGenerator" && o.Str("name") == "SymrmLinkClip");
-        var holders = GeneratorEditor.ReferencesTo(wired, clipAfter.Id);
-        Console.WriteLine($"  the clip survived as #{clipAfter.Id}, referenced by {holders.Count}: " +
-                          string.Join(", ", holders.Select(h => $"#{h} {wired.Get(h)?.Class}")));
-
-        var blenderAfter = wired.Objects.FirstOrDefault(o => o.Class == "hkbBlenderGenerator");
-        if (blenderAfter != null)
-        {
-            Console.WriteLine("\n--- drag the blender child off again ---");
-            string wrapper = blenderAfter.Refs("children")
-                .First(id => wired.Get(id)?.Ref("generator") == clipAfter.Id);
-            back = GraphLinks.Disconnect(back, blenderAfter.Id, "children", wrapper, out string offNote);
-            Console.WriteLine($"  {offNote}");
-        }
-
-        string final = RoundTripTo(back, Path.Combine(work, "unwired"));
-        var end = BehaviourGraphModel.Parse(final);
-        Console.WriteLine($"\nFINAL: {end.Objects.Count} objects, " +
-                          $"{end.Objects.Count(o => o.Class == "hkbBlenderGeneratorChild")} blender children left");
-
-        Console.WriteLine("\n--- validator ---");
-        var findings = GraphValidator.Check(final);
-        int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
-        Console.WriteLine($"  {errors} errors, {findings.Count - errors} warnings");
-        foreach (var f in findings.Take(8)) Console.WriteLine("   " + f);
-        return errors == 0 ? 0 : 1;
-    }
-
-    private static string RoundTripTo(string xml, string dir)
-    {
-        Directory.CreateDirectory(dir);
-        string xmlPath = Path.Combine(dir, "edited.xml");
-        File.WriteAllText(xmlPath, xml);
-        string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
-        Console.WriteLine($"repacked to {new FileInfo(packed).Length} bytes");
-        return HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, packed, Path.Combine(dir, "back")));
-    }
 
 
 
@@ -9629,106 +7855,10 @@ public static class Program
 
 
 
-    private static int Door(string[] argv)
-    {
-        if (argv.Length < 3) { Usage(); return 1; }
-        NeedHkxPack();
-
-        string work = Path.Combine(Path.GetTempPath(), "symrm", "door");
-        HkxTextEdit.ResetDirectory(work);
-        Directory.CreateDirectory(work);
-
-        string xml = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[1], work));
-        var model = BehaviourGraphModel.Parse(xml);
-
-        string machine = model.Objects.First(o => o.Class == "hkbStateMachine").Id;
-        var states = StateEditor.States(model, machine);
-        Console.WriteLine($"BEFORE: {model.Objects.Count} objects, {states.Count} states, " +
-                          $"{StateEditor.Transitions(model, machine).Count} transitions, " +
-                          $"{SymbolEditor.EventNames(model).Count} events");
-
-        int StateIdNamed(string name) => states.FirstOrDefault(s => s.Name == name)?.StateId
-            ?? throw new InvalidOperationException($"this graph has no state called {name}");
-        int EventNamed(string name)
-        {
-            int i = SymbolEditor.EventNames(BehaviourGraphModel.Parse(xml)).IndexOf(name);
-            return i >= 0 ? i : throw new InvalidOperationException($"this graph declares no event called {name}");
-        }
-
-
-
-        string effect = FirstTransitionEffect(model, machine, xml);
-        Console.WriteLine($"  reusing transition effect {effect}");
-
-        int openedState = StateIdNamed("Opened");
-        int closedState = StateIdNamed("Closed");
 
 
 
 
-
-        foreach (var (eventName, stateName, sequence, endEvent, target, poseEntry) in new[]
-                 {
-                     ("StartOpen", "StartOpening", "Opening", "Opened", openedState, true),
-                     ("StartClosed", "StartClosing", "Closing", "Closed", closedState, false),
-                 })
-        {
-            xml = SymbolEditor.AddEvent(xml, eventName, out int eventId);
-            int enterState = target;
-
-
-
-
-            if (!poseEntry)
-            {
-                xml = GeneratorEditor.Add(xml, "sequence", stateName, sequence, "", out string generator);
-                xml = StateEditor.AddState(xml, machine, stateName, "#" + generator, out string stateObject, out enterState);
-
-                xml = StateEditor.AddTransition(xml, machine, stateObject, target, EventNamed(endEvent), effect);
-            }
-
-
-            xml = StateEditor.AddTransition(xml, machine, "", enterState, eventId, effect);
-
-            Console.WriteLine(poseEntry
-                ? $"  {eventName,-12} event {eventId,2}  ->  state {enterState} directly, the held pose, no animation, no new state"
-                : $"  {eventName,-12} event {eventId,2}  ->  state {enterState} '{stateName}' " +
-                  $"playing sequence '{sequence}'  ->  on {endEvent} to state {target}");
-        }
-
-        string xmlPath = Path.Combine(work, "edited.xml");
-        File.WriteAllText(xmlPath, xml);
-        string packed = HkxTextEdit.Repack(_java, _jar, xmlPath);
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(argv[2]))!);
-        File.Copy(packed, argv[2], true);
-        Console.WriteLine($"\nrepacked to {new FileInfo(argv[2]).Length} bytes at {argv[2]}");
-
-        string back = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, argv[2], Path.Combine(work, "back")));
-        var after = BehaviourGraphModel.Parse(back);
-        string machineAfter = after.Objects.First(o => o.Class == "hkbStateMachine").Id;
-        var statesAfter = StateEditor.States(after, machineAfter);
-
-        Console.WriteLine($"AFTER:  {after.Objects.Count} objects, {statesAfter.Count} states, " +
-                          $"{StateEditor.Transitions(after, machineAfter).Count} transitions, " +
-                          $"{SymbolEditor.EventNames(after).Count} events\n");
-
-        var events = SymbolEditor.EventNames(after);
-        foreach (var s in statesAfter)
-        {
-            var generator = after.Get(s.GeneratorRef.TrimStart('#'));
-            Console.WriteLine($"  state {s.StateId,2} {s.Name,-16} {generator?.Class} '{generator?.Str("pSequence")}'");
-        }
-        Console.WriteLine();
-        foreach (var t in StateEditor.Transitions(after, machineAfter))
-            Console.WriteLine($"  {(t.Wildcard ? "wildcard" : "        ")} on {events[t.EventId],-34} -> state {t.ToStateId}");
-
-        Console.WriteLine("\n--- validator ---");
-        var findings = GraphValidator.Check(back);
-        int errors = findings.Count(f => f.Level == GraphValidator.Level.Error);
-        Console.WriteLine($"  {errors} errors, {findings.Count - errors} warnings");
-        foreach (var f in findings) Console.WriteLine("   " + f);
-        return errors == 0 ? 0 : 1;
-    }
 
     private static string FirstTransitionEffect(BehaviourGraphModel model, string machine, string xml)
     {

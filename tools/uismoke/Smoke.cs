@@ -329,7 +329,7 @@ public static class Smoke
 
                 Console.WriteLine($"        symbols: {window.SymbolGrid.RowCount} rows, " +
                                   $"{said.Count} of them naming a role, e.g. \"{said.FirstOrDefault()}\"" +
-                                  (window.LoadedXml.Length == 0 ? "  (read with no Java)" : ""));
+                                  (window.LoadedXml.Length == 0 ? "  (native text unavailable)" : ""));
             }
 
 

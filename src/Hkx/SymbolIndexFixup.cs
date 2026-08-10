@@ -274,7 +274,7 @@ public static class SymbolIndexFixup
                 if (isEvent != events) continue;
 
                 string? text = FieldRender.Render(objects, at, walking, member, Nothing, null, e,
-                                                  types, FieldRender.LikeHkxPack);
+                                                  types, FieldRender.ReferenceText);
                 if (text == null || !int.TryParse(FieldRender.Plain(text), out int value)) continue;
 
                 string holderClass = owner, holderParam = name;

@@ -261,7 +261,7 @@ public static class NativeGraphModel
 
         for (int e = 0; e < array.Count; e++)
             yield return FieldRender.Render(objects, array.At + e * stride, "", element, reference,
-                                            null, 0, types, FieldRender.LikeHkxPack) ?? "";
+                                            null, 0, types, FieldRender.ReferenceText) ?? "";
     }
 
 
@@ -304,7 +304,7 @@ public static class NativeGraphModel
         }
 
         string? rendered = FieldRender.Render(objects, at, owner, member, reference, null, element,
-                                             types, FieldRender.LikeHkxPack);
+                                             types, FieldRender.ReferenceText);
         if (rendered == null) return "";
 
         string shown = PanelFields.Shown(rendered);

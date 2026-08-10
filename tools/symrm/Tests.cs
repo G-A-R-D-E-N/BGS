@@ -39,7 +39,6 @@ public static class Tests
         ("AppendedStringsLandOnAnEvenOffset", AppendedStringsLandOnAnEvenOffset),
         ("StructuralObjectsAreProtected", StructuralObjectsAreProtected),
         ("PortTypesRefuseNonsense", PortTypesRefuseNonsense),
-        ("BundledHkxPackIsFound", BundledHkxPackIsFound),
         ("Fo4CharacterListsItsAnimations", Fo4CharacterListsItsAnimations),
         ("MissingClipAnimationIsReported", MissingClipAnimationIsReported),
         ("RepackDriftNamesWhatMoved", RepackDriftNamesWhatMoved),
@@ -81,7 +80,7 @@ public static class Tests
         ("ReferencesAndArraysReadFromTheBytes", ReferencesAndArraysReadFromTheBytes),
         ("AnUndeclaredEnumValueIsNotNamed", AnUndeclaredEnumValueIsNotNamed),
         ("TheModelComparisonCatchesFaultsPutThereOnPurpose", TheModelComparisonCatchesFaultsPutThereOnPurpose),
-        ("AFloatIsSpelledTheWayHkxPackSpellsIt", AFloatIsSpelledTheWayHkxPackSpellsIt),
+        ("AFloatIsSpelledTheWayReferenceFormatterSpellsIt", AFloatIsSpelledTheWayReferenceFormatterSpellsIt),
         ("AnAppendedObjectLandsWhereItsNumberSaysItWill", AnAppendedObjectLandsWhereItsNumberSaysItWill),
         ("RemovingAnObjectIsRefusedAndOrphaningIsNot", RemovingAnObjectIsRefusedAndOrphaningIsNot),
         ("DeletingTakesAnObjectOutOfTheFile", DeletingTakesAnObjectOutOfTheFile),
@@ -105,11 +104,11 @@ public static class Tests
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
         ("ASpaceInAValueIsKept", ASpaceInAValueIsKept),
         ("TheClassTableKnowsWhatTheDumpCannot", TheClassTableKnowsWhatTheDumpCannot),
-        ("AFieldListIsBuiltWithoutHkxPack", AFieldListIsBuiltWithoutHkxPack),
+        ("AFieldListIsBuiltWithoutReferenceFormatter", AFieldListIsBuiltWithoutReferenceFormatter),
         ("AClassSignedDifferentlyIsRefused", AClassSignedDifferentlyIsRefused),
         ("AMisSignedFileIsNotWrittenInto", AMisSignedFileIsNotWrittenInto),
         ("AnEnumIsNamedSignedAndPrintedUnsigned", AnEnumIsNamedSignedAndPrintedUnsigned),
-        ("APaddedStructIsKnownFromHkxPacksIdeaOfIt", APaddedStructIsKnownFromHkxPacksIdeaOfIt),
+        ("APaddedStructIsKnownFromReferenceFormattersIdeaOfIt", APaddedStructIsKnownFromReferenceFormattersIdeaOfIt),
         ("AnElementsFieldIsWrittenToThatElement", AnElementsFieldIsWrittenToThatElement),
         ("EveryFieldSaysWhereItSits", EveryFieldSaysWhereItSits),
         ("APackedRotationComesBackAsItself", APackedRotationComesBackAsItself),
@@ -1029,37 +1028,6 @@ public static class Tests
 
 
 
-
-    private static void BundledHkxPackIsFound()
-    {
-        Console.WriteLine("\nthe bundled jar is found from the executable's own directory");
-
-        string app = Directory.CreateTempSubdirectory("bgs-bundle").FullName;
-        string project = Directory.CreateTempSubdirectory("bgs-project").FullName;
-        string saved = HkxTextEdit.AppDirectory;
-        try
-        {
-            HkxTextEdit.AppDirectory = app;
-            Check("nothing is found before it is bundled", null, HkxTextEdit.FindHkxPack("", project));
-
-            Directory.CreateDirectory(Path.Combine(app, "tools"));
-            string jar = Path.Combine(app, "tools", "hkxpack-cli.jar");
-            File.WriteAllText(jar, "not really a jar");
-            Check("the bundled jar is found", jar, HkxTextEdit.FindHkxPack("", project));
-
-            string chosen = Path.Combine(project, "elsewhere.jar");
-            File.WriteAllText(chosen, "not really a jar either");
-            Check("an explicitly configured jar still wins", chosen, HkxTextEdit.FindHkxPack(chosen, project));
-            Check("a configured path that does not exist is ignored", jar,
-                HkxTextEdit.FindHkxPack(Path.Combine(project, "gone.jar"), project));
-        }
-        finally
-        {
-            HkxTextEdit.AppDirectory = saved;
-            Directory.Delete(app, true);
-            Directory.Delete(project, true);
-        }
-    }
 
     private static int Reachable(BehaviourGraphModel model)
     {
@@ -2407,7 +2375,7 @@ public static class Tests
 
     private static void AnAnimationIsRefusedForSaving()
     {
-        Console.WriteLine("\nan animation hkxpack cannot carry is refused before it is written");
+        Console.WriteLine("\nan animation reference formatter cannot carry is refused before it is written");
 
         CheckTrue("a behaviour is not refused", GraphValidator.RefuseToSave(SmallGraph()) == null);
 
@@ -3054,14 +3022,14 @@ public static class Tests
         var clip = objects.Instances.Single();
 
         var names = ClassFields.NamesOf(objects, clip)!;
-        CheckTrue("the list holds the fields hkxpack writes",
+        CheckTrue("the list holds the fields reference formatter writes",
                   names.Contains("animationName") && names.Contains("playbackSpeed"));
         CheckTrue("and not the running state it does not",
                   !names.Contains("localTime") && !names.Contains("atEnd"));
 
 
 
-        var xml = names.Select(n => (n, "from-hkxpack")).ToList();
+        var xml = names.Select(n => (n, "from-reference formatter")).ToList();
         var fields = PanelFields.For(objects, clip, xml, (_, wasNull) => wasNull ? "null" : "");
 
         Check("one field per name in the table's list", names.Count, fields.Count);
@@ -3071,7 +3039,7 @@ public static class Tests
               fields[names.IndexOf("playbackSpeed")].Value);
         Check("a null string is an empty box rather than a symbol", "",
               fields[names.IndexOf("animationBundleName")].Value);
-        Check("nothing fell back to hkxpack", 0,
+        Check("nothing fell back to reference formatter", 0,
               fields.Count(f => f.From == PanelFields.Source.Fallback));
 
 
@@ -3079,13 +3047,13 @@ public static class Tests
         var edited = PanelFields.For(objects, clip, xml, (_, _) => "",
                                      new HashSet<string> { "playbackSpeed" });
         int speed = names.IndexOf("playbackSpeed");
-        Check("an edited field shows the edit, not the bytes", "from-hkxpack", edited[speed].Value);
+        Check("an edited field shows the edit, not the bytes", "from-reference formatter", edited[speed].Value);
         Check("and says so", PanelFields.Source.Edited, edited[speed].From);
 
 
 
         var short_ = PanelFields.For(objects, clip, xml.Take(3).ToList(), (_, _) => "");
-        Check("a list that does not line up with hkxpack's degrades to hkxpack's", 3, short_.Count);
+        Check("a list that does not line up with reference formatter's degrades to reference formatter's", 3, short_.Count);
         Check("and reads none of it from the bytes", 3,
               short_.Count(f => f.From == PanelFields.Source.Fallback));
     }
@@ -3154,7 +3122,7 @@ public static class Tests
 
         var clip = types["hkbClipGenerator"]!;
         Check("a signature, which the dump has none of", 0xd4cc9f6u, clip.Signature);
-        Check("and a size, which hkxpack has none of", 352, clip.Size);
+        Check("and a size, which reference formatter has none of", 352, clip.Size);
         Check("the same size the dump gives", HavokClasses.Shipped["hkbClipGenerator"]!.Size, clip.Size);
 
         var members = types.Members("hkbClipGenerator");
@@ -3192,16 +3160,16 @@ public static class Tests
 
 
 
-    private static void AFieldListIsBuiltWithoutHkxPack()
+    private static void AFieldListIsBuiltWithoutReferenceFormatter()
     {
-        Console.WriteLine("\na field list is built without hkxpack");
+        Console.WriteLine("\na field list is built without reference formatter");
 
         var image = ClipInAPackfile("A.hkx", out _);
         var objects = new PackfileObjects(image);
         var names = ClassFields.NamesOf(objects, objects.Instances.Single());
 
         CheckTrue("a list comes back at all", names != null);
-        CheckTrue("it holds the fields hkxpack writes", names!.Contains("animationName") &&
+        CheckTrue("it holds the fields reference formatter writes", names!.Contains("animationName") &&
                                                         names.Contains("playbackSpeed"));
         CheckTrue("and not the ones it never writes", !names.Contains("localTime") &&
                                                       !names.Contains("atEnd"));
@@ -3348,9 +3316,9 @@ public static class Tests
     }
 
 
-    private static void APaddedStructIsKnownFromHkxPacksIdeaOfIt()
+    private static void APaddedStructIsKnownFromReferenceFormattersIdeaOfIt()
     {
-        Console.WriteLine("\na padded struct is known from hkxpack's idea of it");
+        Console.WriteLine("\na padded struct is known from reference formatter's idea of it");
 
         var types = HavokClassTypes.Shipped;
 
@@ -3358,23 +3326,23 @@ public static class Tests
 
 
         Check("the game's size for the bone data", 528, types["BSLookAtModifierBoneData"]!.Size);
-        CheckTrue("and it is padded past what hkxpack would work out",
-                  types.PaddedBeyondHkxPack("BSLookAtModifierBoneData"));
+        CheckTrue("and it is padded past what reference formatter would work out",
+                  types.HasTrailingPadding("BSLookAtModifierBoneData"));
 
 
         Check("a struct with nothing wider than a pointer", 72,
               types["hkbStateMachineTransitionInfo"]!.Size);
         CheckTrue("is not padded past it",
-                  !types.PaddedBeyondHkxPack("hkbStateMachineTransitionInfo"));
+                  !types.HasTrailingPadding("hkbStateMachineTransitionInfo"));
 
 
 
 
 
         Check("a class smaller than the rounding itself", 6, types["hkbVariableInfo"]!.Size);
-        CheckTrue("is not called padded", !types.PaddedBeyondHkxPack("hkbVariableInfo"));
+        CheckTrue("is not called padded", !types.HasTrailingPadding("hkbVariableInfo"));
         Check("nor is a four byte one", 4, types["hkbEventInfo"]!.Size);
-        CheckTrue("either", !types.PaddedBeyondHkxPack("hkbEventInfo"));
+        CheckTrue("either", !types.HasTrailingPadding("hkbEventInfo"));
     }
 
 
@@ -3872,9 +3840,9 @@ public static class Tests
 
 
 
-    private static void AFloatIsSpelledTheWayHkxPackSpellsIt()
+    private static void AFloatIsSpelledTheWayReferenceFormatterSpellsIt()
     {
-        Console.WriteLine("\na float is spelled the way hkxpack spells it");
+        Console.WriteLine("\na float is spelled the way reference formatter spells it");
 
 
 
@@ -3992,7 +3960,7 @@ public static class Tests
         var model = NativeGraphModel.From(objects);
         CheckTrue("a file the table describes is read", model != null);
         Check("with the object in it", 1, model!.Objects.Count);
-        Check("numbered where hkxpack starts numbering", "90", model.Objects[0].Id);
+        Check("numbered where reference formatter starts numbering", "90", model.Objects[0].Id);
         Check("and named by its class", "hkbClipGenerator", model.Objects[0].Class);
         Check("its string read from the bytes", "A.hkx", model.Objects[0].Str("animationName"));
         Check("and its number spelled like the file", "2.5", model.Objects[0].Str("playbackSpeed"));

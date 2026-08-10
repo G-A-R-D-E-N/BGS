@@ -246,7 +246,6 @@ public class MainWindow : Window
         Height = 940;
         Background = Ux.BaseBrush;
 
-        HkxTextEdit.AppDirectory = AppContext.BaseDirectory;
         _pathField.Text = Settings.Get("last_path");
 
         var open = Ux.Primary("Open");
@@ -2932,7 +2931,7 @@ public class MainWindow : Window
         }
         catch (Exception) { }
 
-        return HkxTextEdit.LegacyTextOf(path);
+        return "";
     }
 
     private static BehaviourDiff.Result ComputeDiff(string mine, string other)
@@ -3230,7 +3229,7 @@ public class MainWindow : Window
             var problems = HavokClassTypes.Shipped.SignatureProblems(bytes.ClassNames());
             if (problems.Count > 0)
             {
-                _classWarning = $"Read through hkxpack only: {problems[0]}" +
+                _classWarning = $"Unsupported class signature: {problems[0]}" +
                                 (problems.Count > 1 ? $", and {problems.Count - 1} more like it" : "") +
                                 ". Values are not read from the bytes when the classes do not match.";
                 _bytes = null;
@@ -3326,40 +3325,6 @@ public class MainWindow : Window
             {
                 _xmlText = "";
                 _objectIds = new List<string>();
-            }
-        }
-
-        if (!own && HkxTextEdit.LegacyPackerEnabled)
-        {
-            try
-            {
-                string work = Path.Combine(Path.GetTempPath(), "bgs_edit",
-                                           Path.GetFileNameWithoutExtension(_hkxPath));
-                HkxTextEdit.ResetDirectory(work);
-
-                _xmlPath = Path.Combine(work, Path.GetFileNameWithoutExtension(_hkxPath) + ".xml");
-                _xmlText = HkxTextEdit.LegacyTextOf(_hkxPath);
-                File.WriteAllText(_xmlPath, _xmlText);
-                _objectIds = HkxTextEdit.ObjectIds(_xmlText);
-
-
-
-                if (_objectIds.Count != _objects.Count)
-                {
-                    _xmlText = "";
-                    _objectIds = new List<string>();
-                }
-            }
-            catch (Exception ex)
-            {
-                _xmlText = "";
-                _objectIds = new List<string>();
-                if (reading == null)
-                {
-                    ResetHistory();
-                    SetStatus("Read only: " + ex.Message.Split('\n')[0], Ux.MutedBrush);
-                    return;
-                }
             }
         }
 
@@ -3710,7 +3675,7 @@ public class MainWindow : Window
 
         int fromXml = parameters.Count(p => p.From == PanelFields.Source.Fallback);
         var heading = Ux.Label($"#{objectId}   {className}   {parameters.Count} editable fields" +
-                               (fromXml > 0 ? $", {fromXml} of them read through hkxpack" : ""));
+                               (fromXml > 0 ? $", {fromXml} from fallback metadata" : ""));
         heading.TextWrapping = TextWrapping.Wrap;
         panel.Add(heading);
 

@@ -213,12 +213,12 @@ public static class GraphValidator
 
 
 
-    public static string? RepackWouldLose(string xml)
+    public static string? NativeRebuildWouldLose(string xml)
     {
         foreach (string cls in LossyOnRepack)
             if (xml.Contains($"class=\"{cls}\"", StringComparison.Ordinal))
                 return $"Not saved, and the original is untouched. This edit needs the file rebuilt, " +
-                       $"and this file holds a {cls}, which hkxpack cannot write back without " +
+                       $"and this file holds a {cls}, which a native rebuild cannot write back without " +
                        "changing it: the packed words it stores are cut short on the way through, so " +
                        "the animation that came out would not be the one that went in. Changing " +
                        "values on their own is written straight into the file and does not hit this.";
@@ -231,7 +231,7 @@ public static class GraphValidator
     {
         if (xml.Length == 0) return null;
 
-        if (includeRepackLosses && RepackWouldLose(xml) is { } lossy) return lossy;
+        if (includeRepackLosses && NativeRebuildWouldLose(xml) is { } lossy) return lossy;
 
         var empty = EmptyStates(BehaviourGraphModel.Parse(xml));
         if (empty.Count == 0) return null;

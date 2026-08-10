@@ -3,16 +3,12 @@
 Notable changes, newest first. Read the commit messages for the detail; this is the shape of the
 work rather than a list of every edit.
 
-## 2026-08-10, native save is the only supported path
+## 2026-08-10, external packer retired
 
 The normal application now opens, compares, validates, and saves through the native C# pipeline.
-Java setup and external-packer files are no longer part of application builds or releases. A native
-write that cannot safely represent an edit refuses before changing the original file.
-
-The former path is retained only as a private, developer-only validation escape hatch while the
-native lifecycle corpus gate is completed. It has no user interface, is disabled by default, and
-requires explicit environment paths when intentionally enabled. Permanent deletion waits for the
-corpus milestone.
+Java setup, the external packer, its helper commands, and its packaged files are removed. A native
+write that cannot safely represent an edit refuses before changing the original file. Earlier entries
+that mention the retired implementation are historical records.
 
 ## 2026-08-08, a clip can be made longer or shorter
 
