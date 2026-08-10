@@ -43,6 +43,7 @@ public static class Tests
         ("MissingClipAnimationIsReported", MissingClipAnimationIsReported),
         ("RepackDriftNamesWhatMoved", RepackDriftNamesWhatMoved),
         ("TransitionRowsCarryPriorityAndFlags", TransitionRowsCarryPriorityAndFlags),
+        ("StaticTraceFollowsExistingGraphLinks", StaticTraceFollowsExistingGraphLinks),
         ("AnUnreachableStateIsReported", AnUnreachableStateIsReported),
         ("EventUsageSaysWhoSendsAndWhoListens", EventUsageSaysWhoSendsAndWhoListens),
         ("ScaleIsShownOnlyWhenItIsRealScale", ScaleIsShownOnlyWhenItIsRealScale),
@@ -1235,6 +1236,26 @@ public static class Tests
         Check("flags come from its own transition element", 8192, row.Flags);
         CheckTrue("the nested-target validity bit is visible", row.HasFlag(0x2000));
         CheckTrue("an unrelated flag is not invented", !row.HasFlag(0x1000));
+    }
+
+    private static void StaticTraceFollowsExistingGraphLinks()
+    {
+        Console.WriteLine("\nstatic trace follows the graph it already draws");
+
+        string xml = StateEditor.AddTransition(SmallGraph(), "92", "93", 1, 0, "null");
+        var model = BehaviourGraphModel.Parse(xml);
+        var trace = GraphTrace.Of(model, StateRoutes.Of(model));
+        var visible = model.Objects.Select(o => o.Id).ToHashSet();
+
+        Check("downstream follows the state's generator and transition", "93,94,95,96,98",
+              string.Join(",", trace.Reachable("93", GraphTrace.Direction.Downstream, visible)
+                                   .OrderBy(id => id)));
+        Check("upstream follows the parent graph and transition", "91,92,93,95",
+              string.Join(",", trace.Reachable("95", GraphTrace.Direction.Upstream, visible)
+                                   .OrderBy(id => id)));
+        Check("a focused trace stays inside the visible tree", "93,94",
+              string.Join(",", trace.Reachable("93", GraphTrace.Direction.Both,
+                  new HashSet<string> { "93", "94" }).OrderBy(id => id)));
     }
 
     private static List<GraphValidator.Finding> Unreachable(string xml) =>
