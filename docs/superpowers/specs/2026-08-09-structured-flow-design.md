@@ -55,21 +55,38 @@ or `Idle` from a name substring. A container title is either a real serialized n
 fallback plus `#ID`. Any future author-defined semantic groups are a separate feature and require
 explicit persisted metadata.
 
-## Behavior-first visibility
+## Behavior-first visibility and level of detail
 
-At its default zoom, Structured Flow prioritizes machine containers, machine states, and nested
-machine containers. Helper generators and other lower-level Havok plumbing remain part of the graph
-and can be revealed by selecting, expanding, tracing, or focusing a relevant branch. They must not
-compete visually with state machines and their states at overview scale.
+Structured Flow uses progressive disclosure. At overview scale it primarily renders state-machine
+containers, direct states, and nested state-machine containers. Helper generators, blenders,
+modifiers, events, and other lower-level Havok plumbing are not competing peers in the default
+overview. They are revealed from the selected or expanded ownership branch when the user asks for
+detail.
 
-This is an appearance policy, not a visibility mutation: unshown descendants remain addressable by
-selection, inspector, search, editing, and trace. The existing Focus tree action can restrict either
-layout mode to the selected ownership subtree. Show full graph explicitly restores all branches.
+The same layout has three zoom-dependent detail bands:
+
+- Far zoom: show the root and state-machine container hierarchy. Containers summarize their state
+  counts and hide direct state tiles when the tiles would no longer be readable.
+- Medium zoom: show readable direct state tiles inside their state-machine containers and nested
+  machine containers beneath their ownership parent.
+- Close zoom: show selected or expanded state descendants, including real helper generators,
+  blenders, modifiers, and event-related nodes, under their owning state.
+
+The thresholds are based on readable node dimensions, not semantic guesses. Zoom only changes
+presentation and never changes ownership, routes, selection, trace traversal, parsed data, XML, or
+simulation state. A node suppressed at one zoom remains addressable through selection, inspector,
+search, editing, focus, and trace.
+
+The existing Focus tree action can restrict either layout mode to the selected ownership subtree.
+Show full graph explicitly restores all branches.
 
 ## Edges and visual emphasis
 
-Ownership hierarchy is primary in Structured Flow. Owner-to-child links are straight or orthogonal,
-readable at overview zoom, and visually connect the container hierarchy.
+Ownership hierarchy is primary in Structured Flow. State-machine containers are the strongest visual
+element in the view: their boundary, title, nesting, and owner-to-child links must read before any
+route does. Owner-to-child links are straight or orthogonal, readable at overview zoom, and visually
+connect the container hierarchy. Whenever a rendering choice conflicts, the hierarchy wins over a
+transition route.
 
 State transition routes are secondary:
 
@@ -92,6 +109,15 @@ Selection, framing, dragging, and Properties retain their current behavior in bo
 selected through Workspace selects and frames it in the active mode, but does not automatically enter
 Focus tree or start a trace. The Tree tab remains unchanged.
 
+## Future Execution view
+
+Execution is a future third display mode built on Structured Flow coordinates and containers, not a
+third graph model. It will add runtime execution overlays such as active states, recent transitions,
+and timeline history to the existing behavior hierarchy. Structured Flow therefore keeps static
+layout computation, visual ownership containers, and route emphasis independent from `GraphRun` and
+any future execution-history store. Runtime must illuminate the chosen layout without deciding its
+coordinates or visibility rules.
+
 ## Scope
 
 Included in the prototype:
@@ -102,6 +128,7 @@ Included in the prototype:
 - Real name and `#ID` headers.
 - Hierarchy-primary and transition-secondary rendering.
 - Existing focus tree and static trace behavior in both modes.
+- Progressive disclosure at far, medium, and close zoom without semantic inference.
 - Headless 1600x1000 render comparison of Dogmeat in both modes.
 - Test-first smoke and regression coverage.
 
@@ -128,6 +155,9 @@ Smoke coverage must prove:
 - Focus tree limits either layout to visible ownership descendants without altering the model.
 - Static trace works in Structured Flow, contains only visible trace IDs under focus, and Clear
   trace retains selection.
+- Far, medium, and close zoom show progressively more ownership detail without changing graph data
+  or route traversal.
+- Containers and ownership links have stronger normal visual emphasis than transition routes.
 - The existing Freeform layout remains available and unchanged by the new mode.
 - Dogmeat renders at 1600x1000 in both modes without a node or route painting outside the canvas or
   Properties pane.
@@ -135,4 +165,3 @@ Smoke coverage must prove:
 Before the implementation commit, run the repository's four required gates, render both Dogmeat
 layouts at 1600x1000, and inspect the rendered images. Automated rendering is evidence of layout
 output, not a claim of manual GUI verification.
-
