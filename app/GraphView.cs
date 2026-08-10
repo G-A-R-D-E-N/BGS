@@ -149,6 +149,8 @@ public class GraphView : Control
     public IReadOnlyCollection<string> StructuredMachineIds => _structuredPlan == null
         ? Array.Empty<string>()
         : _structuredPlan.Machines.Where(m => _nodes.ContainsKey(m.Id)).Select(m => m.Id).ToList();
+    public IReadOnlyCollection<string> VisibleStructuredMachineIds => StructuredMachineIds
+        .Where(IsDrawnAtCurrentDetail).ToList();
 
     public Rect? StructuredContainerBounds(string machineId) =>
         _structuredContainers.TryGetValue(machineId, out var bounds) ? bounds : null;
@@ -532,51 +534,60 @@ public class GraphView : Control
         IReadOnlyDictionary<string, double> heightOf)
     {
         var showingIds = showing.Select(p => p.Node.Id).ToHashSet(StringComparer.Ordinal);
-        var children = showing.ToDictionary(p => p.Node.Id, _ => new List<string>(), StringComparer.Ordinal);
-        var roots = new List<string>();
-        foreach (var (node, _, ownerId) in showing)
-        {
-            if (ownerId.Length > 0 && children.TryGetValue(ownerId, out var owned)) owned.Add(node.Id);
-            else roots.Add(node.Id);
-        }
-
-        var rowHeight = new Dictionary<int, double>();
-        foreach (string id in showingIds)
-        {
-            int depth = _structuredPlan?.Item(id).Depth ?? 0;
-            rowHeight[depth] = Math.Max(rowHeight.GetValueOrDefault(depth), heightOf[id]);
-        }
-
-        var rowY = new Dictionary<int, double>();
-        double nextY = 0;
-        foreach (int depth in rowHeight.Keys.OrderBy(d => d))
-        {
-            rowY[depth] = nextY;
-            nextY += rowHeight[depth] + 80;
-        }
-
-        const double ColumnWidth = 300;
-        var xOf = new Dictionary<string, double>(StringComparer.Ordinal);
-        double nextLeaf = 0;
-
-        double PlaceX(string id)
-        {
-            var kids = children[id];
-            if (kids.Count == 0) return xOf[id] = nextLeaf++ * ColumnWidth;
-
-            double first = PlaceX(kids[0]);
-            double last = first;
-            for (int i = 1; i < kids.Count; i++) last = PlaceX(kids[i]);
-            return xOf[id] = (first + last) / 2;
-        }
-
-        foreach (string root in roots) PlaceX(root);
-
         var at = new Dictionary<string, Point>(StringComparer.Ordinal);
-        foreach (string id in showingIds)
+        if (_structuredPlan == null) return at;
+
+        // Structured Flow's overview packs only behavior-bearing objects into its ranks. A helper
+        // generator remains owned by its state, but it cannot be allowed to reserve a whole global
+        // lane while it is hidden at overview zoom.
+        var structural = showing.Where(p => IsDrawnAtCurrentDetail(p.Node.Id)
+                                            && _structuredPlan.Item(p.Node.Id).Kind
+            is StructuredFlowLayout.NodeKind.Root
+            or StructuredFlowLayout.NodeKind.Machine
+            or StructuredFlowLayout.NodeKind.State).ToList();
+
+        const int Columns = 5;
+        const double ColumnWidth = NodeWidth + 54;
+        double nextY = 0;
+        foreach (var rank in structural.GroupBy(p => _structuredPlan.Item(p.Node.Id).Depth)
+                                       .OrderBy(group => group.Key))
         {
-            int depth = _structuredPlan?.Item(id).Depth ?? 0;
-            at[id] = new Point(xOf[id] - NodeWidth / 2, rowY[depth]);
+            var row = rank.OrderBy(p => _structuredPlan.Item(p.Node.Id).SiblingOrder)
+                          .ThenBy(p => p.Node.Id, StringComparer.Ordinal).ToList();
+            double height = row.Max(p => heightOf[p.Node.Id]);
+            for (int index = 0; index < row.Count; index++)
+                at[row[index].Node.Id] = new Point(index % Columns * ColumnWidth,
+                                                    nextY + index / Columns * (height + 36));
+            nextY += ((row.Count + Columns - 1) / Columns) * (height + 36) + 86;
+        }
+
+        // Nodes hidden at this detail level remain selectable data, so give each one the position
+        // of its nearest visible structural ancestor. The next detail-band reflow gives it its own
+        // slot before it is painted.
+        foreach (var (node, _, _) in showing.Where(p => !at.ContainsKey(p.Node.Id)
+                                                        && _structuredPlan.Item(p.Node.Id).Kind
+                                                           is not StructuredFlowLayout.NodeKind.Helper))
+        {
+            string anchor = _structuredPlan.Item(node.Id).StructuralAncestorIds
+                .LastOrDefault(id => at.ContainsKey(id)) ?? at.Keys.FirstOrDefault() ?? "";
+            at[node.Id] = anchor.Length > 0 ? at[anchor] : default;
+        }
+
+        // Close-detail helpers appear beside the nearest structural owner. Their compact local
+        // grid avoids turning one state machine's plumbing into a graph-wide rank.
+        var helperNumber = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (node, _, _) in showing.Where(p => !at.ContainsKey(p.Node.Id)))
+        {
+            var item = _structuredPlan.Item(node.Id);
+            string anchor = item.StructuralAncestorIds.LastOrDefault(id => at.ContainsKey(id)) ?? "";
+            if (anchor.Length == 0) anchor = at.Keys.FirstOrDefault() ?? "";
+            if (anchor.Length == 0) { at[node.Id] = default; continue; }
+
+            int index = helperNumber.GetValueOrDefault(anchor);
+            helperNumber[anchor] = index + 1;
+            var parent = at[anchor];
+            at[node.Id] = new Point(parent.X + NodeWidth + 48 + index / 4 * 94,
+                                    parent.Y + index % 4 * 82);
         }
         return at;
     }
@@ -595,17 +606,6 @@ public class GraphView : Control
 
             double left = members.Min(b => b.Left), top = members.Min(b => b.Top);
             double right = members.Max(b => b.Right), bottom = members.Max(b => b.Bottom);
-            var nested = _structuredContainers
-                .Where(pair => _structuredPlan.Item(pair.Key).ParentMachineId == machine.Id)
-                .Select(pair => pair.Value).ToList();
-            if (nested.Count > 0)
-            {
-                left = Math.Min(left, nested.Min(b => b.Left));
-                top = Math.Min(top, nested.Min(b => b.Top));
-                right = Math.Max(right, nested.Max(b => b.Right));
-                bottom = Math.Max(bottom, nested.Max(b => b.Bottom));
-            }
-
             _structuredContainers[machine.Id] = new Rect(left - 24, top - 34,
                                                           right - left + 48, bottom - top + 58);
         }
@@ -614,12 +614,12 @@ public class GraphView : Control
     private bool InStructuredMachine(string id, string machineId)
     {
         if (_structuredPlan == null || !_structuredPlan.Items.TryGetValue(id, out var item)) return false;
-        return id == machineId || item.StructuralAncestorIds.Contains(machineId);
+        return item.MachineId == machineId;
     }
 
     private StructuredFlowDetail CurrentDetail() => _layoutMode == GraphLayoutMode.Freeform
         ? StructuredFlowDetail.Close
-        : _zoom < 0.50 ? StructuredFlowDetail.Far
+        : _zoom < 0.80 ? StructuredFlowDetail.Far
         : _zoom < 1.05 ? StructuredFlowDetail.Medium
         : StructuredFlowDetail.Close;
 
@@ -627,7 +627,13 @@ public class GraphView : Control
     {
         if (_layoutMode == GraphLayoutMode.Freeform) return _nodes.ContainsKey(id);
         if (_structuredPlan == null || !_structuredPlan.Items.TryGetValue(id, out var item)) return false;
-        if (item.Kind is StructuredFlowLayout.NodeKind.Root or StructuredFlowLayout.NodeKind.Machine) return true;
+        if (item.Kind == StructuredFlowLayout.NodeKind.Root) return true;
+        if (item.Kind == StructuredFlowLayout.NodeKind.Machine)
+        {
+            if (CurrentDetail() != StructuredFlowDetail.Far) return true;
+            return item.ParentMachineId.Length == 0 || _structuredPlan.Machines
+                .Any(root => root.ParentMachineId.Length == 0 && root.Id == item.ParentMachineId);
+        }
         if (CurrentDetail() == StructuredFlowDetail.Close) return true;
         if (item.Kind == StructuredFlowLayout.NodeKind.State) return CurrentDetail() != StructuredFlowDetail.Far;
         return CurrentDetail() == StructuredFlowDetail.Medium &&
@@ -810,9 +816,18 @@ public class GraphView : Control
 
     public (double Wide, double Tall) Extent()
     {
-        if (_nodes.Count == 0) return (0, 0);
-        return (_nodes.Values.Max(n => n.Bounds.Right) - _nodes.Values.Min(n => n.Bounds.X),
-                _nodes.Values.Max(n => n.Bounds.Bottom) - _nodes.Values.Min(n => n.Bounds.Y));
+        return ExtentOf(_nodes.Values);
+    }
+
+    public (double Wide, double Tall) VisibleExtent() =>
+        ExtentOf(_nodes.Values.Where(n => IsDrawnAtCurrentDetail(n.Id)));
+
+    private static (double Wide, double Tall) ExtentOf(IEnumerable<Node> nodes)
+    {
+        var list = nodes.ToList();
+        if (list.Count == 0) return (0, 0);
+        return (list.Max(n => n.Bounds.Right) - list.Min(n => n.Bounds.X),
+                list.Max(n => n.Bounds.Bottom) - list.Min(n => n.Bounds.Y));
     }
 
     /// The events written on a node saying it can be entered from any state of its machine.
@@ -1516,10 +1531,11 @@ public class GraphView : Control
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         var before = ToWorld(e.GetPosition(this));
+        var detail = CurrentDetail();
         _zoom = Math.Clamp(_zoom * (e.Delta.Y > 0 ? 1.12 : 1 / 1.12), 0.15, 3.0);
         var after = ToWorld(e.GetPosition(this));
         _pan += (after - before) * _zoom;
-        if (_layoutMode == GraphLayoutMode.StructuredFlow) BuildStructuredContainers();
+        ReflowForDetail(detail);
         InvalidateVisual();
     }
 
@@ -1555,8 +1571,9 @@ public class GraphView : Control
     /// at whatever the last interaction left behind.
     public void SetZoom(double zoom)
     {
+        var detail = CurrentDetail();
         _zoom = Math.Clamp(zoom, 0.15, 3.0);
-        if (_layoutMode == GraphLayoutMode.StructuredFlow) BuildStructuredContainers();
+        ReflowForDetail(detail);
         InvalidateVisual();
     }
 
@@ -1566,7 +1583,13 @@ public class GraphView : Control
     /// anything: Dogmeat's default behaviour lays out 8,890 by 5,589, so at 0.7 the button put you
     /// in the top left corner of something seven screens across and said it had framed it. The zoom
     /// is worked out from what there is to show.
-    public void FrameAll() => Frame(_nodes.Values.Where(n => IsDrawnAtCurrentDetail(n.Id)).Select(n => n.Bounds));
+    public void FrameAll()
+    {
+        var detail = CurrentDetail();
+        Frame(_nodes.Values.Where(n => IsDrawnAtCurrentDetail(n.Id)).Select(n => n.Bounds));
+        if (_layoutMode == GraphLayoutMode.StructuredFlow && detail != CurrentDetail())
+            Frame(_nodes.Values.Where(n => IsDrawnAtCurrentDetail(n.Id)).Select(n => n.Bounds));
+    }
 
     /// Fit one node and everything it is joined to, which is what somebody asking about a machine
     /// wants: that machine and its states filling the view instead of being a tenth of it.
@@ -1582,6 +1605,7 @@ public class GraphView : Control
     {
         var boxes = what.ToList();
         if (boxes.Count == 0 || Bounds.Width < 1 || Bounds.Height < 1) return;
+        var detail = CurrentDetail();
 
         double minX = boxes.Min(b => b.X), minY = boxes.Min(b => b.Y);
         double maxX = boxes.Max(b => b.Right), maxY = boxes.Max(b => b.Bottom);
@@ -1595,12 +1619,19 @@ public class GraphView : Control
         // all" framed something taller than the view and said it had framed it.
         _zoom = Math.Clamp(Math.Min((Bounds.Width - Margin * 2) / wide,
                                     (Bounds.Height - Margin * 2) / tall), 0.005, 1.5);
-        if (_layoutMode == GraphLayoutMode.StructuredFlow) BuildStructuredContainers();
+        ReflowForDetail(detail);
 
         // Centred rather than corner aligned. A graph wider than it is tall leaves a band of empty
         // canvas otherwise, and the thing being looked at sits against one edge of it.
         _pan = new Point(Bounds.Width / 2 - (minX + wide / 2) * _zoom,
                          Bounds.Height / 2 - (minY + tall / 2) * _zoom);
         InvalidateVisual();
+    }
+
+    private void ReflowForDetail(StructuredFlowDetail before)
+    {
+        if (_layoutMode != GraphLayoutMode.StructuredFlow) return;
+        if (before != CurrentDetail() && _model != null) Show(_model);
+        else BuildStructuredContainers();
     }
 }

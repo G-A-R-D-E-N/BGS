@@ -23,7 +23,7 @@ public static class Smoke
     /// drawing transitions rather than listing them. Rendering it to a file is how that question
     /// gets answered without asking somebody to open the window and describe what they see.
     ///
-    /// Usage: uismoke --png &lt;behaviour.hkx&gt; [out.png] [zoom] [focus node id]
+    /// Usage: uismoke --png &lt;behaviour.hkx&gt; [out.png] [zoom] [focus node id] [--structured-flow]
     ///
     /// `--window` draws everything beside the canvas as well, which is where the properties panel
     /// is. `--details` opens the Problems and Output drawer, while `--output` selects Output.
@@ -50,6 +50,8 @@ public static class Smoke
         var window = new MainWindow();
         window.Show();
         window.Open(file);
+        if (args.Contains("--structured-flow"))
+            window.SetGraphLayoutModeForTest(GraphLayoutMode.StructuredFlow);
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
         // A TabControl builds only the tab that is showing, so the canvas does not exist as a visual
@@ -158,6 +160,7 @@ public static class Smoke
         Console.WriteLine($"        laid out {extent.Wide:0} wide by {extent.Tall:0} tall");
         Console.WriteLine($"{output}: {canvas.DrawnCount} node(s), {canvas.DrawableRouteCount} route(s), " +
                           $"{canvas.StartStateIds.Count} start state(s), zoom {zoom}" +
+                          $", layout {canvas.LayoutMode}" +
                           (focus.Length > 0 ? $", focused on #{focus}" : ""));
 
         // How far the ownership wires run, which is what the layout is judged on. A picture at a zoom
@@ -818,10 +821,14 @@ public static class Smoke
                     string stateId = model.Objects
                         .Where(o => o.Class == "hkbStateMachineStateInfo" && canvas.OwnerOf(o.Id) == machineId)
                         .Select(o => o.Id).FirstOrDefault() ?? "";
+                    string detachedStateId = model.Objects
+                        .Where(o => o.Class == "hkbStateMachineStateInfo" && canvas.OwnerOf(o.Id).Length == 0)
+                        .Select(o => o.Id).FirstOrDefault() ?? "";
                     string helperId = stateId.Length == 0 ? "" : canvas.OwnedIds(stateId).FirstOrDefault() ?? "";
 
                     if (machineId.Length > 0 && stateId.Length > 0 && helperId.Length > 0)
                     {
+                        var freeformExtent = canvas.Extent();
                         canvas.SetLayoutMode(GraphLayoutMode.StructuredFlow);
                         canvas.FrameAll();
                         canvas.SetZoomForTest(0.75);
@@ -829,21 +836,56 @@ public static class Smoke
 
                         Check($"{name}: Structured Flow is selected", GraphLayoutMode.StructuredFlow,
                               canvas.LayoutMode);
+                        Check($"{name}: 1600px Structured Flow review starts at overview detail",
+                              StructuredFlowDetail.Far, canvas.DetailLevel);
+                        CheckTrue($"{name}: overview suppresses state plumbing",
+                                  !canvas.IsDrawnAtCurrentDetail(stateId));
+
+                        canvas.SetZoomForTest(0.9);
                         CheckTrue($"{name}: Structured Flow creates machine containers",
                                   canvas.StructuredMachineIds.Contains(machineId));
                         CheckTrue($"{name}: Structured Flow puts a machine above its state",
                                   canvas.PositionOf(machineId)!.Value.Y < canvas.PositionOf(stateId)!.Value.Y);
+                        CheckTrue($"{name}: Structured Flow does not expand past Freeform's height",
+                                  canvas.Extent().Wide <= freeformExtent.Tall * 1.1);
                         CheckTrue($"{name}: Structured Flow bounds the state in its machine",
                                   canvas.StructuredContainerBounds(machineId) is { } box
                                   && box.Contains(canvas.PositionOf(stateId)!.Value));
 
+                        var nestedPair = model.Objects
+                            .Where(machine => machine.Class == "hkbStateMachine")
+                            .SelectMany(parent => model.Objects
+                                .Where(state => state.Class == "hkbStateMachineStateInfo"
+                                                && canvas.OwnerOf(state.Id) == parent.Id)
+                                .Select(state => (Parent: parent.Id, State: state.Id,
+                                                  Child: model.Follow(state, "generator")?.Id ?? "")))
+                            .FirstOrDefault(pair => model.Get(pair.Child)?.Class == "hkbStateMachine");
+                        if (nestedPair.Child.Length > 0)
+                        {
+                            var parentBox = canvas.StructuredContainerBounds(nestedPair.Parent);
+                            var childBox = canvas.StructuredContainerBounds(nestedPair.Child);
+                            CheckTrue($"{name}: nested machine containers keep separate footprints",
+                                      parentBox is { } parent && childBox is { } child
+                                      && !parent.Intersects(child));
+                            CheckTrue($"{name}: a nested machine sits below its owning state",
+                                      canvas.PositionOf(nestedPair.State)!.Value.Y
+                                      < canvas.PositionOf(nestedPair.Child)!.Value.Y);
+                        }
+
                         canvas.SetZoomForTest(0.35);
                         Check($"{name}: far Structured Flow detail is selected", StructuredFlowDetail.Far,
                               canvas.DetailLevel);
+                        CheckTrue($"{name}: far detail reflows to a compact hierarchy",
+                                  canvas.VisibleExtent().Tall < freeformExtent.Tall * 0.35);
+                        CheckTrue($"{name}: far detail keeps only top-level machine branches",
+                                  canvas.VisibleStructuredMachineIds.Count < canvas.StructuredMachineIds.Count);
                         CheckTrue($"{name}: far detail retains machine tiles",
                                   canvas.IsDrawnAtCurrentDetail(machineId));
                         CheckTrue($"{name}: far detail suppresses helper tiles",
                                   !canvas.IsDrawnAtCurrentDetail(helperId));
+                        if (detachedStateId.Length > 0)
+                            CheckTrue($"{name}: far detail suppresses detached state plumbing",
+                                      !canvas.IsDrawnAtCurrentDetail(detachedStateId));
 
                         canvas.SetZoomForTest(1.20);
                         Check($"{name}: close Structured Flow detail is selected", StructuredFlowDetail.Close,
