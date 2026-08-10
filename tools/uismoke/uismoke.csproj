@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BehaviourStudio.UiSmoke</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>uismoke</AssemblyName>
+    <StartupObject>BehaviourStudio.UiSmoke.Smoke</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="*.cs" />
+    <Compile Include="../../app/*.cs" />
+    <Compile Include="../../src/Archive/*.cs" />
+    <Compile Include="../../src/Hkx/*.cs" />
+    <Compile Include="../../src/Nif/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
+  </ItemGroup>
+  <!-- The same data the application embeds. Without it the class table is empty, the window cannot
+       read a file from its own bytes, and every check here runs against a build nobody ships. That
+       is not a smaller test, it is a test of something else: it passed the whole time the window
+       was being moved onto the bytes, because in this build the window never got there. -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../src/Hkx/HavokClassLayouts.json" />
+    <EmbeddedResource Include="../../src/Hkx/HavokClassTypes.json" Condition="Exists('../../src/Hkx/HavokClassTypes.json')" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,17 @@
+bin/
+obj/
+*.user
+
+# Publish output
+/dist/
+/out/
+/BehaviourGraphStudio-*/
+/*.zip
+/downloads/*.zip
+
+# Local tooling config
+
+# Test results
+[Tt]est[Rr]esults/
+.avalonia-build-tasks/
+/BehaviourGraphStudio/

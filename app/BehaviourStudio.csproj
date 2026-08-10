@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>BehaviourGraphStudio</AssemblyName>
+    <RootNamespace>BehaviourStudio.App</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RuntimeIdentifiers>linux-x64;win-x64</RuntimeIdentifiers>
+    <!-- A release is one file that runs on a machine with no dotnet installed. Trimming is off:
+         the format layer reaches types by reflection through the class table, and a trimmer cannot
+         see that. -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>embedded</DebugType>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="*.cs" />
+    <Compile Include="../src/Archive/*.cs" />
+    <Compile Include="../src/Hkx/*.cs" />
+    <Compile Include="../src/Nif/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../src/Hkx/HavokClassLayouts.json" />
+    <EmbeddedResource Include="../src/Hkx/HavokClassTypes.json" Condition="Exists('../src/Hkx/HavokClassTypes.json')" />
+  </ItemGroup>
+</Project>
