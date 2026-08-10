@@ -4481,7 +4481,7 @@ public static class Tests
     {
         Console.WriteLine("\nan active expression modifier updates runtime variables");
 
-        string path = Path.GetFullPath("dist/examples/Dogmeat/Behaviors/DogmeatRoot.hkx");
+        string path = RepositoryFile("dist", "examples", "Dogmeat", "Behaviors", "DogmeatRoot.hkx");
         byte[] original = File.ReadAllBytes(path);
         var image = PackfileImage.Read(path);
         var model = NativeGraphModel.From(new PackfileObjects(image), HavokClassTypes.Shipped);
@@ -4509,6 +4509,16 @@ public static class Tests
         CheckTrue("changing an expression input changes the next target value",
                   Math.Abs(run.ValueOf("fHeadBlendDampedClamped") ?? -1) < 1e-6);
         CheckTrue("the simulation does not mutate native source bytes", original.SequenceEqual(File.ReadAllBytes(path)));
+    }
+
+    private static string RepositoryFile(params string[] parts)
+    {
+        for (var folder = new DirectoryInfo(AppContext.BaseDirectory); folder != null; folder = folder.Parent)
+        {
+            string candidate = Path.Combine(new[] { folder.FullName }.Concat(parts).ToArray());
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new DirectoryNotFoundException("could not find the repository's " + Path.Combine(parts));
     }
 
 
