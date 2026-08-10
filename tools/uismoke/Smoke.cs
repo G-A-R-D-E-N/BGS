@@ -27,7 +27,7 @@ public static class Smoke
     ///
     /// `--window` draws everything beside the canvas as well, which is where the properties panel
     /// is. `--details` opens the Problems and Output drawer, while `--output` selects Output.
-    /// `--runtime-window` opens the separate Runtime tool window. `--check` fills Problems through
+    /// `--workspace-window` opens the separate Workspace tool window. `--check` fills Problems through
     /// the real validation button, and `--event` sends the first available event.
     /// Focusing on a node also selects it, so that panel is showing the object the picture is about
     /// rather than nothing. `--expand` opens the array element blocks, which start closed, so a
@@ -74,28 +74,23 @@ public static class Smoke
         // The whole window rather than the canvas alone, for anything that is drawn beside it: the
         // legend explains the canvas and cannot be checked from a picture that leaves it out.
         bool whole = args.Contains("--window");
-        if (args.Contains("--legend"))
-        {
-            Find<Button>(window).First(b => b.Content?.ToString() == "Legend")
-                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-        }
+        if (args.Contains("--legend")) { window.OpenLegendForTest(); Avalonia.Threading.Dispatcher.UIThread.RunJobs(); }
         if (args.Contains("--details"))
         {
             window.SetGraphDrawerOpen(true);
             if (args.Contains("--output")) window.SelectGraphDrawerTab("Output");
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         }
-        if (args.Contains("--runtime-window"))
+        if (args.Contains("--workspace-window"))
         {
-            window.OpenRuntimeForTest();
+            window.OpenWorkspaceForTest();
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         }
 
         var canvas = Find<GraphView>(window).First();
-        bool runtimeWindow = args.Contains("--runtime-window");
-        var size = runtimeWindow ? new Size(1100, 700) : new Size(1600, 1000);
-        Control drawn = runtimeWindow ? window.RuntimeWindowForTest! : whole ? window : canvas;
+        bool workspaceWindow = args.Contains("--workspace-window");
+        var size = workspaceWindow ? new Size(1100, 700) : new Size(1600, 1000);
+        Control drawn = workspaceWindow ? window.WorkspaceWindowForTest! : whole ? window : canvas;
         drawn.Measure(size);
         drawn.Arrange(new Rect(size));
 
@@ -212,8 +207,8 @@ public static class Smoke
 
         Check("the node canvas exists", 1, canvases);
         Check("the skeleton viewport exists", 1, viewports);
-        Check("the tree, graph navigator, symbol, chain, animation, clip and compare grids build without opening details",
-              7, grids.Count);
+        Check("the tree, symbol, chain, animation, clip and compare grids build without opening tools",
+              6, grids.Count);
 
         // The drawer is collapsed by default, so its diagnostics and runtime grids are not built into
         // the visible workspace until the user asks for them. That is what returns their height to the
@@ -222,7 +217,7 @@ public static class Smoke
         foreach (string expected in new[]
                  { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
                    "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
-                   "Play", "From selected node", "Fit", "Legend", "Fit all", "Fit selection" })
+                   "Play", "From selected node", "Fit", "View ▾", "Fit all", "Fit selection" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
 
         // The canvas draws six node colours, three kinds of line and two badges. The legend is the
@@ -232,15 +227,12 @@ public static class Smoke
             tabs[0].SelectedIndex = headers.IndexOf("Graph");
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
-            var legendButton = Find<Button>(window).First(b => b.Content?.ToString() == "Legend");
-            CheckTrue("the legend stays out of the way until it is asked for", !window.Legend.IsVisible);
-
-            legendButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            CheckTrue("the legend stays out of the way until it is asked for", !window.LegendWindowVisible);
+            window.OpenLegendForTest();
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-            CheckTrue("clicking Legend opens it", window.Legend.IsVisible);
-            Check("and the button then offers to return to Machines", "Machines", legendButton.Content?.ToString());
+            CheckTrue("opening Legend creates a separate reference window", window.LegendWindowVisible);
 
-            var said = Find<TextBlock>(window.Legend).Select(t => t.Text ?? "").ToList();
+            var said = Find<TextBlock>(window.LegendWindowForTest!).Select(t => t.Text ?? "").ToList();
             foreach (string mark in new[]
                      { "State machine", "State", "Transitions", "Clip", "Blend", "Modifier",
                        "Solid: holds", "Dashed: transition", "Dashed pink: from this state",
@@ -248,9 +240,6 @@ public static class Smoke
                        "Start", "Teal glow: running now", "Red outline", "Amber outline" })
                 CheckTrue($"the legend explains {mark}", said.Contains(mark));
 
-            legendButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-            CheckTrue("and clicking again puts it away", !window.Legend.IsVisible);
             tabs[0].SelectedIndex = 0;
         }
 
@@ -361,8 +350,17 @@ public static class Smoke
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
                 var navigatorModel = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
-                Check($"{name}: Machines is the default left-pane view", "Machines", window.GraphLeftPaneView);
-                CheckTrue($"{name}: the machine navigator starts open", window.GraphLeftPaneOpen);
+                CheckTrue($"{name}: graph workspace has no permanent left pane", !window.GraphLeftPanePresent);
+                CheckTrue($"{name}: navigator starts hidden with Workspace",
+                          !window.WorkspaceVisible);
+                window.OpenWorkspaceForTest();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                CheckTrue($"{name}: Workspace opens as a top-level tool window", window.WorkspaceVisible);
+                Check("Workspace starts with Machines and Runtime tabs", "Machines, Runtime",
+                      string.Join(", ", window.WorkspaceWindowForTest?.TabHeaders ?? Array.Empty<string>()));
+                CheckTrue($"{name}: Workspace is a reusable desktop window",
+                          window.WorkspaceWindowForTest?.UsesDesktopPresentation == true);
+                Check($"{name}: Workspace has exactly one window instance", 1, window.WorkspaceWindowInstances);
                 CheckTrue($"{name}: navigator contains only state machines",
                           window.MachineNavigatorIds.Count > 0 &&
                           window.MachineNavigatorIds.All(id =>
@@ -376,11 +374,11 @@ public static class Smoke
                 {
                     window.SelectMachineForTest(navigatorMachine);
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-                    Check($"{name}: navigator selection reaches the inspector", navigatorMachine,
+                    Check($"{name}: Workspace selection reaches the inspector", navigatorMachine,
                           window.SelectedObjectId);
-                    Check($"{name}: navigator selection reaches the canvas", navigatorMachine,
+                    Check($"{name}: Workspace selection reaches the canvas", navigatorMachine,
                           window.Canvas.SelectedId);
-                    CheckTrue($"{name}: navigator selection does not enable focus",
+                    CheckTrue($"{name}: Workspace selection does not enable focus",
                               !window.GraphFocusTreeActive);
 
                     window.FocusTreeForTest();
@@ -394,6 +392,10 @@ public static class Smoke
 
                 CheckTrue($"{name}: running machines are marked in the navigator",
                           !window.RunReady || window.MachineNavigatorActiveIds.Count > 0);
+                window.FilterMachinesForTest("DefaultRootBehavior");
+                Check("Workspace machine filter narrows the real list", 1,
+                      window.WorkspaceWindowForTest?.MachineRowCount ?? -1);
+                window.FilterMachinesForTest("");
                 window.ClearRunForTest();
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 Check($"{name}: clearing the run clears navigator active markers", 0,
@@ -413,6 +415,10 @@ public static class Smoke
                           window.GraphCanvasHostClips);
                 CheckTrue($"{name}: the properties host clips its own contents",
                           window.GraphPropertiesHostClips);
+                CheckTrue($"{name}: Properties rows are constrained to their pane",
+                          window.GraphProperties.ContentsFitWidth);
+                CheckTrue($"{name}: Properties scroll vertically without horizontal overflow",
+                          window.GraphProperties.ScrollsVerticallyOnly);
                 CheckTrue($"{name}: the graph toolbar has space above its section labels",
                           window.GraphToolbarTopInset >= 10);
                 Check($"{name}: the graph toolbar has deliberate control groups",
@@ -422,7 +428,8 @@ public static class Smoke
                 CheckTrue($"{name}: edit tools stay out of the toolbar until requested", !window.GraphEditShelfOpen);
                 Check($"{name}: the details drawer has isolated tabs", "Problems, Output",
                       string.Join(", ", window.GraphDrawerTabs));
-                CheckTrue($"{name}: Runtime is not permanently below the graph", !window.RuntimeWindowVisible);
+                CheckTrue($"{name}: Runtime is housed by the Workspace tab",
+                          window.WorkspaceWindowForTest?.TabHeaders.Contains("Runtime") == true);
 
                 var diagnosticsButton = Find<Button>(window)
                     .SingleOrDefault(button => button.Content?.ToString() == "Show diagnostics");
@@ -436,18 +443,9 @@ public static class Smoke
                     Check($"{name}: the drawer opens on Problems", "Problems", window.SelectedGraphDrawerTab);
                 }
 
-                window.SetGraphLeftPaneOpen(true);
-                window.ResizeGraphLeftPaneForTest(300);
-                CheckTrue($"{name}: the navigator pane can open and resize",
-                          window.GraphLeftPaneOpen && window.GraphLeftPaneWidth == 300);
-
-                window.ShowLegendForTest();
+                window.OpenLegendForTest();
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-                Check($"{name}: Legend swaps into the navigator pane", "Legend", window.GraphLeftPaneView);
-                window.ShowMachinesForTest();
-                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-                Check($"{name}: Machines returns after the legend closes", "Machines",
-                      window.GraphLeftPaneView);
+                CheckTrue($"{name}: Legend opens independently of Workspace", window.LegendWindowVisible);
 
                 window.SetGraphRightPaneOpen(false);
                 CheckTrue($"{name}: the properties pane can collapse", !window.GraphRightPaneOpen);
@@ -461,29 +459,18 @@ public static class Smoke
                 CheckTrue($"{name}: the details drawer can open and resize",
                           window.GraphDrawerOpen && window.GraphDrawerHeight == 250);
 
-                var runtimeButton = Find<Button>(window)
-                    .First(button => button.Content?.ToString() == "Runtime");
-                runtimeButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-                CheckTrue($"{name}: Runtime opens in its own window", window.RuntimeWindowVisible);
-                Check($"{name}: Runtime gives its sections room", 4, window.RuntimeWindowSectionCount);
-                CheckTrue($"{name}: Runtime uses an activated resizable top-level window",
-                    window.RuntimeWindowForTest?.UsesDesktopPresentation == true);
-                CheckTrue($"{name}: Runtime reaches the native opened and activated lifecycle",
-                    window.RuntimeWindowForTest?.WasOpenedAndActivated == true);
-                int runtimeWindows = window.RuntimeWindowInstances;
-                window.CloseRuntimeForTest();
-                CheckTrue($"{name}: closing Runtime leaves the simulation running",
-                          !window.RuntimeWindowVisible && window.RunningCount > 0);
-                window.OpenRuntimeForTest();
-                Check($"{name}: reopening Runtime reuses the same window", runtimeWindows,
-                      window.RuntimeWindowInstances);
-                CheckTrue($"{name}: reopening Runtime asks the native window to come forward",
-                    window.RuntimeWindowForTest?.PresentationRequests >= 2);
+                int workspaceWindows = window.WorkspaceWindowInstances;
+                window.CloseWorkspaceForTest();
+                CheckTrue($"{name}: closing Workspace leaves the simulation running",
+                          !window.WorkspaceVisible && window.RunningCount > 0);
+                window.OpenWorkspaceForTest();
+                Check($"{name}: reopening Workspace reuses the same window", workspaceWindows,
+                      window.WorkspaceWindowInstances);
+                CheckTrue($"{name}: reopening Workspace asks the native window to come forward",
+                    window.WorkspaceWindowForTest?.PresentationRequests >= 2);
 
-                window.SetGraphLeftPaneOpen(false);
                 window.SetGraphDrawerOpen(false);
-                window.CloseRuntimeForTest();
+                window.CloseWorkspaceForTest();
                 CheckTrue($"{name}: closing details hides their contents again", !window.GraphDrawerContentsVisible);
             }
 
@@ -1932,11 +1919,11 @@ public static class Smoke
     /// The value box on the row whose label is this field's name.
     private static TextBox? FieldNamed(Visual panel, string name)
     {
-        foreach (var row in Find<DockPanel>(panel))
+        foreach (var row in Find<Grid>(panel))
         {
-            var label = row.Children.OfType<TextBlock>().FirstOrDefault();
+            var label = row.Children.OfType<TextBlock>().FirstOrDefault(text => Grid.GetColumn(text) == 0);
             if (label?.Text != name) continue;
-            return row.Children.OfType<TextBox>().FirstOrDefault();
+            return row.Children.OfType<TextBox>().FirstOrDefault(box => Grid.GetColumn(box) == 1);
         }
         return null;
     }

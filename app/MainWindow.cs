@@ -26,9 +26,6 @@ public class MainWindow : Window
     private readonly Inspector _treeProps = new(340);
     private readonly Inspector _graphProps = new(360);
     private readonly GraphView _graph = new();
-    private readonly ColumnDefinition _graphLeftColumn = new(new GridLength(0, GridUnitType.Pixel))
-        { MinWidth = 0, MaxWidth = 440 };
-    private readonly ColumnDefinition _graphLeftSplitterColumn = new(new GridLength(0, GridUnitType.Pixel));
     private readonly ColumnDefinition _graphCenterColumn = new(new GridLength(1, GridUnitType.Star)) { MinWidth = 720 };
     private readonly ColumnDefinition _graphRightSplitterColumn = new(new GridLength(6, GridUnitType.Pixel));
     private readonly ColumnDefinition _graphRightColumn = new(new GridLength(380, GridUnitType.Pixel))
@@ -36,7 +33,6 @@ public class MainWindow : Window
     private readonly RowDefinition _graphDrawerSplitterRow = new(new GridLength(0, GridUnitType.Pixel));
     private readonly RowDefinition _graphDrawerRow = new(new GridLength(0, GridUnitType.Pixel))
         { MaxHeight = 300 };
-    private GridSplitter? _graphLeftSplitter;
     private GridSplitter? _graphRightSplitter;
     private GridSplitter? _graphDrawerSplitter;
     private Control? _graphDrawer;
@@ -47,22 +43,17 @@ public class MainWindow : Window
     private Border? _playbackViewportHost;
     private readonly List<string> _graphToolbarGroups = new();
     private bool _graphToolbarGroupLabelsHaveFixedLineHeight;
-    private RuntimeWindow? _runtimeWindow;
-    private int _runtimeWindowInstances;
-    private Button? _legendButton;
-    private Button? _propertiesButton;
+    private WorkspaceWindow? _workspaceWindow;
+    private LegendWindow? _legendWindow;
+    private int _workspaceWindowInstances;
     private Button? _drawerButton;
     private readonly HkGrid _machineNavigator = new(("Machine", -4), ("ID", 70), ("Run", 62));
-    private Control _machinePane = new Panel();
-    private string _graphLeftPaneView = "Machines";
     private bool _machineNavigatorRebuilding;
     private readonly List<string> _machineNavigatorIds = new();
     private readonly List<string> _machineNavigatorLabels = new();
     private readonly HashSet<string> _machineNavigatorActiveIds = new(StringComparer.Ordinal);
-    private bool _graphLeftOpen;
     private bool _graphRightOpen = true;
     private bool _graphDrawerOpen;
-    private double _graphLeftWidth = 360;
     private double _graphRightWidth = 380;
     private double _graphDrawerHeight = 110;
     private readonly Button _saveButton;
@@ -433,36 +424,6 @@ public class MainWindow : Window
     {
         _problems.SelectionChanged += OnProblemSelected;
 
-        // The canvas draws six node colours, three kinds of line and two badges, and none of them
-        // says what it means. That is a lot to hold in your head on a graph with eight hundred boxes
-        // in it, and the answer is not fewer marks: it is the marks having somewhere to be looked up.
-        var legendBody = BuildLegend();
-        var legendClose = Ux.Secondary("Machines");
-        legendClose.Click += (_, _) => ShowMachinesPane();
-        var legendHeader = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-        DockPanel.SetDock(legendClose, Dock.Right);
-        legendHeader.Children.Add(legendClose);
-        legendHeader.Children.Add(Ux.SectionTitle("Legend"));
-        var legendPane = new DockPanel();
-        DockPanel.SetDock(legendHeader, Dock.Top);
-        legendPane.Children.Add(legendHeader);
-        legendPane.Children.Add(legendBody);
-        _legend = Framed(legendPane);
-        _legend.IsVisible = false;
-
-        _machinePane = Framed(BuildMachineNavigatorPane());
-        _machinePane.IsVisible = true;
-
-        _legendButton = Ux.Secondary("Legend");
-        _legendButton.Click += (_, _) =>
-        {
-            if (_graphLeftPaneView == "Legend" && _graphLeftOpen) ShowMachinesPane();
-            else ShowLegendPane();
-        };
-
-        _propertiesButton = Ux.Secondary("Hide properties");
-        _propertiesButton.Click += (_, _) => SetGraphRightPaneOpen(!_graphRightOpen);
-
         // A behaviour lays out several screens across. Without a way back to the whole of it, being
         // anywhere in particular means being lost, and the answer to a graph feeling overwhelming is
         // usually being able to see all of it rather than there being less of it.
@@ -484,9 +445,10 @@ public class MainWindow : Window
             _graph.FrameRelated();
         };
 
+        Control view = BuildViewMenu(fitAll, fitPicked);
         _graphToolbarGroups.Clear();
         _graphToolbarGroupLabelsHaveFixedLineHeight = false;
-        var view = GraphToolbarGroup("View", fitAll, fitPicked, _legendButton, _propertiesButton);
+        view = GraphToolbarGroup("View", view, fitAll, fitPicked);
         var runBar = BuildRunControls();
         var pasteBar = BuildPasteControls();
         _graphEditShelf = Framed(pasteBar);
@@ -510,31 +472,21 @@ public class MainWindow : Window
             Child = toolbar,
         };
 
-        _graphLeftSplitter = new GridSplitter { Width = 6, Background = Ux.BorderBrush,
-            ResizeDirection = GridResizeDirection.Columns, IsVisible = false };
         _graphRightSplitter = new GridSplitter { Width = 6, Background = Ux.BorderBrush,
             ResizeDirection = GridResizeDirection.Columns };
 
         var workspace = new Grid();
-        workspace.ColumnDefinitions.Add(_graphLeftColumn);
-        workspace.ColumnDefinitions.Add(_graphLeftSplitterColumn);
         workspace.ColumnDefinitions.Add(_graphCenterColumn);
         workspace.ColumnDefinitions.Add(_graphRightSplitterColumn);
         workspace.ColumnDefinitions.Add(_graphRightColumn);
-        Grid.SetColumn(_machinePane, 0);
-        Grid.SetColumn(_legend, 0);
-        Grid.SetColumn(_graphLeftSplitter, 1);
         _graphCanvasHost = Framed(_graph);
         _graphCanvasHost.ClipToBounds = true;
-        Grid.SetColumn(_graphCanvasHost, 2);
-        Grid.SetColumn(_graphRightSplitter, 3);
+        Grid.SetColumn(_graphCanvasHost, 0);
+        Grid.SetColumn(_graphRightSplitter, 1);
         _graphProps.SetHeaderAction("Collapse", () => SetGraphRightPaneOpen(false));
         _graphPropertiesHost = Framed(_graphProps);
         _graphPropertiesHost.ClipToBounds = true;
-        Grid.SetColumn(_graphPropertiesHost, 4);
-        workspace.Children.Add(_machinePane);
-        workspace.Children.Add(_legend);
-        workspace.Children.Add(_graphLeftSplitter);
+        Grid.SetColumn(_graphPropertiesHost, 2);
         workspace.Children.Add(_graphCanvasHost);
         workspace.Children.Add(_graphRightSplitter);
         workspace.Children.Add(_graphPropertiesHost);
@@ -590,64 +542,97 @@ public class MainWindow : Window
         _problems.IsVisible = false;
         _problemBar.IsVisible = false;
         _running.IsVisible = false;
-        SetGraphLeftPaneOpen(true);
-        ShowMachinesPane();
         return graphWorkspace;
     }
 
-    private Control BuildMachineNavigatorPane()
+    // View actions change what is visible around the graph. Keeping them behind one menu avoids a
+    // second permanent toolbar for occasional panels while giving every top-level tool window an
+    // obvious, consistent route back.
+    private Button BuildViewMenu(Control fitAll, Control fitPicked)
     {
-        _machineNavigator.SelectionChanged += OnMachineNavigatorSelected;
+        var button = Ux.Secondary("View ▾");
+        var menu = new ContextMenu();
+        var workspace = ViewItem("Workspace", OpenWorkspaceWindow);
+        var properties = ViewItem("Properties", () => SetGraphRightPaneOpen(!_graphRightOpen));
+        var problems = ViewItem("Problems", () => OpenGraphDrawer("Problems"));
+        var output = ViewItem("Output", () => OpenGraphDrawer("Output"));
+        var legend = ViewItem("Legend", OpenLegendWindow);
+        var focus = ViewItem("Focus tree", FocusSelectedMachine);
+        var full = ViewItem("Show full graph", ShowFullGraph);
+        var upstream = ViewItem("Trace upstream", () => TraceSelected(GraphTrace.Direction.Upstream));
+        var downstream = ViewItem("Trace downstream", () => TraceSelected(GraphTrace.Direction.Downstream));
+        var both = ViewItem("Trace both", () => TraceSelected(GraphTrace.Direction.Both));
+        var clear = ViewItem("Clear trace", _graph.ClearTrace);
+        foreach (var item in new MenuItem[]
+                 { workspace, properties, problems, output, legend, focus, full, upstream, downstream, both, clear })
+            menu.Items.Add(item);
 
-        var collapse = Ux.Secondary("Collapse");
-        collapse.Click += (_, _) => SetGraphLeftPaneOpen(false);
-        var header = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-        DockPanel.SetDock(collapse, Dock.Right);
-        header.Children.Add(collapse);
-        header.Children.Add(Ux.SectionTitle("Machines"));
-
-        var focusTree = Ux.Secondary("Focus tree");
-        focusTree.Click += (_, _) => FocusSelectedMachine();
-        var showFull = Ux.Secondary("Show full graph");
-        showFull.Click += (_, _) => ShowFullGraph();
-
-        var upstream = Ux.Secondary("Upstream");
-        upstream.Click += (_, _) => TraceSelected(GraphTrace.Direction.Upstream);
-        var downstream = Ux.Secondary("Downstream");
-        downstream.Click += (_, _) => TraceSelected(GraphTrace.Direction.Downstream);
-        var both = Ux.Secondary("Both");
-        both.Click += (_, _) => TraceSelected(GraphTrace.Direction.Both);
-        var clearTrace = Ux.Secondary("Clear trace");
-        clearTrace.Click += (_, _) => _graph.ClearTrace();
-
-        var viewActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        viewActions.Children.Add(focusTree);
-        viewActions.Children.Add(showFull);
-
-        var traceActions = new WrapPanel { Orientation = Orientation.Horizontal };
-        foreach (var control in new Control[] { upstream, downstream, both, clearTrace })
+        button.ContextMenu = menu;
+        button.Click += (_, _) =>
         {
-            control.Margin = new Thickness(0, 0, 6, 6);
-            traceActions.Children.Add(control);
-        }
+            workspace.Header = WorkspaceVisible ? "Workspace   Open" : "Workspace   Closed";
+            legend.Header = LegendWindowVisible ? "Legend   Open" : "Legend   Closed";
+            properties.Header = _graphRightOpen ? "Properties   Open" : "Properties   Closed";
+            menu.Open(button);
+        };
+        ToolTip.SetTip(button, "Open workspace tools, panels, graph focus, tracing, and reference material.");
+        return button;
+    }
 
-        var controls = new StackPanel { Spacing = 8, Margin = new Thickness(0, 8, 0, 0) };
-        controls.Children.Add(Ux.SectionTitle("View"));
-        controls.Children.Add(viewActions);
-        controls.Children.Add(Ux.SectionTitle("Trace"));
-        controls.Children.Add(traceActions);
+    private static MenuItem ViewItem(string label, Action action)
+    {
+        var item = new MenuItem { Header = label };
+        item.Click += (_, _) => action();
+        return item;
+    }
 
-        var pane = new Grid();
-        pane.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        pane.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
-        pane.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        Grid.SetRow(header, 0);
-        Grid.SetRow(_machineNavigator, 1);
-        Grid.SetRow(controls, 2);
-        pane.Children.Add(header);
-        pane.Children.Add(_machineNavigator);
-        pane.Children.Add(controls);
-        return pane;
+    private void OpenGraphDrawer(string tab)
+    {
+        SetGraphDrawerOpen(true);
+        SelectGraphDrawerTab(tab);
+    }
+
+    private Control BuildWorkspaceRuntimeTab()
+    {
+        var variables = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(14, 0, 14, 10),
+        };
+        variables.Children.Add(Ux.SectionTitle("Variables"));
+        variables.Children.Add(_runVariables);
+        variables.Children.Add(_runValue);
+        variables.Children.Add(_setRunVariable);
+
+        var sections = new Grid();
+        sections.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+        sections.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+        sections.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
+        sections.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
+        PlaceRuntime(_running, sections, 0, 0, new Thickness(14, 0, 5, 5));
+        PlaceRuntime(_runStopsGrid, sections, 1, 0, new Thickness(5, 0, 14, 5));
+        PlaceRuntime(_runHeldBackGrid, sections, 0, 1, new Thickness(14, 5, 5, 14));
+        PlaceRuntime(_runLog, sections, 1, 1, new Thickness(5, 5, 14, 14));
+
+        var content = new DockPanel { LastChildFill = true };
+        var header = new DockPanel { Margin = new Thickness(14, 12, 14, 8) };
+        header.Children.Add(Ux.SectionTitle("Simulation runtime"));
+        header.Children.Add(_runtimeStatus);
+        DockPanel.SetDock(header, Dock.Top);
+        DockPanel.SetDock(variables, Dock.Top);
+        content.Children.Add(header);
+        content.Children.Add(variables);
+        content.Children.Add(sections);
+        return content;
+    }
+
+    private static void PlaceRuntime(Control control, Grid grid, int column, int row, Thickness margin)
+    {
+        control.Margin = margin;
+        Grid.SetColumn(control, column);
+        Grid.SetRow(control, row);
+        grid.Children.Add(control);
     }
 
     /// The controls that step the graph: pick an event, send it, and see which states go active.
@@ -665,10 +650,6 @@ public class MainWindow : Window
         var restart = Ux.Secondary("Restart");
         ToolTip.SetTip(restart, "Put the graph back in the state it starts in.");
         restart.Click += (_, _) => StartRun("Back at the start.");
-
-        var runtime = Ux.Secondary("Runtime");
-        ToolTip.SetTip(runtime, "Open the live simulation state in its own window.");
-        runtime.Click += (_, _) => OpenRuntimeWindow();
 
         // Advances the clock a tenth of a second, which moves any transition still blending along.
         // A tenth because a blend is a fifth to a half of a second in the corpus, so this is a few
@@ -715,7 +696,7 @@ public class MainWindow : Window
         _setRunVariable.Click += (_, _) => SetRunVariable();
 
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-        foreach (var control in new Control[] { label, _runEvents, send, _step, restart, runtime })
+        foreach (var control in new Control[] { label, _runEvents, send, _step, restart })
             left.Children.Add(control);
 
         SetRunSummary("Open a behaviour, then send it an event to watch which state goes active.",
@@ -1297,11 +1278,6 @@ public class MainWindow : Window
         _runOutput.Text = string.Join(Environment.NewLine, _runOutputLines);
     }
 
-    private Control _legend = new Panel();
-
-    /// Read only, for the window checks.
-    public Control Legend => _legend;
-
     /// What everything on the canvas means, in the words somebody reading a graph would use.
     ///
     /// Every colour here is asked for by class name rather than written down again, so the legend
@@ -1521,10 +1497,9 @@ public class MainWindow : Window
     // The workspace state is exposed to the headless smoke checks so they can exercise the real pane
     // buttons' behavior. These are layout controls only: the graph and every existing data panel stay
     // responsible for their own content.
-    public bool GraphLeftPaneOpen => _graphLeftOpen;
+    public bool GraphLeftPanePresent => false;
     public bool GraphRightPaneOpen => _graphRightOpen;
     public bool GraphDrawerOpen => _graphDrawerOpen;
-    public double GraphLeftPaneWidth => _graphLeftColumn.Width.Value;
     public double GraphRightPaneWidth => _graphRightColumn.Width.Value;
     public double GraphDrawerHeight => _graphDrawerRow.Height.Value;
     public double GraphDrawerDefaultHeight => _graphDrawerHeight;
@@ -1533,7 +1508,6 @@ public class MainWindow : Window
     public bool GraphEditShelfOpen => _graphEditShelf?.IsVisible ?? false;
     public bool GraphCanvasHostClips => _graphCanvasHost?.ClipToBounds ?? false;
     public bool GraphPropertiesHostClips => _graphPropertiesHost?.ClipToBounds ?? false;
-    public string GraphLeftPaneView => _graphLeftOpen ? _graphLeftPaneView : "";
     public IReadOnlyList<string> MachineNavigatorIds => _machineNavigatorIds;
     public IReadOnlyList<string> MachineNavigatorLabels => _machineNavigatorLabels;
     public IReadOnlyCollection<string> MachineNavigatorActiveIds => _machineNavigatorActiveIds;
@@ -1547,10 +1521,12 @@ public class MainWindow : Window
         .Select(tab => tab.Header?.ToString() ?? "").ToList() ?? (IReadOnlyList<string>)Array.Empty<string>();
     public string SelectedGraphDrawerTab => _graphDrawerTabs?.SelectedItem is TabItem tab
         ? tab.Header?.ToString() ?? "" : "";
-    public bool RuntimeWindowVisible => _runtimeWindow?.IsVisible ?? false;
-    public int RuntimeWindowSectionCount => _runtimeWindow?.SectionCount ?? 0;
-    public int RuntimeWindowInstances => _runtimeWindowInstances;
-    public RuntimeWindow? RuntimeWindowForTest => _runtimeWindow;
+    public bool WorkspaceVisible => _workspaceWindow?.IsVisible ?? false;
+    public bool WorkspaceRuntimeVisible => WorkspaceVisible;
+    public int WorkspaceWindowInstances => _workspaceWindowInstances;
+    public WorkspaceWindow? WorkspaceWindowForTest => _workspaceWindow;
+    public bool LegendWindowVisible => _legendWindow?.IsVisible ?? false;
+    public LegendWindow? LegendWindowForTest => _legendWindow;
 
     public void SetGraphEditShelfOpen(bool open)
     {
@@ -1564,30 +1540,6 @@ public class MainWindow : Window
             .FirstOrDefault(tab => tab.Header?.ToString() == header);
     }
 
-    public void SetGraphLeftPaneOpen(bool open)
-    {
-        _graphLeftOpen = open;
-        _machinePane.IsVisible = open && _graphLeftPaneView == "Machines";
-        _legend.IsVisible = open && _graphLeftPaneView == "Legend";
-        _graphLeftColumn.Width = Pixels(open ? _graphLeftWidth : 0);
-        _graphLeftSplitterColumn.Width = Pixels(open ? 6 : 0);
-        if (_graphLeftSplitter != null) _graphLeftSplitter.IsVisible = open;
-        if (_legendButton != null) _legendButton.Content = _graphLeftPaneView == "Legend" && open
-            ? "Machines" : "Legend";
-    }
-
-    private void ShowMachinesPane()
-    {
-        _graphLeftPaneView = "Machines";
-        SetGraphLeftPaneOpen(true);
-    }
-
-    private void ShowLegendPane()
-    {
-        _graphLeftPaneView = "Legend";
-        SetGraphLeftPaneOpen(true);
-    }
-
     public void SetGraphRightPaneOpen(bool open)
     {
         _graphRightOpen = open;
@@ -1596,7 +1548,6 @@ public class MainWindow : Window
         _graphRightColumn.Width = Pixels(open ? _graphRightWidth : 0);
         _graphRightSplitterColumn.Width = Pixels(open ? 6 : 0);
         if (_graphRightSplitter != null) _graphRightSplitter.IsVisible = open;
-        if (_propertiesButton != null) _propertiesButton.Content = open ? "Hide properties" : "Properties";
     }
 
     public void SetGraphDrawerOpen(bool open)
@@ -1608,12 +1559,6 @@ public class MainWindow : Window
         if (_graphDrawer != null) _graphDrawer.IsVisible = open;
         if (_graphDrawerSplitter != null) _graphDrawerSplitter.IsVisible = open;
         if (_drawerButton != null) _drawerButton.Content = open ? "Hide diagnostics" : "Show diagnostics";
-    }
-
-    public void ResizeGraphLeftPaneForTest(double width)
-    {
-        _graphLeftWidth = Math.Clamp(width, 300, 440);
-        if (_graphLeftOpen) _graphLeftColumn.Width = Pixels(_graphLeftWidth);
     }
 
     public void ResizeGraphRightPaneForTest(double width)
@@ -1628,11 +1573,13 @@ public class MainWindow : Window
         if (_graphDrawerOpen) _graphDrawerRow.Height = Pixels(_graphDrawerHeight);
     }
 
-    public void ShowLegendForTest() => ShowLegendPane();
-
-    public void ShowMachinesForTest() => ShowMachinesPane();
-
     public bool SelectMachineForTest(string machineId) => _machineNavigator.SelectByTag(machineId);
+
+    public void FilterMachinesForTest(string text)
+    {
+        OpenWorkspaceWindow();
+        _workspaceWindow?.FilterMachinesForTest(text);
+    }
 
     public void FocusTreeForTest() => FocusSelectedMachine();
 
@@ -1651,20 +1598,29 @@ public class MainWindow : Window
 
     private static GridLength Pixels(double value) => new(value, GridUnitType.Pixel);
 
-    private void OpenRuntimeWindow()
+    private void OpenWorkspaceWindow()
     {
-        if (_runtimeWindow == null)
+        if (_workspaceWindow == null)
         {
-            _runtimeWindow = new RuntimeWindow(_running, _runStopsGrid, _runHeldBackGrid, _runLog,
-                                               _runVariables, _runValue, _setRunVariable, _runtimeStatus);
-            _runtimeWindowInstances++;
+            _machineNavigator.SelectionChanged += OnMachineNavigatorSelected;
+            _workspaceWindow = new WorkspaceWindow(_machineNavigator, BuildWorkspaceRuntimeTab(),
+                                                     FilterMachines);
+            _workspaceWindowInstances++;
         }
-        _runtimeWindow.Present(this);
+        _workspaceWindow.Present(this);
     }
 
-    public void OpenRuntimeForTest() => OpenRuntimeWindow();
+    private void OpenLegendWindow()
+    {
+        _legendWindow ??= new LegendWindow(BuildLegend());
+        _legendWindow.Present(this);
+    }
 
-    public void CloseRuntimeForTest() => _runtimeWindow?.CloseForTest();
+    public void OpenWorkspaceForTest() => OpenWorkspaceWindow();
+
+    public void CloseWorkspaceForTest() => _workspaceWindow?.CloseForTest();
+
+    public void OpenLegendForTest() => OpenLegendWindow();
 
     /// Read-only hooks for the window checks, so the run panel can be exercised headless.
     public bool RunReady => _run != null;
@@ -3446,7 +3402,6 @@ public class MainWindow : Window
         _graph.Show(model);
         _graph.FrameAll();
         BuildMachineNavigator(model);
-        ShowMachinesPane();
         BuildSymbols(model);
         BuildClipList(model);
         BuildChain(java, jar);
@@ -3478,11 +3433,14 @@ public class MainWindow : Window
             _machineNavigatorIds.Clear();
             _machineNavigatorLabels.Clear();
 
+            string filter = _workspaceWindow?.MachineFilterText ?? "";
             foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
             {
                 string name = machine.Str("name");
                 if (name.Length == 0) name = "hkbStateMachine";
                 string id = "#" + machine.Id;
+                if (filter.Length > 0 && !name.Contains(filter, StringComparison.OrdinalIgnoreCase) &&
+                    !id.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
                 bool active = _machineNavigatorActiveIds.Contains(machine.Id);
 
                 _machineNavigatorIds.Add(machine.Id);
@@ -3501,6 +3459,11 @@ public class MainWindow : Window
         {
             _machineNavigatorRebuilding = false;
         }
+    }
+
+    private void FilterMachines(string text)
+    {
+        if (_reading.Objects.Count > 0) BuildMachineNavigator(_reading);
     }
 
     private void SetMachineNavigatorActive(IEnumerable<string> activeMachineIds)
@@ -3782,7 +3745,7 @@ public class MainWindow : Window
             string group = parameters[i].Group;
             if (group.Length == 0)
             {
-                panel.Add(FieldRow(parameters[i], objectId));
+                panel.Add(FieldRow(panel, parameters[i], objectId));
                 i++;
                 continue;
             }
@@ -3790,8 +3753,8 @@ public class MainWindow : Window
             int end = i;
             while (end < parameters.Count && parameters[end].Group == group) end++;
 
-            var inside = new StackPanel { Spacing = 6, Margin = new Thickness(8, 4, 0, 4) };
-            for (int f = i; f < end; f++) inside.Children.Add(FieldRow(parameters[f], objectId));
+            var inside = new StackPanel { Spacing = 6, Margin = new Thickness(8, 4, 0, 4), ClipToBounds = true };
+            for (int f = i; f < end; f++) inside.Children.Add(FieldRow(panel, parameters[f], objectId));
 
             panel.Add(ElementBlock(group, summaries.GetValueOrDefault(group, ""), inside));
             i = end;
@@ -3861,11 +3824,7 @@ public class MainWindow : Window
             value.LostFocus += (_, _) => Commit();
             value.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) Commit(); };
 
-            var line = new DockPanel();
-            DockPanel.SetDock(label, Dock.Left);
-            line.Children.Add(label);
-            line.Children.Add(value);
-            panel.Add(line);
+            panel.Add(panel.TwoColumnRow(label, value, 188));
         }
 
         return true;
@@ -3940,10 +3899,14 @@ public class MainWindow : Window
     /// summary shows its index alone: a made up description would read as a fact about the file.
     private static Control ElementBlock(string group, string summary, Control inside)
     {
-        var header = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8 };
+        var header = new Grid { ClipToBounds = true };
+        header.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        header.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
 
         var index = Ux.Label(group);
         index.Foreground = Ux.MutedBrush;
+        index.Margin = new Thickness(0, 0, 8, 0);
+        Grid.SetColumn(index, 0);
         header.Children.Add(index);
 
         if (summary.Length > 0)
@@ -3951,6 +3914,8 @@ public class MainWindow : Window
             var said = Ux.Label(summary);
             said.Foreground = Ux.CodeBrush;
             said.TextTrimming = TextTrimming.CharacterEllipsis;
+            said.ClipToBounds = true;
+            Grid.SetColumn(said, 1);
             ToolTip.SetTip(said, summary);
             header.Children.Add(said);
         }
@@ -3961,17 +3926,18 @@ public class MainWindow : Window
             Content = inside,
             IsExpanded = false,
             Padding = new Thickness(0),
+            ClipToBounds = true,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
         };
     }
 
-    private Control FieldRow(PanelFields.Field p, string owner)
+    private Control FieldRow(Inspector panel, PanelFields.Field p, string owner)
     {
         // An enum whose values the class table declares becomes a list rather than a box. The names
         // are the ones the game registers, not ours, and PanelFields only offers them when the value
         // already in the file is one of them, so picking from the list can never be the only way to
         // keep what is there.
-        if (p.Options.Count > 0) return EnumRow(p, owner);
+        if (p.Options.Count > 0) return EnumRow(panel, p, owner);
 
         string address = p.Address;
         string original = p.Value;
@@ -4001,11 +3967,7 @@ public class MainWindow : Window
         label.TextTrimming = TextTrimming.CharacterEllipsis;
         ToolTip.SetTip(label, Tip(p));
 
-        var row = new DockPanel();
-        DockPanel.SetDock(label, Dock.Left);
-        row.Children.Add(label);
-        row.Children.Add(field);
-        return row;
+        return panel.TwoColumnRow(label, field);
     }
 
     // The other direction of the usages question: not who touches this symbol, but which symbols this
@@ -4041,7 +4003,7 @@ public class MainWindow : Window
         return string.Join("\n", lines);
     }
 
-    private Control EnumRow(PanelFields.Field p, string owner)
+    private Control EnumRow(Inspector panel, PanelFields.Field p, string owner)
     {
         var choice = new ComboBox
         {
@@ -4072,11 +4034,7 @@ public class MainWindow : Window
         label.TextTrimming = TextTrimming.CharacterEllipsis;
         ToolTip.SetTip(label, Tip(p));
 
-        var row = new DockPanel();
-        DockPanel.SetDock(label, Dock.Left);
-        row.Children.Add(label);
-        row.Children.Add(choice);
-        return row;
+        return panel.TwoColumnRow(label, choice);
     }
 
     private void AddSymbolSection(Inspector panel, string objectId, BehaviourGraphModel model)

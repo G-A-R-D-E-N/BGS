@@ -2,178 +2,137 @@
 
 ## Purpose
 
-Phase 2 makes a large behaviour graph easier to navigate without changing the graph, its saved
-data, or simulation semantics. It adds a state-machine-only navigator, an explicit tree focus
-mode, a static dependency trace, object-ID chips on nodes, and active-machine indicators.
-
-The graph canvas remains the primary workspace. The existing Tree tab remains the complete object
-tree. This phase does not redesign diagnostics, the Runtime window, or the toolbar.
+Phase 2 keeps the Graph tab focused on editing. Navigation and simulation information move to a
+reusable top-level Workspace tool window, while state-machine focus, static tracing, and object-ID
+chips remain graph-view actions. No change may alter XML, parsed graph data, routes, saved data, or
+simulation semantics.
 
 ## Evidence and constraints
 
-`symrm nesting dist/examples` measured 453 readable files, 45 state machines, 167 states, and 181
-resolved transitions. The existing `StateRoutes` model resolves the transition relationships used
-by the graph. `GraphView` already owns selection, dimming, and framing behavior.
+`symrm objects dist/examples/Dogmeat/Behaviors/DogmeatDefault.hkx hkbStateMachine` reports 906
+objects, all covered by the class table, including 33 state machines. The Workspace window therefore
+uses a scrollable, filterable machine list and receives its active indicators from the existing
+`GraphRun.Where()` path.
 
-Every measured file serializes object names in the numeric form `#98`. The current text and graph
-parsers accept only that numeric format and store the inner value, such as `98`. Phase 2 displays
-that serialized form by adding the `#` only for presentation. It neither renumbers objects nor
-claims support for literal identifiers such as `State1`.
+The existing graph edge definition remains authoritative. Static tracing uses existing
+ownership/reference relationships and resolved `StateRoutes`. It must not change
+`GraphAuthor.PointsAt` or broaden its deliberate reachability policy.
 
-The existing graph edge definition remains authoritative. Static tracing uses the same existing
-ownership/reference relationships and resolved `StateRoutes`; it must not modify
-`GraphAuthor.PointsAt` or expand its deliberate reachability policy.
+Supported files serialize object identifiers in numeric `#98` form. The parser stores the inner
+numeric value. The UI presents `#` plus that existing value and does not claim literal-ID support.
 
 ## Scope
 
 Included:
 
-- Machine Navigator in the left pane.
-- Explicit Focus tree and Show full graph actions.
-- Static upstream, downstream, and both-direction dependency tracing.
-- Serialized numeric object-ID chips on canvas nodes.
-- Active-machine indicators in the navigator while simulation is running.
-- Headless UI smoke coverage and existing regression gates.
+- Remove the permanent left graph pane.
+- One reusable, resizable Workspace top-level window with Machines and Runtime tabs.
+- Workspace lifecycle persistence: single instance, remembered bounds, hide-on-close, reopen and
+  activate the existing instance, and continued synchronization while hidden.
+- View-menu access to Workspace, Properties, Problems, Output, and a separate Legend reference
+  window.
+- Explicit Focus tree, Show full graph, static trace actions, and object-ID chips on canvas nodes.
+- Active-machine indicators, machine filtering, and selection/frame behavior in Workspace.
+- Inspector containment through constrained two-column rows and independently scrolling Properties.
+- UI smoke, rendered 1600x1000 evidence, and existing regression gates.
 
 Excluded:
 
-- Runtime execution history and runtime tracing.
-- Diagnostics, Runtime-window, or toolbar redesign.
-- Parser, serialization, native write, or simulation-semantics changes.
+- Runtime execution history, runtime tracing, Variables, Watches, Timeline, Breakpoints, Search,
+  Statistics, and other future Workspace tabs.
+- Parser, serialization, native-write, graph-layout, or simulation-semantics changes.
 - Literal nonnumeric object identifier support.
-- Any replacement or expansion of the Tree tab.
+- Replacement or expansion of the Tree tab.
 
-## Machine Navigator
+## Graph workspace
 
-The left pane defaults to **Machines** when a graph is loaded. It contains only
-`hkbStateMachine` objects, ordered as their graph objects are loaded. Each row shows the
-machine's display name and its serialized numeric object ID, for example `Locomotion   #221`.
-An unnamed machine uses its class name as its display name. The navigator does not list arbitrary
-generators, state infos, symbols, or full object hierarchies.
+The Graph tab contains only the grouped toolbar, graph canvas, Properties pane, and optional
+Problems/Output drawer. There is no permanent left navigation pane and no runtime panel below the
+canvas.
 
-Selecting a navigator row performs the same selection path as a canvas selection, selects the
-machine in the inspector, and frames that machine and its immediate graph context. It does not
-enter focus mode, hide nodes, alter a trace, modify XML, or start or stop simulation.
+The View toolbar group exposes a compact menu or equivalent popup with these actions:
 
-While a `GraphRun` exists, a machine row receives an active indicator when it has an active,
-non-fading runtime machine. The indicator is presentation only and is refreshed from the existing
-run update path. It is removed when the run stops or a different file is loaded.
+- Workspace: opens or activates the Workspace tool window and states whether it is open.
+- Properties: shows or hides the right inspector pane.
+- Problems and Output: open the bounded diagnostics drawer on the requested tab.
+- Legend: opens a separate temporary Legend reference window.
 
-## Legend swap
+The toolbar does not gain a separate permanent Workspace button. View is the single home for
+workspace visibility and reference material.
 
-The existing **Legend** control remains in the View group. It swaps the left pane between the
-Machine Navigator and the Legend. Closing or collapsing the Legend restores the Machine Navigator
-when the left pane is open. The left pane remains resizable and collapsible under the Phase 1
-constraints.
+## Workspace tool window
 
-## Focus tree
+Workspace is a normal, resizable, top-level editor window. It has one instance per main window and
+uses the main window as owner. It remembers its last normal size and position through `Settings`;
+the first presentation is centered on the owner. Closing cancels the native close and hides the
+window. Reopening shows the same window, restores it if minimized, and activates it. Hiding it does
+not stop or reset simulation.
 
-`Focus tree` is enabled only with a selected state machine. It is an explicit view action, never a
-side effect of selecting a machine.
+Workspace owns only its presentation. `MainWindow` remains the owner of graph selection, GraphRun,
+loaded document data, and mutation operations. When the loaded graph or current run changes,
+MainWindow refreshes Workspace immediately whether it is visible or hidden.
 
-Focus computes the selected machine's ownership tree using the existing graph ownership result.
-The visible set is the machine plus all descendants owned by that machine. Nodes owned by another
-branch remain hidden even when they are referenced by a visible node. This makes the result a
-readable ownership tree rather than a misleading duplicate graph.
+The window starts with a TabControl rather than a layout specialized to two tabs. Future tool tabs
+can be added without reworking the window frame or lifecycle.
 
-`Show full graph` clears the focus filter and restores normal GraphView visibility. Focus state is
-held only by the view. It does not mutate XML, the parsed model, routes, collapsed-state data,
-pinned positions, the undo stack, or the simulation.
+### Machines tab
 
-If a selected machine is not on the canvas or has no ownership tree, focus is refused with a clear
-status message and the visible graph stays unchanged. A machine with no owned descendants is still
-a valid focus result: the canvas shows that single machine and frames it.
+Machines lists only `hkbStateMachine` objects in loaded graph order. Each row has the display name,
+serialized numeric identifier, and presentation-only running marker. An unnamed machine displays
+its class name. A filter field matches display name or serialized ID without changing the graph.
 
-## Static dependency trace
+Selecting a row selects the same object in the canvas and Properties pane and frames its existing
+graph context. It does not enter Focus tree, clear or start a trace, change graph visibility,
+modify XML, or affect simulation.
 
-Static tracing is independent of selection. Selection chooses the seed. A trace begins only when
-the user presses one of its explicit actions:
+### Runtime tab
 
-- **Upstream**: every visible graph node that can reach the seed.
-- **Downstream**: every visible graph node reachable from the seed.
-- **Both**: the union of upstream and downstream nodes and the seed.
-- **Clear trace**: removes static trace emphasis while retaining the selected node and its
-  inspector contents.
+Runtime hosts the existing active-machines, stopped, held-back, and event-log controls. It is the
+current home for simulation information. Its tab organization deliberately leaves room for later
+Variables, Watches, Timeline, and Execution History tabs without adding disabled placeholders now.
 
-Traversal uses a cycle-safe breadth-first walk over existing reference/ownership relationships and
-the existing resolved `StateRoutes` transition relationships. It does not create edges, rewrite
-routes, broaden `GraphAuthor.PointsAt`, or alter GraphRun state.
+## Legend reference window
 
-When Focus tree is active, the traversal graph is restricted to the currently visible ownership
-tree. A trace does not reveal nodes outside focus mode and does not silently cancel focus. In the
-full graph view, traversal uses all canvas-visible graph nodes.
+Legend is reference material, not navigation. View > Legend opens a separate temporary top-level
+Legend window. It is resizable, centered on first presentation, hides on close, and reopens as the
+same instance. It is independent from Workspace and does not consume graph-canvas width.
 
-When there is no selected canvas node, trace actions are disabled. If a selected node is no longer
-visible, the trace is cleared during the normal visibility rebuild. A seed with no path in the
-chosen direction remains selected and frames itself as a one-node result.
+## Focus tree and static trace
 
-## Trace visual states
+Focus tree is an explicit graph action enabled only with a selected state machine. It uses existing
+ownership data to filter GraphView visibility, does not mutate data or simulation, and Show full
+graph explicitly restores all graph nodes.
 
-The visual layers remain distinct:
+Static trace is independent from selection. Upstream, Downstream, and Both traverse only existing
+ownership/reference links and resolved `StateRoutes`; Focus tree limits traversal to visible nodes.
+Tracing emphasizes its result, dims unrelated visible content, frames the result, and Clear trace
+restores normal emphasis while retaining selection. It must not change GraphRun state.
 
-1. Selection uses the existing selected-node treatment.
-2. Static trace uses a dedicated strong path treatment for trace nodes and trace edges.
-3. Non-traced visible graph content is dimmed but remains visible for context.
-4. Active simulation state keeps its existing live-state ring and is not interpreted as trace
-   history.
-5. Validation marks retain their existing error and warning treatment.
+## Inspector containment
 
-Running a static trace frames the trace result. Clearing the trace restores normal emphasis, keeps
-the selected node, and does not reframe the canvas.
-
-Runtime execution tracing is intentionally absent from this phase. A later phase may add event and
-transition history to the Runtime window, with a separate representation from static tracing.
-
-## Node ID chips
-
-Each rendered node gains a compact, right-aligned header chip. The primary node name remains on
-the left. In current supported files the chip displays `#` plus the parsed numeric object ID, for
-example `#98`.
-
-The chip is a label only. It does not identify a node by draw order, does not change object IDs,
-and does not imply support for alternate identifier syntax. The name truncates before the chip
-rather than overlapping it; the chip remains readable at normal graph zoom.
-
-## Proposed left-pane layout
-
-```text
-┌──────────── Machines ────────────┐
-│ Filter machines...                │
-│                                    │
-│ ▾ Root                 #92  ●      │
-│   Combat               #143        │
-│   Locomotion           #221  ●     │
-│   Idle                 #356        │
-│                                    │
-│ [Focus tree] [Show full graph]    │
-│                                    │
-│ Trace selection                   │
-│ [Upstream] [Downstream] [Both]    │
-│ [Clear trace]                     │
-└────────────────────────────────────┘
-```
-
-`●` denotes a live non-fading machine. It appears only while simulation is running.
+Every regular field, enum field, bone-array field, and expandable-array header uses a bounded
+two-column layout: a fixed, ellipsized label column and a star-sized value column. The row and its
+children clip to their bounds. Long summaries and values trim rather than widening the scroll
+content. Properties retains vertical scrolling only and no child may paint outside its host.
 
 ## Verification plan
 
-Smoke coverage must prove the real UI paths, not only helper state:
+Smoke coverage must prove the real UI paths:
 
-- Machines is the default left-pane view after a real graph loads.
-- Legend swaps into the same pane and returns to Machines when dismissed.
-- Only state machines appear in the navigator, with their expected `#` numeric IDs.
-- Selecting a navigator row selects the matching graph object and frames it without entering focus.
-- Active-machine indicators match the current GraphRun state and disappear when the run stops.
-- Focus tree changes only the visible canvas set, leaves loaded XML and run state unchanged, and
-  Show full graph restores the full canvas set.
-- Upstream, downstream, and both traces follow known graph-reference and `StateRoutes` paths.
-- Static trace dims unrelated visible nodes, frames the trace result, and Clear trace preserves the
-  selected node while restoring normal emphasis.
-- A trace in Focus tree never includes hidden nodes.
-- Node ID chips render `#` numeric identifiers without obscuring node names.
-- Existing selection, inspector, layout, playback clipping, and Phase 1 pane smoke checks remain
-  green.
+- The Graph workspace has no permanent left pane and keeps the canvas usable at 1600x1000.
+- View exposes Workspace, Properties, Problems, Output, and Legend without duplicate controls.
+- Workspace opens once, activates on repeat request, hides on close, restores saved bounds, and
+  keeps simulation running while hidden.
+- Workspace starts with Machines and Runtime tabs. Machines filters, lists only state machines,
+  shows numeric IDs and active markers, and selection frames without entering Focus tree.
+- Runtime receives the existing live simulation grids and remains synchronized after it is hidden.
+- Legend opens independently and never changes the graph workspace width.
+- Focus, Show full graph, static tracing, trace clearing, and ID chips retain their Phase 2
+  behavior and restrictions.
+- Properties rows and expander headers fit within the Properties host and vertically scroll.
+- Existing selection, playback clipping, diagnostics drawer, parsing, serialization, and simulation
+  smoke checks remain green.
 
-The implementation must begin by adding these assertions in `tools/uismoke`, observing their
-expected failures, and then adding the smallest production changes to make them pass. The four
-repository gates run before the implementation commit.
+The implementation starts by adding assertions to `tools/uismoke`, observing the expected failures,
+then making the smallest production changes. Before commit it renders the Graph workspace at
+1600x1000 with Workspace visible and hidden, then runs all four required repository gates.
