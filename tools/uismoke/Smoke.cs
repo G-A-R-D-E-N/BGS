@@ -388,6 +388,13 @@ public static class Smoke
                     window.ShowFullGraphForTest();
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                     CheckTrue($"{name}: Show full graph clears focus mode", !window.GraphFocusTreeActive);
+
+                    window.SetGraphLayoutModeForTest(GraphLayoutMode.StructuredFlow);
+                    Check($"{name}: View can select Structured Flow", GraphLayoutMode.StructuredFlow,
+                          window.GraphLayoutModeForTest);
+                    window.SetGraphLayoutModeForTest(GraphLayoutMode.Freeform);
+                    Check($"{name}: View can restore Freeform", GraphLayoutMode.Freeform,
+                          window.GraphLayoutModeForTest);
                 }
 
                 CheckTrue($"{name}: running machines are marked in the navigator",

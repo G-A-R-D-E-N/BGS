@@ -559,12 +559,15 @@ public class MainWindow : Window
         var legend = ViewItem("Legend", OpenLegendWindow);
         var focus = ViewItem("Focus tree", FocusSelectedMachine);
         var full = ViewItem("Show full graph", ShowFullGraph);
+        var freeform = ViewItem("Freeform", () => SetGraphLayoutMode(GraphLayoutMode.Freeform));
+        var structured = ViewItem("Structured Flow", () => SetGraphLayoutMode(GraphLayoutMode.StructuredFlow));
         var upstream = ViewItem("Trace upstream", () => TraceSelected(GraphTrace.Direction.Upstream));
         var downstream = ViewItem("Trace downstream", () => TraceSelected(GraphTrace.Direction.Downstream));
         var both = ViewItem("Trace both", () => TraceSelected(GraphTrace.Direction.Both));
         var clear = ViewItem("Clear trace", _graph.ClearTrace);
         foreach (var item in new MenuItem[]
-                 { workspace, properties, problems, output, legend, focus, full, upstream, downstream, both, clear })
+                 { workspace, properties, problems, output, legend, freeform, structured, focus, full,
+                   upstream, downstream, both, clear })
             menu.Items.Add(item);
 
         button.ContextMenu = menu;
@@ -573,6 +576,9 @@ public class MainWindow : Window
             workspace.Header = WorkspaceVisible ? "Workspace   Open" : "Workspace   Closed";
             legend.Header = LegendWindowVisible ? "Legend   Open" : "Legend   Closed";
             properties.Header = _graphRightOpen ? "Properties   Open" : "Properties   Closed";
+            freeform.Header = _graph.LayoutMode == GraphLayoutMode.Freeform ? "✓ Freeform" : "Freeform";
+            structured.Header = _graph.LayoutMode == GraphLayoutMode.StructuredFlow
+                ? "✓ Structured Flow" : "Structured Flow";
             menu.Open(button);
         };
         ToolTip.SetTip(button, "Open workspace tools, panels, graph focus, tracing, and reference material.");
@@ -590,6 +596,14 @@ public class MainWindow : Window
     {
         SetGraphDrawerOpen(true);
         SelectGraphDrawerTab(tab);
+    }
+
+    private void SetGraphLayoutMode(GraphLayoutMode mode)
+    {
+        _graph.SetLayoutMode(mode);
+        SetStatus(mode == GraphLayoutMode.StructuredFlow
+            ? "Structured Flow shows the state-machine hierarchy."
+            : "Freeform shows the raw object dependency graph.", Ux.MetaBrush);
     }
 
     private Control BuildWorkspaceRuntimeTab()
@@ -1493,6 +1507,7 @@ public class MainWindow : Window
     public string LoadedXml => _xmlText;
     public Inspector GraphProperties => _graphProps;
     public GraphView Canvas => _graph;
+    public GraphLayoutMode GraphLayoutModeForTest => _graph.LayoutMode;
 
     // The workspace state is exposed to the headless smoke checks so they can exercise the real pane
     // buttons' behavior. These are layout controls only: the graph and every existing data panel stay
@@ -1584,6 +1599,8 @@ public class MainWindow : Window
     public void FocusTreeForTest() => FocusSelectedMachine();
 
     public void ShowFullGraphForTest() => ShowFullGraph();
+
+    public void SetGraphLayoutModeForTest(GraphLayoutMode mode) => SetGraphLayoutMode(mode);
 
     public void ClearRunForTest()
     {
