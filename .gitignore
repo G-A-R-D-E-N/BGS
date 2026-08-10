@@ -10,7 +10,6 @@ obj/
 /downloads/*.zip
 
 # Local tooling config
-.claude/
 
 # Test results
 [Tt]est[Rr]esults/
