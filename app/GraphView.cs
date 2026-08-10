@@ -10,6 +10,19 @@ using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.App;
 
+public enum GraphLayoutMode
+{
+    Freeform,
+    StructuredFlow,
+}
+
+public enum StructuredFlowDetail
+{
+    Far,
+    Medium,
+    Close,
+}
+
 // The node canvas, drawn directly rather than built from a toolkit's graph widget. Everything it
 // knows about the file comes from the same GraphAuthor and GraphLinks the headless tools use, so
 // what it draws and what an edit does cannot drift apart.
@@ -52,6 +65,9 @@ public class GraphView : Control
     private readonly Dictionary<string, Node> _nodes = new();
     private readonly List<string> _order = new();
     private readonly Dictionary<string, Point> _placed = new();
+    private readonly Dictionary<string, Rect> _structuredContainers = new(StringComparer.Ordinal);
+    private StructuredFlowLayout.Plan? _structuredPlan;
+    private GraphLayoutMode _layoutMode;
 
     /// Which nodes are folded shut, kept across rebuilds so an edit does not silently unfold the
     /// graph, and cleared when a different file is opened.
@@ -127,6 +143,15 @@ public class GraphView : Control
 
     /// Everything picked. A marquee or ctrl click can pick several, and a drag moves all of them.
     public IReadOnlyList<string> SelectedIds => _selected;
+
+    public GraphLayoutMode LayoutMode => _layoutMode;
+    public StructuredFlowDetail DetailLevel => CurrentDetail();
+    public IReadOnlyCollection<string> StructuredMachineIds => _structuredPlan == null
+        ? Array.Empty<string>()
+        : _structuredPlan.Machines.Where(m => _nodes.ContainsKey(m.Id)).Select(m => m.Id).ToList();
+
+    public Rect? StructuredContainerBounds(string machineId) =>
+        _structuredContainers.TryGetValue(machineId, out var bounds) ? bounds : null;
 
     /// The one the properties panel is looking at, which is the first of the selection.
     ///
@@ -311,6 +336,8 @@ public class GraphView : Control
         _nodes.Clear();
         _order.Clear();
         _placed.Clear();
+        _structuredContainers.Clear();
+        _structuredPlan = null;
         _collapsed.Clear();
         _placedCount = 0;
         _sharedBy.Clear();
@@ -327,6 +354,16 @@ public class GraphView : Control
         _zoom = 0.9;
         _pan = new Point(40, 40);
     }
+
+    public void SetLayoutMode(GraphLayoutMode mode)
+    {
+        if (_layoutMode == mode) return;
+        _layoutMode = mode;
+        if (_model != null) Show(_model);
+        FrameAll();
+    }
+
+    public void SetZoomForTest(double zoom) => SetZoom(zoom);
 
     public void Show(BehaviourGraphModel model)
     {
@@ -362,6 +399,8 @@ public class GraphView : Control
         // count, so this is not a constant anyone can assume.
         var placed = GraphAuthor.Layout(model, MaxNodes);
         _own = GraphOwnership.Of(placed);
+        _structuredPlan = StructuredFlowLayout.Of(placed);
+        _structuredContainers.Clear();
 
         _placedCount = placed.Count;
 
@@ -440,11 +479,18 @@ public class GraphView : Control
         foreach (var (id, at) in _placed)
             if (heightOf.ContainsKey(id)) pinned[id] = at.Y;
 
-        var y = GraphLayout.Place(measured, pinned, RowGap);
+        var freeformY = GraphLayout.Place(measured, pinned, RowGap);
+        var structuredAt = _layoutMode == GraphLayoutMode.StructuredFlow
+            ? StructuredPositions(showing, heightOf)
+            : new Dictionary<string, Point>(StringComparer.Ordinal);
 
         foreach (var (obj, column, ownerId) in showing)
         {
-            double x = _placed.TryGetValue(obj.Id, out var kept) ? kept.X : column * ColumnGap;
+            Point at = _layoutMode == GraphLayoutMode.StructuredFlow
+                ? structuredAt[obj.Id]
+                : _placed.TryGetValue(obj.Id, out var kept)
+                    ? kept
+                    : new Point(column * ColumnGap, freeformY[obj.Id]);
 
             _order.Add(obj.Id);
             _nodes[obj.Id] = new Node
@@ -461,9 +507,11 @@ public class GraphView : Control
                 Active = _active.Contains(obj.Id),
                 Wildcards = wildcardsOf[obj.Id],
                 Problem = _problems.TryGetValue(obj.Id, out var level) ? level : null,
-                Bounds = new Rect(x, y[obj.Id], NodeWidth, heightOf[obj.Id]),
+                Bounds = new Rect(at.X, at.Y, NodeWidth, heightOf[obj.Id]),
             };
         }
+
+        if (_layoutMode == GraphLayoutMode.StructuredFlow) BuildStructuredContainers();
 
         // The whole selection is pruned, not just the primary. Folding a branch takes its nodes off
         // the canvas, and a selection still naming them would drag things nobody can see.
@@ -477,6 +525,113 @@ public class GraphView : Control
         RebuildRelated();
         RebuildMatched();
         InvalidateVisual();
+    }
+
+    private Dictionary<string, Point> StructuredPositions(
+        IReadOnlyList<(HkObject Node, int Column, string OwnerId)> showing,
+        IReadOnlyDictionary<string, double> heightOf)
+    {
+        var showingIds = showing.Select(p => p.Node.Id).ToHashSet(StringComparer.Ordinal);
+        var children = showing.ToDictionary(p => p.Node.Id, _ => new List<string>(), StringComparer.Ordinal);
+        var roots = new List<string>();
+        foreach (var (node, _, ownerId) in showing)
+        {
+            if (ownerId.Length > 0 && children.TryGetValue(ownerId, out var owned)) owned.Add(node.Id);
+            else roots.Add(node.Id);
+        }
+
+        var rowHeight = new Dictionary<int, double>();
+        foreach (string id in showingIds)
+        {
+            int depth = _structuredPlan?.Item(id).Depth ?? 0;
+            rowHeight[depth] = Math.Max(rowHeight.GetValueOrDefault(depth), heightOf[id]);
+        }
+
+        var rowY = new Dictionary<int, double>();
+        double nextY = 0;
+        foreach (int depth in rowHeight.Keys.OrderBy(d => d))
+        {
+            rowY[depth] = nextY;
+            nextY += rowHeight[depth] + 80;
+        }
+
+        const double ColumnWidth = 300;
+        var xOf = new Dictionary<string, double>(StringComparer.Ordinal);
+        double nextLeaf = 0;
+
+        double PlaceX(string id)
+        {
+            var kids = children[id];
+            if (kids.Count == 0) return xOf[id] = nextLeaf++ * ColumnWidth;
+
+            double first = PlaceX(kids[0]);
+            double last = first;
+            for (int i = 1; i < kids.Count; i++) last = PlaceX(kids[i]);
+            return xOf[id] = (first + last) / 2;
+        }
+
+        foreach (string root in roots) PlaceX(root);
+
+        var at = new Dictionary<string, Point>(StringComparer.Ordinal);
+        foreach (string id in showingIds)
+        {
+            int depth = _structuredPlan?.Item(id).Depth ?? 0;
+            at[id] = new Point(xOf[id] - NodeWidth / 2, rowY[depth]);
+        }
+        return at;
+    }
+
+    private void BuildStructuredContainers()
+    {
+        _structuredContainers.Clear();
+        if (_structuredPlan == null) return;
+
+        foreach (var machine in _structuredPlan.Machines.OrderByDescending(m => m.Depth))
+        {
+            var members = _nodes.Values.Where(node => InStructuredMachine(node.Id, machine.Id)
+                                                       && IsDrawnAtCurrentDetail(node.Id))
+                                      .Select(node => node.Bounds).ToList();
+            if (members.Count == 0) continue;
+
+            double left = members.Min(b => b.Left), top = members.Min(b => b.Top);
+            double right = members.Max(b => b.Right), bottom = members.Max(b => b.Bottom);
+            var nested = _structuredContainers
+                .Where(pair => _structuredPlan.Item(pair.Key).ParentMachineId == machine.Id)
+                .Select(pair => pair.Value).ToList();
+            if (nested.Count > 0)
+            {
+                left = Math.Min(left, nested.Min(b => b.Left));
+                top = Math.Min(top, nested.Min(b => b.Top));
+                right = Math.Max(right, nested.Max(b => b.Right));
+                bottom = Math.Max(bottom, nested.Max(b => b.Bottom));
+            }
+
+            _structuredContainers[machine.Id] = new Rect(left - 24, top - 34,
+                                                          right - left + 48, bottom - top + 58);
+        }
+    }
+
+    private bool InStructuredMachine(string id, string machineId)
+    {
+        if (_structuredPlan == null || !_structuredPlan.Items.TryGetValue(id, out var item)) return false;
+        return id == machineId || item.StructuralAncestorIds.Contains(machineId);
+    }
+
+    private StructuredFlowDetail CurrentDetail() => _layoutMode == GraphLayoutMode.Freeform
+        ? StructuredFlowDetail.Close
+        : _zoom < 0.50 ? StructuredFlowDetail.Far
+        : _zoom < 1.05 ? StructuredFlowDetail.Medium
+        : StructuredFlowDetail.Close;
+
+    public bool IsDrawnAtCurrentDetail(string id)
+    {
+        if (_layoutMode == GraphLayoutMode.Freeform) return _nodes.ContainsKey(id);
+        if (_structuredPlan == null || !_structuredPlan.Items.TryGetValue(id, out var item)) return false;
+        if (item.Kind is StructuredFlowLayout.NodeKind.Root or StructuredFlowLayout.NodeKind.Machine) return true;
+        if (CurrentDetail() == StructuredFlowDetail.Close) return true;
+        if (item.Kind == StructuredFlowLayout.NodeKind.State) return CurrentDetail() != StructuredFlowDetail.Far;
+        return CurrentDetail() == StructuredFlowDetail.Medium &&
+               (_traceIds.Contains(id) || item.StructuralAncestorIds.Any(_selected.Contains));
     }
 
     public bool SetFocusTree(string machineId)
@@ -698,6 +853,8 @@ public class GraphView : Control
 
         if (_model == null) return;
 
+        if (_layoutMode == GraphLayoutMode.StructuredFlow) DrawStructuredContainers(ctx);
+
         // Two passes so the highlighted wires sit on top of the dimmed ones rather than being
         // crossed by them, which is the whole point of asking for one state at a time. With nothing
         // picked out there is nothing to sit on top of, and a second walk of four thousand nodes is
@@ -708,6 +865,7 @@ public class GraphView : Control
                 for (int i = 0; i < node.Slots.Count; i++)
                     foreach (string target in node.Slots[i].Targets)
                     {
+                        if (!IsDrawnAtCurrentDetail(node.Id) || !IsDrawnAtCurrentDetail(target)) continue;
                         if (!_nodes.TryGetValue(target, out var to)) continue;
                         bool lit = Lit(node.Id, target);
                         if (lit != (pass == 1)) continue;
@@ -727,11 +885,32 @@ public class GraphView : Control
 
         foreach (var node in _nodes.Values)
         {
+            if (!IsDrawnAtCurrentDetail(node.Id)) continue;
             if (!Dimmed(node.Id)) DrawNode(ctx, node);
             else using (ctx.PushOpacity(0.4)) DrawNode(ctx, node);
         }
 
         DrawMarquee(ctx);
+    }
+
+    private void DrawStructuredContainers(DrawingContext ctx)
+    {
+        if (_structuredPlan == null) return;
+
+        foreach (var machine in _structuredPlan.Machines.OrderBy(m => m.Depth))
+        {
+            if (!_structuredContainers.TryGetValue(machine.Id, out var world)) continue;
+            var box = new Rect(ToScreen(world.TopLeft), new Size(world.Width * _zoom, world.Height * _zoom));
+            if (!box.Intersects(new Rect(Bounds.Size))) continue;
+
+            bool selected = _selected.Contains(machine.Id);
+            var accent = _nodes.TryGetValue(machine.Id, out var node) ? node.Accent : Ux.RouteColour;
+            ctx.DrawRectangle(new SolidColorBrush(accent, selected ? 0.13 : 0.07),
+                              new Pen(new SolidColorBrush(accent, selected ? 0.92 : 0.68), selected ? 2.3 : 1.6),
+                              box, 10, 10);
+            Draw(ctx, HeaderTextOf(machine.Id), box.X + 10 * _zoom, box.Y + 7 * _zoom,
+                 Math.Max(9, 11 * _zoom), new SolidColorBrush(accent), box.Width - 20 * _zoom);
+        }
     }
 
     /// Which routes get drawn, which depends on whether a state has been picked out.
@@ -786,6 +965,7 @@ public class GraphView : Control
         {
             if (!_nodes.TryGetValue(route.FromId, out var from)) continue;
             if (!_nodes.TryGetValue(route.ToId, out var to)) continue;
+            if (!IsDrawnAtCurrentDetail(route.FromId) || !IsDrawnAtCurrentDetail(route.ToId)) continue;
 
             bool lit = Lit(route.FromId, route.ToId);
 
@@ -1183,11 +1363,12 @@ public class GraphView : Control
     private string _hovered = "";
 
     private Node? NodeAt(Point world) =>
-        _nodes.Values.LastOrDefault(n => n.Bounds.Contains(world));
+        _nodes.Values.LastOrDefault(n => IsDrawnAtCurrentDetail(n.Id) && n.Bounds.Contains(world));
 
     private (Node Node, int Slot)? PortAt(Point world)
     {
         foreach (var node in _nodes.Values)
+            if (IsDrawnAtCurrentDetail(node.Id))
             for (int i = 0; i < node.Slots.Count; i++)
                 if (Distance(node.OutPort(i), world) < PortRadius * 2.5)
                     return (node, i);
@@ -1293,7 +1474,8 @@ public class GraphView : Control
             // Intersecting rather than wholly inside, so a node hanging off the edge of the view can
             // be caught without zooming out far enough to fit all of it in the box.
             foreach (string id in _order)
-                if (_nodes.TryGetValue(id, out var node) && node.Bounds.Intersects(_marquee))
+                if (_nodes.TryGetValue(id, out var node) && IsDrawnAtCurrentDetail(id)
+                                                    && node.Bounds.Intersects(_marquee))
                     _selected.Add(id);
 
             Selected?.Invoke(SelectedId);
@@ -1337,6 +1519,7 @@ public class GraphView : Control
         _zoom = Math.Clamp(_zoom * (e.Delta.Y > 0 ? 1.12 : 1 / 1.12), 0.15, 3.0);
         var after = ToWorld(e.GetPosition(this));
         _pan += (after - before) * _zoom;
+        if (_layoutMode == GraphLayoutMode.StructuredFlow) BuildStructuredContainers();
         InvalidateVisual();
     }
 
@@ -1373,6 +1556,7 @@ public class GraphView : Control
     public void SetZoom(double zoom)
     {
         _zoom = Math.Clamp(zoom, 0.15, 3.0);
+        if (_layoutMode == GraphLayoutMode.StructuredFlow) BuildStructuredContainers();
         InvalidateVisual();
     }
 
@@ -1382,7 +1566,7 @@ public class GraphView : Control
     /// anything: Dogmeat's default behaviour lays out 8,890 by 5,589, so at 0.7 the button put you
     /// in the top left corner of something seven screens across and said it had framed it. The zoom
     /// is worked out from what there is to show.
-    public void FrameAll() => Frame(_nodes.Values.Select(n => n.Bounds));
+    public void FrameAll() => Frame(_nodes.Values.Where(n => IsDrawnAtCurrentDetail(n.Id)).Select(n => n.Bounds));
 
     /// Fit one node and everything it is joined to, which is what somebody asking about a machine
     /// wants: that machine and its states filling the view instead of being a tenth of it.
@@ -1391,7 +1575,7 @@ public class GraphView : Control
         if (_highlight.Length == 0) { FrameAll(); return; }
 
         var of = _related.Count > 0 ? _related : new HashSet<string> { _highlight };
-        Frame(of.Where(_nodes.ContainsKey).Select(id => _nodes[id].Bounds));
+        Frame(of.Where(id => _nodes.ContainsKey(id) && IsDrawnAtCurrentDetail(id)).Select(id => _nodes[id].Bounds));
     }
 
     private void Frame(IEnumerable<Rect> what)
@@ -1411,6 +1595,7 @@ public class GraphView : Control
         // all" framed something taller than the view and said it had framed it.
         _zoom = Math.Clamp(Math.Min((Bounds.Width - Margin * 2) / wide,
                                     (Bounds.Height - Margin * 2) / tall), 0.005, 1.5);
+        if (_layoutMode == GraphLayoutMode.StructuredFlow) BuildStructuredContainers();
 
         // Centred rather than corner aligned. A graph wider than it is tall leaves a band of empty
         // canvas otherwise, and the thing being looked at sits against one edge of it.

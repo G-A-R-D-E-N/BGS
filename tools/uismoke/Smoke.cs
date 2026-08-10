@@ -801,6 +801,54 @@ public static class Smoke
                     Check($"{name}: and clearing it releases the canvas", "", canvas.HighlightId);
                 }
 
+                // Structured Flow is a second layout of the same graph, not a second graph. The
+                // hierarchy comes from ownership and its zoom bands only decide what is painted.
+                {
+                    var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
+                    string machineId = model.Objects
+                        .Where(o => o.Class == "hkbStateMachine" && canvas.OwnedCount(o.Id) > 0)
+                        .Select(o => o.Id).FirstOrDefault() ?? "";
+                    string stateId = model.Objects
+                        .Where(o => o.Class == "hkbStateMachineStateInfo" && canvas.OwnerOf(o.Id) == machineId)
+                        .Select(o => o.Id).FirstOrDefault() ?? "";
+                    string helperId = stateId.Length == 0 ? "" : canvas.OwnedIds(stateId).FirstOrDefault() ?? "";
+
+                    if (machineId.Length > 0 && stateId.Length > 0 && helperId.Length > 0)
+                    {
+                        canvas.SetLayoutMode(GraphLayoutMode.StructuredFlow);
+                        canvas.FrameAll();
+                        canvas.SetZoomForTest(0.75);
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                        Check($"{name}: Structured Flow is selected", GraphLayoutMode.StructuredFlow,
+                              canvas.LayoutMode);
+                        CheckTrue($"{name}: Structured Flow creates machine containers",
+                                  canvas.StructuredMachineIds.Contains(machineId));
+                        CheckTrue($"{name}: Structured Flow puts a machine above its state",
+                                  canvas.PositionOf(machineId)!.Value.Y < canvas.PositionOf(stateId)!.Value.Y);
+                        CheckTrue($"{name}: Structured Flow bounds the state in its machine",
+                                  canvas.StructuredContainerBounds(machineId) is { } box
+                                  && box.Contains(canvas.PositionOf(stateId)!.Value));
+
+                        canvas.SetZoomForTest(0.35);
+                        Check($"{name}: far Structured Flow detail is selected", StructuredFlowDetail.Far,
+                              canvas.DetailLevel);
+                        CheckTrue($"{name}: far detail retains machine tiles",
+                                  canvas.IsDrawnAtCurrentDetail(machineId));
+                        CheckTrue($"{name}: far detail suppresses helper tiles",
+                                  !canvas.IsDrawnAtCurrentDetail(helperId));
+
+                        canvas.SetZoomForTest(1.20);
+                        Check($"{name}: close Structured Flow detail is selected", StructuredFlowDetail.Close,
+                              canvas.DetailLevel);
+                        CheckTrue($"{name}: close detail reveals helper tiles",
+                                  canvas.IsDrawnAtCurrentDetail(helperId));
+
+                        canvas.SetLayoutMode(GraphLayoutMode.Freeform);
+                        canvas.SetZoomForTest(0.9);
+                    }
+                }
+
                 // Focus tree and static trace are view-only. Selection picks an object, focus hides
                 // everything outside one machine tree, and trace dims visible graph content without
                 // changing the loaded document or simulation state.

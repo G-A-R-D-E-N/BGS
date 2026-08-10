@@ -43,13 +43,6 @@ public static class StructuredFlowLayout
     public static Plan Of(IReadOnlyList<(HkObject Node, int Column, string OwnerId)> placed)
     {
         var byId = placed.ToDictionary(p => p.Node.Id, p => p, StringComparer.Ordinal);
-        var childOrder = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var (_, _, ownerId) in placed)
-        {
-            if (!childOrder.ContainsKey(ownerId)) childOrder[ownerId] = 0;
-            childOrder[ownerId]++;
-        }
-
         var items = new Dictionary<string, Item>(StringComparer.Ordinal);
         foreach (var (node, _, ownerId) in placed)
         {
