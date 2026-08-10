@@ -52,6 +52,13 @@ public class MainWindow : Window
     private Button? _legendButton;
     private Button? _propertiesButton;
     private Button? _drawerButton;
+    private readonly HkGrid _machineNavigator = new(("Machine", -4), ("ID", 70), ("Run", 62));
+    private Control _machinePane = new Panel();
+    private string _graphLeftPaneView = "Machines";
+    private bool _machineNavigatorRebuilding;
+    private readonly List<string> _machineNavigatorIds = new();
+    private readonly List<string> _machineNavigatorLabels = new();
+    private readonly HashSet<string> _machineNavigatorActiveIds = new(StringComparer.Ordinal);
     private bool _graphLeftOpen;
     private bool _graphRightOpen = true;
     private bool _graphDrawerOpen;
@@ -430,8 +437,8 @@ public class MainWindow : Window
         // says what it means. That is a lot to hold in your head on a graph with eight hundred boxes
         // in it, and the answer is not fewer marks: it is the marks having somewhere to be looked up.
         var legendBody = BuildLegend();
-        var legendClose = Ux.Secondary("Collapse");
-        legendClose.Click += (_, _) => SetGraphLeftPaneOpen(false);
+        var legendClose = Ux.Secondary("Machines");
+        legendClose.Click += (_, _) => ShowMachinesPane();
         var legendHeader = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
         DockPanel.SetDock(legendClose, Dock.Right);
         legendHeader.Children.Add(legendClose);
@@ -443,8 +450,15 @@ public class MainWindow : Window
         _legend = Framed(legendPane);
         _legend.IsVisible = false;
 
+        _machinePane = Framed(BuildMachineNavigatorPane());
+        _machinePane.IsVisible = true;
+
         _legendButton = Ux.Secondary("Legend");
-        _legendButton.Click += (_, _) => SetGraphLeftPaneOpen(!_graphLeftOpen);
+        _legendButton.Click += (_, _) =>
+        {
+            if (_graphLeftPaneView == "Legend" && _graphLeftOpen) ShowMachinesPane();
+            else ShowLegendPane();
+        };
 
         _propertiesButton = Ux.Secondary("Hide properties");
         _propertiesButton.Click += (_, _) => SetGraphRightPaneOpen(!_graphRightOpen);
@@ -507,6 +521,7 @@ public class MainWindow : Window
         workspace.ColumnDefinitions.Add(_graphCenterColumn);
         workspace.ColumnDefinitions.Add(_graphRightSplitterColumn);
         workspace.ColumnDefinitions.Add(_graphRightColumn);
+        Grid.SetColumn(_machinePane, 0);
         Grid.SetColumn(_legend, 0);
         Grid.SetColumn(_graphLeftSplitter, 1);
         _graphCanvasHost = Framed(_graph);
@@ -517,6 +532,7 @@ public class MainWindow : Window
         _graphPropertiesHost = Framed(_graphProps);
         _graphPropertiesHost.ClipToBounds = true;
         Grid.SetColumn(_graphPropertiesHost, 4);
+        workspace.Children.Add(_machinePane);
         workspace.Children.Add(_legend);
         workspace.Children.Add(_graphLeftSplitter);
         workspace.Children.Add(_graphCanvasHost);
@@ -574,7 +590,64 @@ public class MainWindow : Window
         _problems.IsVisible = false;
         _problemBar.IsVisible = false;
         _running.IsVisible = false;
+        SetGraphLeftPaneOpen(true);
+        ShowMachinesPane();
         return graphWorkspace;
+    }
+
+    private Control BuildMachineNavigatorPane()
+    {
+        _machineNavigator.SelectionChanged += OnMachineNavigatorSelected;
+
+        var collapse = Ux.Secondary("Collapse");
+        collapse.Click += (_, _) => SetGraphLeftPaneOpen(false);
+        var header = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        DockPanel.SetDock(collapse, Dock.Right);
+        header.Children.Add(collapse);
+        header.Children.Add(Ux.SectionTitle("Machines"));
+
+        var focusTree = Ux.Secondary("Focus tree");
+        focusTree.Click += (_, _) => FocusSelectedMachine();
+        var showFull = Ux.Secondary("Show full graph");
+        showFull.Click += (_, _) => ShowFullGraph();
+
+        var upstream = Ux.Secondary("Upstream");
+        upstream.Click += (_, _) => TraceSelected(GraphTrace.Direction.Upstream);
+        var downstream = Ux.Secondary("Downstream");
+        downstream.Click += (_, _) => TraceSelected(GraphTrace.Direction.Downstream);
+        var both = Ux.Secondary("Both");
+        both.Click += (_, _) => TraceSelected(GraphTrace.Direction.Both);
+        var clearTrace = Ux.Secondary("Clear trace");
+        clearTrace.Click += (_, _) => _graph.ClearTrace();
+
+        var viewActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        viewActions.Children.Add(focusTree);
+        viewActions.Children.Add(showFull);
+
+        var traceActions = new WrapPanel { Orientation = Orientation.Horizontal };
+        foreach (var control in new Control[] { upstream, downstream, both, clearTrace })
+        {
+            control.Margin = new Thickness(0, 0, 6, 6);
+            traceActions.Children.Add(control);
+        }
+
+        var controls = new StackPanel { Spacing = 8, Margin = new Thickness(0, 8, 0, 0) };
+        controls.Children.Add(Ux.SectionTitle("View"));
+        controls.Children.Add(viewActions);
+        controls.Children.Add(Ux.SectionTitle("Trace"));
+        controls.Children.Add(traceActions);
+
+        var pane = new Grid();
+        pane.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        pane.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
+        pane.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        Grid.SetRow(header, 0);
+        Grid.SetRow(_machineNavigator, 1);
+        Grid.SetRow(controls, 2);
+        pane.Children.Add(header);
+        pane.Children.Add(_machineNavigator);
+        pane.Children.Add(controls);
+        return pane;
     }
 
     /// The controls that step the graph: pick an event, send it, and see which states go active.
@@ -1040,6 +1113,7 @@ public class MainWindow : Window
         _runOutput.Text = "";
         _running.IsVisible = false;
         _step.IsEnabled = false;
+        SetMachineNavigatorActive(Array.Empty<string>());
 
         var model = Model();
         if (model.Objects.Count == 0)
@@ -1166,6 +1240,7 @@ public class MainWindow : Window
 
         var here = _run.Where();
         _graph.ShowActive(here.Select(a => a.StateId));
+        SetMachineNavigatorActive(here.Where(a => !a.Fading).Select(a => a.MachineId));
         AddRunOutput(note);
 
         _running.Clear();
@@ -1458,6 +1533,12 @@ public class MainWindow : Window
     public bool GraphEditShelfOpen => _graphEditShelf?.IsVisible ?? false;
     public bool GraphCanvasHostClips => _graphCanvasHost?.ClipToBounds ?? false;
     public bool GraphPropertiesHostClips => _graphPropertiesHost?.ClipToBounds ?? false;
+    public string GraphLeftPaneView => _graphLeftOpen ? _graphLeftPaneView : "";
+    public IReadOnlyList<string> MachineNavigatorIds => _machineNavigatorIds;
+    public IReadOnlyList<string> MachineNavigatorLabels => _machineNavigatorLabels;
+    public IReadOnlyCollection<string> MachineNavigatorActiveIds => _machineNavigatorActiveIds;
+    public bool GraphFocusTreeActive => _graph.FocusTreeActive;
+    public string SelectedObjectId => _selectedId;
     public double GraphToolbarTopInset => 10;
     public IReadOnlyList<string> GraphToolbarGroups => _graphToolbarGroups;
     public bool GraphToolbarGroupLabelsHaveFixedLineHeight => _graphToolbarGroupLabelsHaveFixedLineHeight;
@@ -1486,11 +1567,25 @@ public class MainWindow : Window
     public void SetGraphLeftPaneOpen(bool open)
     {
         _graphLeftOpen = open;
-        _legend.IsVisible = open;
+        _machinePane.IsVisible = open && _graphLeftPaneView == "Machines";
+        _legend.IsVisible = open && _graphLeftPaneView == "Legend";
         _graphLeftColumn.Width = Pixels(open ? _graphLeftWidth : 0);
         _graphLeftSplitterColumn.Width = Pixels(open ? 6 : 0);
         if (_graphLeftSplitter != null) _graphLeftSplitter.IsVisible = open;
-        if (_legendButton != null) _legendButton.Content = open ? "Hide legend" : "Legend";
+        if (_legendButton != null) _legendButton.Content = _graphLeftPaneView == "Legend" && open
+            ? "Machines" : "Legend";
+    }
+
+    private void ShowMachinesPane()
+    {
+        _graphLeftPaneView = "Machines";
+        SetGraphLeftPaneOpen(true);
+    }
+
+    private void ShowLegendPane()
+    {
+        _graphLeftPaneView = "Legend";
+        SetGraphLeftPaneOpen(true);
     }
 
     public void SetGraphRightPaneOpen(bool open)
@@ -1532,6 +1627,27 @@ public class MainWindow : Window
         _graphDrawerHeight = Math.Clamp(height, 80, 300);
         if (_graphDrawerOpen) _graphDrawerRow.Height = Pixels(_graphDrawerHeight);
     }
+
+    public void ShowLegendForTest() => ShowLegendPane();
+
+    public void ShowMachinesForTest() => ShowMachinesPane();
+
+    public bool SelectMachineForTest(string machineId) => _machineNavigator.SelectByTag(machineId);
+
+    public void FocusTreeForTest() => FocusSelectedMachine();
+
+    public void ShowFullGraphForTest() => ShowFullGraph();
+
+    public void ClearRunForTest()
+    {
+        _run = null;
+        _graph.ClearActive();
+        _running.Clear();
+        _running.IsVisible = false;
+        SetMachineNavigatorActive(Array.Empty<string>());
+    }
+
+    public void StartRunForTest() => StartRun();
 
     private static GridLength Pixels(double value) => new(value, GridUnitType.Pixel);
 
@@ -3054,6 +3170,8 @@ public class MainWindow : Window
         // Object ids start again at #1 in the next file, so anything the canvas remembers by id is
         // about to be applied to a different object entirely.
         _graph.Reset();
+        BuildMachineNavigator(new BehaviourGraphModel());
+        SetMachineNavigatorActive(Array.Empty<string>());
         ClearPose();
         ResetHistory();
         _readOnly = false;
@@ -3311,6 +3429,8 @@ public class MainWindow : Window
 
         _graph.Show(model);
         _graph.FrameAll();
+        BuildMachineNavigator(model);
+        ShowMachinesPane();
         BuildSymbols(model);
         BuildClipList(model);
         BuildChain(java, jar);
@@ -3331,6 +3451,95 @@ public class MainWindow : Window
         && _offsetToIndex.TryGetValue(offset, out int index)
         && index < _objectIds.Count
         && _emptyStates.Contains(_objectIds[index]);
+
+    private void BuildMachineNavigator(BehaviourGraphModel model)
+    {
+        string selected = _machineNavigator.SelectedTag as string ?? "";
+        _machineNavigatorRebuilding = true;
+        try
+        {
+            _machineNavigator.Clear();
+            _machineNavigatorIds.Clear();
+            _machineNavigatorLabels.Clear();
+
+            foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+            {
+                string name = machine.Str("name");
+                if (name.Length == 0) name = "hkbStateMachine";
+                string id = "#" + machine.Id;
+                bool active = _machineNavigatorActiveIds.Contains(machine.Id);
+
+                _machineNavigatorIds.Add(machine.Id);
+                _machineNavigatorLabels.Add(name + " " + id);
+
+                var row = _machineNavigator.Add(null, name, id, active ? "running" : "").Tag(machine.Id);
+                var activeBrush = new SolidColorBrush(Ux.Good);
+                row.Colour(0, active ? activeBrush : Ux.TitleBrush)
+                   .Colour(1, Ux.CodeBrush)
+                   .Colour(2, active ? activeBrush : Ux.MutedBrush);
+            }
+
+            if (selected.Length > 0) _machineNavigator.SelectByTag(selected);
+        }
+        finally
+        {
+            _machineNavigatorRebuilding = false;
+        }
+    }
+
+    private void SetMachineNavigatorActive(IEnumerable<string> activeMachineIds)
+    {
+        _machineNavigatorActiveIds.Clear();
+        foreach (string id in activeMachineIds) _machineNavigatorActiveIds.Add(id);
+        if (_reading.Objects.Count > 0) BuildMachineNavigator(_reading);
+    }
+
+    private void OnMachineNavigatorSelected()
+    {
+        if (_machineNavigatorRebuilding) return;
+        if (_machineNavigator.SelectedTag is not string id || id.Length == 0) return;
+        if (_graph.FocusOn(id)) SelectObjectId(id);
+        else SelectObjectId(id);
+    }
+
+    private string SelectedMachineId()
+    {
+        if (_machineNavigator.SelectedTag is string machineId && machineId.Length > 0)
+            return machineId;
+        var selected = Model().Get(_selectedId);
+        return selected?.Class == "hkbStateMachine" ? _selectedId : "";
+    }
+
+    private void FocusSelectedMachine()
+    {
+        string machineId = SelectedMachineId();
+        if (machineId.Length == 0)
+        {
+            SetStatus("Choose a machine before focusing its tree.", Ux.MutedBrush);
+            return;
+        }
+
+        if (_graph.SetFocusTree(machineId))
+            SetStatus($"Focused machine #{machineId}. Use Show full graph to clear the focus.", Ux.MetaBrush);
+    }
+
+    private void ShowFullGraph()
+    {
+        _graph.ClearFocusTree();
+        SetStatus("Showing the full graph.", Ux.MetaBrush);
+    }
+
+    private void TraceSelected(GraphTrace.Direction direction)
+    {
+        if (_graph.Trace(direction))
+        {
+            SetStatus($"Traced {direction.ToString().ToLowerInvariant()} dependencies for #{_graph.SelectedId}.",
+                      Ux.MetaBrush);
+            return;
+        }
+
+        SetStatus("Select a visible graph node before tracing.", Ux.MutedBrush);
+    }
 
     // The properties panel is not cleared here: the tree is rebuilt on every keystroke in the filter,
     // and the node whose fields are open is usually the reason the filter is being typed.

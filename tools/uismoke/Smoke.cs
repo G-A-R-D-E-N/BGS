@@ -212,7 +212,8 @@ public static class Smoke
 
         Check("the node canvas exists", 1, canvases);
         Check("the skeleton viewport exists", 1, viewports);
-        Check("the tree, symbol, chain, animation, clip and compare grids build without opening details", 6, grids.Count);
+        Check("the tree, graph navigator, symbol, chain, animation, clip and compare grids build without opening details",
+              7, grids.Count);
 
         // The drawer is collapsed by default, so its diagnostics and runtime grids are not built into
         // the visible workspace until the user asks for them. That is what returns their height to the
@@ -237,7 +238,7 @@ public static class Smoke
             legendButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
             CheckTrue("clicking Legend opens it", window.Legend.IsVisible);
-            Check("and the button then offers to put it away", "Hide legend", legendButton.Content?.ToString());
+            Check("and the button then offers to return to Machines", "Machines", legendButton.Content?.ToString());
 
             var said = Find<TextBlock>(window.Legend).Select(t => t.Text ?? "").ToList();
             foreach (string mark in new[]
@@ -359,7 +360,47 @@ public static class Smoke
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
-                CheckTrue($"{name}: the legend pane starts collapsed", !window.GraphLeftPaneOpen);
+                var navigatorModel = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
+                Check($"{name}: Machines is the default left-pane view", "Machines", window.GraphLeftPaneView);
+                CheckTrue($"{name}: the machine navigator starts open", window.GraphLeftPaneOpen);
+                CheckTrue($"{name}: navigator contains only state machines",
+                          window.MachineNavigatorIds.Count > 0 &&
+                          window.MachineNavigatorIds.All(id =>
+                              navigatorModel.Get(id)?.Class == "hkbStateMachine"));
+                CheckTrue($"{name}: navigator labels serialize numeric ids",
+                          window.MachineNavigatorLabels.Count == window.MachineNavigatorIds.Count &&
+                          window.MachineNavigatorLabels.All(text => text.Contains("#", StringComparison.Ordinal)));
+
+                string navigatorMachine = window.MachineNavigatorIds.FirstOrDefault() ?? "";
+                if (navigatorMachine.Length > 0)
+                {
+                    window.SelectMachineForTest(navigatorMachine);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    Check($"{name}: navigator selection reaches the inspector", navigatorMachine,
+                          window.SelectedObjectId);
+                    Check($"{name}: navigator selection reaches the canvas", navigatorMachine,
+                          window.Canvas.SelectedId);
+                    CheckTrue($"{name}: navigator selection does not enable focus",
+                              !window.GraphFocusTreeActive);
+
+                    window.FocusTreeForTest();
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    CheckTrue($"{name}: Focus tree is an explicit action", window.GraphFocusTreeActive);
+
+                    window.ShowFullGraphForTest();
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    CheckTrue($"{name}: Show full graph clears focus mode", !window.GraphFocusTreeActive);
+                }
+
+                CheckTrue($"{name}: running machines are marked in the navigator",
+                          !window.RunReady || window.MachineNavigatorActiveIds.Count > 0);
+                window.ClearRunForTest();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                Check($"{name}: clearing the run clears navigator active markers", 0,
+                      window.MachineNavigatorActiveIds.Count);
+                window.StartRunForTest();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
                 CheckTrue($"{name}: the properties pane starts open", window.GraphRightPaneOpen);
                 CheckTrue($"{name}: the properties pane is wide enough for its inspector",
                           window.GraphRightPaneWidth >= 360);
@@ -397,8 +438,16 @@ public static class Smoke
 
                 window.SetGraphLeftPaneOpen(true);
                 window.ResizeGraphLeftPaneForTest(300);
-                CheckTrue($"{name}: the legend pane can open and resize",
+                CheckTrue($"{name}: the navigator pane can open and resize",
                           window.GraphLeftPaneOpen && window.GraphLeftPaneWidth == 300);
+
+                window.ShowLegendForTest();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                Check($"{name}: Legend swaps into the navigator pane", "Legend", window.GraphLeftPaneView);
+                window.ShowMachinesForTest();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                Check($"{name}: Machines returns after the legend closes", "Machines",
+                      window.GraphLeftPaneView);
 
                 window.SetGraphRightPaneOpen(false);
                 CheckTrue($"{name}: the properties pane can collapse", !window.GraphRightPaneOpen);
