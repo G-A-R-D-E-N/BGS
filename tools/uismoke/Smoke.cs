@@ -26,9 +26,12 @@ public static class Smoke
     /// Usage: uismoke --png &lt;behaviour.hkx&gt; [out.png] [zoom] [focus node id]
     ///
     /// `--window` draws everything beside the canvas as well, which is where the properties panel
-    /// is. Focusing on a node also selects it, so that panel is showing the object the picture is
-    /// about rather than nothing. `--expand` opens the array element blocks, which start closed, so
-    /// a question about what one of a transition's boxes says can be answered from the picture.
+    /// is. `--details` opens the Problems and Output drawer, while `--output` selects Output.
+    /// `--runtime-window` opens the separate Runtime tool window. `--check` fills Problems through
+    /// the real validation button, and `--event` sends the first available event.
+    /// Focusing on a node also selects it, so that panel is showing the object the picture is about
+    /// rather than nothing. `--expand` opens the array element blocks, which start closed, so a
+    /// question about what one of a transition's boxes says can be answered from the picture.
     private static int Png(string[] args)
     {
         // Real drawing rather than the headless stub, which records that something was drawn and
@@ -56,6 +59,18 @@ public static class Smoke
                                  .FindIndex(t => t.Header?.ToString() == "Graph");
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
+        if (args.Contains("--check"))
+        {
+            Find<Button>(window).First(b => b.Content?.ToString() == "Check graph")
+                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        }
+        if (args.Contains("--event") && window.RunEvents.Count > 0)
+        {
+            window.SendEventForTest(window.RunEvents[0]);
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        }
+
         // The whole window rather than the canvas alone, for anything that is drawn beside it: the
         // legend explains the canvas and cannot be checked from a picture that leaves it out.
         bool whole = args.Contains("--window");
@@ -65,10 +80,22 @@ public static class Smoke
                 .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         }
+        if (args.Contains("--details"))
+        {
+            window.SetGraphDrawerOpen(true);
+            if (args.Contains("--output")) window.SelectGraphDrawerTab("Output");
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        }
+        if (args.Contains("--runtime-window"))
+        {
+            window.OpenRuntimeForTest();
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        }
 
         var canvas = Find<GraphView>(window).First();
-        var size = new Size(1600, 1000);
-        Control drawn = whole ? window : canvas;
+        bool runtimeWindow = args.Contains("--runtime-window");
+        var size = runtimeWindow ? new Size(1100, 700) : new Size(1600, 1000);
+        Control drawn = runtimeWindow ? window.RuntimeWindowForTest! : whole ? window : canvas;
         drawn.Measure(size);
         drawn.Arrange(new Rect(size));
 
@@ -185,12 +212,12 @@ public static class Smoke
 
         Check("the node canvas exists", 1, canvases);
         Check("the skeleton viewport exists", 1, viewports);
-        Check("the tree, problem, running, symbol, chain, animation, clip and compare grids exist", 8, grids.Count);
+        Check("the tree, symbol, chain, animation, clip and compare grids build without opening details", 6, grids.Count);
 
-        // Two grids start hidden: the problem list, and the running list. An empty box under the
-        // canvas before a check or a run would read as one that found nothing.
-        Check("the problem and running lists are hidden until they have something to show", 2,
-            grids.Count(g => !g.IsVisible));
+        // The drawer is collapsed by default, so its diagnostics and runtime grids are not built into
+        // the visible workspace until the user asks for them. That is what returns their height to the
+        // graph rather than merely making an empty panel look inactive.
+        Check("collapsed details leave no hidden grids under the canvas", 0, grids.Count(g => !g.IsVisible));
         foreach (string expected in new[]
                  { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
                    "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
@@ -334,9 +361,39 @@ public static class Smoke
 
                 CheckTrue($"{name}: the legend pane starts collapsed", !window.GraphLeftPaneOpen);
                 CheckTrue($"{name}: the properties pane starts open", window.GraphRightPaneOpen);
+                CheckTrue($"{name}: the properties pane is wide enough for its inspector",
+                          window.GraphRightPaneWidth >= 360);
                 CheckTrue($"{name}: the details drawer starts collapsed", !window.GraphDrawerOpen);
+                CheckTrue($"{name}: the drawer default is compact when opened",
+                    window.GraphDrawerDefaultHeight <= 110);
                 CheckTrue($"{name}: collapsed details do not paint over the graph", !window.GraphDrawerContentsVisible);
                 CheckTrue($"{name}: the graph keeps a usable minimum width", window.GraphCenterMinWidth >= 720);
+                CheckTrue($"{name}: the canvas host clips graph drawing at the pane boundary",
+                          window.GraphCanvasHostClips);
+                CheckTrue($"{name}: the properties host clips its own contents",
+                          window.GraphPropertiesHostClips);
+                CheckTrue($"{name}: the graph toolbar has space above its section labels",
+                          window.GraphToolbarTopInset >= 10);
+                Check($"{name}: the graph toolbar has deliberate control groups",
+                      "View, Edit, Simulation", string.Join(", ", window.GraphToolbarGroups));
+                CheckTrue($"{name}: toolbar group labels reserve their own text height",
+                          window.GraphToolbarGroupLabelsHaveFixedLineHeight);
+                CheckTrue($"{name}: edit tools stay out of the toolbar until requested", !window.GraphEditShelfOpen);
+                Check($"{name}: the details drawer has isolated tabs", "Problems, Output",
+                      string.Join(", ", window.GraphDrawerTabs));
+                CheckTrue($"{name}: Runtime is not permanently below the graph", !window.RuntimeWindowVisible);
+
+                var diagnosticsButton = Find<Button>(window)
+                    .SingleOrDefault(button => button.Content?.ToString() == "Show diagnostics");
+                CheckTrue($"{name}: diagnostics has one clear drawer affordance", diagnosticsButton != null);
+                CheckTrue($"{name}: no duplicate drawer tab launchers sit above the graph",
+                    !Find<Button>(window).Any(button => button.Content?.ToString() is "Problems" or "Output"));
+                if (diagnosticsButton != null)
+                {
+                    diagnosticsButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    Check($"{name}: the drawer opens on Problems", "Problems", window.SelectedGraphDrawerTab);
+                }
 
                 window.SetGraphLeftPaneOpen(true);
                 window.ResizeGraphLeftPaneForTest(300);
@@ -346,18 +403,47 @@ public static class Smoke
                 window.SetGraphRightPaneOpen(false);
                 CheckTrue($"{name}: the properties pane can collapse", !window.GraphRightPaneOpen);
                 window.SetGraphRightPaneOpen(true);
-                window.ResizeGraphRightPaneForTest(340);
+                window.ResizeGraphRightPaneForTest(400);
                 CheckTrue($"{name}: the properties pane can reopen and resize",
-                          window.GraphRightPaneOpen && window.GraphRightPaneWidth == 340);
+                          window.GraphRightPaneOpen && window.GraphRightPaneWidth == 400);
 
                 window.SetGraphDrawerOpen(true);
                 window.ResizeGraphDrawerForTest(250);
                 CheckTrue($"{name}: the details drawer can open and resize",
                           window.GraphDrawerOpen && window.GraphDrawerHeight == 250);
 
+                var runtimeButton = Find<Button>(window)
+                    .First(button => button.Content?.ToString() == "Runtime");
+                runtimeButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                CheckTrue($"{name}: Runtime opens in its own window", window.RuntimeWindowVisible);
+                Check($"{name}: Runtime gives its sections room", 4, window.RuntimeWindowSectionCount);
+                CheckTrue($"{name}: Runtime uses an activated resizable top-level window",
+                    window.RuntimeWindowForTest?.UsesDesktopPresentation == true);
+                CheckTrue($"{name}: Runtime reaches the native opened and activated lifecycle",
+                    window.RuntimeWindowForTest?.WasOpenedAndActivated == true);
+                int runtimeWindows = window.RuntimeWindowInstances;
+                window.CloseRuntimeForTest();
+                CheckTrue($"{name}: closing Runtime leaves the simulation running",
+                          !window.RuntimeWindowVisible && window.RunningCount > 0);
+                window.OpenRuntimeForTest();
+                Check($"{name}: reopening Runtime reuses the same window", runtimeWindows,
+                      window.RuntimeWindowInstances);
+                CheckTrue($"{name}: reopening Runtime asks the native window to come forward",
+                    window.RuntimeWindowForTest?.PresentationRequests >= 2);
+
                 window.SetGraphLeftPaneOpen(false);
                 window.SetGraphDrawerOpen(false);
+                window.CloseRuntimeForTest();
                 CheckTrue($"{name}: closing details hides their contents again", !window.GraphDrawerContentsVisible);
+            }
+
+            // Playback has a separate renderer. Its mesh must stay inside the viewport rather than
+            // painting across the playback controls or outside the tab.
+            {
+                tabs[0].SelectedIndex = 5;
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                CheckTrue($"{name}: playback viewport clips mesh drawing", window.PlaybackViewportClips);
             }
 
             // Folding a branch. Two things have to be true and they fail separately: the right nodes

@@ -27,28 +27,37 @@ public class MainWindow : Window
     private readonly Inspector _graphProps = new(360);
     private readonly GraphView _graph = new();
     private readonly ColumnDefinition _graphLeftColumn = new(new GridLength(0, GridUnitType.Pixel))
-        { MinWidth = 0, MaxWidth = 340 };
+        { MinWidth = 0, MaxWidth = 440 };
     private readonly ColumnDefinition _graphLeftSplitterColumn = new(new GridLength(0, GridUnitType.Pixel));
     private readonly ColumnDefinition _graphCenterColumn = new(new GridLength(1, GridUnitType.Star)) { MinWidth = 720 };
     private readonly ColumnDefinition _graphRightSplitterColumn = new(new GridLength(6, GridUnitType.Pixel));
-    private readonly ColumnDefinition _graphRightColumn = new(new GridLength(320, GridUnitType.Pixel))
-        { MinWidth = 260, MaxWidth = 420 };
+    private readonly ColumnDefinition _graphRightColumn = new(new GridLength(380, GridUnitType.Pixel))
+        { MinWidth = 360, MaxWidth = 480 };
     private readonly RowDefinition _graphDrawerSplitterRow = new(new GridLength(0, GridUnitType.Pixel));
     private readonly RowDefinition _graphDrawerRow = new(new GridLength(0, GridUnitType.Pixel))
-        { MaxHeight = 360 };
+        { MaxHeight = 300 };
     private GridSplitter? _graphLeftSplitter;
     private GridSplitter? _graphRightSplitter;
     private GridSplitter? _graphDrawerSplitter;
     private Control? _graphDrawer;
+    private Control? _graphEditShelf;
+    private TabControl? _graphDrawerTabs;
+    private Border? _graphCanvasHost;
+    private Border? _graphPropertiesHost;
+    private Border? _playbackViewportHost;
+    private readonly List<string> _graphToolbarGroups = new();
+    private bool _graphToolbarGroupLabelsHaveFixedLineHeight;
+    private RuntimeWindow? _runtimeWindow;
+    private int _runtimeWindowInstances;
     private Button? _legendButton;
     private Button? _propertiesButton;
     private Button? _drawerButton;
     private bool _graphLeftOpen;
     private bool _graphRightOpen = true;
     private bool _graphDrawerOpen;
-    private double _graphLeftWidth = 260;
-    private double _graphRightWidth = 320;
-    private double _graphDrawerHeight = 220;
+    private double _graphLeftWidth = 360;
+    private double _graphRightWidth = 380;
+    private double _graphDrawerHeight = 110;
     private readonly Button _saveButton;
     private readonly Button _undoButton;
     private readonly Button _redoButton;
@@ -141,7 +150,20 @@ public class MainWindow : Window
     private readonly TextBlock _runSummary = new()
         { Foreground = Ux.MetaBrush, FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
           TextWrapping = TextWrapping.Wrap, Margin = new Thickness(10, 0, 0, 0) };
-    private readonly HkGrid _running = new(("Machine", -4), ("Is in state", -4), ("Weight", 70)) { Height = 130 };
+    private readonly TextBlock _runtimeStatus = new()
+        { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+          HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 700 };
+    private readonly HkGrid _running = new(("Machine", -4), ("Is in state", -4), ("Weight", 70));
+    private readonly HkGrid _runStopsGrid = new(("Stops", -3), ("Why", -6));
+    private readonly HkGrid _runHeldBackGrid = new(("Held back", -3), ("Condition", -6));
+    private readonly HkGrid _runLog = new(("Event and transition log", -1));
+    private readonly TextBox _runOutput = new()
+    {
+        IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+        Background = Ux.CardBrush, Foreground = Ux.MetaBrush, BorderBrush = Ux.BorderBrush,
+        BorderThickness = new Thickness(1), Padding = new Thickness(8), FontSize = 12,
+    };
+    private readonly List<string> _runOutputLines = new();
     private readonly TextBlock _runStops = new()
         { Foreground = Ux.WarnBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
           Margin = new Thickness(2, 4, 2, 2) };
@@ -157,6 +179,7 @@ public class MainWindow : Window
         { MinWidth = 170, MaxWidth = 230, Foreground = Ux.CodeBrush, FontSize = 12 };
     private readonly TextBox _runValue = new()
         { Width = 80, Foreground = Ux.CodeBrush, FontSize = 12, Watermark = "value" };
+    private readonly Button _setRunVariable = Ux.Secondary("Set variable");
     private readonly TextBlock _runHeldBack = new()
         { Foreground = Ux.WarnBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
           Margin = new Thickness(2, 4, 2, 2) };
@@ -320,6 +343,54 @@ public class MainWindow : Window
         Child = content,
     };
 
+    private Border GraphToolbarGroup(string name, params Control[] controls)
+    {
+        var label = new TextBlock
+        {
+            Text = name.ToUpperInvariant(),
+            Foreground = Ux.MutedBrush,
+            FontSize = 10,
+            FontWeight = FontWeight.Bold,
+            LineHeight = 14,
+            Height = 20,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+        };
+        var tag = new Border
+        {
+            Background = Ux.BaseBrush,
+            BorderBrush = Ux.BorderBrush,
+            BorderThickness = new Thickness(0, 0, 1, 0),
+            Padding = new Thickness(8, 2),
+            Child = label,
+        };
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 5,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        row.Children.Add(tag);
+        foreach (var control in controls)
+        {
+            control.VerticalAlignment = VerticalAlignment.Center;
+            if (control is Button or ComboBox) control.MinHeight = 28;
+            row.Children.Add(control);
+        }
+
+        _graphToolbarGroups.Add(name);
+        _graphToolbarGroupLabelsHaveFixedLineHeight = true;
+        return new Border
+        {
+            Background = Ux.CardBrush,
+            BorderBrush = Ux.BorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(1, 1, 6, 1),
+            Child = row,
+        };
+    }
+
     // The last control in the row is the one that stretches, unless a later one is a button, which
     // is the layout every bar in this window happens to want.
     private static Control Bar(params Control[] controls)
@@ -353,13 +424,23 @@ public class MainWindow : Window
     // sizes. The existing controls are deliberately moved, not redesigned, in this first layout pass.
     private Control BuildGraphTab()
     {
-        _problems.Height = 150;
         _problems.SelectionChanged += OnProblemSelected;
 
         // The canvas draws six node colours, three kinds of line and two badges, and none of them
         // says what it means. That is a lot to hold in your head on a graph with eight hundred boxes
         // in it, and the answer is not fewer marks: it is the marks having somewhere to be looked up.
-        _legend = BuildLegend();
+        var legendBody = BuildLegend();
+        var legendClose = Ux.Secondary("Collapse");
+        legendClose.Click += (_, _) => SetGraphLeftPaneOpen(false);
+        var legendHeader = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        DockPanel.SetDock(legendClose, Dock.Right);
+        legendHeader.Children.Add(legendClose);
+        legendHeader.Children.Add(Ux.SectionTitle("Legend"));
+        var legendPane = new DockPanel();
+        DockPanel.SetDock(legendHeader, Dock.Top);
+        legendPane.Children.Add(legendHeader);
+        legendPane.Children.Add(legendBody);
+        _legend = Framed(legendPane);
         _legend.IsVisible = false;
 
         _legendButton = Ux.Secondary("Legend");
@@ -389,21 +470,35 @@ public class MainWindow : Window
             _graph.FrameRelated();
         };
 
-        var top = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-        foreach (var button in new[] { _legendButton, _propertiesButton, fitAll, fitPicked })
-        {
-            button.Margin = new Thickness(0, 0, 8, 0);
-            DockPanel.SetDock(button, Dock.Left);
-            top.Children.Add(button);
-        }
-        top.Children.Add(new Panel());
-
+        _graphToolbarGroups.Clear();
+        _graphToolbarGroupLabelsHaveFixedLineHeight = false;
+        var view = GraphToolbarGroup("View", fitAll, fitPicked, _legendButton, _propertiesButton);
         var runBar = BuildRunControls();
         var pasteBar = BuildPasteControls();
+        _graphEditShelf = Framed(pasteBar);
+        _graphEditShelf.IsVisible = false;
+        var edit = Ux.Secondary("Edit tools");
+        edit.Click += (_, _) => SetGraphEditShelfOpen(!_graphEditShelf.IsVisible);
+        var editGroup = GraphToolbarGroup("Edit", edit);
+        var simulation = GraphToolbarGroup("Simulation", runBar);
 
-        _graphLeftSplitter = new GridSplitter { Width = 6, Background = Brushes.Transparent,
+        var toolbarLeft = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        toolbarLeft.Children.Add(view);
+        toolbarLeft.Children.Add(editGroup);
+        toolbarLeft.Children.Add(simulation);
+        var toolbar = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(toolbarLeft, Dock.Left);
+        toolbar.Children.Add(toolbarLeft);
+        toolbar.Children.Add(_runSummary);
+        var toolbarHost = new Border
+        {
+            Padding = new Thickness(0, 10, 0, 8),
+            Child = toolbar,
+        };
+
+        _graphLeftSplitter = new GridSplitter { Width = 6, Background = Ux.BorderBrush,
             ResizeDirection = GridResizeDirection.Columns, IsVisible = false };
-        _graphRightSplitter = new GridSplitter { Width = 6, Background = Brushes.Transparent,
+        _graphRightSplitter = new GridSplitter { Width = 6, Background = Ux.BorderBrush,
             ResizeDirection = GridResizeDirection.Columns };
 
         var workspace = new Grid();
@@ -414,52 +509,63 @@ public class MainWindow : Window
         workspace.ColumnDefinitions.Add(_graphRightColumn);
         Grid.SetColumn(_legend, 0);
         Grid.SetColumn(_graphLeftSplitter, 1);
-        var canvas = Framed(_graph);
-        Grid.SetColumn(canvas, 2);
+        _graphCanvasHost = Framed(_graph);
+        _graphCanvasHost.ClipToBounds = true;
+        Grid.SetColumn(_graphCanvasHost, 2);
         Grid.SetColumn(_graphRightSplitter, 3);
-        Grid.SetColumn(_graphProps, 4);
+        _graphProps.SetHeaderAction("Collapse", () => SetGraphRightPaneOpen(false));
+        _graphPropertiesHost = Framed(_graphProps);
+        _graphPropertiesHost.ClipToBounds = true;
+        Grid.SetColumn(_graphPropertiesHost, 4);
         workspace.Children.Add(_legend);
         workspace.Children.Add(_graphLeftSplitter);
-        workspace.Children.Add(canvas);
+        workspace.Children.Add(_graphCanvasHost);
         workspace.Children.Add(_graphRightSplitter);
-        workspace.Children.Add(_graphProps);
+        workspace.Children.Add(_graphPropertiesHost);
 
-        var drawer = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 6), IsVisible = false };
-        _graphDrawer = drawer;
+        var problems = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(_problemBar, Dock.Top);
-        DockPanel.SetDock(_runStops, Dock.Top);
-        DockPanel.SetDock(_runHeldBack, Dock.Top);
-        DockPanel.SetDock(_running, Dock.Top);
-        drawer.Children.Add(_problemBar);
-        drawer.Children.Add(_runStops);
-        drawer.Children.Add(_runHeldBack);
-        drawer.Children.Add(_running);
-        drawer.Children.Add(_problems);
+        problems.Children.Add(_problemBar);
+        problems.Children.Add(_problems);
 
-        _drawerButton = Ux.Secondary("Show details");
+        _graphDrawerTabs = new TabControl { Padding = new Thickness(6, 0, 6, 0) };
+        _graphDrawerTabs.Items.Add(Tab("Problems", problems));
+        _graphDrawerTabs.Items.Add(Tab("Output", _runOutput));
+
+        var drawer = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 6), IsVisible = false,
+            ClipToBounds = true };
+        _graphDrawer = drawer;
+        drawer.Children.Add(_graphDrawerTabs);
+
+        _drawerButton = Ux.Secondary("Show diagnostics");
         _drawerButton.Click += (_, _) => SetGraphDrawerOpen(!_graphDrawerOpen);
-        ToolTip.SetTip(_drawerButton, "Show validation findings and simulation details below the graph.");
-        var drawerBar = new DockPanel { Margin = new Thickness(0, 6, 0, 0) };
-        DockPanel.SetDock(_drawerButton, Dock.Left);
+        ToolTip.SetTip(_drawerButton, "Show validation findings and diagnostic output below the graph.");
+        var drawerBar = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 0,
+            Margin = new Thickness(0, 8, 0, 0),
+        };
         drawerBar.Children.Add(_drawerButton);
-        drawerBar.Children.Add(Ux.Label("Problems and runtime details"));
 
-        _graphDrawerSplitter = new GridSplitter { Height = 6, Background = Brushes.Transparent,
+        _graphDrawerSplitter = new GridSplitter { Height = 6, Background = Ux.BorderBrush,
             ResizeDirection = GridResizeDirection.Rows, IsVisible = false };
 
         var graphWorkspace = new Grid();
+        graphWorkspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         graphWorkspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         graphWorkspace.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
         graphWorkspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         graphWorkspace.RowDefinitions.Add(_graphDrawerSplitterRow);
         graphWorkspace.RowDefinitions.Add(_graphDrawerRow);
-        var commands = Rows((top, false), (runBar, false), (pasteBar, false));
-        Grid.SetRow(commands, 0);
-        Grid.SetRow(workspace, 1);
-        Grid.SetRow(drawerBar, 2);
-        Grid.SetRow(_graphDrawerSplitter, 3);
-        Grid.SetRow(drawer, 4);
-        graphWorkspace.Children.Add(commands);
+        Grid.SetRow(toolbarHost, 0);
+        Grid.SetRow(_graphEditShelf, 1);
+        Grid.SetRow(workspace, 2);
+        Grid.SetRow(drawerBar, 3);
+        Grid.SetRow(_graphDrawerSplitter, 4);
+        Grid.SetRow(drawer, 5);
+        graphWorkspace.Children.Add(toolbarHost);
+        graphWorkspace.Children.Add(_graphEditShelf);
         graphWorkspace.Children.Add(workspace);
         graphWorkspace.Children.Add(drawerBar);
         graphWorkspace.Children.Add(_graphDrawerSplitter);
@@ -468,8 +574,6 @@ public class MainWindow : Window
         _problems.IsVisible = false;
         _problemBar.IsVisible = false;
         _running.IsVisible = false;
-        _runStops.IsVisible = false;
-        _runHeldBack.IsVisible = false;
         return graphWorkspace;
     }
 
@@ -488,6 +592,10 @@ public class MainWindow : Window
         var restart = Ux.Secondary("Restart");
         ToolTip.SetTip(restart, "Put the graph back in the state it starts in.");
         restart.Click += (_, _) => StartRun("Back at the start.");
+
+        var runtime = Ux.Secondary("Runtime");
+        ToolTip.SetTip(runtime, "Open the live simulation state in its own window.");
+        runtime.Click += (_, _) => OpenRuntimeWindow();
 
         // Advances the clock a tenth of a second, which moves any transition still blending along.
         // A tenth because a blend is a fifth to a half of a second in the corpus, so this is a few
@@ -522,45 +630,24 @@ public class MainWindow : Window
                 SelectObjectId(id);
         };
 
-        var label = new TextBlock
-        {
-            Text = "Send event",
-            Foreground = Ux.MetaBrush,
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 0),
-        };
+        var label = Ux.Label("Event");
+        label.FontSize = 11;
+        label.Margin = new Thickness(2, 0, 0, 0);
 
-        // Setting a variable is what makes a gated transition testable rather than only reported.
-        // Refused for a name the graph does not declare, because nothing in the graph could read it.
-        var set = Ux.Secondary("Set");
-        ToolTip.SetTip(set, "Change a variable, so a transition gated on it can be tried both ways.");
-        set.Click += (_, _) => SetRunVariable();
+        // Variables are runtime data, not permanent toolbar controls. Their editor lives in the
+        // separate Runtime window, while these controls remain the short event-driving strip.
         _runValue.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) SetRunVariable(); };
         _runVariables.SelectionChanged += (_, _) => ShowRunVariable();
+        ToolTip.SetTip(_setRunVariable, "Change a simulation variable before sending the next event.");
+        _setRunVariable.Click += (_, _) => SetRunVariable();
 
-        var variableLabel = new TextBlock
-        {
-            Text = "Variable",
-            Foreground = Ux.MetaBrush,
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(12, 0, 8, 0),
-        };
-
-        var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        foreach (var control in new Control[]
-                 { label, _runEvents, send, _step, restart, variableLabel, _runVariables, _runValue, set })
+        var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
+        foreach (var control in new Control[] { label, _runEvents, send, _step, restart, runtime })
             left.Children.Add(control);
-
-        var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 6), LastChildFill = true };
-        DockPanel.SetDock(left, Dock.Left);
-        bar.Children.Add(left);
-        bar.Children.Add(_runSummary);
 
         SetRunSummary("Open a behaviour, then send it an event to watch which state goes active.",
             Ux.MutedBrush);
-        return bar;
+        return left;
     }
 
     /// Copy and paste of a whole subtree, which is the thing that turns building the same generator
@@ -946,9 +1033,12 @@ public class MainWindow : Window
     {
         _graph.ClearActive();
         _running.Clear();
+        _runStopsGrid.Clear();
+        _runHeldBackGrid.Clear();
+        _runLog.Clear();
+        _runOutputLines.Clear();
+        _runOutput.Text = "";
         _running.IsVisible = false;
-        _runStops.IsVisible = false;
-        _runHeldBack.IsVisible = false;
         _step.IsEnabled = false;
 
         var model = Model();
@@ -1014,6 +1104,10 @@ public class MainWindow : Window
         var fired = _run.Send(name);
         int held = _run.HeldBack.Count;
 
+        _runLog.Add(null, "Event: " + name);
+        foreach (var move in fired)
+            _runLog.Add(null, $"Transition: {move.Event} to {move.ToStateName}").Tag(move.ToStateId);
+
         // The two nothings are different answers and saying so is the point. Nothing listening means
         // the event is not wired to anything running; something listening but held back means it is
         // wired and a variable is stopping it, which is a thing the person can then go and change.
@@ -1072,6 +1166,7 @@ public class MainWindow : Window
 
         var here = _run.Where();
         _graph.ShowActive(here.Select(a => a.StateId));
+        AddRunOutput(note);
 
         _running.Clear();
         foreach (var active in here)
@@ -1094,24 +1189,17 @@ public class MainWindow : Window
         // nothing, which reads as broken.
         _step.IsEnabled = _run.Blending;
 
-        if (_run.Stops.Count > 0)
-        {
-            _runStops.Text = "Stops here: " + string.Join("    ", _run.Stops.Select(s => s.Why));
-            _runStops.IsVisible = true;
-        }
-        else _runStops.IsVisible = false;
+        _runStopsGrid.Clear();
+        foreach (var stop in _run.Stops)
+            _runStopsGrid.Add(null, stop.ClassName, stop.Why).Tag(stop.ObjectId);
 
         // "I sent the event and nothing happened" is the question this answers. A transition held
         // back by its condition is the commonest reason, and it is invisible unless it is said.
-        if (_run.HeldBack.Count > 0)
-        {
-            _runHeldBack.Text = "Held back by a condition: " + string.Join("    ",
-                _run.HeldBack.Select(h =>
-                    $"{h.Event} to '{(h.ToStateName.Length > 0 ? h.ToStateName : "#" + h.ToStateId)}' " +
-                    $"needs {h.Condition}"));
-            _runHeldBack.IsVisible = true;
-        }
-        else _runHeldBack.IsVisible = false;
+        _runHeldBackGrid.Clear();
+        foreach (var held in _run.HeldBack)
+            _runHeldBackGrid.Add(null, held.Event + " to " +
+                                   (held.ToStateName.Length > 0 ? held.ToStateName : "#" + held.ToStateId),
+                                   held.Condition).Tag(held.ToStateId);
 
         int machines = here.Count(a => !a.Fading);
         string blending = _run.Blending ? "  A transition is blending; Step to move it along." : "";
@@ -1122,6 +1210,16 @@ public class MainWindow : Window
     {
         _runSummary.Text = text;
         _runSummary.Foreground = brush;
+        _runtimeStatus.Text = text;
+        _runtimeStatus.Foreground = brush;
+    }
+
+    private void AddRunOutput(string text)
+    {
+        if (text.Length == 0) return;
+        _runOutputLines.Add(text);
+        if (_runOutputLines.Count > 120) _runOutputLines.RemoveRange(0, _runOutputLines.Count - 120);
+        _runOutput.Text = string.Join(Environment.NewLine, _runOutputLines);
     }
 
     private Control _legend = new Panel();
@@ -1136,7 +1234,9 @@ public class MainWindow : Window
     /// read as the answer rather than checked against the thing it describes.
     private Control BuildLegend()
     {
-        var body = new StackPanel { Spacing = 4, Width = 284 };
+        // The scroll viewer measures this body to the width its pane assigns. Unlike the earlier
+        // fixed-width version, each explanation can wrap when a person resizes the Legend.
+        var body = new StackPanel { Spacing = 4 };
 
         void Heading(string text)
         {
@@ -1147,11 +1247,7 @@ public class MainWindow : Window
 
         void Swatch(Control mark, string name, string what)
         {
-            // Width given rather than inherited. The row is a DockPanel with the swatch docked left,
-            // and the words filling what is left of a panel that is itself inside a scroll viewer,
-            // which measures its content as though it had all the room in the world. Left to itself
-            // the last word of every explanation sat past the edge of the panel.
-            var words = new StackPanel { Spacing = 1, Width = 212 };
+            var words = new StackPanel { Spacing = 1 };
             var title = Ux.Label(name);
             title.Foreground = Ux.TitleBrush;
             words.Children.Add(title);
@@ -1165,8 +1261,11 @@ public class MainWindow : Window
             mark.Margin = new Thickness(0, 3, 8, 0);
             mark.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top;
 
-            var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
-            DockPanel.SetDock(mark, Dock.Left);
+            var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
+            row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+            Grid.SetColumn(mark, 0);
+            Grid.SetColumn(words, 1);
             row.Children.Add(mark);
             row.Children.Add(words);
             body.Children.Add(row);
@@ -1279,23 +1378,18 @@ public class MainWindow : Window
             line.Foreground = Ux.MetaBrush;
             line.FontSize = 11;
             line.TextWrapping = TextWrapping.Wrap;
-            line.Width = 240;
             line.Margin = new Thickness(0, 3, 0, 0);
             body.Children.Add(line);
         }
 
-        return new Border
+        return new ScrollViewer
         {
-            Background = Ux.CardBrush,
-            BorderBrush = Ux.BorderBrush,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(10, 6, 10, 10),
-            Margin = new Thickness(0, 0, 8, 0),
-            Child = new ScrollViewer
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            Content = new Border
             {
-                Content = body,
-                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+                Padding = new Thickness(12, 4, 12, 12),
+                Child = body,
             },
         };
     }
@@ -1358,8 +1452,36 @@ public class MainWindow : Window
     public double GraphLeftPaneWidth => _graphLeftColumn.Width.Value;
     public double GraphRightPaneWidth => _graphRightColumn.Width.Value;
     public double GraphDrawerHeight => _graphDrawerRow.Height.Value;
+    public double GraphDrawerDefaultHeight => _graphDrawerHeight;
     public double GraphCenterMinWidth => _graphCenterColumn.MinWidth;
     public bool GraphDrawerContentsVisible => _graphDrawer?.IsVisible ?? false;
+    public bool GraphEditShelfOpen => _graphEditShelf?.IsVisible ?? false;
+    public bool GraphCanvasHostClips => _graphCanvasHost?.ClipToBounds ?? false;
+    public bool GraphPropertiesHostClips => _graphPropertiesHost?.ClipToBounds ?? false;
+    public double GraphToolbarTopInset => 10;
+    public IReadOnlyList<string> GraphToolbarGroups => _graphToolbarGroups;
+    public bool GraphToolbarGroupLabelsHaveFixedLineHeight => _graphToolbarGroupLabelsHaveFixedLineHeight;
+    public bool PlaybackViewportClips => (_playbackViewportHost?.ClipToBounds ?? false) && _skeleton.ClipToBounds;
+    public IReadOnlyList<string> GraphDrawerTabs => _graphDrawerTabs?.Items.OfType<TabItem>()
+        .Select(tab => tab.Header?.ToString() ?? "").ToList() ?? (IReadOnlyList<string>)Array.Empty<string>();
+    public string SelectedGraphDrawerTab => _graphDrawerTabs?.SelectedItem is TabItem tab
+        ? tab.Header?.ToString() ?? "" : "";
+    public bool RuntimeWindowVisible => _runtimeWindow?.IsVisible ?? false;
+    public int RuntimeWindowSectionCount => _runtimeWindow?.SectionCount ?? 0;
+    public int RuntimeWindowInstances => _runtimeWindowInstances;
+    public RuntimeWindow? RuntimeWindowForTest => _runtimeWindow;
+
+    public void SetGraphEditShelfOpen(bool open)
+    {
+        if (_graphEditShelf != null) _graphEditShelf.IsVisible = open;
+    }
+
+    public void SelectGraphDrawerTab(string header)
+    {
+        if (_graphDrawerTabs == null) return;
+        _graphDrawerTabs.SelectedItem = _graphDrawerTabs.Items.OfType<TabItem>()
+            .FirstOrDefault(tab => tab.Header?.ToString() == header);
+    }
 
     public void SetGraphLeftPaneOpen(bool open)
     {
@@ -1375,7 +1497,7 @@ public class MainWindow : Window
     {
         _graphRightOpen = open;
         _graphProps.IsVisible = open;
-        _graphRightColumn.MinWidth = open ? 260 : 0;
+        _graphRightColumn.MinWidth = open ? 360 : 0;
         _graphRightColumn.Width = Pixels(open ? _graphRightWidth : 0);
         _graphRightSplitterColumn.Width = Pixels(open ? 6 : 0);
         if (_graphRightSplitter != null) _graphRightSplitter.IsVisible = open;
@@ -1385,33 +1507,48 @@ public class MainWindow : Window
     public void SetGraphDrawerOpen(bool open)
     {
         _graphDrawerOpen = open;
-        _graphDrawerRow.MinHeight = open ? 130 : 0;
+        _graphDrawerRow.MinHeight = open ? 80 : 0;
         _graphDrawerRow.Height = Pixels(open ? _graphDrawerHeight : 0);
         _graphDrawerSplitterRow.Height = Pixels(open ? 6 : 0);
         if (_graphDrawer != null) _graphDrawer.IsVisible = open;
         if (_graphDrawerSplitter != null) _graphDrawerSplitter.IsVisible = open;
-        if (_drawerButton != null) _drawerButton.Content = open ? "Hide details" : "Show details";
+        if (_drawerButton != null) _drawerButton.Content = open ? "Hide diagnostics" : "Show diagnostics";
     }
 
     public void ResizeGraphLeftPaneForTest(double width)
     {
-        _graphLeftWidth = Math.Clamp(width, 220, 340);
+        _graphLeftWidth = Math.Clamp(width, 300, 440);
         if (_graphLeftOpen) _graphLeftColumn.Width = Pixels(_graphLeftWidth);
     }
 
     public void ResizeGraphRightPaneForTest(double width)
     {
-        _graphRightWidth = Math.Clamp(width, 260, 420);
+        _graphRightWidth = Math.Clamp(width, 360, 480);
         if (_graphRightOpen) _graphRightColumn.Width = Pixels(_graphRightWidth);
     }
 
     public void ResizeGraphDrawerForTest(double height)
     {
-        _graphDrawerHeight = Math.Clamp(height, 130, 360);
+        _graphDrawerHeight = Math.Clamp(height, 80, 300);
         if (_graphDrawerOpen) _graphDrawerRow.Height = Pixels(_graphDrawerHeight);
     }
 
     private static GridLength Pixels(double value) => new(value, GridUnitType.Pixel);
+
+    private void OpenRuntimeWindow()
+    {
+        if (_runtimeWindow == null)
+        {
+            _runtimeWindow = new RuntimeWindow(_running, _runStopsGrid, _runHeldBackGrid, _runLog,
+                                               _runVariables, _runValue, _setRunVariable, _runtimeStatus);
+            _runtimeWindowInstances++;
+        }
+        _runtimeWindow.Present(this);
+    }
+
+    public void OpenRuntimeForTest() => OpenRuntimeWindow();
+
+    public void CloseRuntimeForTest() => _runtimeWindow?.CloseForTest();
 
     /// Read-only hooks for the window checks, so the run panel can be exercised headless.
     public bool RunReady => _run != null;
@@ -1438,7 +1575,7 @@ public class MainWindow : Window
     public IReadOnlyList<string> RunVariables =>
         (_runVariables.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
     public int RunHeldBack => _run?.HeldBack.Count ?? 0;
-    public bool RunHeldBackVisible => _runHeldBack.IsVisible;
+    public bool RunHeldBackVisible => _runHeldBackGrid.RowCount > 0;
     public string RunHeldBackText => _runHeldBack.Text ?? "";
     public string RunSummary => _runSummary.Text ?? "";
     public double? RunValueOf(string name) => _run?.ValueOf(name);
@@ -2024,7 +2161,10 @@ public class MainWindow : Window
         DockPanel.SetDock(scrubRow, Dock.Bottom);
         panel.Children.Add(bar);
         panel.Children.Add(scrubRow);
-        panel.Children.Add(WithClipPicker(Framed(_skeleton)));
+        _skeleton.ClipToBounds = true;
+        _playbackViewportHost = Framed(_skeleton);
+        _playbackViewportHost.ClipToBounds = true;
+        panel.Children.Add(WithClipPicker(_playbackViewportHost));
 
         // Says that a model is a second, separate step. What plays here is the skeleton, and waiting
         // for a character to appear on its own is waiting for something that never happens.
