@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Net;
 
 namespace OpenCommonwealth.Services.Hkx;
 
@@ -107,6 +108,7 @@ public static class Expression
 
     public static Parsed Parse(string text)
     {
+        text = WebUtility.HtmlDecode(text);
         var names = new List<string>();
         if (string.IsNullOrWhiteSpace(text))
             return new Parsed(null, "the condition is empty", false, names);

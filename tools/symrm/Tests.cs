@@ -100,6 +100,7 @@ public static class Tests
         ("AConditionSaysWhatItSays", AConditionSaysWhatItSays),
         ("AnExpressionAssignmentDoesTheArithmeticWeShip", AnExpressionAssignmentDoesTheArithmeticWeShip),
         ("AFalseConditionHoldsATransitionBack", AFalseConditionHoldsATransitionBack),
+        ("AnActiveExpressionModifierUpdatesRuntimeVariables", AnActiveExpressionModifierUpdatesRuntimeVariables),
         ("TheReadingFromTheBytesRefusesWhatItCannotDescribe", TheReadingFromTheBytesRefusesWhatItCannotDescribe),
         ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
         ("AnEscapedValueIsShownAsItself", AnEscapedValueIsShownAsItself),
@@ -4474,6 +4475,40 @@ public static class Tests
         catch (ArgumentException e) { refused = e.Message; }
         CheckTrue("setting a variable the graph does not declare is refused",
                   refused.Contains("declares no variable", StringComparison.Ordinal));
+    }
+
+    private static void AnActiveExpressionModifierUpdatesRuntimeVariables()
+    {
+        Console.WriteLine("\nan active expression modifier updates runtime variables");
+
+        string path = Path.GetFullPath("dist/examples/Dogmeat/Behaviors/DogmeatRoot.hkx");
+        byte[] original = File.ReadAllBytes(path);
+        var image = PackfileImage.Read(path);
+        var model = NativeGraphModel.From(new PackfileObjects(image), HavokClassTypes.Shipped);
+        CheckTrue("the real Dogmeat graph is read", model != null);
+        if (model == null) return;
+
+        CheckTrue("the real graph contains expression modifiers",
+                  model.Objects.Any(o => o.Class == "hkbEvaluateExpressionModifier"));
+        CheckTrue("the real graph contains expression data arrays",
+                  model.Objects.Any(o => o.Class == "hkbExpressionDataArray"));
+
+        var run = GraphRun.Start(model);
+        CheckTrue("the active graph contributes real expression rows", run.ActiveExpressionCount >= 4);
+        CheckTrue("the active rows include a real head blend assignment",
+                  run.ActiveExpressionSources.Any(source => source.StartsWith("fHeadBlendDampedClamped =", StringComparison.Ordinal)));
+        run.Set("fHeadBlendDamped", 2);
+        run.Advance(0.1f);
+        CheckTrue("the active expression receives this tick's duration",
+                  Math.Abs((run.ValueOf("fTimeStep") ?? -1) - 0.1d) < 1e-6);
+        CheckTrue("a real head-control assignment updates its target",
+                  Math.Abs((run.ValueOf("fHeadBlendDampedClamped") ?? -1) - 1d) < 1e-6);
+
+        run.Set("fHeadBlendDamped", -1);
+        run.Advance(0.2f);
+        CheckTrue("changing an expression input changes the next target value",
+                  Math.Abs(run.ValueOf("fHeadBlendDampedClamped") ?? -1) < 1e-6);
+        CheckTrue("the simulation does not mutate native source bytes", original.SequenceEqual(File.ReadAllBytes(path)));
     }
 
 
