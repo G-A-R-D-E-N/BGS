@@ -138,6 +138,7 @@ public static class Tests
         ("PredefinedClipGeneratorIsNativeAndAtomic", PredefinedClipGeneratorIsNativeAndAtomic),
         ("PredefinedBlendGeneratorCreatesItsChildren", PredefinedBlendGeneratorCreatesItsChildren),
         ("PredefinedStateAttachesItsGenerator", PredefinedStateAttachesItsGenerator),
+        ("PredefinedStateUsesFirstUnusedId", PredefinedStateUsesFirstUnusedId),
         ("ACutTakesTheClipsOwnTimeWithIt", ACutTakesTheClipsOwnTimeWithIt),
         ("ALinearTravelStaysTwoSamplesAfterACut", ALinearTravelStaysTwoSamplesAfterACut),
         ("ACutRefusesWhatIsNotAClip", ACutRefusesWhatIsNotAClip),
@@ -4698,7 +4699,34 @@ public static class Tests
 
         CheckTrue("the required animation resolves", resolved.Possible);
         Check("the clip name has an explicit default", "New Clip", resolved.Text("name"));
-        Check("the clip playback mode has an explicit default", "looping", resolved.Text("mode"));
+        Check("the clip playback mode has an explicit default", "looping", resolved.Choice("mode"));
+        var invalidMode = PredefinedTemplates.Resolve(clip, new Dictionary<string, string>
+        {
+            ["animation"] = "Walk.hkx",
+            ["mode"] = "forever",
+        });
+        CheckTrue("an unknown playback mode is refused", !invalidMode.Possible);
+
+        var blend = PredefinedTemplates.Get("blend-generator");
+        CheckTrue("the blend template can be found by ID", blend != null);
+        if (blend != null)
+        {
+            var count = PredefinedTemplates.Resolve(blend, new Dictionary<string, string> { ["children"] = "3" });
+            CheckTrue("the child count resolves", count.Possible);
+            Check("the child count resolves once as an integer", 3, count.Count("children"));
+        }
+
+        var state = PredefinedTemplates.Get("state-with-generator");
+        CheckTrue("the state template can be found by ID", state != null);
+        if (state != null)
+        {
+            var reference = PredefinedTemplates.Resolve(state, new Dictionary<string, string> { ["machine"] = "#91" });
+            CheckTrue("the state machine reference resolves", reference.Possible);
+            Check("the state machine reference resolves once as an object ID", 91, reference.ObjectId("machine"));
+
+            var malformed = PredefinedTemplates.Resolve(state, new Dictionary<string, string> { ["machine"] = "machine" });
+            CheckTrue("a malformed object reference is refused before materialization", !malformed.Possible);
+        }
 
         var missing = PredefinedTemplates.Resolve(clip, new Dictionary<string, string>());
         CheckTrue("a missing required slot is refused", !missing.Possible);
@@ -4727,6 +4755,22 @@ public static class Tests
         Check("the requested animation is written", "Walk.hkx",
               objects.ReadString(objects.Instances[^1], "animationName"));
         Check("the default playback mode is looping", 1, objects.ReadInt(objects.Instances[^1], "mode"));
+
+        var singlePlay = PredefinedTemplates.Instantiate(path, "clip-generator", new Dictionary<string, string>
+        {
+            ["animation"] = "Walk.hkx",
+            ["mode"] = "single-play",
+        });
+        CheckTrue("single-play mode materializes", singlePlay.Possible);
+        if (singlePlay.Bytes != null)
+        {
+            var singlePlayObjects = new PackfileObjects(PackfileImage.Read(singlePlay.Bytes), HavokClasses.Shipped);
+            Check("single-play mode uses the shipped enum value", 0,
+                  singlePlayObjects.ReadInt(singlePlayObjects.Instances[^1], "mode"));
+        }
+
+        var unknown = PredefinedTemplates.Instantiate(path, "unknown", new Dictionary<string, string>());
+        CheckTrue("an unknown predefined template is refused", !unknown.Possible && unknown.Bytes == null && unknown.CreatedIds.Count == 0);
     }
 
     private static void PredefinedBlendGeneratorCreatesItsChildren()
@@ -4755,7 +4799,13 @@ public static class Tests
         {
             ["children"] = "0",
         });
-        CheckTrue("an invalid child count is refused", !invalid.Possible);
+        CheckTrue("a below-minimum child count is refused without replacement bytes",
+                  !invalid.Possible && invalid.Bytes == null && invalid.CreatedIds.Count == 0);
+        var aboveMaximum = PredefinedTemplates.Instantiate(path, "blend-generator", new Dictionary<string, string>
+        {
+            ["children"] = (PredefinedTemplates.MaximumBlendChildren + 1).ToString(),
+        });
+        CheckTrue("an above-maximum child count is refused", !aboveMaximum.Possible && aboveMaximum.Bytes == null);
     }
 
     private static void PredefinedStateAttachesItsGenerator()
@@ -4801,6 +4851,46 @@ public static class Tests
         Check("the state points at the supplied generator", 90,
               NativeGraphModel.FirstId + existingObjects.Instances.ToList().IndexOf(
                   existingObjects.ReadRef(existingObjects.Instances[existing.RootId - NativeGraphModel.FirstId], "generator", out _)!));
+
+        var incompatible = PredefinedTemplates.Instantiate(path, "state-with-generator", new Dictionary<string, string>
+        {
+            ["machine"] = "#90",
+            ["generator"] = "#90",
+        });
+        CheckTrue("an incompatible state machine is refused without replacement bytes",
+                  !incompatible.Possible && incompatible.Bytes == null && incompatible.CreatedIds.Count == 0);
+    }
+
+    private static void PredefinedStateUsesFirstUnusedId()
+    {
+        string folder = OwnTemplateFolder("predefined-state-id");
+        byte[] source = ClipInAPackfile("Idle.hkx", out _).Rebuild();
+        var setup = new NativeSave.Plan(new List<NativeSave.Change>
+        {
+            new("hkbStateMachine", 0, "", "#91", Added: true),
+            new("hkbStateMachineStateInfo", 0, "", "#92", Added: true),
+            new("hkbStateMachineStateInfo", 1, "", "#93", Added: true),
+            new("hkbStateMachine", 0, "states", "#92 #93", Array: true),
+            new("hkbStateMachine", 0, "startStateId", "2"),
+            new("hkbStateMachineStateInfo", 0, "stateId", "0"),
+            new("hkbStateMachineStateInfo", 1, "stateId", "2"),
+        }, null);
+        string path = WriteImage(PackfileImage.Read(NativeSave.Apply(source, setup)), folder, "StateId.hkx");
+
+        var result = PredefinedTemplates.Instantiate(path, "state-with-generator", new Dictionary<string, string>
+        {
+            ["machine"] = "#91",
+            ["generator"] = "#90",
+        });
+
+        CheckTrue("a state can fill an unused ID gap", result.Possible);
+        if (result.Bytes == null) return;
+
+        var objects = new PackfileObjects(PackfileImage.Read(result.Bytes), HavokClasses.Shipped);
+        var state = objects.Instances[result.RootId - NativeGraphModel.FirstId];
+        var machine = objects.Instances[1];
+        Check("the new state uses the first unused ID", 1, objects.ReadInt(state, "stateId"));
+        Check("the machine start state is unchanged", 2, objects.ReadInt(machine, "startStateId"));
     }
 
 

@@ -25,10 +25,17 @@ public static class PredefinedTemplates
     public sealed record Definition(string Id, string DisplayName, string Description, string RootClass,
                                     IReadOnlyList<Slot> Slots);
 
-    public sealed record Resolution(IReadOnlyDictionary<string, string> Values, string? Refusal)
+    public sealed record Resolution(IReadOnlyDictionary<string, string> TextValues,
+                                    IReadOnlyDictionary<string, int> CountValues,
+                                    IReadOnlyDictionary<string, string> ChoiceValues,
+                                    IReadOnlyDictionary<string, int?> ReferenceValues,
+                                    string? Refusal)
     {
         public bool Possible => Refusal == null;
-        public string Text(string key) => Values.TryGetValue(key, out var value) ? value : "";
+        public string Text(string key) => TextValues.TryGetValue(key, out var value) ? value : "";
+        public int Count(string key) => CountValues.TryGetValue(key, out var value) ? value : 0;
+        public string Choice(string key) => ChoiceValues.TryGetValue(key, out var value) ? value : "";
+        public int? ObjectId(string key) => ReferenceValues.TryGetValue(key, out var value) ? value : null;
     }
 
     public sealed record Result(byte[]? Bytes, int RootId, IReadOnlyList<int> CreatedIds, string Summary,
@@ -85,25 +92,45 @@ public static class PredefinedTemplates
 
     public static Resolution Resolve(Definition definition, IReadOnlyDictionary<string, string> raw)
     {
-        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        var texts = new Dictionary<string, string>(StringComparer.Ordinal);
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var choices = new Dictionary<string, string>(StringComparer.Ordinal);
+        var references = new Dictionary<string, int?>(StringComparer.Ordinal);
         foreach (var slot in definition.Slots)
         {
             string value = raw.TryGetValue(slot.Key, out var supplied) ? supplied.Trim() : slot.DefaultValue;
             if (slot.Required && value.Length == 0)
-                return new Resolution(values, $"{slot.DisplayName} ({slot.Key}) is required.");
+                return FailedResolution($"{slot.DisplayName} ({slot.Key}) is required.");
 
-            if (slot.Kind == SlotKind.Count && value.Length > 0 &&
-                (!int.TryParse(value, out int count) || count < slot.Minimum || count > slot.Maximum))
-                return new Resolution(values, $"{slot.DisplayName} must be between {slot.Minimum} and {slot.Maximum}.");
-
-            if (slot.Kind == SlotKind.Choice && value.Length > 0 &&
-                (slot.Choices == null || !slot.Choices.Contains(value, StringComparer.Ordinal)))
-                return new Resolution(values, $"{slot.DisplayName} must be one of: {string.Join(", ", slot.Choices ?? Array.Empty<string>())}.");
-
-            values[slot.Key] = value;
+            switch (slot.Kind)
+            {
+                case SlotKind.Text:
+                    texts[slot.Key] = value;
+                    break;
+                case SlotKind.Count:
+                    if (!int.TryParse(value, out int count) || count < slot.Minimum || count > slot.Maximum)
+                        return FailedResolution($"{slot.DisplayName} must be between {slot.Minimum} and {slot.Maximum}.");
+                    counts[slot.Key] = count;
+                    break;
+                case SlotKind.Choice:
+                    if (slot.Choices == null || !slot.Choices.Contains(value, StringComparer.Ordinal))
+                        return FailedResolution($"{slot.DisplayName} must be one of: {string.Join(", ", slot.Choices ?? Array.Empty<string>())}.");
+                    choices[slot.Key] = value;
+                    break;
+                case SlotKind.ObjectReference:
+                    if (value.Length == 0)
+                    {
+                        references[slot.Key] = null;
+                        break;
+                    }
+                    if (!int.TryParse(value.TrimStart('#'), out int id) || id < NativeGraphModel.FirstId)
+                        return FailedResolution($"{slot.DisplayName} must name an object in this file.");
+                    references[slot.Key] = id;
+                    break;
+            }
         }
 
-        return new Resolution(values, null);
+        return new Resolution(texts, counts, choices, references, null);
     }
 
     public static Result Instantiate(string path, string templateId, IReadOnlyDictionary<string, string> raw)
@@ -152,7 +179,7 @@ public static class PredefinedTemplates
 
             int Clip()
             {
-                return AddClip(resolved.Text("name"), resolved.Text("animation"), resolved.Text("mode"));
+                return AddClip(resolved.Text("name"), resolved.Text("animation"), resolved.Choice("mode"));
             }
 
             int AddClip(string name, string animation, string mode)
@@ -170,7 +197,7 @@ public static class PredefinedTemplates
             if (templateId == "clip-generator") root = Clip();
             else if (templateId == "blend-generator")
             {
-                int count = int.Parse(resolved.Text("children"));
+                int count = resolved.Count("children");
                 root = Add("hkbBlenderGenerator");
                 Field("hkbBlenderGenerator", root, "name", resolved.Text("name"));
                 Field("hkbBlenderGenerator", root, "blendParameter", "1");
@@ -189,13 +216,15 @@ public static class PredefinedTemplates
             }
             else
             {
-                if (!TryObject(resolved.Text("machine"), objects, out int machine, out string machineClass) ||
+                if (resolved.ObjectId("machine") is not int machine ||
+                    !TryObject(machine, objects, out string machineClass) ||
                     machineClass != "hkbStateMachine") return Failed("State machine must name an hkbStateMachine in this file.");
 
                 int generator;
-                if (resolved.Text("generator").Length > 0)
+                if (resolved.ObjectId("generator") is int existingGenerator)
                 {
-                    if (!TryObject(resolved.Text("generator"), objects, out generator, out string generatorClass) ||
+                    generator = existingGenerator;
+                    if (!TryObject(generator, objects, out string generatorClass) ||
                         !IsA(generatorClass, "hkbGenerator"))
                         return Failed("Generator must name a generator in this file.");
                 }
@@ -230,6 +259,13 @@ public static class PredefinedTemplates
         catch (Exception e) { return Failed(e.Message); }
     }
 
+    private static Resolution FailedResolution(string refusal) => new(
+        new Dictionary<string, string>(StringComparer.Ordinal),
+        new Dictionary<string, int>(StringComparer.Ordinal),
+        new Dictionary<string, string>(StringComparer.Ordinal),
+        new Dictionary<string, int?>(StringComparer.Ordinal),
+        refusal);
+
     private static Result Failed(string refusal) => new(null, -1, Array.Empty<int>(), "", refusal);
 
     private static bool IsA(string className, string expected)
@@ -241,11 +277,9 @@ public static class PredefinedTemplates
 
     private static string FindingKey(GraphValidator.Finding finding) => finding.Where + "\n" + finding.What;
 
-    private static bool TryObject(string value, PackfileObjects objects, out int id, out string className)
+    private static bool TryObject(int id, PackfileObjects objects, out string className)
     {
-        id = -1;
         className = "";
-        if (!int.TryParse(value.TrimStart('#'), out id)) return false;
         int index = id - NativeGraphModel.FirstId;
         if (index < 0 || index >= objects.Instances.Count) return false;
         className = objects.Instances[index].ClassName;
@@ -256,7 +290,10 @@ public static class PredefinedTemplates
     {
         var used = objects.ReadRefArray(objects.Instances[machine - NativeGraphModel.FirstId], "states")
             ?.Where(state => state?.ClassName == "hkbStateMachineStateInfo")
-            .Select(state => objects.ReadInt(state!, "stateId") ?? -1).ToList() ?? new List<int>();
-        return used.Count == 0 ? 0 : used.Max() + 1;
+            .Select(state => objects.ReadInt(state!, "stateId") ?? -1)
+            .Where(id => id >= 0).ToHashSet() ?? new HashSet<int>();
+        for (int id = 0; id < int.MaxValue; id++)
+            if (!used.Contains(id)) return id;
+        throw new InvalidOperationException("The state machine has no unused state IDs.");
     }
 }
