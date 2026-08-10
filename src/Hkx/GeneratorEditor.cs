@@ -5,28 +5,21 @@ using System.Linq;
 namespace OpenCommonwealth.Services.Hkx;
 
 // Creating and deleting generator nodes: clips, blenders, modifier wrappers and selectors.
-// Signatures and field sets are copied out of vanilla files rather than guessed, because hkxpack
-// validates both and a wrong signature is rejected on repack.
+// hkxpack requires the correct class signature when adding objects, so signatures come from the
+// shipped class table instead of generator-specific literals.
 public static class GeneratorEditor
 {
     public sealed class Kind
     {
         public string Class = "";
-        public string Signature = "";
         public string Body = "";
     }
 
-    // hkbClipGenerator            from PipboyBehavior.hkx #98
-    // hkbBlenderGenerator         from PipboyBehavior.hkx #96
-    // hkbBlenderGeneratorChild    from PipboyBehavior.hkx
-    // hkbModifierGenerator        from WeaponBehavior.hkx #159
-    // hkbManualSelectorGenerator  from WeaponBehavior.hkx #2407
     public static readonly Dictionary<string, Kind> Kinds = new()
     {
         ["clip"] = new Kind
         {
             Class = "hkbClipGenerator",
-            Signature = "0xd4cc9f6",
             Body =
                 "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
                 "            <hkparam name=\"userData\">0</hkparam>\n" +
@@ -48,7 +41,6 @@ public static class GeneratorEditor
         ["blender"] = new Kind
         {
             Class = "hkbBlenderGenerator",
-            Signature = "0xce45c088",
             Body =
                 "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
                 "            <hkparam name=\"userData\">0</hkparam>\n" +
@@ -65,7 +57,6 @@ public static class GeneratorEditor
         ["modifier"] = new Kind
         {
             Class = "hkbModifierGenerator",
-            Signature = "0xc499fc9e",
             Body =
                 "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
                 "            <hkparam name=\"userData\">0</hkparam>\n" +
@@ -80,7 +71,6 @@ public static class GeneratorEditor
         ["sequence"] = new Kind
         {
             Class = "BGSGamebryoSequenceGenerator",
-            Signature = "0x4e708fb6",
             Body =
                 "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
                 "            <hkparam name=\"userData\">0</hkparam>\n" +
@@ -94,7 +84,6 @@ public static class GeneratorEditor
         ["selector"] = new Kind
         {
             Class = "hkbManualSelectorGenerator",
-            Signature = "0xeed8d5cd",
             Body =
                 "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
                 "            <hkparam name=\"userData\">0</hkparam>\n" +
@@ -108,7 +97,13 @@ public static class GeneratorEditor
     };
 
     private const string BlenderChildClass = "hkbBlenderGeneratorChild";
-    private const string BlenderChildSignature = "0xb35bbfd3";
+
+    private static string SignatureOf(string className)
+    {
+        var layout = HavokClassTypes.Shipped[className] ??
+            throw new InvalidOperationException($"no shipped class definition for {className}");
+        return $"0x{layout.Signature:x}";
+    }
 
     public static string Add(string xml, string kind, string name, string animation,
                              string childRef, out string newId)
@@ -121,7 +116,7 @@ public static class GeneratorEditor
             .Replace("{animation}", animation)
             .Replace("{child}", string.IsNullOrEmpty(childRef) ? "null" : childRef);
 
-        return HkxTextEdit.AddObject(xml, spec.Class, spec.Signature, body, out newId);
+        return HkxTextEdit.AddObject(xml, spec.Class, SignatureOf(spec.Class), body, out newId);
     }
 
     // A blender does not hold generators directly, it holds hkbBlenderGeneratorChild wrappers that
@@ -142,7 +137,7 @@ public static class GeneratorEditor
             $"            <hkparam name=\"weight\">{weight.ToString("0.0#####", System.Globalization.CultureInfo.InvariantCulture)}</hkparam>\n" +
             "            <hkparam name=\"worldFromModelWeight\">0.0</hkparam>";
 
-        xml = HkxTextEdit.AddObject(xml, BlenderChildClass, BlenderChildSignature, body, out childId);
+        xml = HkxTextEdit.AddObject(xml, BlenderChildClass, SignatureOf(BlenderChildClass), body, out childId);
         return HkxTextEdit.ArrayAppend(xml, blenderId, "children", $"                #{childId}");
     }
 

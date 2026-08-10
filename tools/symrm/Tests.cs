@@ -32,6 +32,7 @@ public static class Tests
         ("DepthOnOneSideCostsNothingOnTheOther", DepthOnOneSideCostsNothingOnTheOther),
         ("ReplacingLinkSaysWhatItDisplaced", ReplacingLinkSaysWhatItDisplaced),
         ("BlenderChildIsWrapped", BlenderChildIsWrapped),
+        ("GeneratorSignaturesComeFromTheClassTable", GeneratorSignaturesComeFromTheClassTable),
         ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
         ("AReferenceInsideAStructIsSeenByBothReaders", AReferenceInsideAStructIsSeenByBothReaders),
         ("ADanglingReferenceIsReportedWhereverItSits", ADanglingReferenceIsReportedWhereverItSits),
@@ -708,6 +709,28 @@ public static class Tests
         Check("the child is a wrapper, not the clip", "hkbBlenderGeneratorChild", model.Get(child)?.Class);
         Check("the wrapper points at the clip", "94", model.Get(child)?.Ref("generator"));
         CheckTrue("the note mentions the wrapper", note.Contains(child));
+    }
+
+    // Added generator objects should not carry signature literals from sampled game files. The
+    // shipped class table is the source of class metadata, so generation follows that table.
+    private static void GeneratorSignaturesComeFromTheClassTable()
+    {
+        Console.WriteLine("\ngenerator object signatures come from the class table");
+
+        var layout = HavokClassTypes.Shipped["hkbClipGenerator"]!;
+        var signature = typeof(HavokClassTypes.Layout).GetProperty(nameof(HavokClassTypes.Layout.Signature))!;
+        var original = layout.Signature;
+        signature.SetValue(layout, 0x12345678u);
+        try
+        {
+            string xml = GeneratorEditor.Add(SmallGraph(), "clip", "NewClip", "new.hkx", "", out string id);
+            var match = Regex.Match(xml, $"<hkobject class=\"hkbClipGenerator\" name=\"#{id}\" signature=\"(?<sig>[^\"]+)\"");
+            Check("the added clip uses the table signature", "0x12345678", match.Groups["sig"].Value);
+        }
+        finally
+        {
+            signature.SetValue(layout, original);
+        }
     }
 
     // A node that shipped with the game is referenced by something, always. Refusing to delete
