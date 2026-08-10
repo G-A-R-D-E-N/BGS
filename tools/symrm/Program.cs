@@ -5992,13 +5992,15 @@ public static class Program
         var expressions = new Dictionary<string, int>(StringComparer.Ordinal);
         int filesWithConditions = 0, filesWithExpressions = 0, unread = 0;
         int parsedOk = 0, unparsed = 0, undecided = 0, trueAtStart = 0, falseAtStart = 0;
-        int expressionParsed = 0, expressionEvaluated = 0, expressionUnsupported = 0;
+        int expressionModifiers = 0, filesWithExpressionModifiers = 0;
+        int expressionParsed = 0, expressionEvaluated = 0, expressionUnsupported = 0, expressionEventRecords = 0;
         int driven = 0, flipped = 0, reachedFromState = 0, sweepEnters = 0, falseNow = 0;
         var problems = new List<string>();
         var assignments = new List<string>();
         var undeclared = new List<string>();
         var stuck = new List<string>();
         var expressionRefusals = new List<string>();
+        var eventPredicates = new List<string>();
 
         foreach (string file in files)
         {
@@ -6010,6 +6012,9 @@ public static class Program
 
             var declared = VariableTable(objects);
             var expressionValues = new Dictionary<string, double>(declared, StringComparer.Ordinal);
+            int modifierCount = objects.OfClass("hkbEvaluateExpressionModifier").Count();
+            expressionModifiers += modifierCount;
+            if (modifierCount > 0) filesWithExpressionModifiers++;
 
             foreach (var instance in objects.OfClass("hkbExpressionCondition"))
             {
@@ -6055,13 +6060,30 @@ public static class Program
                     expressions[text] = expressions.GetValueOrDefault(text) + 1;
                     there++;
 
+                    if (text.Contains(" if ", StringComparison.Ordinal))
+                    {
+                        expressionEventRecords++;
+                        eventPredicates.Add($"{Path.GetFileName(file)}: \"{text}\"");
+                        continue;
+                    }
                     var parsed = Expression.Parse(text);
-                    if (!parsed.Ok || parsed.Root is not Expression.Node.Assign assignment ||
-                        !expressionValues.ContainsKey(assignment.Variable))
+                    if (!parsed.Ok)
                     {
                         expressionUnsupported++;
                         expressionRefusals.Add($"{Path.GetFileName(file)}: \"{text}\" " +
-                            (parsed.Problem ?? $"does not assign a declared variable"));
+                            parsed.Problem);
+                        continue;
+                    }
+                    if (parsed.Root is not Expression.Node.Assign assignment)
+                    {
+                        expressionUnsupported++;
+                        expressionRefusals.Add($"{Path.GetFileName(file)}: \"{text}\" does not assign a runtime variable");
+                        continue;
+                    }
+                    if (!expressionValues.ContainsKey(assignment.Variable))
+                    {
+                        expressionUnsupported++;
+                        expressionRefusals.Add($"{Path.GetFileName(file)}: \"{text}\" does not assign a declared variable");
                         continue;
                     }
 
@@ -6178,12 +6200,15 @@ public static class Program
 
         Console.WriteLine($"\nexpression modifier lines: {expressions.Values.Sum()} in " +
                           $"{filesWithExpressions} file(s), {expressions.Count} distinct");
-        Console.WriteLine($"  {expressionParsed} parse as assignments; {expressionEvaluated} evaluate from " +
-                          $"each file's starting values; {expressionUnsupported} are safely held");
+        Console.WriteLine($"  {expressionModifiers} modifier object(s) in {filesWithExpressionModifiers} file(s)");
+        Console.WriteLine($"  {expressionParsed} assignment records parse; {expressionEvaluated} evaluate from " +
+                          $"each file's starting values; {expressionUnsupported} assignment record(s) are safely held");
+        Console.WriteLine($"  {expressionEventRecords} event-style predicate record(s) are outside variable-assignment scope");
         foreach (var (text, count) in expressions.OrderByDescending(c => c.Value).Take(15))
             Console.WriteLine($"  {count,5}  {text}");
         foreach (string refusal in expressionRefusals.Take(12)) Console.WriteLine("  cannot evaluate: " + refusal);
         if (expressionRefusals.Count > 12) Console.WriteLine($"  ... and {expressionRefusals.Count - 12} more");
+        foreach (string eventClause in eventPredicates.Take(12)) Console.WriteLine("  event predicate: " + eventClause);
 
 
 
