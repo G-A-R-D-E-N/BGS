@@ -765,6 +765,72 @@ public static class Smoke
                     Check($"{name}: and clearing it releases the canvas", "", canvas.HighlightId);
                 }
 
+                // Focus tree and static trace are view-only. Selection picks an object, focus hides
+                // everything outside one machine tree, and trace dims visible graph content without
+                // changing the loaded document or simulation state.
+                {
+                    var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
+                    string machineId = model.Objects
+                        .Where(o => o.Class == "hkbStateMachine")
+                        .Select(o => o.Id)
+                        .FirstOrDefault(id => canvas.OwnedCount(id) > 0) ?? "";
+
+                    if (machineId.Length > 0)
+                    {
+                        int drawnBeforeFocus = canvas.DrawnCount;
+                        string xmlBeforeFocus = window.LoadedXml;
+
+                        canvas.SelectForTest(new[] { machineId });
+                        CheckTrue($"{name}: focus tree accepts a real state machine",
+                                  canvas.SetFocusTree(machineId));
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                        CheckTrue($"{name}: focus hides nodes outside its machine tree",
+                                  canvas.FocusTreeActive && canvas.DrawnCount < drawnBeforeFocus);
+                        CheckTrue($"{name}: focus does not change XML",
+                                  string.Equals(xmlBeforeFocus, window.LoadedXml, StringComparison.Ordinal));
+                        Check($"{name}: focus records the focused machine", machineId,
+                              canvas.FocusTreeRootId);
+                        CheckTrue($"{name}: node headers show the serialized object id",
+                                  canvas.HeaderTextOf(machineId).EndsWith(" #" + machineId,
+                                      StringComparison.Ordinal));
+
+                        string traceSeed = model.Objects
+                            .Where(o => o.Class == "hkbClipGenerator" && canvas.DrawnIds.Contains(o.Id))
+                            .Select(o => o.Id)
+                            .FirstOrDefault()
+                            ?? canvas.DrawnIds.FirstOrDefault(id => id != machineId) ?? machineId;
+
+                        canvas.SelectForTest(new[] { traceSeed });
+                        CheckTrue($"{name}: static trace accepts a visible selected node",
+                                  canvas.Trace(OpenCommonwealth.Services.Hkx.GraphTrace.Direction.Both));
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                        CheckTrue($"{name}: trace keeps the selected seed",
+                                  canvas.TraceIds.Contains(traceSeed));
+                        CheckTrue($"{name}: focused trace cannot escape visible graph",
+                                  canvas.TraceIds.All(id => canvas.DrawnIds.Contains(id)));
+
+                        string unrelated = canvas.DrawnIds.FirstOrDefault(id => !canvas.TraceIds.Contains(id)) ?? "";
+                        CheckTrue($"{name}: trace leaves at least one visible node unrelated",
+                                  unrelated.Length > 0);
+                        if (unrelated.Length > 0)
+                            CheckTrue($"{name}: trace dims unrelated visible nodes",
+                                      canvas.IsDimmed(unrelated) && canvas.IsTraceDimmed(unrelated));
+
+                        canvas.ClearTrace();
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                        Check($"{name}: clearing trace keeps the selection", traceSeed, canvas.SelectedId);
+                        CheckTrue($"{name}: clearing trace restores normal emphasis",
+                                  !canvas.TraceActive && (unrelated.Length == 0 || !canvas.IsTraceDimmed(unrelated)));
+
+                        canvas.ClearFocusTree();
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                        CheckTrue($"{name}: show full graph clears focus mode",
+                                  !canvas.FocusTreeActive && canvas.DrawnCount == drawnBeforeFocus);
+                    }
+                }
+
                 // Which event moves which state to which state, which is the thing the canvas has
                 // never been able to show: none of it is a reference in the file, so the ownership
                 // wires cannot carry it.

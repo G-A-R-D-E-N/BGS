@@ -96,6 +96,7 @@ public class GraphView : Control
     /// drawn from them: a route joins two states that hold no reference to each other, and the
     /// ownership wires the rest of the canvas draws cannot show one.
     private StateRoutes _routes = new();
+    private GraphTrace.GraphTraceMap? _trace;
 
     /// Off by default. A shipped behaviour draws a few thousand ownership wires already, and routes
     /// laid over all of them at once is a worse picture rather than a fuller one.
@@ -121,6 +122,8 @@ public class GraphView : Control
     private Point _wireTo;
 
     private readonly List<string> _selected = new();
+    private string _focusTreeRootId = "";
+    private readonly HashSet<string> _traceIds = new(StringComparer.Ordinal);
 
     /// Everything picked. A marquee or ctrl click can pick several, and a drag moves all of them.
     public IReadOnlyList<string> SelectedIds => _selected;
@@ -266,12 +269,17 @@ public class GraphView : Control
     public bool IsDimmed(string id) => Dimmed(id);
 
     private bool Dimmed(string id) =>
-        (_highlight.Length > 0 && !_related.Contains(id))
+        IsTraceDimmed(id)
+        || (_highlight.Length > 0 && !_related.Contains(id))
         || (_needle.Length > 0 && !_matched.Contains(id));
+
+    public bool IsTraceDimmed(string id) =>
+        _traceIds.Count > 0 && !_traceIds.Contains(id);
 
     // A wire touching a match stays lit, because where a match connects is the question being asked.
     private bool Lit(string fromId, string toId)
     {
+        if (_traceIds.Count > 0 && (!_traceIds.Contains(fromId) || !_traceIds.Contains(toId))) return false;
         if (_highlight.Length > 0 && fromId != _highlight && toId != _highlight) return false;
         if (_needle.Length > 0 && !_matched.Contains(fromId) && !_matched.Contains(toId)) return false;
         return true;
@@ -299,6 +307,7 @@ public class GraphView : Control
         // something that cannot be unpacked left the previous file's graph on screen.
         _model = null;
         _routes = new StateRoutes();
+        _trace = null;
         _nodes.Clear();
         _order.Clear();
         _placed.Clear();
@@ -313,6 +322,8 @@ public class GraphView : Control
         _matched.Clear();
         _active.Clear();
         _selected.Clear();
+        _focusTreeRootId = "";
+        _traceIds.Clear();
         _zoom = 0.9;
         _pan = new Point(40, 40);
     }
@@ -321,6 +332,7 @@ public class GraphView : Control
     {
         _model = model;
         _routes = StateRoutes.Of(model);
+        _trace = GraphTrace.Of(model, _routes);
         _nodes.Clear();
         _order.Clear();
 
@@ -353,6 +365,22 @@ public class GraphView : Control
 
         _placedCount = placed.Count;
 
+        HashSet<string>? focusedIds = null;
+        if (_focusTreeRootId.Length > 0)
+        {
+            var focused = model.Get(_focusTreeRootId);
+            if (focused == null || focused.Class != "hkbStateMachine" || !_own.Owner.ContainsKey(_focusTreeRootId))
+            {
+                _focusTreeRootId = "";
+                _traceIds.Clear();
+            }
+            else
+            {
+                focusedIds = _own.Under(_focusTreeRootId).Append(_focusTreeRootId)
+                    .ToHashSet(StringComparer.Ordinal);
+            }
+        }
+
         _sharedBy.Clear();
         _nameOf.Clear();
 
@@ -380,7 +408,10 @@ public class GraphView : Control
 
         // A folded branch is left out here rather than drawn and skipped, so the contour it would
         // have reserved is never measured and the space it was holding comes back.
-        var showing = placed.Where(p => !_own.Hidden(_collapsed, p.Node.Id)).ToList();
+        var showing = placed
+            .Where(p => !_own.Hidden(_collapsed, p.Node.Id)
+                        && (focusedIds == null || focusedIds.Contains(p.Node.Id)))
+            .ToList();
 
         var measured = new List<GraphLayout.Item>();
         var slotsOf = new Dictionary<string, List<GraphLinks.Slot>>(StringComparer.Ordinal);
@@ -427,6 +458,7 @@ public class GraphView : Control
                 Accent = Ux.ForClass(obj.Class),
                 Empty = empty.Contains(obj.Id),
                 Start = _routes.StartStates.Contains(obj.Id),
+                Active = _active.Contains(obj.Id),
                 Wildcards = wildcardsOf[obj.Id],
                 Problem = _problems.TryGetValue(obj.Id, out var level) ? level : null,
                 Bounds = new Rect(x, y[obj.Id], NodeWidth, heightOf[obj.Id]),
@@ -437,9 +469,81 @@ public class GraphView : Control
         // the canvas, and a selection still naming them would drag things nobody can see.
         _selected.RemoveAll(id => !_nodes.ContainsKey(id));
         if (_highlight.Length > 0 && !_nodes.ContainsKey(_highlight)) _highlight = "";
+        if (_traceIds.Count > 0)
+        {
+            _traceIds.RemoveWhere(id => !_nodes.ContainsKey(id));
+            if (_traceIds.Count == 0) _traceIds.Clear();
+        }
         RebuildRelated();
         RebuildMatched();
         InvalidateVisual();
+    }
+
+    public bool SetFocusTree(string machineId)
+    {
+        if (_model == null) return false;
+        var machine = _model.Get(machineId);
+        if (machine == null || machine.Class != "hkbStateMachine" || !_own.Owner.ContainsKey(machineId))
+            return false;
+
+        _focusTreeRootId = machineId;
+        ClearTrace();
+        Show(_model);
+        FrameAll();
+        return true;
+    }
+
+    public void ClearFocusTree()
+    {
+        if (_focusTreeRootId.Length == 0) return;
+        _focusTreeRootId = "";
+        ClearTrace();
+        if (_model != null) Show(_model);
+        FrameAll();
+    }
+
+    public bool FocusTreeActive => _focusTreeRootId.Length > 0;
+    public string FocusTreeRootId => _focusTreeRootId;
+
+    public bool Trace(GraphTrace.Direction direction)
+    {
+        if (_trace == null || SelectedId.Length == 0 || !_nodes.ContainsKey(SelectedId)) return false;
+
+        var visible = _nodes.Keys.ToHashSet(StringComparer.Ordinal);
+        var found = _trace.Reachable(SelectedId, direction, visible);
+        if (found.Count == 0) return false;
+
+        _traceIds.Clear();
+        foreach (string id in found) _traceIds.Add(id);
+        Frame(_traceIds.Where(_nodes.ContainsKey).Select(id => _nodes[id].Bounds));
+        InvalidateVisual();
+        return true;
+    }
+
+    public void ClearTrace()
+    {
+        if (_traceIds.Count == 0) return;
+        _traceIds.Clear();
+        InvalidateVisual();
+    }
+
+    public bool TraceActive => _traceIds.Count > 0;
+    public IReadOnlyCollection<string> TraceIds => _traceIds;
+
+    public string HeaderTextOf(string id)
+    {
+        if (_nodes.TryGetValue(id, out var node)) return HeaderText(node);
+        var obj = _model?.Get(id);
+        if (obj == null) return "";
+        string title = obj.Str("name");
+        if (title.Length == 0) title = obj.Class;
+        return title + " #" + id;
+    }
+
+    private static string HeaderText(Node node)
+    {
+        string title = node.Name.Length > 0 ? node.Name : node.Class;
+        return title + " #" + node.Id;
     }
 
     /// How far each ownership wire has to travel down the canvas, in world units.
@@ -598,7 +702,7 @@ public class GraphView : Control
         // crossed by them, which is the whole point of asking for one state at a time. With nothing
         // picked out there is nothing to sit on top of, and a second walk of four thousand nodes is
         // not free, so that case runs the lit pass only.
-        bool focused = _highlight.Length > 0 || _needle.Length > 0;
+        bool focused = _highlight.Length > 0 || _needle.Length > 0 || _traceIds.Count > 0;
         for (int pass = focused ? 0 : 1; pass < 2; pass++)
             foreach (var node in _nodes.Values)
                 for (int i = 0; i < node.Slots.Count; i++)
@@ -675,7 +779,7 @@ public class GraphView : Control
     /// vanilla machine with 168 of them cannot, and that is what the gating is for.
     private void DrawRoutes(DrawingContext ctx)
     {
-        bool focused = _highlight.Length > 0 || _needle.Length > 0;
+        bool focused = _highlight.Length > 0 || _needle.Length > 0 || _traceIds.Count > 0;
         var wanted = new List<(string Text, Point At, Color Colour, bool Lit, bool Wildcard)>();
 
         foreach (var route in RoutesToDraw())
@@ -912,14 +1016,21 @@ public class GraphView : Control
         double scale = _zoom;
         var faultBrush = fault is { } f ? new SolidColorBrush(f) : null;
         string title = node.Name.Length > 0 ? node.Name : node.Class;
+        string chipText = "#" + node.Id;
 
         // The title starts clear of the chevron on a node that has one, so folding does not cover
         // the name of the thing being folded.
         bool family = HasFamily(node);
         double titleAt = family ? 18 : 6;
+        double chipWidth = Math.Clamp((chipText.Length * 6 + 10) * scale, 24 * scale, 58 * scale);
+        var chip = new Rect(r.Right - (chipWidth + 5 * scale), r.Y + 4 * scale,
+                            chipWidth, 13 * scale);
 
         Draw(ctx, title, r.X + titleAt * scale, r.Y + 4 * scale, 11 * scale,
-             faultBrush ?? Ux.TitleBrush, r.Width - (titleAt + 6) * scale);
+             faultBrush ?? Ux.TitleBrush, r.Width - (titleAt + 14) * scale - chipWidth);
+        ctx.DrawRectangle(new SolidColorBrush(Ux.Base, 0.38), null, chip, 3, 3);
+        Draw(ctx, chipText, chip.X + 3 * scale, chip.Y + 1 * scale, 8 * scale,
+             Ux.MetaBrush, chip.Width - 6 * scale);
 
         if (family)
         {
