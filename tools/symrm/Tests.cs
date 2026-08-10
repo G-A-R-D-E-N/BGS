@@ -766,6 +766,12 @@ public static class Tests
         CheckTrue("Unattached reads structs, so a node held only by one is not called orphaned",
                   GraphAuthor.Unattached(model).All(o => o.Id != "97"));
 
+        // The canvas uses PointsAt rather than HkReferences. Keep its edge walk in agreement with
+        // the reachability and deletion walks, otherwise an event payload looks disconnected even
+        // though its named event property points straight at it.
+        CheckTrue("PointsAt reads structs, so the canvas keeps the payload connected",
+                  GraphAuthor.PointsAt(model, holder).Contains("99"));
+
         // ReferencesTo does not, so it reports the payload as pointed at by nothing. That is the
         // answer Remove trusts before it deletes, and it is wrong.
         Check("ReferencesTo names the modifier that holds it", 1,

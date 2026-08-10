@@ -1092,6 +1092,91 @@ public static class Smoke
                     }
                 }
 
+                // Bone weight arrays used to be one opaque line of numbers. VertibirdBehavior has
+                // a real 73-entry instance and its extracted character tree carries the matching
+                // skeleton, so this is the direct UI path rather than a model-only substitute.
+                string boneWeights = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                    .IdsOfClass(window.LoadedXml, "hkbBoneWeightArray")
+                    .Select(id => new
+                    {
+                        Id = id,
+                        Values = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                            .ArrayValues(window.LoadedXml, id, "boneWeights") ?? new List<string>(),
+                    })
+                    .FirstOrDefault(array => array.Values.Count == 73)?.Id ?? "";
+                if (string.Equals(name, "VertibirdBehavior.hkx", StringComparison.OrdinalIgnoreCase))
+                    CheckTrue($"{name}: finds the real 73-entry bone weight array", boneWeights.Length > 0);
+                if (boneWeights.Length > 0)
+                {
+                    string field = "boneWeights";
+                    var before = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                        .ArrayValues(window.LoadedXml, boneWeights, field)!;
+                    Check($"{name}: the selected Vertibird bone weight array has 73 entries", 73, before.Count);
+
+                    window.SelectNode(boneWeights);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    var boxes = Find<TextBox>(window.GraphProperties);
+                    var labels = Find<TextBlock>(window.GraphProperties).Select(t => t.Text ?? "").ToList();
+                    Check($"{name}: every bone weight has one editable row", before.Count, boxes.Count);
+
+                    string rigPath = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+                        System.IO.Path.GetDirectoryName(path) ?? "", "..", "CharacterAssets", "skeleton.hkx"));
+                    if (System.IO.File.Exists(rigPath))
+                    {
+                        var bones = new OpenCommonwealth.Services.Hkx.HkxBinaryReader().ReadSkeleton(rigPath).BoneNames;
+                        CheckTrue($"{name}: a bone weight row resolves the first skeleton name",
+                                  bones.Count > 0 && labels.Any(t => t.Contains(bones[0], StringComparison.Ordinal)));
+                        CheckTrue($"{name}: a bone weight row resolves a later skeleton name",
+                                  bones.Count > 36 && labels.Any(t => t.Contains(bones[36], StringComparison.Ordinal)));
+                        Console.WriteLine($"        #{boneWeights}: {before.Count} weights; " +
+                                          $"bone 0 = {bones[0]}, bone 36 = {bones[36]}");
+                    }
+                    else
+                    {
+                        CheckTrue($"{name}: missing skeleton says why labels are numeric",
+                                  labels.Any(t => t.Contains("No skeleton is available", StringComparison.Ordinal)));
+                    }
+
+                    string changed = before[0] == "0.125" ? "0.25" : "0.125";
+                    var changedValues = before.ToList();
+                    changedValues[0] = changed;
+                    Check($"{name}: the array writer changes a bone weight", changed,
+                          OpenCommonwealth.Services.Hkx.HkxTextEdit
+                              .ArrayValues(OpenCommonwealth.Services.Hkx.HkxTextEdit
+                                  .SetArrayValues(window.LoadedXml, boneWeights, field, changedValues),
+                                  boneWeights, field)![0]);
+                    boxes[0].Text = changed;
+                    boxes[0].RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(
+                        Avalonia.Input.InputElement.LostFocusEvent));
+                    window.CommitPendingFields();
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    window.SelectNode(boneWeights);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    boxes = Find<TextBox>(window.GraphProperties);
+                    Check($"{name}: reselecting the array keeps the edited weight", changed, boxes[0].Text ?? "");
+                    int objectStart = window.LoadedXml.IndexOf(
+                        $"<hkobject class=\"hkbBoneWeightArray\" name=\"#{boneWeights}\"", StringComparison.Ordinal);
+                    int valueStart = window.LoadedXml.IndexOf("<hkparam name=\"boneWeights\"", objectStart,
+                                                               StringComparison.Ordinal);
+                    CheckTrue($"{name}: editing a bone weight changes the loaded document",
+                              valueStart >= 0 && window.LoadedXml.IndexOf(changed, valueStart,
+                                                                           StringComparison.Ordinal) >= 0);
+                    Check($"{name}: reselecting still has every weight row", before.Count, boxes.Count);
+
+                    var scroll = Find<ScrollViewer>(window.GraphProperties).First();
+                    scroll.Offset = new Vector(0, scroll.Extent.Height);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    CheckTrue($"{name}: the full bone array scrolls to its final row",
+                              scroll.Offset.Y > 0 && boxes[^1].Bounds.Width > 0 && boxes[^1].Bounds.Height > 0);
+
+                    // The edit is deliberately unsaved. Restore the original before the general
+                    // smoke walk below verifies undo and save state.
+                    window.Open(path);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                }
+
                 // The filter box sits above the tabs, so it has to work on whichever one is showing.
                 // Driving only the tree meant typing in it on the Graph tab did nothing at all.
                 int drawn = canvas.DrawnCount;
@@ -1457,6 +1542,7 @@ public static class Smoke
         }
 
         StandaloneAnimationFillsTheClipList();
+        StandaloneAnimationSkeletonSearchesFromAnimationsRoot();
 
         ArchiveBrowserBuilds();
 
@@ -1506,6 +1592,56 @@ public static class Smoke
         CheckTrue("and the file summary calls it an animation",
                   Find<TextBlock>(window).Any(t => (t.Text ?? "").Contains("an animation, not a behaviour",
                                                                   StringComparison.Ordinal)));
+    }
+
+    private static void StandaloneAnimationSkeletonSearchesFromAnimationsRoot()
+    {
+        string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-animation-root-search");
+        OpenCommonwealth.Services.Hkx.HkxTextEdit.ResetDirectory(root);
+
+        string character = System.IO.Path.Combine(root, "Character");
+        string assets = System.IO.Path.Combine(character, "CharacterAssets");
+        System.IO.Directory.CreateDirectory(assets);
+        string skeleton = System.IO.Path.Combine(assets, "skeleton.hkx");
+        System.IO.File.WriteAllText(skeleton, "fixture");
+
+        string shallow = System.IO.Path.Combine(character, "Animations", "kziitd", "MyAnimation", "MWOW.hkx");
+        string nested = System.IO.Path.Combine(character, "Animations", "kziitd", "MyAnimation", "01", "MWOW.hkx");
+        string deep = System.IO.Path.Combine(character, "Animations", "kziitd", "MyAnimation", "01", "a", "b", "c", "MWOW.hkx");
+        foreach (string file in new[] { shallow, nested, deep })
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(file)!);
+            System.IO.File.WriteAllText(file, "fixture");
+        }
+
+        string unrelated = System.IO.Path.Combine(root, "CharacterAssets");
+        System.IO.Directory.CreateDirectory(unrelated);
+        System.IO.File.WriteAllText(System.IO.Path.Combine(unrelated, "wrong.hkx"), "fixture");
+        string outside = System.IO.Path.Combine(root, "Other", "AnimationsElsewhere", "MWOW.hkx");
+        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(outside)!);
+        System.IO.File.WriteAllText(outside, "fixture");
+
+        Check("a shallow animation finds its character skeleton", assets,
+              MainWindow.FindSiblingSkeletonFolder(shallow) ?? "");
+        Check("one extra animation folder finds the same skeleton", assets,
+              MainWindow.FindSiblingSkeletonFolder(nested) ?? "");
+        Check("several extra animation folders find the same skeleton", assets,
+              MainWindow.FindSiblingSkeletonFolder(deep) ?? "");
+        Check("an unrelated higher CharacterAssets folder is not selected", "",
+              MainWindow.FindSiblingSkeletonFolder(outside) ?? "");
+
+        const string sampleAnimation = "dist/examples/Dogmeat/Animations/IdleOutroDogmeatWalkForward.hkx";
+        const string sampleSkeleton = "dist/examples/Dogmeat/CharacterAssets/skeleton.hkx";
+        if (!System.IO.File.Exists(sampleAnimation) || !System.IO.File.Exists(sampleSkeleton)) return;
+
+        System.IO.File.Copy(sampleSkeleton, skeleton, true);
+        System.IO.File.Copy(sampleAnimation, shallow, true);
+        System.IO.File.Copy(sampleAnimation, nested, true);
+        var window = new MainWindow();
+        window.Show();
+        window.Open(nested);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("the extra nested animation has a pose to render", window.PoseNow != null);
     }
 
     /// The archive browser, built on a real archive written here rather than one from the game, so

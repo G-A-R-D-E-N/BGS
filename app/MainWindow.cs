@@ -2168,17 +2168,34 @@ public class MainWindow : Window
     // comes through transformTrackToBoneIndices.
     private static HkxSkeleton? SiblingSkeleton(string animationPath)
     {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(animationPath)) ?? "");
-        for (int up = 0; up < 4 && dir != null; up++, dir = dir.Parent)
-        {
-            string assets = Path.Combine(dir.FullName, "CharacterAssets");
-            if (!Directory.Exists(assets)) continue;
+        string? assets = FindSiblingSkeletonFolder(animationPath);
+        if (assets == null) return null;
 
-            foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
+        foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
+        {
+            try { return new HkxBinaryReader().ReadSkeleton(file); }
+            catch { /* not a skeleton, try the next */ }
+        }
+        return null;
+    }
+
+    /// Animation folders can be nested as deeply as an author needs. The relevant skeleton is the
+    /// CharacterAssets sibling of the directory that owns the Animations folder, never a similarly
+    /// named folder farther up the drive.
+    internal static string? FindSiblingSkeletonFolder(string animationPath)
+    {
+        var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(animationPath)) ?? "");
+        while (dir != null)
+        {
+            if (dir.Name.Equals("Animations", StringComparison.OrdinalIgnoreCase))
             {
-                try { return new HkxBinaryReader().ReadSkeleton(file); }
-                catch { /* not a skeleton, try the next */ }
+                var characterRoot = dir.Parent;
+                if (characterRoot == null) return null;
+
+                string assets = Path.Combine(characterRoot.FullName, "CharacterAssets");
+                return Directory.Exists(assets) ? assets : null;
             }
+            dir = dir.Parent;
         }
         return null;
     }
@@ -3322,17 +3339,16 @@ public class MainWindow : Window
         // came out the same, so this is the same picture drawn without the dependency.
         var reading = _bytes == null ? null : NativeGraphModel.From(_bytes);
 
-        // The text form is written from the file's own bytes when the class table can describe it,
-        // and unpacked with hkxpack when it cannot. That is what takes Java off the editing path as
-        // well as the reading one: an edit is made by rewriting this text, so with no text every edit
-        // was refused.
+        // Editing needs a lossless text form. The native writer is enough for graph reading but can
+        // omit a real-valued array while still accounting for every object, so when hkxpack is
+        // available it is the authoritative editable form.
         //
         // The two texts were set against each other line by line across every vanilla behaviour. Of
         // the 370 files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them.
         // The other 128 hold a class hkxpack strides wrongly, so its own text is misaligned and there
         // is nothing there to match.
         bool own = false;
-        if (_bytes != null && reading != null)
+        if (!text && _bytes != null && reading != null)
         {
             try
             {
@@ -3751,6 +3767,9 @@ public class MainWindow : Window
         heading.TextWrapping = TextWrapping.Wrap;
         panel.Add(heading);
 
+        if (AddBoneArraySection(panel, objectId, className))
+            return;
+
         // An array of structs is shown one element at a time rather than as one flat run of boxes.
         // The file writes an element's fields together, so the fields sharing a group arrive
         // together and a run of them is an element. A transition array with five transitions in it
@@ -3781,6 +3800,92 @@ public class MainWindow : Window
         AddSymbolSection(panel, objectId, model);
         AddBindingSection(panel, objectId, model);
         AddBlendSection(panel, objectId, model, className);
+    }
+
+    /// The two bone-array objects are ordinary arrays on disk, but treating their whole run as one
+    /// property box makes both kinds hard to read: a weight's bone is its position in the run, while
+    /// an index names a bone elsewhere in the skeleton. Show one editable value per row and keep the
+    /// existing array writer as the one place that changes the complete run.
+    private bool AddBoneArraySection(Inspector panel, string objectId, string className)
+    {
+        bool weights = className == "hkbBoneWeightArray";
+        bool indices = className == "hkbBoneIndexArray";
+        if (!weights && !indices) return false;
+
+        string field = weights ? "boneWeights" : "boneIndices";
+        var values = HkxTextEdit.ArrayValues(_xmlText, objectId, field);
+        if (values == null) return false;
+        var skeleton = PoseSkeleton();
+        panel.Add(Ux.SectionTitle(weights ? "bone weights" : "bone indices"));
+
+        if (skeleton == null)
+        {
+            var unavailable = Ux.Label("No skeleton is available, so values remain numeric.");
+            unavailable.TextWrapping = TextWrapping.Wrap;
+            unavailable.Foreground = Ux.WarnBrush;
+            panel.Add(unavailable);
+        }
+
+        for (int i = 0; i < values.Count; i++)
+        {
+            int row = i;
+            int bone = row;
+            if (indices) int.TryParse(values[row], out bone);
+
+            string name = skeleton != null && bone >= 0 && bone < skeleton.BoneNames.Count
+                ? skeleton.BoneNames[bone]
+                : skeleton == null ? "bone name unavailable" : $"bone {bone} is outside this skeleton";
+
+            var label = Ux.Label($"{row}  {name}");
+            label.Width = 188;
+            label.TextTrimming = TextTrimming.CharacterEllipsis;
+            ToolTip.SetTip(label, weights
+                ? $"weight for skeleton bone {row}: {name}"
+                : $"entry {row} names skeleton bone {bone}: {name}");
+
+            var value = Ux.Field();
+            value.Text = values[row];
+            string original = values[row];
+            void Commit()
+            {
+                string now = value.Text ?? original;
+                if (now == original) return;
+
+                string before = values[row];
+                values[row] = now;
+                if (SetArrayValues(objectId, field, values)) original = now;
+                else { values[row] = before; value.Text = original; }
+            }
+
+            _fieldCommits.Add(Commit);
+            value.LostFocus += (_, _) => Commit();
+            value.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) Commit(); };
+
+            var line = new DockPanel();
+            DockPanel.SetDock(label, Dock.Left);
+            line.Children.Add(label);
+            line.Children.Add(value);
+            panel.Add(line);
+        }
+
+        return true;
+    }
+
+    private bool SetArrayValues(string objectId, string field, IReadOnlyList<string> values)
+    {
+        if (_xmlText.Length == 0) return false;
+        try
+        {
+            Commit(HkxTextEdit.SetArrayValues(_xmlText, objectId, field, values));
+            _editedFields.Add(objectId + "." + field);
+            SetStatus($"#{objectId}.{field} = {values.Count} value(s)   (unsaved)", Ux.CodeBrush);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message.Split('\n')[0], Ux.MutedBrush);
+            return false;
+        }
     }
 
     /// When the selected node is a blender, the mix it plays: which child, and how much of it.

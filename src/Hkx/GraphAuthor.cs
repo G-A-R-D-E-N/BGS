@@ -278,6 +278,10 @@ public static class GraphAuthor
             foreach (var row in rows)
                 foreach (string value in row.Values)
                     if (value.StartsWith('#')) yield return value[1..];
+
+        foreach (var fields in obj.Structs.Values)
+            foreach (string value in fields.Values)
+                if (value.StartsWith('#')) yield return value[1..];
     }
 
     // Only things that produce or shape a pose count. Vanilla ships plenty of unreferenced

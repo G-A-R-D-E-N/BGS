@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace OpenCommonwealth.Services.Hkx;
@@ -327,6 +328,56 @@ public static class HkxTextEdit
             });
         return result;
     }
+
+    /// Plain-value arrays are written over more than one line in real game files. They are not
+    /// `ReadParams` fields: the numelements attribute deliberately excludes them from that reader.
+    /// Keep their narrow API separate from arrays of nested objects, whose body must never be
+    /// flattened into whitespace-delimited values.
+    public static List<string>? ArrayValues(string xmlText, string id, string paramName)
+    {
+        var (start, length) = ObjectBlock(xmlText, id);
+        if (start < 0) return null;
+        string block = xmlText.Substring(start, length);
+        Match param = PlainArrayParam(block, paramName);
+        if (!param.Success) return null;
+        if (param.Groups["self"].Success) return new List<string>();
+
+        string body = param.Groups["body"].Value;
+        if (body.Contains('<')) return null;
+        return Decode(body).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).ToList();
+    }
+
+    /// Replaces a plain-value array while preserving its object and all unrelated fields. Nested
+    /// arrays use the structural editors below; accepting one here would erase its elements.
+    public static string SetArrayValues(string xmlText, string id, string paramName,
+                                        IReadOnlyList<string> values)
+    {
+        var (start, length) = ObjectBlock(xmlText, id);
+        if (start < 0) throw new ArgumentException($"object #{id} not found");
+        string block = xmlText.Substring(start, length);
+        Match param = PlainArrayParam(block, paramName);
+        if (!param.Success)
+            throw new ArgumentException($"#{id} has no array parameter named {paramName}");
+
+        string oldBody = param.Groups["self"].Success ? "" : param.Groups["body"].Value;
+        if (oldBody.Contains('<'))
+            throw new ArgumentException($"#{id}.{paramName} is an array of nested objects");
+
+        string opening = $"<hkparam name=\"{paramName}\"" + param.Groups["attrs"].Value + ">";
+        opening = Regex.Replace(opening, @"numelements=""\d+""", $"numelements=\"{values.Count}\"");
+        string replacement = values.Count == 0
+            ? $"<hkparam name=\"{paramName}\" numelements=\"0\"/>"
+            : opening + Escape(string.Join(" ", values)) + "</hkparam>";
+
+        string rewritten = block[..param.Index] + replacement + block[(param.Index + param.Length)..];
+        return xmlText[..start] + rewritten + xmlText[(start + length)..];
+    }
+
+    private static Match PlainArrayParam(string block, string name) =>
+        Regex.Match(block,
+                    $@"<hkparam\s+name=""{Regex.Escape(name)}""(?<attrs>[^>]*)>(?<body>.*?)</hkparam>|" +
+                    $@"<hkparam\s+name=""{Regex.Escape(name)}""(?<attrs>[^>]*)/(?<self>)>",
+                    RegexOptions.Singleline);
 
     /// A value is XML, so what sits in the file is `&gt;` where the value is `>`. Read undoes that
     /// and write puts it back, in step, so what a person sees and types is the value itself.
