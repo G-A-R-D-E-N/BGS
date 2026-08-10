@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Linq;
 using System.Xml.Linq;
@@ -594,11 +595,14 @@ public static class NativeSave
 
 
     public static byte[] Apply(string hkxPath, Plan plan, HavokClasses? classes = null)
+        => Apply(File.ReadAllBytes(hkxPath), plan, classes);
+
+    public static byte[] Apply(byte[] source, Plan plan, HavokClasses? classes = null)
     {
         if (!plan.Possible)
             throw new InvalidOperationException("This edit cannot be written in place: " + plan.Refusal);
 
-        var image = PackfileImage.Read(hkxPath);
+        var image = PackfileImage.Read(source);
         var objects = new PackfileObjects(image, classes);
 
 

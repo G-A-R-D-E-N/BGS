@@ -196,6 +196,11 @@ public class MainWindow : Window
     private readonly ComboBox _templates = new()
         { MinWidth = 210, MaxWidth = 300, Foreground = Ux.CodeBrush, FontSize = 12 };
     private Button _applyTemplate = Ux.Secondary("Apply template");
+    private readonly ComboBox _predefinedTemplates = new()
+        { MinWidth = 190, MaxWidth = 250, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private readonly StackPanel _predefinedSlots = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
+    private readonly Dictionary<string, Control> _predefinedValues = new(StringComparer.Ordinal);
+    private readonly Button _applyPredefinedTemplate = Ux.Primary("Create template");
 
     private readonly Dictionary<int, int> _offsetToIndex = new();
     private HashSet<string> _emptyStates = new();
@@ -761,6 +766,10 @@ public class MainWindow : Window
 
 
         _templates.SelectionChanged += (_, _) => DescribeTemplate();
+        _predefinedTemplates.ItemsSource = PredefinedTemplates.All().Select(template => template.Id).ToList();
+        _predefinedTemplates.SelectionChanged += (_, _) => RefreshPredefinedTemplateEditors();
+        _applyPredefinedTemplate.Click += (_, _) => ApplyPredefinedTemplate();
+        if (_predefinedTemplates.Items.Count > 0) _predefinedTemplates.SelectedIndex = 0;
 
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         foreach (var control in new Control[] { copy, label, _pasteInto, _pasteButton,
@@ -772,9 +781,23 @@ public class MainWindow : Window
         bar.Children.Add(left);
         bar.Children.Add(_pasteSummary);
 
+        var predefined = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6,
+                                          Margin = new Thickness(0, 6, 0, 0) };
+        predefined.Children.Add(new TextBlock { Text = "Predefined", Foreground = Ux.MetaBrush,
+                                                FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        predefined.Children.Add(_predefinedTemplates);
+        predefined.Children.Add(_predefinedSlots);
+        predefined.Children.Add(_applyPredefinedTemplate);
+
+        var all = new StackPanel();
+        all.Children.Add(bar);
+        all.Children.Add(predefined);
+
         RefreshPasteSlots();
         RefreshTemplates();
-        return bar;
+        _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
+        RefreshPredefinedTemplateEditors();
+        return all;
     }
 
 
@@ -808,6 +831,7 @@ public class MainWindow : Window
         _pasteInto.SelectedItem = slots.Contains(chosen) ? chosen : Unattached;
 
         _pasteButton.IsEnabled = _clip != null && !_readOnly && _hkxPath.Length > 0;
+        _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
         if (_clip != null && _pasteSummary.Text?.Length == 0) SetPasteSummary(Held(_clip), Ux.MetaBrush);
     }
 
@@ -1050,6 +1074,66 @@ public class MainWindow : Window
         }
     }
 
+    private void RefreshPredefinedTemplateEditors()
+    {
+        _predefinedSlots.Children.Clear();
+        _predefinedValues.Clear();
+        _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
+
+        if (_predefinedTemplates.SelectedItem as string is not { } id) return;
+        var template = PredefinedTemplates.Get(id);
+        if (template == null) return;
+
+        foreach (var slot in template.Slots)
+        {
+            Control control;
+            if (slot.Kind == PredefinedTemplates.SlotKind.Choice)
+            {
+                var choices = new ComboBox { MinWidth = 120, Foreground = Ux.CodeBrush, FontSize = 12,
+                                             ItemsSource = slot.Choices?.ToList() ?? new List<string>() };
+                choices.SelectedItem = slot.DefaultValue;
+                control = choices;
+            }
+            else
+            {
+                control = Ux.Field(slot.DisplayName + (slot.Required ? " *" : ""), 130);
+                ((TextBox)control).Text = slot.DefaultValue;
+            }
+            ToolTip.SetTip(control, slot.Description);
+            _predefinedValues[slot.Key] = control;
+            _predefinedSlots.Children.Add(control);
+        }
+
+        SetPasteSummary($"{template.DisplayName}: {template.Description}", Ux.MetaBrush);
+    }
+
+    private void ApplyPredefinedTemplate()
+    {
+        if (_predefinedTemplates.SelectedItem as string is not { } id) return;
+        if (_readOnly) { SetPasteSummary("Not created: " + _readOnlyWhy, Ux.BadBrush); return; }
+        if (_dirty) { SetPasteSummary("Save your other changes first.", Ux.BadBrush); return; }
+        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
+        if (blocked != null) { SetPasteSummary("Cannot create: " + blocked, Ux.BadBrush); return; }
+
+        var raw = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, control) in _predefinedValues)
+            raw[key] = control is ComboBox choice ? choice.SelectedItem as string ?? "" : ((TextBox)control).Text ?? "";
+
+        var result = PredefinedTemplates.Instantiate(_hkxPath, id, raw);
+        if (!result.Possible || result.Bytes == null)
+        {
+            SetPasteSummary("Nothing created: " + result.Refusal, Ux.BadBrush);
+            return;
+        }
+
+        string backup = _hkxPath + ".bak";
+        if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
+        ReplaceFile(_hkxPath, result.Bytes);
+        Load();
+        SelectObjectId(result.RootId.ToString());
+        SetPasteSummary(result.Summary + $" The file before this is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
+    }
+
     private void SetPasteSummary(string text, IBrush brush)
     {
         _pasteSummary.Text = text;
@@ -1060,6 +1144,7 @@ public class MainWindow : Window
     public IReadOnlyList<string> TemplateNames =>
         (_templates.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
     public bool CanApplyTemplate => _applyTemplate.IsEnabled;
+    public bool CanCreatePredefinedTemplate => _applyPredefinedTemplate.IsEnabled;
     public void SaveTemplateForTest(string name)
     {
         _templateName.Text = name;
@@ -3241,6 +3326,7 @@ public class MainWindow : Window
 
 
         RefreshTemplates();
+        _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
 
         var classes = new HashSet<string>();
         int clips = 0;

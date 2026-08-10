@@ -134,6 +134,10 @@ public static class Tests
         ("ATemplateRefusesToLiftWhatSharesItsFile", ATemplateRefusesToLiftWhatSharesItsFile),
         ("ATemplateSaysWhatToDeclareRatherThanJustFailing", ATemplateSaysWhatToDeclareRatherThanJustFailing),
         ("ATemplateDescriptionSurvivesAwkwardNames", ATemplateDescriptionSurvivesAwkwardNames),
+        ("PredefinedTemplateCatalogResolvesDefaults", PredefinedTemplateCatalogResolvesDefaults),
+        ("PredefinedClipGeneratorIsNativeAndAtomic", PredefinedClipGeneratorIsNativeAndAtomic),
+        ("PredefinedBlendGeneratorCreatesItsChildren", PredefinedBlendGeneratorCreatesItsChildren),
+        ("PredefinedStateAttachesItsGenerator", PredefinedStateAttachesItsGenerator),
         ("ACutTakesTheClipsOwnTimeWithIt", ACutTakesTheClipsOwnTimeWithIt),
         ("ALinearTravelStaysTwoSamplesAfterACut", ALinearTravelStaysTwoSamplesAfterACut),
         ("ACutRefusesWhatIsNotAClip", ACutRefusesWhatIsNotAClip),
@@ -4675,6 +4679,128 @@ public static class Tests
 
         Check("and the description is still one line per field", 8,
               System.IO.File.ReadAllLines(System.IO.Path.Combine(folder, lifted.Slug + ".template")).Length);
+    }
+
+    private static void PredefinedTemplateCatalogResolvesDefaults()
+    {
+        var all = PredefinedTemplates.All();
+        Check("the predefined catalog has the three agreed shapes", 3, all.Count);
+        Check("the clip template has its stable ID", "clip-generator", all[0].Id);
+
+        var clip = PredefinedTemplates.Get("clip-generator");
+        CheckTrue("the clip template can be found by ID", clip != null);
+        if (clip == null) return;
+
+        var resolved = PredefinedTemplates.Resolve(clip, new Dictionary<string, string>
+        {
+            ["animation"] = "Walk.hkx",
+        });
+
+        CheckTrue("the required animation resolves", resolved.Possible);
+        Check("the clip name has an explicit default", "New Clip", resolved.Text("name"));
+        Check("the clip playback mode has an explicit default", "looping", resolved.Text("mode"));
+
+        var missing = PredefinedTemplates.Resolve(clip, new Dictionary<string, string>());
+        CheckTrue("a missing required slot is refused", !missing.Possible);
+        CheckTrue("the refusal names the missing slot", missing.Refusal?.Contains("animation", StringComparison.Ordinal) == true);
+    }
+
+    private static void PredefinedClipGeneratorIsNativeAndAtomic()
+    {
+        string folder = OwnTemplateFolder("predefined-clip");
+        string path = WriteImage(ClipInAPackfile("Idle.hkx", out _), folder, "Clip.hkx");
+        byte[] original = System.IO.File.ReadAllBytes(path);
+
+        var result = PredefinedTemplates.Instantiate(path, "clip-generator", new Dictionary<string, string>
+        {
+            ["animation"] = "Walk.hkx",
+        });
+
+        CheckTrue("the predefined clip materializes", result.Possible);
+        CheckTrue("the source file remains unchanged until a caller accepts bytes",
+                  original.SequenceEqual(System.IO.File.ReadAllBytes(path)));
+        if (result.Bytes == null) return;
+
+        var objects = new PackfileObjects(PackfileImage.Read(result.Bytes), HavokClasses.Shipped);
+        Check("the materialized root is a real clip", "hkbClipGenerator",
+              objects.Instances[result.RootId - NativeGraphModel.FirstId].ClassName);
+        Check("the requested animation is written", "Walk.hkx",
+              objects.ReadString(objects.Instances[^1], "animationName"));
+        Check("the default playback mode is looping", 1, objects.ReadInt(objects.Instances[^1], "mode"));
+    }
+
+    private static void PredefinedBlendGeneratorCreatesItsChildren()
+    {
+        string folder = OwnTemplateFolder("predefined-blend");
+        string path = WriteImage(ClipInAPackfile("Idle.hkx", out _), folder, "Blend.hkx");
+
+        var result = PredefinedTemplates.Instantiate(path, "blend-generator", new Dictionary<string, string>
+        {
+            ["children"] = "3",
+        });
+
+        CheckTrue("the predefined blend materializes", result.Possible);
+        if (result.Bytes == null) return;
+
+        var objects = new PackfileObjects(PackfileImage.Read(result.Bytes), HavokClasses.Shipped);
+        var blend = objects.Instances[result.RootId - NativeGraphModel.FirstId];
+        Check("the materialized root is a real blender", "hkbBlenderGenerator", blend.ClassName);
+        Check("the blender has exactly the requested child references", 3, objects.ReadRefArray(blend, "children")?.Count);
+        Check("three real blender child objects were created", 3,
+              objects.Instances.Count(instance => instance.ClassName == "hkbBlenderGeneratorChild"));
+        Check("the blender default parameter is one", 1f, objects.ReadFloat(blend, "blendParameter"));
+        Check("the blender default flags are preserved", 8, objects.ReadInt(blend, "flags"));
+
+        var invalid = PredefinedTemplates.Instantiate(path, "blend-generator", new Dictionary<string, string>
+        {
+            ["children"] = "0",
+        });
+        CheckTrue("an invalid child count is refused", !invalid.Possible);
+    }
+
+    private static void PredefinedStateAttachesItsGenerator()
+    {
+        string folder = OwnTemplateFolder("predefined-state");
+        byte[] source = ClipInAPackfile("Idle.hkx", out _).Rebuild();
+        var setup = new NativeSave.Plan(new List<NativeSave.Change>
+        {
+            new("hkbStateMachine", 0, "", "#91", Added: true),
+            new("hkbStateMachine", 0, "states", "", Array: true),
+            new("hkbStateMachine", 0, "startStateId", "0"),
+        }, null);
+        string path = WriteImage(PackfileImage.Read(NativeSave.Apply(source, setup)), folder, "State.hkx");
+
+        var result = PredefinedTemplates.Instantiate(path, "state-with-generator", new Dictionary<string, string>
+        {
+            ["machine"] = "#91",
+            ["animation"] = "Walk.hkx",
+        });
+
+        CheckTrue("the predefined state materializes", result.Possible);
+        Check("the state materializer refusal is empty", "", result.Refusal ?? "");
+        if (result.Bytes == null) return;
+
+        var objects = new PackfileObjects(PackfileImage.Read(result.Bytes), HavokClasses.Shipped);
+        var state = objects.Instances[result.RootId - NativeGraphModel.FirstId];
+        Check("the materialized root is a state", "hkbStateMachineStateInfo", state.ClassName);
+        Check("the state gets the next unused state ID", 0, objects.ReadInt(state, "stateId"));
+        CheckTrue("the state points at the generated clip", objects.ReadRef(state, "generator", out _)?.ClassName == "hkbClipGenerator");
+        Check("the generated state clip loops by default", 1,
+              objects.ReadInt(objects.ReadRef(state, "generator", out _)!, "mode"));
+        Check("the machine receives the new state", 1,
+              objects.ReadRefArray(objects.Instances[1], "states")?.Count);
+
+        var existing = PredefinedTemplates.Instantiate(path, "state-with-generator", new Dictionary<string, string>
+        {
+            ["machine"] = "#91",
+            ["generator"] = "#90",
+        });
+        CheckTrue("an existing generator needs no animation name", existing.Possible);
+        if (existing.Bytes == null) return;
+        var existingObjects = new PackfileObjects(PackfileImage.Read(existing.Bytes), HavokClasses.Shipped);
+        Check("the state points at the supplied generator", 90,
+              NativeGraphModel.FirstId + existingObjects.Instances.ToList().IndexOf(
+                  existingObjects.ReadRef(existingObjects.Instances[existing.RootId - NativeGraphModel.FirstId], "generator", out _)!));
     }
 
 

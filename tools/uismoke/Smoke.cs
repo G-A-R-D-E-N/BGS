@@ -220,7 +220,7 @@ public static class Smoke
         foreach (string expected in new[]
                  { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
                    "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
-                   "Play", "From selected node", "Fit", "View ▾", "Fit all", "Fit selection" })
+                   "Play", "From selected node", "Fit", "View ▾", "Fit all", "Fit selection", "Create template" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
 
 
