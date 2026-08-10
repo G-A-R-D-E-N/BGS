@@ -5992,11 +5992,13 @@ public static class Program
         var expressions = new Dictionary<string, int>(StringComparer.Ordinal);
         int filesWithConditions = 0, filesWithExpressions = 0, unread = 0;
         int parsedOk = 0, unparsed = 0, undecided = 0, trueAtStart = 0, falseAtStart = 0;
+        int expressionParsed = 0, expressionEvaluated = 0, expressionUnsupported = 0;
         int driven = 0, flipped = 0, reachedFromState = 0, sweepEnters = 0, falseNow = 0;
         var problems = new List<string>();
         var assignments = new List<string>();
         var undeclared = new List<string>();
         var stuck = new List<string>();
+        var expressionRefusals = new List<string>();
 
         foreach (string file in files)
         {
@@ -6007,6 +6009,7 @@ public static class Program
             int here = 0, there = 0;
 
             var declared = VariableTable(objects);
+            var expressionValues = new Dictionary<string, double>(declared, StringComparer.Ordinal);
 
             foreach (var instance in objects.OfClass("hkbExpressionCondition"))
             {
@@ -6051,6 +6054,29 @@ public static class Program
                     string text = objects.ReadStringAt(array.At + e * stride) ?? "";
                     expressions[text] = expressions.GetValueOrDefault(text) + 1;
                     there++;
+
+                    var parsed = Expression.Parse(text);
+                    if (!parsed.Ok || parsed.Root is not Expression.Node.Assign assignment ||
+                        !expressionValues.ContainsKey(assignment.Variable))
+                    {
+                        expressionUnsupported++;
+                        expressionRefusals.Add($"{Path.GetFileName(file)}: \"{text}\" " +
+                            (parsed.Problem ?? $"does not assign a declared variable"));
+                        continue;
+                    }
+
+                    expressionParsed++;
+                    var value = Expression.EvaluateNumber(parsed,
+                        name => expressionValues.TryGetValue(name, out double number) ? number : null);
+                    if (!value.Possible)
+                    {
+                        expressionUnsupported++;
+                        expressionRefusals.Add($"{Path.GetFileName(file)}: \"{text}\" {value.Refusal}");
+                        continue;
+                    }
+
+                    expressionEvaluated++;
+                    expressionValues[assignment.Variable] = value.Value!.Value;
                 }
             }
 
@@ -6152,8 +6178,12 @@ public static class Program
 
         Console.WriteLine($"\nexpression modifier lines: {expressions.Values.Sum()} in " +
                           $"{filesWithExpressions} file(s), {expressions.Count} distinct");
+        Console.WriteLine($"  {expressionParsed} parse as assignments; {expressionEvaluated} evaluate from " +
+                          $"each file's starting values; {expressionUnsupported} are safely held");
         foreach (var (text, count) in expressions.OrderByDescending(c => c.Value).Take(15))
             Console.WriteLine($"  {count,5}  {text}");
+        foreach (string refusal in expressionRefusals.Take(12)) Console.WriteLine("  cannot evaluate: " + refusal);
+        if (expressionRefusals.Count > 12) Console.WriteLine($"  ... and {expressionRefusals.Count - 12} more");
 
 
 
