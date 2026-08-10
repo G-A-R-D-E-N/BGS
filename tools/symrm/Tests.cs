@@ -44,6 +44,7 @@ public static class Tests
         ("RepackDriftNamesWhatMoved", RepackDriftNamesWhatMoved),
         ("TransitionRowsCarryPriorityAndFlags", TransitionRowsCarryPriorityAndFlags),
         ("StaticTraceFollowsExistingGraphLinks", StaticTraceFollowsExistingGraphLinks),
+        ("StructuredFlowKeepsMachineOwnership", StructuredFlowKeepsMachineOwnership),
         ("AnUnreachableStateIsReported", AnUnreachableStateIsReported),
         ("EventUsageSaysWhoSendsAndWhoListens", EventUsageSaysWhoSendsAndWhoListens),
         ("ScaleIsShownOnlyWhenItIsRealScale", ScaleIsShownOnlyWhenItIsRealScale),
@@ -1262,6 +1263,25 @@ public static class Tests
         Check("a focused trace stays inside the visible tree", "93,94",
               string.Join(",", trace.Reachable("93", GraphTrace.Direction.Both,
                   new HashSet<string> { "93", "94" }).OrderBy(id => id)));
+    }
+
+    private static void StructuredFlowKeepsMachineOwnership()
+    {
+        Console.WriteLine("\nstructured flow keeps machine ownership");
+
+        var model = BehaviourGraphModel.Parse(NestedReachabilityGraph());
+        var plan = StructuredFlowLayout.Of(GraphAuthor.Layout(model, 1000));
+
+        Check("the outer machine has no machine parent", "", plan.Item("10").ParentMachineId);
+        Check("the nested machine stays inside the outer machine", "10", plan.Item("20").ParentMachineId);
+        Check("an outer state belongs to the outer machine", "10", plan.Item("11").MachineId);
+        Check("a helper inherits its nearest machine", "10", plan.Item("12").MachineId);
+        Check("a nested state belongs to the nested machine", "20", plan.Item("21").MachineId);
+        CheckTrue("the root machine ranks above its state", plan.Item("10").Depth < plan.Item("11").Depth);
+        CheckTrue("the nested machine ranks below the state that owns it",
+                  plan.Item("13").Depth < plan.Item("20").Depth);
+        CheckTrue("source order gives sibling states a stable order",
+                  plan.Item("11").SiblingOrder < plan.Item("13").SiblingOrder);
     }
 
     private static List<GraphValidator.Finding> Unreachable(string xml) =>
