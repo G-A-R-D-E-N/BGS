@@ -187,6 +187,10 @@ public static class HkxTextEdit
 
     public static string AppDirectory = "";
 
+    public static bool LegacyPackerEnabled =>
+        string.Equals(Environment.GetEnvironmentVariable("BGS_ENABLE_LEGACY_PACKER"), "1",
+                      StringComparison.Ordinal);
+
     public static string? FindHkxPack(string configured, string projectRoot)
     {
         if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return configured;
@@ -252,7 +256,7 @@ public static class HkxTextEdit
 
 
 
-    public static string TextOf(string hkxPath, string? java, string? jar)
+    public static string TextOf(string hkxPath)
     {
         try
         {
@@ -268,7 +272,19 @@ public static class HkxTextEdit
 
         }
 
-        if (java == null || jar == null) return "";
+        return LegacyTextOf(hkxPath);
+    }
+
+    public static string TextOf(string hkxPath, string? java, string? jar) => TextOf(hkxPath);
+
+    public static string LegacyTextOf(string hkxPath)
+    {
+        if (!LegacyPackerEnabled) return "";
+
+        string? java = Environment.GetEnvironmentVariable("BGS_LEGACY_JAVA");
+        string? jar = Environment.GetEnvironmentVariable("BGS_LEGACY_HKXPACK");
+        if (string.IsNullOrWhiteSpace(java) || string.IsNullOrWhiteSpace(jar) ||
+            !File.Exists(java) || !File.Exists(jar)) return "";
 
         string work = Path.Combine(Path.GetTempPath(), "bgs_text",
                                    Path.GetFileNameWithoutExtension(hkxPath));

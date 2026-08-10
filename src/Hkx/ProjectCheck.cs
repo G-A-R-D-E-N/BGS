@@ -60,8 +60,7 @@ public static class ProjectCheck
         return found;
     }
 
-    public static Result Run(ProjectChain chain, string? java = null, string? jar = null,
-                             Action<string>? progress = null)
+    public static Result Run(ProjectChain chain, Action<string>? progress = null)
     {
         var result = new Result();
         var files = BehaviourFiles(chain);
@@ -75,11 +74,10 @@ public static class ProjectCheck
 
             try
             {
-                string xml = HkxTextEdit.TextOf(path, java, jar);
+                string xml = HkxTextEdit.TextOf(path);
                 if (xml.Length == 0)
                 {
-                    file.Error = "holds a class this build cannot describe, and there is no hkxpack " +
-                                 "to fall back on";
+                    file.Error = "holds a class this build cannot describe";
                     continue;
                 }
 

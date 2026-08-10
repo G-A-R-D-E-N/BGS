@@ -4,18 +4,17 @@
 alongside it is listed below with its own licence. Fallout 4 and its file formats are Bethesda's;
 nothing in this repository is derived from their code or ships their assets.
 
-Software distributed with this tool that was written by someone else.
+Software currently distributed with this tool that was written by someone else.
 
 ## hkxpack
 
 - Upstream: https://github.com/Dexesttp/hkxpack
 - Version: 0.1.5-beta (`tools/hkxpack-cli.jar`)
-- Licence: MIT, Copyright (c) 2016 DexesTTP. Full text in `tools/hkxpack-LICENSE.txt`, and shipped
-  beside the jar in every release because the licence requires it to travel with the software.
+- Licence: MIT, Copyright (c) 2016 DexesTTP. This artifact is retained only in the private source
+  tree during native-pipeline validation. It is not included in normal application builds or releases.
 
-Reading a behaviour file needs none of this; the reader is C# and native to the tool. hkxpack is
-what turns edited XML back into a binary `.hkx`, so it is only reached when saving. Without a Java
-runtime present the tool stays read only and says so, rather than failing at the point of save.
+Reading, editing, comparison, validation, and supported saves use native C# code. The retained
+artifact is an internal validation escape hatch only, pending its Phase B deletion.
 
 **`src/Hkx/HavokClassTypes.json` is derived from this jar and carries the same licence.** The jar
 holds a database of Havok class descriptions under `classxml/`, and `symrm classes` reads it out —

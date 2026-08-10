@@ -276,8 +276,8 @@ public static class Smoke
 
 
 
-        CheckTrue("the Java picker stays hidden until Java is actually missing",
-            Find<Button>(window).First(b => b.Content?.ToString() == "Find Java...").IsVisible == false);
+        CheckTrue("the window has no Java setup control",
+            !Find<Button>(window).Any(b => b.Content?.ToString() == "Find Java..."));
 
 
 

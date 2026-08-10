@@ -59,7 +59,6 @@ public class MainWindow : Window
     private readonly Button _saveButton;
     private readonly Button _undoButton;
     private readonly Button _redoButton;
-    private readonly Button _findJava;
 
     private readonly HkGrid _tree = new(("Node", -4), ("Havok class", -3), ("Animation", -4), ("Offset", 90));
     private readonly HkGrid _symbols =
@@ -282,10 +281,6 @@ public class MainWindow : Window
         _redoButton.Click += (_, _) => Redo();
         ToolTip.SetTip(_redoButton, "Ctrl+Y");
 
-        _findJava = Ux.Secondary("Find Java...");
-        _findJava.IsVisible = false;
-        _findJava.Click += async (_, _) => await PickJava();
-
         KeyDown += OnWindowKey;
 
         _tree.SelectionChanged += OnTreeSelected;
@@ -317,7 +312,7 @@ public class MainWindow : Window
                 (Ux.Pill(_summary), false),
                 (Bar(_filter, expand, collapse), false),
                 (tabs, true),
-                (Bar(Ux.Pill(_status), _findJava, _undoButton, _redoButton, checkProject, check, _saveButton), false)),
+                (Bar(Ux.Pill(_status), _undoButton, _redoButton, checkProject, check, _saveButton), false)),
         };
 
         SetSummary("No file loaded.", Ux.MutedBrush);
@@ -2898,9 +2893,6 @@ public class MainWindow : Window
         string? other = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
         if (other == null) return;
 
-        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
-        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-
         if (_xmlText.Length == 0)
         {
             SetDiffSummary("Nothing is open to compare against.", Ux.BadBrush);
@@ -2908,13 +2900,13 @@ public class MainWindow : Window
         }
 
         _diff.Clear();
-        SetDiffSummary($"Unpacking {Path.GetFileName(other)}...", Ux.MutedBrush);
+        SetDiffSummary($"Reading {Path.GetFileName(other)}...", Ux.MutedBrush);
 
         BehaviourDiff.Result result;
         try
         {
             string mine = _xmlText;
-            result = await Task.Run(() => ComputeDiff(mine, other, java, jar));
+            result = await Task.Run(() => ComputeDiff(mine, other));
         }
         catch (Exception ex)
         {
@@ -2928,7 +2920,7 @@ public class MainWindow : Window
 
 
 
-    private static string TextOf(string path, string? java, string? jar)
+    private static string TextOf(string path)
     {
         try
         {
@@ -2940,20 +2932,15 @@ public class MainWindow : Window
         }
         catch (Exception) { }
 
-        if (java == null || jar == null) return "";
-
-        string work = Path.Combine(Path.GetTempPath(), "bgs_compare");
-        HkxTextEdit.ResetDirectory(work);
-        return HkxTextEdit.ReadXml(HkxTextEdit.Unpack(java, jar, path, work));
+        return HkxTextEdit.LegacyTextOf(path);
     }
 
-    private static BehaviourDiff.Result ComputeDiff(string mine, string other, string? java, string? jar)
+    private static BehaviourDiff.Result ComputeDiff(string mine, string other)
     {
-        string theirs = TextOf(other, java, jar);
+        string theirs = TextOf(other);
         if (theirs.Length == 0)
             throw new InvalidOperationException(
-                "this file's classes are not ones this build describes, and there is no hkxpack " +
-                "to fall back on");
+                "this file's classes are not ones this build describes");
 
         return BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(theirs));
     }
@@ -2962,11 +2949,9 @@ public class MainWindow : Window
 
     public string CompareLoadedWith(string other)
     {
-        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
-        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
         if (_xmlText.Length == 0) return "";
 
-        ShowDiff(Path.GetFileName(other), ComputeDiff(_xmlText, other, java, jar));
+        ShowDiff(Path.GetFileName(other), ComputeDiff(_xmlText, other));
         return _diffSummary.Text ?? "";
     }
 
@@ -3300,16 +3285,6 @@ public class MainWindow : Window
 
     private void PrepareEditing()
     {
-        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
-        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-        bool text = java != null && jar != null;
-
-        _findJava.IsVisible = java == null;
-
-
-
-
-
         var reading = _bytes == null ? null : NativeGraphModel.From(_bytes);
 
 
@@ -3321,7 +3296,7 @@ public class MainWindow : Window
 
 
         bool own = false;
-        if (!text && _bytes != null && reading != null)
+        if (_bytes != null && reading != null)
         {
             try
             {
@@ -3354,7 +3329,7 @@ public class MainWindow : Window
             }
         }
 
-        if (text && !own)
+        if (!own && HkxTextEdit.LegacyPackerEnabled)
         {
             try
             {
@@ -3362,8 +3337,9 @@ public class MainWindow : Window
                                            Path.GetFileNameWithoutExtension(_hkxPath));
                 HkxTextEdit.ResetDirectory(work);
 
-                _xmlPath = HkxTextEdit.Unpack(java!, jar!, _hkxPath, work);
-                _xmlText = HkxTextEdit.ReadXml(_xmlPath);
+                _xmlPath = Path.Combine(work, Path.GetFileNameWithoutExtension(_hkxPath) + ".xml");
+                _xmlText = HkxTextEdit.LegacyTextOf(_hkxPath);
+                File.WriteAllText(_xmlPath, _xmlText);
                 _objectIds = HkxTextEdit.ObjectIds(_xmlText);
 
 
@@ -3392,17 +3368,9 @@ public class MainWindow : Window
         var model = reading ?? (_xmlText.Length > 0 ? Model() : null);
         if (model == null)
         {
-            string missing = java == null && jar == null ? "Java and hkxpack are missing"
-                           : java == null ? "Java is missing"
-                           : jar == null ? "hkxpack-cli.jar is missing"
-                           : "the file's classes are not ones this build describes";
-
             SetStatus("Read only, so the Graph, Symbols, Chain and Animation tabs stay empty: " +
-                      missing + ". The tree is read straight from the binary and does not need " +
-                      "either. " +
-                      (java == null ? "Install a Java runtime, or press Find Java if one is already installed somewhere this did not look. " : "") +
-                      (jar == null ? $"Put hkxpack-cli.jar in a tools folder beside the program, at {Path.Combine(AppContext.BaseDirectory, "tools")}. " : "") +
-                      "Save stays off until then.", Ux.WarnBrush);
+                      "this file holds a class this build cannot describe. The tree is read straight " +
+                      "from the binary. Save stays off for this file.", Ux.WarnBrush);
             return;
         }
 
@@ -3421,16 +3389,15 @@ public class MainWindow : Window
         BuildMachineNavigator(model);
         BuildSymbols(model);
         BuildClipList(model);
-        BuildChain(java, jar);
+        BuildChain();
         FindMeshForFile();
         StartRun();
 
-        string source = reading != null ? "read from the file itself" : "read through hkxpack";
+        string source = reading != null ? "read from the file itself" : "read by the internal developer fallback";
         SetStatus(_xmlText.Length > 0
             ? $"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, {source}."
             : $"{_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, {source}. " +
-              "This file holds a class this build cannot describe, so editing it needs Java and " +
-              "hkxpack-cli.jar. Every other file edits and saves without either.",
+              "This file holds a class this build cannot describe, so it is read only.",
             _xmlText.Length > 0 ? Ux.MetaBrush : Ux.WarnBrush);
     }
 
@@ -4296,10 +4263,10 @@ public class MainWindow : Window
             .Select(g => g.Count() > 1 ? $"{g.Key} x{g.Count()}" : g.Key).Take(4));
     }
 
-    private void BuildChain(string? java, string? jar)
+    private void BuildChain()
     {
         _chain.Clear();
-        var chain = ProjectChain.Resolve(_hkxPath, java, jar);
+        var chain = ProjectChain.Resolve(_hkxPath);
         _projectChain = chain;
 
         foreach (var link in chain.Links)
@@ -4810,15 +4777,12 @@ public class MainWindow : Window
 
 
 
-        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
-        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-
         _problems.Clear();
         _problems.IsVisible = _problemBar.IsVisible = true;
         _problemBar.Text = "Reading the project...";
 
         var progress = new Progress<string>(s => SetStatus("Checking " + s, Ux.MutedBrush));
-        var result = await Task.Run(() => ProjectCheck.Run(chain, java, jar, s => ((IProgress<string>)progress).Report(s)));
+        var result = await Task.Run(() => ProjectCheck.Run(chain, s => ((IProgress<string>)progress).Report(s)));
 
         foreach (var file in result.Files.Where(f => f.Error.Length > 0 || f.Findings.Count > 0))
         {
@@ -4912,61 +4876,8 @@ public class MainWindow : Window
         if (refusal != null) { SetStatus(refusal, Ux.BadBrush); return; }
 
         if (SavedInPlace()) return;
-
-        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
-        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-        if (java == null) { SetStatus("Cannot save: no Java runtime found.", Ux.BadBrush); return; }
-        if (jar == null) { SetStatus("Cannot save: hkxpack-cli.jar not found.", Ux.BadBrush); return; }
-
-
-
-        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
-        if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return; }
-
-
-        string? lossy = GraphValidator.RepackWouldLose(_xmlText);
-        if (lossy != null) { SetStatus(lossy, Ux.BadBrush); return; }
-
-        try
-        {
-            File.WriteAllText(_xmlPath, _xmlText);
-            string packed = HkxTextEdit.Repack(java, jar, _xmlPath);
-
-            var drift = VerifyRepack(java, jar, packed);
-            if (!drift.Clean)
-            {
-                SetStatus($"Not saved, and the original is untouched: the repack {drift}.", Ux.BadBrush);
-                return;
-            }
-
-            string backup = _hkxPath + ".bak";
-            if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
-            File.Copy(packed, _hkxPath, true);
-
-            ResetHistory();
-            SetStatus($"Saved. The original is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
-            Load();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            SetStatus("Save failed: " + (HkxTextEdit.WhyNotWritable(_hkxPath) ??
-                      "Windows refused the write. Your original is untouched."), Ux.BadBrush);
-        }
-        catch (Exception ex)
-        {
-            SetStatus("Save failed: " + ex.Message.Split('\n')[0], Ux.BadBrush);
-        }
-    }
-
-
-
-    private RepackCheck.Drift VerifyRepack(string java, string jar, string packed)
-    {
-        string work = Path.Combine(Path.GetTempPath(), "bgs_verify", Path.GetFileNameWithoutExtension(_hkxPath));
-        HkxTextEdit.ResetDirectory(work);
-
-        string xml = HkxTextEdit.Unpack(java, jar, packed, work);
-        return RepackCheck.Compare(RepackCheck.Take(_xmlText), RepackCheck.Take(HkxTextEdit.ReadXml(xml)));
+        SetStatus("Not saved, and the original is untouched: native save does not support this edit yet.",
+                  Ux.BadBrush);
     }
 
     private void OnWindowKey(object? sender, Avalonia.Input.KeyEventArgs e)
@@ -5054,54 +4965,6 @@ public class MainWindow : Window
     }
 
 
-
-    private async Task PickJava()
-    {
-        var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Find the Java launcher",
-            AllowMultiple = false,
-            SuggestedStartLocation = await JavaStartFolder(),
-            FileTypeFilter = new[]
-            {
-                new FilePickerFileType("Java launcher") { Patterns = new[] { "java", "java.exe" } },
-                FilePickerFileTypes.All,
-            },
-        });
-
-        string? path = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
-        if (path == null) return;
-
-        SetStatus($"Running {Path.GetFileName(path)} -version...", Ux.MutedBrush);
-        string? bad = await Task.Run(() => HkxTextEdit.WhyNotJava(path));
-        if (bad != null) { SetStatus(bad + " Nothing was changed.", Ux.BadBrush); return; }
-
-        string version = await Task.Run(() => HkxTextEdit.JavaVersion(path));
-        Settings.Set("java", path);
-        _findJava.IsVisible = false;
-        SetStatus($"Java accepted: {version}", Ux.MetaBrush);
-
-
-
-        if (_hkxPath.Length > 0 && _root != null) PrepareEditing();
-    }
-
-    private async Task<IStorageFolder?> JavaStartFolder()
-    {
-        string[] candidates =
-        {
-            Path.GetDirectoryName(Settings.Get("java")) ?? "",
-            Path.Combine(Environment.GetEnvironmentVariable("JAVA_HOME") ?? "", "bin"),
-            @"C:\Program Files\Java",
-            "/usr/lib/jvm",
-        };
-
-        foreach (string dir in candidates)
-            if (dir.Length > 0 && Directory.Exists(dir))
-                return await StorageProvider.TryGetFolderFromPathAsync(dir);
-
-        return null;
-    }
 
     private void SetSummary(string text, IBrush brush)
     {

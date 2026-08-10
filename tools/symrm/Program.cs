@@ -693,7 +693,7 @@ public static class Program
 
         foreach (string project in roots)
         {
-            var chain = ProjectChain.Resolve(Path.Combine(project, "Behaviors"), _java, _jar);
+            var chain = ProjectChain.Resolve(Path.Combine(project, "Behaviors"));
             if (chain.Animations.Count == 0)
             {
                 chainless++;
@@ -737,7 +737,7 @@ public static class Program
 
     private static int AnimsOne(string hkx)
     {
-        var chain = ProjectChain.Resolve(hkx, _java, _jar);
+        var chain = ProjectChain.Resolve(hkx);
 
         Console.WriteLine($"project root  {chain.Root}");
         Console.WriteLine($"{chain.Animations.Count} animations declared by the character");
@@ -6602,13 +6602,7 @@ public static class Program
         if (argv.Length < 2) { Usage(); return 1; }
 
         string file = Path.GetFullPath(argv[1]);
-        string? java = HkxTextEdit.FindJava("");
-        string? jar = HkxTextEdit.FindHkxPack("", AppContext.BaseDirectory);
-
-        Console.WriteLine($"java {(java == null ? "hidden" : "present")}, " +
-                          $"hkxpack {(jar == null ? "missing" : "present")}");
-
-        var chain = ProjectChain.Resolve(file, java, jar);
+        var chain = ProjectChain.Resolve(file);
 
         foreach (var link in chain.Links)
             Console.WriteLine($"  {link.Role,-12} {(link.Exists ? "found  " : "MISSING")} {link.Declared}");
@@ -6620,7 +6614,7 @@ public static class Program
 
 
 
-        var checkResult = ProjectCheck.Run(chain, java, jar);
+        var checkResult = ProjectCheck.Run(chain);
         int unread = checkResult.Files.Count(f => f.Error.Length > 0);
 
         foreach (var unreadable in checkResult.Files.Where(f => f.Error.Length > 0).Take(5))

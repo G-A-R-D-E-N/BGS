@@ -39,9 +39,8 @@ the game, with the evidence behind it, lives in the
   is how a longer name is written without moving anything already there. An array at a new length is
   written the same way, whether it holds pointers or structs: a run of the new length goes on the end
   and the array is aimed at it, so nothing already in the file moves. Only an edit that changes the
-  number of objects, or the length of an array of text, is rebuilt through hkxpack, and before that
-  overwrites anything it reads the file hkxpack just produced back out and counts it; if objects went
-  missing on the way through, nothing is written and it says what was lost.
+  number of objects, or the length of an array of text, is not written until the native writer can
+  express it safely. In that case the original file is left untouched and the window explains why.
 - **Highlight one state's paths**: right click a node and pick "Highlight the paths of ...". Every
   wire that does not touch that node drops to half opacity and every unrelated node dims, so a single
   state's routes are readable in a graph that draws a few hundred wires over each other. Escape, or
@@ -61,14 +60,14 @@ the game, with the evidence behind it, lives in the
   since it could never go into a different file. Templates are yours: they are lifted from your own
   files into your own application data, and none ship with the tool.
 - **Symbols tab**: every variable and event with its index, type, initial value, and what references
-  it. Add, rename, retype the value, bound it, or remove. Declaring one no longer needs Java: the
+  it. Add, rename, retype the value, bound it, or remove. Declaring one uses the native writer: the
   array of names is written by appending a longer run, proved by declaring an event in each of the
   328 vanilla behaviours that have somewhere to put one and reading every name back from the bytes. **Set bounds** gives a variable a min and a
   max, extending `variableBounds` to reach it when the array stops short, which it usually does: of
   the 531 vanilla files it is empty in 224 and shorter than the variable list in 87. The entries
   written in between are `0` to `0`, which is what the file already means by an unbounded variable
   inside the array. Both go straight into the file's own bytes, whether the bound is one the array
-  already holds or one it has to be lengthened to reach, so neither needs a Java runtime.
+  already holds or one it has to be lengthened to reach.
   Removing renumbers every reference above it. Expand an
   event to see what the file does with it: raised here, listened for here, or written somewhere with
   no established direction, each naming the class and member. No verdict comes with it, for the reason
@@ -88,7 +87,7 @@ the game, with the evidence behind it, lives in the
   clip and cannot change one". The file gets much larger, which is the honest cost of not having an
   encoder, and the clip is exact. Fallout 4 registers the class at startup, so the engine has the code
   to read one; it has not been loaded in game, which is #19's question and not this one's.
-- **Check graph**: looks for the mistakes hkxpack cannot, listed under Validating below. With a real
+- **Check graph**: looks for structural mistakes, listed under Validating below. With a real
   project folder around the file it also checks every clip's animation against the folder on disk.
   Findings do not just print: the node each one is about is **outlined red for an error and amber for
   a warning** on the canvas, and the problem list under it names them all. Click a row and the canvas
@@ -142,9 +141,6 @@ the game, with the evidence behind it, lives in the
 - **Check project**: the same checks run over every behaviour in the project, reported grouped by
   file. Most real problems only exist between files: a clip that plays an animation no file in the
   chain provides reads as fine one file at a time.
-- **Find Java**: when autodetection misses a Java install the tool goes read only, and the button next
-  to the message is how to fix it without leaving the window. The pick is checked by running
-  `-version` rather than taken on its name.
 - **Filter by name, class or animation**, on whichever view is showing. The tree narrows to the
   matches; on the canvas the matches stay lit, everything else dims, and a wire touching a match stays
   lit so you can see where it connects. Enter goes to the first match.
@@ -152,8 +148,8 @@ the game, with the evidence behind it, lives in the
 ## Structural editing
 
 Beyond changing field values, the editing layer under `src/Hkx` can change the shape of a graph.
-Every operation below was checked by repacking with hkxpack and reading the binary back, not by
-hkxpack merely accepting the file.
+Every operation below is checked by writing native bytes and reading them back through the native
+reader.
 
 | What | Where | Notes |
 |---|---|---|
@@ -166,7 +162,7 @@ hkxpack merely accepting the file.
 | Remove a variable or an event | `SymbolEditor`, `SymbolIndexFixup` | Renumbers every reference above it; refuses while anything points at the exact index |
 | Read a transition's condition | `Expression`, `GraphRun` | Parses the expression language the corpus uses and answers True, False or Unknown. Unknown always means the transition still fires |
 | Copy and paste a subtree | `NativePaste` | Takes what the root owns, gives every copied object a fresh id and aims every reference inside the copy at the copies. Works between two files, and refuses naming what is missing |
-| Check a graph before repacking | `GraphValidator` | See Validating below |
+| Check a graph before saving | `GraphValidator` | See Validating below |
 
 Things the format makes easy to get wrong, all handled here:
 
@@ -248,11 +244,8 @@ Download the release for your platform, unzip it, and run `BehaviourGraphStudio`
 `BehaviourGraphStudio.exe`). **Nothing to install.** It is one file with the .NET runtime inside it,
 and it does not need a game, a game engine, or an SDK. Keep the `tools/` folder next to it.
 
-Opening, reading, editing and comparing a file need nothing else at all. **A Java runtime is only
-needed for a structural save**, meaning one that adds or removes objects rather than changing what is
-already there, because that still goes back through hkxpack. hkxpack itself ships in the release, in
-`tools/` beside the binary; Java does not. Without it the tool says so in the status line rather than
-pretending.
+Opening, reading, editing, comparing, validation, and supported saves use the native C# pipeline.
+An edit the native writer cannot safely express is refused before the original file changes.
 
 There is a terminal mode for scripting and for proving a change without a display:
 
@@ -278,19 +271,12 @@ because a self contained publish emits the target's own host binary rather than 
 machine's.
 
 Nobody has to do any of that to get a release. `.gitlab-ci.yml` runs the format checks and the
-window smoke test, publishes both platforms, drops hkxpack in beside each binary, then unzips the
-Linux one on a bare Debian image with no .NET and no build tools to prove it actually starts.
+window smoke test, publishes both platforms, then unzips the Linux one on a bare Debian image with
+no .NET and no build tools to prove it actually starts.
 
 ## Requirements
 
 - .NET 8 SDK to build. Nothing to build with, to run a release.
-- **A Java runtime**, only for a structural save. Reading, editing and comparing come from the native
-  C# reader and work without it: the window's checks pass identically with Java present and with Java
-  hidden every way the tool looks for it, 78 checks either way. What still goes through hkxpack is
-  packing a file back after objects have been added or removed. hkxpack itself is
-  bundled at `tools/hkxpack-cli.jar` (MIT, see `THIRD_PARTY_NOTICES.md`) and is found automatically
-  next to the executable, so only Java has to be supplied. If it is installed somewhere the search
-  does not reach, "Find Java..." in the status bar points the tool at it and remembers.
 - **Optional: a folder of Papyrus `.psc` sources**, only for showing which scripts send each animation
   event. Nothing else needs it and nothing changes when it is not set.
 

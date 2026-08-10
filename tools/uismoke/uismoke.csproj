@@ -22,12 +22,6 @@
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
     <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
   </ItemGroup>
-  <!-- Without the jar the window opens read only, and the whole file driven half of this test
-       skips itself while still reporting every check it did run as passing. -->
-  <ItemGroup>
-    <None Include="../../tools/hkxpack-cli.jar" Link="tools/hkxpack-cli.jar"
-          CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
   <!-- The same data the application embeds. Without it the class table is empty, the window cannot
        read a file from its own bytes, and every check here runs against a build nobody ships. That
        is not a smaller test, it is a test of something else: it passed the whole time the window

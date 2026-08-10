@@ -31,7 +31,7 @@ public sealed class ProjectChain
     public HkxSkeleton? Skeleton;
     public string SkeletonPath = "";
 
-    public static ProjectChain Resolve(string anyHkxPath, string? java = null, string? jar = null)
+    public static ProjectChain Resolve(string anyHkxPath)
     {
         var chain = new ProjectChain();
         string dir = Path.GetDirectoryName(Path.GetFullPath(anyHkxPath)) ?? "";
@@ -56,7 +56,7 @@ public sealed class ProjectChain
 
         chain.Add("project", Path.GetFileName(projectFile), projectFile);
 
-        var project = Read(projectFile, java, jar, chain);
+        var project = Read(projectFile, chain);
         string characterRel = project?.Objects
             .FirstOrDefault(o => o.Class == "hkbProjectStringData")?.Strings("characterFilenames")
             .FirstOrDefault() ?? "";
@@ -71,7 +71,7 @@ public sealed class ProjectChain
         chain.Add("character", characterRel, characterPath);
         if (!File.Exists(characterPath)) return chain;
 
-        var character = Read(characterPath, java, jar, chain);
+        var character = Read(characterPath, chain);
         var strings = character?.Objects.FirstOrDefault(o => o.Class == "hkbCharacterStringData");
         if (strings == null)
         {
@@ -184,15 +184,15 @@ public sealed class ProjectChain
         return link;
     }
 
-    private static BehaviourGraphModel? Read(string hkxPath, string? java, string? jar, ProjectChain chain)
+    private static BehaviourGraphModel? Read(string hkxPath, ProjectChain chain)
     {
         try
         {
-            string xml = HkxTextEdit.TextOf(hkxPath, java, jar);
+            string xml = HkxTextEdit.TextOf(hkxPath);
             if (xml.Length == 0)
             {
                 chain.Problems.Add($"could not read {Path.GetFileName(hkxPath)}: it holds a class this " +
-                                   "build cannot describe, and there is no hkxpack to fall back on");
+                                   "build cannot describe");
                 return null;
             }
 

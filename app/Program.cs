@@ -89,28 +89,18 @@ public static class Headless
         Console.WriteLine($"{Path.GetFileName(path)}  root {root.ClassName}  {objects.Count} objects  " +
                           $"{objects.Select(o => o.ClassName).Distinct().Count()} classes");
 
-        HkxTextEdit.AppDirectory = AppContext.BaseDirectory;
-        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
-        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-        if (java == null || jar == null)
+        string xml = HkxTextEdit.TextOf(path);
+        if (xml.Length == 0)
         {
-            Console.WriteLine(java == null
-                ? "read only: no java runtime found, so the graph and symbols are unavailable"
-                : "read only: hkxpack-cli.jar was not found next to the executable");
+            Console.WriteLine("read only: this file holds a class this build cannot describe");
             return 0;
         }
-
-        string work = Path.Combine(Path.GetTempPath(), "bgs_headless", Path.GetFileNameWithoutExtension(path));
-        HkxTextEdit.ResetDirectory(work);
-
-        string xmlPath = HkxTextEdit.Unpack(java, jar, path, work);
-        string xml = HkxTextEdit.ReadXml(xmlPath);
         var model = BehaviourGraphModel.Parse(xml);
 
         Console.WriteLine($"graph  {GraphAuthor.Layout(model, 4000).Count} nodes drawn");
         Console.WriteLine("symbols  " + SymbolEditor.Audit(model));
 
-        var chain = ProjectChain.Resolve(path, java, jar);
+        var chain = ProjectChain.Resolve(path);
         Console.WriteLine($"chain  {chain.Animations.Count} animations declared under {chain.Root}");
 
         var findings = GraphValidator.Check(xml, chain);
