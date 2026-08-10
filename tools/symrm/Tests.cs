@@ -98,6 +98,7 @@ public static class Tests
         ("AnAddedObjectHasToLandWhereItsIdSays", AnAddedObjectHasToLandWhereItsIdSays),
         ("APastedSubtreePointsAtItself", APastedSubtreePointsAtItself),
         ("AConditionSaysWhatItSays", AConditionSaysWhatItSays),
+        ("AnExpressionAssignmentDoesTheArithmeticWeShip", AnExpressionAssignmentDoesTheArithmeticWeShip),
         ("AFalseConditionHoldsATransitionBack", AFalseConditionHoldsATransitionBack),
         ("TheReadingFromTheBytesRefusesWhatItCannotDescribe", TheReadingFromTheBytesRefusesWhatItCannotDescribe),
         ("ThePanelReadsItsListFromTheTable", ThePanelReadsItsListFromTheTable),
@@ -4378,6 +4379,42 @@ public static class Tests
 
         CheckTrue("an unreadable condition is not a reason to hold a transition back",
                   Expression.Evaluate("this is not an expression @@@", Value) != Expression.Verdict.False);
+    }
+
+    private static void AnExpressionAssignmentDoesTheArithmeticWeShip()
+    {
+        Console.WriteLine("\nan expression assignment does the arithmetic we ship");
+
+        var world = new Dictionary<string, double>(StringComparer.Ordinal)
+        {
+            ["Speed"] = 8,
+            ["Gain"] = 0.5,
+            ["Limit"] = 3,
+        };
+        double? Value(string name) => world.TryGetValue(name, out double value) ? value : null;
+
+        var arithmetic = Expression.Parse("Out = clamp(Speed * Gain + 1, -Limit, Limit)");
+        CheckTrue("the arithmetic assignment parses", arithmetic.Ok && arithmetic.IsAssignment);
+        var arithmeticValue = Expression.EvaluateNumber(arithmetic, Value);
+        CheckTrue("the arithmetic assignment evaluates", arithmeticValue.Possible);
+        Check("clamp keeps the result in the real bound", 3d, arithmeticValue.Value ?? -1);
+
+        var selected = Expression.Parse("Out = cond(Speed > 5, 7, 9)");
+        var selectedValue = Expression.EvaluateNumber(selected, Value);
+        CheckTrue("the conditional assignment evaluates", selectedValue.Possible);
+        Check("cond takes the true branch", 7d, selectedValue.Value ?? -1);
+
+        var missing = Expression.EvaluateNumber(Expression.Parse("Out = Speed + Missing"), Value);
+        CheckTrue("an unknown source is refused", !missing.Possible &&
+                  missing.Refusal.Contains("Missing", StringComparison.Ordinal));
+
+        var zero = Expression.EvaluateNumber(Expression.Parse("Out = Speed / 0"), Value);
+        CheckTrue("division by zero is refused", !zero.Possible &&
+                  zero.Refusal.Contains("zero", StringComparison.Ordinal));
+
+        var unsupported = Expression.EvaluateNumber(Expression.Parse("Out = lerp(0, 1, Gain)"), Value);
+        CheckTrue("an unsupported function is refused", !unsupported.Possible &&
+                  unsupported.Refusal.Contains("lerp", StringComparison.Ordinal));
     }
 
 

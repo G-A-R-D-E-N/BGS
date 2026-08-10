@@ -42,6 +42,11 @@ public static class Expression
 {
     public enum Verdict { Unknown, True, False }
 
+    public sealed record NumericResult(double? Value, string Refusal)
+    {
+        public bool Possible => Value != null;
+    }
+
 
     public sealed record Parsed(Node? Root, string? Problem, bool IsAssignment,
                                 IReadOnlyList<string> Names)
@@ -77,6 +82,21 @@ public static class Expression
             public override string ToString() => $"({Left} {(Or ? "||" : "&&")} {Right})";
         }
 
+        public sealed record Arithmetic(string Operator, Node Left, Node Right) : Node
+        {
+            public override string ToString() => $"({Left} {Operator} {Right})";
+        }
+
+        public sealed record Sign(bool Negative, Node Inner) : Node
+        {
+            public override string ToString() => (Negative ? "-" : "+") + Inner;
+        }
+
+        public sealed record Function(string FunctionName, IReadOnlyList<Node> Arguments) : Node
+        {
+            public override string ToString() => $"{FunctionName}({string.Join(", ", Arguments)})";
+        }
+
 
 
         public sealed record Assign(string Variable, Node Value) : Node
@@ -97,7 +117,7 @@ public static class Expression
 
         int at = 0;
         Node node;
-        try { node = Or(tokens, ref at, names); }
+        try { node = Assign(tokens, ref at, names); }
         catch (FormatException e) { return new Parsed(null, e.Message, false, names); }
 
         if (at != tokens.Count)
@@ -120,6 +140,13 @@ public static class Expression
 
     public static Verdict Evaluate(string text, Func<string, double?> value) =>
         Evaluate(Parse(text), value);
+
+    public static NumericResult EvaluateNumber(Parsed parsed, Func<string, double?> value)
+    {
+        if (!parsed.Ok) return new NumericResult(null, parsed.Problem ?? "the expression did not parse");
+        Node node = parsed.Root! is Node.Assign assignment ? assignment.Value : parsed.Root!;
+        return Numeric(node, value);
+    }
 
     private static Verdict Truth(Node node, Func<string, double?> value)
     {
@@ -155,8 +182,8 @@ public static class Expression
 
             case Node.Compare compare:
             {
-                if (Number(compare.Left, value) is not double left) return Verdict.Unknown;
-                if (Number(compare.Right, value) is not double right) return Verdict.Unknown;
+                if (Numeric(compare.Left, value).Value is not double left) return Verdict.Unknown;
+                if (Numeric(compare.Right, value).Value is not double right) return Verdict.Unknown;
 
                 bool answer = compare.Operator switch
                 {
@@ -175,17 +202,83 @@ public static class Expression
 
 
             default:
-                if (Number(node, value) is not double alone) return Verdict.Unknown;
+                if (Numeric(node, value).Value is not double alone) return Verdict.Unknown;
                 return alone != 0 ? Verdict.True : Verdict.False;
         }
     }
 
-    private static double? Number(Node node, Func<string, double?> value) => node switch
+    private static NumericResult Numeric(Node node, Func<string, double?> value)
     {
-        Node.Number number => number.Value,
-        Node.Name name => value(name.Text),
-        _ => null,
-    };
+        NumericResult Read(Node part) => Numeric(part, value);
+        NumericResult Fail(string why) => new(null, why);
+        NumericResult Number(double numberValue) => double.IsFinite(numberValue)
+            ? new NumericResult(numberValue, "")
+            : Fail("the expression produces a non-finite number");
+
+        switch (node)
+        {
+            case Node.Number number:
+                return Number(number.Value);
+            case Node.Name name:
+                return value(name.Text) is double resolved
+                    ? Number(resolved)
+                    : Fail($"'{name.Text}' is not a declared runtime variable");
+            case Node.Sign sign:
+            {
+                var inner = Read(sign.Inner);
+                return inner.Value is double signed ? Number(sign.Negative ? -signed : signed) : inner;
+            }
+            case Node.Arithmetic arithmetic:
+            {
+                var left = Read(arithmetic.Left);
+                if (left.Value is not double a) return left;
+                var right = Read(arithmetic.Right);
+                if (right.Value is not double b) return right;
+                if (arithmetic.Operator == "/" && b == 0) return Fail("division by zero");
+                return arithmetic.Operator switch
+                {
+                    "+" => Number(a + b),
+                    "-" => Number(a - b),
+                    "*" => Number(a * b),
+                    "/" => Number(a / b),
+                    _ => Fail($"'{arithmetic.Operator}' is not an arithmetic operator this evaluates"),
+                };
+            }
+            case Node.Function call when call.FunctionName == "clamp":
+            {
+                if (call.Arguments.Count != 3) return Fail("clamp needs exactly three arguments");
+                var number = Read(call.Arguments[0]);
+                if (number.Value is not double clamped) return number;
+                var low = Read(call.Arguments[1]);
+                if (low.Value is not double minimum) return low;
+                var high = Read(call.Arguments[2]);
+                if (high.Value is not double maximum) return high;
+                return Number(Math.Clamp(clamped, minimum, maximum));
+            }
+            case Node.Function call when call.FunctionName == "cond":
+            {
+                if (call.Arguments.Count != 3) return Fail("cond needs exactly three arguments");
+                var verdict = Truth(call.Arguments[0], value);
+                if (verdict == Verdict.Unknown) return Fail("cond has a test the runtime cannot decide");
+                return Read(call.Arguments[verdict == Verdict.True ? 1 : 2]);
+            }
+            case Node.Function call:
+                return Fail($"'{call.FunctionName}' is not a function this runtime evaluates");
+            case Node.Compare or Node.Both or Node.Not:
+            {
+                return Truth(node, value) switch
+                {
+                    Verdict.True => Number(1),
+                    Verdict.False => Number(0),
+                    _ => Fail("the expression has a test the runtime cannot decide"),
+                };
+            }
+            case Node.Assign assignment:
+                return Read(assignment.Value);
+            default:
+                return Fail("the expression has a form this runtime cannot evaluate");
+        }
+    }
 
     private readonly record struct Token(string Text, bool IsName, bool IsNumber);
 
@@ -227,7 +320,7 @@ public static class Expression
                 }
             }
 
-            if (c is '<' or '>' or '!' or '(' or ')' or '=' or '-' or '+')
+            if (c is '<' or '>' or '!' or '(' or ')' or '=' or '-' or '+' or '*' or '/' or ',')
             {
                 tokens.Add(new Token(c.ToString(), false, false));
                 at++;
@@ -238,6 +331,16 @@ public static class Expression
         }
 
         return tokens;
+    }
+
+    private static Node Assign(List<Token> tokens, ref int at, List<string> names)
+    {
+        var left = Or(tokens, ref at, names);
+        if (at >= tokens.Count || tokens[at].Text != "=") return left;
+        at++;
+        if (left is not Node.Name name)
+            throw new FormatException("there is an assignment to something that is not a variable");
+        return new Node.Assign(name.Text, Or(tokens, ref at, names));
     }
 
     private static Node Or(List<Token> tokens, ref int at, List<string> names)
@@ -267,26 +370,36 @@ public static class Expression
 
     private static Node Compare(List<Token> tokens, ref int at, List<string> names)
     {
-        var left = Unary(tokens, ref at, names);
+        var left = Sum(tokens, ref at, names);
         if (at >= tokens.Count) return left;
-
-
-
-
-        if (tokens[at].Text == "=")
-        {
-            at++;
-            var assigned = Unary(tokens, ref at, names);
-            return left is Node.Name name
-                ? new Node.Assign(name.Text, assigned)
-                : throw new FormatException("there is an assignment to something that is not a variable");
-        }
 
         if (!Comparisons.Contains(tokens[at].Text)) return left;
 
         string op = tokens[at].Text;
         at++;
-        return new Node.Compare(op, left, Unary(tokens, ref at, names));
+        return new Node.Compare(op, left, Sum(tokens, ref at, names));
+    }
+
+    private static Node Sum(List<Token> tokens, ref int at, List<string> names)
+    {
+        var left = Product(tokens, ref at, names);
+        while (at < tokens.Count && tokens[at].Text is "+" or "-")
+        {
+            string op = tokens[at++].Text;
+            left = new Node.Arithmetic(op, left, Product(tokens, ref at, names));
+        }
+        return left;
+    }
+
+    private static Node Product(List<Token> tokens, ref int at, List<string> names)
+    {
+        var left = Unary(tokens, ref at, names);
+        while (at < tokens.Count && tokens[at].Text is "*" or "/")
+        {
+            string op = tokens[at++].Text;
+            left = new Node.Arithmetic(op, left, Unary(tokens, ref at, names));
+        }
+        return left;
     }
 
     private static Node Unary(List<Token> tokens, ref int at, List<string> names)
@@ -307,9 +420,7 @@ public static class Expression
             bool negative = tokens[at].Text == "-";
             at++;
             var inner = Unary(tokens, ref at, names);
-            return inner is Node.Number number
-                ? new Node.Number(negative ? -number.Value : number.Value)
-                : throw new FormatException("there is a sign in front of something that is not a number");
+            return new Node.Sign(negative, inner);
         }
 
         return Primary(tokens, ref at, names);
@@ -342,6 +453,24 @@ public static class Expression
         if (token.IsName)
         {
             at++;
+            if (at < tokens.Count && tokens[at].Text == "(")
+            {
+                at++;
+                var arguments = new List<Node>();
+                if (at < tokens.Count && tokens[at].Text != ")")
+                {
+                    while (true)
+                    {
+                        arguments.Add(Or(tokens, ref at, names));
+                        if (at >= tokens.Count || tokens[at].Text != ",") break;
+                        at++;
+                    }
+                }
+                if (at >= tokens.Count || tokens[at].Text != ")")
+                    throw new FormatException($"the arguments to '{token.Text}' are not closed");
+                at++;
+                return new Node.Function(token.Text, arguments);
+            }
             if (!names.Contains(token.Text)) names.Add(token.Text);
             return new Node.Name(token.Text);
         }
