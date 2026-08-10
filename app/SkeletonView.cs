@@ -10,15 +10,15 @@ using Vector3 = System.Numerics.Vector3;
 
 namespace BehaviourStudio.App;
 
-// The skeleton drawn as lines between joints, at whichever frame it has been given.
-//
-// It decides nothing about the pose. AnimationPose composes every bone position and this projects
-// them, which is the same split the node canvas has with GraphAuthor: a pose that is wrong is wrong
-// in a place a headless check can reach, not in the drawing.
-//
-// Havok is Z up and the units are the game's, so the fit to screen is worked out from the pose's own
-// bounds rather than from a constant. A Deathclaw and an eyebot are not the same size and neither is
-// a metre.
+
+
+
+
+
+
+
+
+
 public class SkeletonView : Control
 {
     private AnimationPose.Pose? _pose;
@@ -38,17 +38,17 @@ public class SkeletonView : Control
     public string HoveredBone { get; private set; } = "";
     public Action<string>? BoneHovered;
 
-    /// Whether the reference pose is drawn behind the animated one, which is the only way to see how
-    /// far a frame has actually moved from rest.
+
+
     public bool ShowReference { get; set; }
 
     public int DrawnBones => _pose?.Bones.Count ?? 0;
     public int DrawnEdges => _mesh?.Length ?? 0;
 
-    // The mesh as line segments in the same space the bones are in, already posed. Held as a flat
-    // pair array and drawn as one geometry rather than as thousands of separate lines: Dogmeat is
-    // about twenty six thousand edges across six shapes, and that many draw calls a frame is the
-    // difference between scrubbing and waiting.
+
+
+
+
     private (Vector3 A, Vector3 B)[]? _mesh;
 
     public void ShowMesh((Vector3 A, Vector3 B)[]? segments)
@@ -69,8 +69,8 @@ public class SkeletonView : Control
         InvalidateVisual();
     }
 
-    /// Re-poses without re-fitting. Scrubbing has to leave the camera where it was, or every frame
-    /// jumps the view about as the bounds change.
+
+
     public void Update(AnimationPose.Pose? pose)
     {
         _pose = pose;
@@ -101,9 +101,9 @@ public class SkeletonView : Control
         InvalidateVisual();
     }
 
-    // Yaw turns the model about the game's up axis, pitch tilts it towards the viewer. Orthographic
-    // on purpose: a perspective divide makes near bones read as longer than far ones, which is the
-    // opposite of what someone reading a pose wants.
+
+
+
     private Point Project(Vector3 world)
     {
         var p = world - _centre;
@@ -143,7 +143,7 @@ public class SkeletonView : Control
                                     Project(_reference.Bones[to].Position));
         }
 
-        // The mesh first, so the skeleton reads on top of it rather than being lost inside it.
+
         if (_mesh is { Length: > 0 })
         {
             var skin = new StreamGeometry();
@@ -161,8 +161,8 @@ public class SkeletonView : Control
         foreach (var (from, to) in pose.Links)
             ctx.DrawLine(bone, Project(pose.Bones[from].Position), Project(pose.Bones[to].Position));
 
-        // Joints on top of the lines, and roots larger, because a forked root is the thing a reader
-        // has to find first and 58 of the 163 vanilla skeletons have one.
+
+
         foreach (var b in pose.Bones)
         {
             var at = Project(b.Position);
@@ -181,8 +181,8 @@ public class SkeletonView : Control
         }
     }
 
-    // A horizon line through the pose's own origin, so a character standing on the ground reads as
-    // standing on it rather than floating in a void with no sense of scale.
+
+
     private void DrawGround(DrawingContext ctx)
     {
         var pen = new Pen(new SolidColorBrush(Ux.Border, 0.7), 1);
@@ -216,8 +216,8 @@ public class SkeletonView : Control
         if (_orbiting)
         {
             _yaw += delta.X * 0.01;
-            // Stopped just short of straight down: at the pole the model spins about the cursor and
-            // the view stops answering the drag.
+
+
             _pitch = Math.Clamp(_pitch + delta.Y * 0.01, -1.5, 1.5);
             InvalidateVisual();
             return;

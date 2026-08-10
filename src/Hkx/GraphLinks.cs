@@ -4,13 +4,13 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// What can be wired to what, so the graph view can offer a port per link a node is allowed to have
-// rather than only per link it already has. Without this a node with an empty generator field has
-// nothing to drag from and the connection can never be made.
-//
-// Two sources, on purpose. The table below covers the fields a class can hold even when they are
-// empty, which cannot be discovered from the file. Anything else currently holding a reference is
-// picked up from the object itself, so an unusual class still shows its real links.
+
+
+
+
+
+
+
 public static class GraphLinks
 {
     public sealed class Slot
@@ -46,9 +46,9 @@ public static class GraphLinks
         ["BGSGamebryoSequenceGenerator"] = new(),
     };
 
-    // Port types, so the canvas can refuse a connection that would not work rather than letting it
-    // be made and finding out later. A generator slot only takes something that produces a pose; a
-    // triggers slot only takes a clip trigger array. Numbers are arbitrary, only equality matters.
+
+
+
     public const int KindGenerator = 1;
     public const int KindModifier = 2;
     public const int KindTransitionArray = 3;
@@ -60,7 +60,7 @@ public static class GraphLinks
     public const int KindChildren = 9;
     public const int KindOther = 99;
 
-    // What a field will accept.
+
     public static int Accepts(string field) => field switch
     {
         "rootGenerator" or "generator" or "generators" or "pDefaultGenerator" or "pBlenderGenerator"
@@ -74,7 +74,7 @@ public static class GraphLinks
         _ => KindOther,
     };
 
-    // What an object can be used as.
+
     public static int FamilyOf(string className) => className switch
     {
         "hkbStateMachineStateInfo" => KindStateInfo,
@@ -90,10 +90,10 @@ public static class GraphLinks
         _ => KindOther,
     };
 
-    // Pairs that are allowed even though the two numbers differ, because the connection builds
-    // something rather than writing a bare reference. A states array takes a state info directly or
-    // a generator that gets wrapped in one; a blender's children take either the wrapper or the
-    // generator to wrap.
+
+
+
+
     public static IEnumerable<(int From, int To)> ValidPairs => new[]
     {
         (KindStates, KindStateInfo),
@@ -126,7 +126,7 @@ public static class GraphLinks
             }
         }
 
-        // Anything already wired that the table does not know about, so nothing is hidden.
+
         foreach (var (field, value) in obj.Scalars)
             if (value.StartsWith('#') && seen.Add(field) && field != "variableBindingSet")
                 slots.Add(new Slot { Field = field, Targets = { value[1..] } });
@@ -152,9 +152,9 @@ public static class GraphLinks
 
         if (!slot.Array)
         {
-            // A single link can only hold one thing, so connecting to a full one drops what was
-            // there. Say so, because the thing dropped keeps its own subtree and simply stops being
-            // reachable, which is easy to mistake for it having been deleted.
+
+
+
             string had = slot.Targets.FirstOrDefault() ?? "";
             note = had.Length > 0 && had != toId
                 ? $"#{fromId}.{field} now points at #{toId}, replacing #{had}, which is now detached"
@@ -162,8 +162,8 @@ public static class GraphLinks
             return HkxTextEdit.SetParam(xml, fromId, field, "#" + toId);
         }
 
-        // A blender holds weighted wrappers, and a state machine holds state infos, so dropping a
-        // generator on either has to build the thing that actually goes in the array.
+
+
         if (from.Class == "hkbBlenderGenerator" && to.Class != "hkbBlenderGeneratorChild")
         {
             xml = GeneratorEditor.AddBlenderChild(xml, fromId, "#" + toId, 1.0f, out string wrapper);
@@ -205,8 +205,8 @@ public static class GraphLinks
 
         xml = HkxTextEdit.ArrayRemoveAt(xml, fromId, field, index);
 
-        // The wrapper only existed to hold that child, so leaving it behind would be litter the
-        // validator then reports as unreachable.
+
+
         var removed = model.Get(toId);
         if (removed != null && removed.Class == "hkbBlenderGeneratorChild")
         {

@@ -4,43 +4,43 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Copying a subtree and pasting it back, into the same file or into another one.
-//
-// Building the same generator shape once per idle is the main thing anybody does with this tool by
-// hand, and it is the thing a copy turns into one action. What makes it worth being careful about is
-// that a copy which gets one reference wrong looks entirely correct: the tree draws the same shape,
-// the checker is happy, and the graph plays the original's child rather than the copy's, because one
-// pointer inside the copy still names an object of the original.
-//
-// So the rules here are about references and nothing else.
-//
-// **What a copy carries.** The objects the root owns, meaning the root and everything every pointer
-// into which comes from inside the set. That is worked out as a fixpoint rather than by following
-// child fields down a list of classes: a class this build has never heard of still has its pointers
-// in the fixup table, and the table is what the walk reads. Anything the subtree points at that
-// something outside also points at is shared rather than copied, because copying it would give the
-// graph two of something the file deliberately has one of.
-//
-// **What a paste writes.** One appended object per copied object, its bytes copied over, and every
-// run hanging off it copied too: its name, its arrays, the arrays inside its struct arrays. A run is
-// not the bytes alone. A struct can hold a name, and a name is a pointer with a fixup naming it, so
-// copying the bytes and stopping gives a second array whose strings are empty.
-//
-// **What a paste rewrites.** Every pointer inside the copy that named a copied object now names its
-// copy. Every pointer that named something shared still names the original, which is the one case
-// where pointing at the original is right. Every event and variable index is remapped by NAME rather
-// than carried across as a number, because index four means different things in two files.
-//
-// **What a paste refuses.** A subtree going into another file which shares something with the file
-// it came from, since the other file has no such object to point at. A subtree using an event or a
-// variable the other file does not declare, named so the answer is "declare these two and paste
-// again" rather than "it did not work".
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public static class NativePaste
 {
-    /// What a root owns, and what it only borrows.
-    ///
-    /// `Ids` and `Shared` are hkxpack style numbers, the same ones the tree and the panel show, so a
-    /// refusal can name an object a person can go and look at.
+
+
+
+
     public sealed record Subtree(int RootId, string RootClass, IReadOnlyList<int> Ids,
                                  IReadOnlyList<int> Shared, IReadOnlyList<string> Events,
                                  IReadOnlyList<string> Variables)
@@ -50,15 +50,15 @@ public static class NativePaste
             $"{Events.Count} event(s), {Variables.Count} variable(s)";
     }
 
-    /// A copy, held between the two halves of the action. The bytes are not carried: the source file
-    /// is read again at paste time, so a copy cannot go stale against a file that was saved in
-    /// between without that being noticed.
+
+
+
     public sealed record Clip(string Path, Subtree Tree)
     {
         public override string ToString() => $"{System.IO.Path.GetFileName(Path)} {Tree}";
     }
 
-    /// What a paste did, or what it would have done.
+
     public sealed record Result(byte[] Bytes, int RootId, int Objects, int Pointers, int Shared,
                                 int Symbols, string Note)
     {
@@ -68,17 +68,17 @@ public static class NativePaste
     public static Clip Copy(string path, int rootId, HavokClassTypes? types = null) =>
         new(path, Of(PackfileImage.Read(path), rootId, types));
 
-    /// Which objects a root owns, which it shares, and which symbols the set uses.
-    ///
-    /// Ownership is "every pointer aimed at this object comes from something already being copied",
-    /// grown from the root until it stops growing. That is exactly the set of objects every route to
-    /// which passes through the root, so nothing reachable from elsewhere is ever taken.
-    ///
-    /// A pointer cycle inside a subtree would leave both of its objects waiting for the other and so
-    /// both shared rather than copied. That is the safe way round, and it does not happen: `symrm
-    /// paste` counts the objects on a cycle over the whole corpus and reports 0 in 0 of the 531
-    /// vanilla behaviours. It is counted on every run rather than recorded here once, so a file that
-    /// did have one would say so rather than quietly coming out shared.
+
+
+
+
+
+
+
+
+
+
+
     public static Subtree Of(PackfileImage image, int rootId, HavokClassTypes? types = null)
     {
         types ??= HavokClassTypes.Shipped;
@@ -99,9 +99,9 @@ public static class NativePaste
         var startsAt = new Dictionary<int, int>();
         for (int i = 0; i < objects.Instances.Count; i++) startsAt[objects.Instances[i].Offset] = i;
 
-        // The graph, read off the fixup table rather than off the classes. A pointer stored in an
-        // element of an array belongs to whichever object owns that array, which is what the spans
-        // are for: they say which object's stretch of the section an offset falls in.
+
+
+
         var outs = new List<HashSet<int>>();
         var preds = new List<HashSet<int>>();
         for (int i = 0; i < objects.Instances.Count; i++) { outs.Add(new()); preds.Add(new()); }
@@ -168,12 +168,12 @@ public static class NativePaste
                            events, variables);
     }
 
-    /// Pastes a copied subtree into a file and returns the file's new bytes.
-    ///
-    /// `attachToId` and `attachField` say where the pasted root hangs. Left out, the copy goes in
-    /// unattached: it is in the file, it is numbered, and nothing reaches it, which is a state the
-    /// checker already reports and a person can wire up on the canvas. That is offered rather than
-    /// insisted on because the useful shape to paste is often not the one that has a slot free.
+
+
+
+
+
+
     public static Result Paste(string targetPath, Clip clip, int attachToId = -1,
                                string attachField = "", HavokClassTypes? types = null)
     {
@@ -186,16 +186,16 @@ public static class NativePaste
 
         bool sameFile = ReferenceEquals(source, target);
 
-        // Worked out again rather than trusting what the copy recorded. A file can be saved between a
-        // copy and a paste, and a subtree worked out against the file as it was would name objects by
-        // numbers that have since moved.
+
+
+
         var tree = Of(source, clip.Tree.RootId, types);
 
         var result = Into(target, source, tree, sameFile, attachToId, attachField, types);
         return result with { Bytes = target.Rebuild() };
     }
 
-    /// The paste itself, on images rather than paths, so a test can do it without a file.
+
     public static Result Into(PackfileImage target, PackfileImage source, Subtree tree, bool sameFile,
                               int attachToId = -1, string attachField = "",
                               HavokClassTypes? types = null)
@@ -213,9 +213,9 @@ public static class NativePaste
         int sourceSection = source.Sections.IndexOf(sourceData);
         int targetSection = target.Sections.IndexOf(targetData);
 
-        // Everything a copied object points at that is not itself copied. Inside one file those keep
-        // naming the original, which is the whole meaning of a shared object. Across two files there
-        // is nothing to name.
+
+
+
         if (!sameFile && tree.Shared.Count > 0)
             throw new InvalidOperationException(
                 $"#{tree.RootId} shares {tree.Shared.Count} object(s) with the rest of the file it " +
@@ -232,8 +232,8 @@ public static class NativePaste
         foreach (var (s, which, d) in sourceData.Globals())
             if (which == sourceSection) sourceGlobals[s] = d;
 
-        // Every copied object is appended before anything is written into any of them, so a pointer
-        // from the first to the last has somewhere to aim by the time it is written.
+
+
         var made = new Dictionary<int, int>();
         var newIds = new List<int>();
         foreach (int id in tree.Ids)
@@ -244,8 +244,8 @@ public static class NativePaste
             newIds.Add(added.Id);
         }
 
-        // Where a pointer out of the copy should aim. A copied object's copy, or, when the object was
-        // shared, the original itself, which only exists in the same file.
+
+
         int? Aim(int destination)
         {
             if (made.TryGetValue(destination, out int copy)) return copy;
@@ -291,12 +291,12 @@ public static class NativePaste
                           symbols, note);
     }
 
-    /// A copied object's runs: its strings and its arrays, and whatever hangs off those in turn.
-    ///
-    /// The bytes of the object were copied wholesale before this runs, so every count, every capacity
-    /// word and every plain value is already right. What is not right is anything that was a pointer,
-    /// because a pointer in this format is a fixup and not a number in the bytes, and the copy has no
-    /// fixups of its own until they are written here.
+
+
+
+
+
+
     private static void CopyMembers(PackfileSection targetData, PackfileSection sourceData,
                                     IReadOnlyDictionary<int, int> sourceLocals,
                                     IReadOnlyDictionary<int, int> sourceGlobals,
@@ -304,8 +304,8 @@ public static class NativePaste
                                     Func<int, int?> aim, HavokClassTypes types, ref int pointers,
                                     int depth)
     {
-        // Nothing in the corpus nests anywhere near this deep; the guard is against a class that
-        // somehow holds itself rather than against real data.
+
+
         if (depth > 8 || !types.Knows(className)) return;
 
         foreach (var member in types.Members(className))
@@ -400,20 +400,20 @@ public static class NativePaste
         }
     }
 
-    /// Rewrites every event and variable index inside the pasted objects to the number the file being
-    /// pasted into uses for that name.
-    ///
-    /// Done over the file as it now stands rather than while the bytes are being copied, because the
-    /// walk that finds an index has to go through the class table into inline structs and struct
-    /// array elements, and doing it once afterwards means it is the same walk that renumbering and
-    /// the symbols tab already use. The pasted objects are told apart from the originals by offset:
-    /// the two hold the same numbers and only the offset says which is which.
+
+
+
+
+
+
+
+
     private static int Rewrite(PackfileImage target, PackfileSection data, HavokClassTypes types,
                                HashSet<int> pastedAt, IReadOnlyDictionary<int, int> events,
                                IReadOnlyDictionary<int, int> variables)
     {
-        // Inside one file every name keeps the number it had, so there is nothing to rewrite and no
-        // reason to walk the file again looking for nothing.
+
+
         bool moved = events.Any(m => m.Key != m.Value) || variables.Any(m => m.Key != m.Value);
         if (!moved) return 0;
 
@@ -458,13 +458,13 @@ public static class NativePaste
         return changed;
     }
 
-    /// Hangs the pasted root off a field of an object already in the file.
-    ///
-    /// Two shapes, and they are the two the format has: a field that holds one pointer, and a field
-    /// that holds an array of them. An array gains an element rather than being written over, and its
-    /// element fixups go back where the old ones sat rather than on the end of the table, because
-    /// position in that table is not free and moving a run of them makes hkxpack read every element
-    /// of the array as null.
+
+
+
+
+
+
+
     private static string Attach(PackfileImage image, PackfileSection data, int section,
                                  HavokClassTypes types, int attachToId, string field, int rootAt,
                                  int rootId, string rootClass)
@@ -506,10 +506,10 @@ public static class NativePaste
             keep.Add(held.Destination == 0 && held.Source == 0 ? -1 : held.Destination);
         }
 
-        // A state carries a number that is unique inside its own machine, so a copy dropped into a
-        // machine that already has states cannot keep the one it was copied with. Two states with the
-        // same number is not a file that fails to load, it is a transition that arrives at whichever
-        // of them the engine finds first.
+
+
+
+
         if (rootClass == "hkbStateMachineStateInfo" && field == "states")
         {
             int highest = -1;
@@ -555,13 +555,13 @@ public static class NativePaste
         return $"added to #{attachToId}.{field} as element {keep.Count - 1}";
     }
 
-    /// A symbol's number in the file it came from against its number in the file it is going to,
-    /// matched by name.
-    ///
-    /// Refusing here is the honest answer rather than a failure. An event the other file does not
-    /// declare cannot be invented without also writing its info and its flags, and a paste that
-    /// quietly aimed at whatever event happened to sit at the same number would play the wrong thing
-    /// and report success.
+
+
+
+
+
+
+
     private static Dictionary<int, int> Remap(PackfileObjects source, PackfileObjects target,
                                               string field, IReadOnlyList<string> used, string what)
     {
@@ -589,7 +589,7 @@ public static class NativePaste
         return map;
     }
 
-    /// The event or variable names a file declares, read out of its own bytes.
+
     private static List<string> Names(PackfileObjects objects, string field)
     {
         var strings = objects.OfClass("hkbBehaviorGraphStringData").FirstOrDefault();
@@ -599,7 +599,7 @@ public static class NativePaste
         return names == null ? new List<string>() : names.Select(n => n ?? "").ToList();
     }
 
-    /// Every object's stretch of the section, so an offset can be asked which object it belongs to.
+
     private static List<(int At, int End, int Object)> Spans(PackfileImage image,
                                                              PackfileObjects objects,
                                                              HavokClassTypes types)

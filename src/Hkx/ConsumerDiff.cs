@@ -4,20 +4,20 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// What the tool does with two readings of one file, set beside each other.
-//
-// The field by field comparison says the two readings hold the same values. This says the tool
-// behaves the same way on them, which is the thing anybody actually cares about: the same nodes and
-// wires on the canvas, the same variables and events in the symbols tab, the same findings from the
-// checker, the same rows in a state machine.
-//
-// If the fields agree then these agree too, and that is the point of running them. It is the check
-// that catches a field comparison passing for the wrong reason: a key neither reading has, a value
-// both spell the same way and both get wrong, a difference sitting somewhere the walk never went.
-//
-// One thing is deliberately not here. The checker's symbol index pass reads the file's text as well
-// as its model, so it cannot be run against a reading that has no text. Every other check can, and
-// this runs those.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public static class ConsumerDiff
 {
     public sealed record Difference(string Consumer, string What)
@@ -59,8 +59,8 @@ public static class ConsumerDiff
         Same("states with no generator", Lines(GraphValidator.StatesWithNoGenerator(a).OrderBy(s => s, StringComparer.Ordinal)),
                                          Lines(GraphValidator.StatesWithNoGenerator(b).OrderBy(s => s, StringComparer.Ordinal)));
 
-        // Findings in the order they are produced rather than sorted. Two readings that report the
-        // same problems in a different order would still send somebody to a different line first.
+
+
         Same("checker findings", Lines(GraphValidator.Check(a).Select(f => f.ToString())),
                                 Lines(GraphValidator.Check(b).Select(f => f.ToString())));
 
@@ -72,11 +72,11 @@ public static class ConsumerDiff
         return new Result(compared, differences);
     }
 
-    /// Every node's outgoing wires, which is the canvas.
-    ///
-    /// Ports rather than GraphAuthor.PointsAt on purpose: this compares what two readings of a file
-    /// would draw, so it has to walk what is drawn. The edges that have no port are covered by
-    /// Referrers below, which asks the same question from the other end.
+
+
+
+
+
     private static string Wiring(BehaviourGraphModel model) =>
         Lines(model.Objects.SelectMany(o => GraphLinks.OutSlots(model, o)
                                                       .Select(s => $"#{o.Id} {o.Class} {s} -> " +
@@ -109,8 +109,8 @@ public static class ConsumerDiff
 
     private static string Lines(IEnumerable<string> values) => string.Join("\n", values);
 
-    /// The first line the two differ on, with its number, rather than both outputs whole. A wiring
-    /// list runs to thousands of lines and printing two of them says less than saying where.
+
+
     private static string First(string left, string right)
     {
         var mine = left.Split('\n');

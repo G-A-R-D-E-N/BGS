@@ -7,17 +7,17 @@ using System.Text.RegularExpressions;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// A transition listening for an event that nothing in its own file sends is the ordinary case, not a
-// fault: the sender is usually a script. 177 vanilla base scripts call ObjectReference.PlayAnimation,
-// which resolves the event by name against the behaviour's own event list.
-//
-// So this answers the question rather than judging it. It reports which scripts name an event and
-// nothing else: no pass, no fail, and silence when no scripts folder has been set.
+
+
+
+
+
+
 public static class PapyrusEvents
 {
-    // The calls that reach a behaviour graph by event name. Every one takes the name as a string
-    // literal in practice; a name built at runtime is invisible here and that is a limit worth
-    // knowing rather than one worth guessing around.
+
+
+
     private static readonly string[] Callers =
     {
         "PlayAnimation", "PlayAnimationAndWait", "PlaySubGraphAnimation",
@@ -34,8 +34,8 @@ public static class PapyrusEvents
     {
         public int ScriptsRead;
         public string Root = "";
-        /// Script file names that name each event, keyed by event name, matched without case because
-        /// Papyrus is case insensitive and the graphs are not consistent.
+
+
         public readonly Dictionary<string, List<string>> ByEvent =
             new(StringComparer.OrdinalIgnoreCase);
 
@@ -48,9 +48,9 @@ public static class PapyrusEvents
               $"{ByEvent.Count} event name{(ByEvent.Count == 1 ? "" : "s")} sent between them";
     }
 
-    /// Reads .psc sources under a folder. Compiled .pex is deliberately not parsed: its string table
-    /// holds every string the script uses, so matching against it would report a sender for names the
-    /// script only prints.
+
+
+
     public static Index Scan(string root)
     {
         var index = new Index { Root = root };
@@ -81,8 +81,8 @@ public static class PapyrusEvents
         return index;
     }
 
-    /// What to show beside an event. Information, not a verdict: a name no script sends is not a
-    /// fault, because the engine sends plenty of them itself.
+
+
     public static string Describe(Index index, string eventName)
     {
         if (index.ScriptsRead == 0) return "";

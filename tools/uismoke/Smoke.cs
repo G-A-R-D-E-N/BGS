@@ -8,34 +8,34 @@ using BehaviourStudio.App;
 
 namespace BehaviourStudio.UiSmoke;
 
-// Builds the real window on a headless display and walks it, so "the window still opens" is
-// something a build runner can prove rather than something someone has to look at. It cannot judge
-// how the window looks; it can prove every part of it was constructed and is reachable.
+
+
+
 public static class Smoke
 {
     private static int _failed;
     private static int _ran;
 
-    /// Draws the canvas to a PNG with no display attached.
-    ///
-    /// The checks above can prove a route was counted and that its ends are on the canvas. They
-    /// cannot say whether the picture is readable, and "is it readable" is the entire point of
-    /// drawing transitions rather than listing them. Rendering it to a file is how that question
-    /// gets answered without asking somebody to open the window and describe what they see.
-    ///
-    /// Usage: uismoke --png &lt;behaviour.hkx&gt; [out.png] [zoom] [focus node id] [--structured-flow]
-    ///
-    /// `--window` draws everything beside the canvas as well, which is where the properties panel
-    /// is. `--details` opens the Problems and Output drawer, while `--output` selects Output.
-    /// `--workspace-window` opens the separate Workspace tool window. `--check` fills Problems through
-    /// the real validation button, and `--event` sends the first available event.
-    /// Focusing on a node also selects it, so that panel is showing the object the picture is about
-    /// rather than nothing. `--expand` opens the array element blocks, which start closed, so a
-    /// question about what one of a transition's boxes says can be answered from the picture.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int Png(string[] args)
     {
-        // Real drawing rather than the headless stub, which records that something was drawn and
-        // produces no pixels.
+
+
         AppBuilder.Configure<HeadlessApp>()
             .UseSkia()
             .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
@@ -54,8 +54,8 @@ public static class Smoke
             window.SetGraphLayoutModeForTest(GraphLayoutMode.StructuredFlow);
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
-        // A TabControl builds only the tab that is showing, so the canvas does not exist as a visual
-        // until the Graph tab is the selected one.
+
+
         var tabs = Find<TabControl>(window).First();
         tabs.SelectedIndex = tabs.Items.OfType<TabItem>().ToList()
                                  .FindIndex(t => t.Header?.ToString() == "Graph");
@@ -73,8 +73,8 @@ public static class Smoke
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         }
 
-        // The whole window rather than the canvas alone, for anything that is drawn beside it: the
-        // legend explains the canvas and cannot be checked from a picture that leaves it out.
+
+
         bool whole = args.Contains("--window");
         if (args.Contains("--legend")) { window.OpenLegendForTest(); Avalonia.Threading.Dispatcher.UIThread.RunJobs(); }
         if (args.Contains("--details"))
@@ -98,9 +98,9 @@ public static class Smoke
 
         if (focus.Length > 0)
         {
-            // A name rather than an id, when what was asked for is not a number. Ids are assigned by
-            // position in the file and mean nothing to anyone reading a picture; a state is known by
-            // what it is called.
+
+
+
             if (!focus.All(char.IsDigit))
             {
                 var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
@@ -119,22 +119,22 @@ public static class Smoke
             canvas.FocusOn(focus);
             canvas.Highlight(focus);
 
-            // Selecting as well as focusing. Highlighting says where a node is; it does not put the
-            // object in front of the panel, and a picture of the whole window drawn without this
-            // shows an empty panel beside a highlighted node.
+
+
+
             window.SelectNode(focus);
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         }
 
-        // Element blocks are collapsed when the panel builds them, which is the point of grouping
-        // them. Opening them is the only way a picture can show what is inside one.
+
+
         if (args.Contains("--expand"))
         {
             foreach (var block in Find<Expander>(window)) block.IsExpanded = true;
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         }
-        // --fit leaves the zoom to the canvas, which is the whole point when what is being checked
-        // is whether the fit button fits.
+
+
         if (args.Contains("--fit"))
         {
             if (focus.Length > 0) canvas.FrameRelated(); else canvas.FrameAll();
@@ -145,8 +145,8 @@ public static class Smoke
         }
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
-        // Again, because selecting and expanding both add controls after the first pass and a
-        // bitmap is rendered from the last layout rather than from the tree.
+
+
         drawn.Measure(size);
         drawn.Arrange(new Rect(size));
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -163,9 +163,9 @@ public static class Smoke
                           $", layout {canvas.LayoutMode}" +
                           (focus.Length > 0 ? $", focused on #{focus}" : ""));
 
-        // How far the ownership wires run, which is what the layout is judged on. A picture at a zoom
-        // that fits the whole graph is far too small to tell whether the long diagonals stopped, so
-        // the distances are printed rather than left to the eye.
+
+
+
         var drops = canvas.OwnershipWireDrops().OrderBy(d => d).ToList();
         if (drops.Count > 0)
             Console.WriteLine($"        wires: {drops.Count}, median {drops[drops.Count / 2]:0} tall, " +
@@ -192,8 +192,8 @@ public static class Smoke
         var headers = tabs[0].Items.OfType<TabItem>().Select(t => t.Header?.ToString()).ToList();
         Check("tabs", "Tree, Graph, Symbols, Chain, Animation, Playback, Compare", string.Join(", ", headers));
 
-        // A TabControl only builds the selected tab, so each one has to be visited to prove it is
-        // whole. Visiting them also exercises the switching itself.
+
+
         var canvases = 0;
         var viewports = 0;
         var grids = new System.Collections.Generic.List<HkGrid>();
@@ -213,9 +213,9 @@ public static class Smoke
         Check("the tree, symbol, chain, animation, clip and compare grids build without opening tools",
               6, grids.Count);
 
-        // The drawer is collapsed by default, so its diagnostics and runtime grids are not built into
-        // the visible workspace until the user asks for them. That is what returns their height to the
-        // graph rather than merely making an empty panel look inactive.
+
+
+
         Check("collapsed details leave no hidden grids under the canvas", 0, grids.Count(g => !g.IsVisible));
         foreach (string expected in new[]
                  { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
@@ -223,9 +223,9 @@ public static class Smoke
                    "Play", "From selected node", "Fit", "View ▾", "Fit all", "Fit selection" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
 
-        // The canvas draws six node colours, three kinds of line and two badges. The legend is the
-        // only thing that says what any of them mean, so it has to be closed to start with, open on
-        // asking, and name every mark that is actually drawn.
+
+
+
         {
             tabs[0].SelectedIndex = headers.IndexOf("Graph");
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -246,15 +246,15 @@ public static class Smoke
             tabs[0].SelectedIndex = 0;
         }
 
-        // Nothing loaded, so the viewport must be empty rather than drawing a rig from the last file.
+
         tabs[0].SelectedIndex = headers.IndexOf("Playback");
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         Check("the viewport draws nothing before a clip is picked", 0, window.Viewport.DrawnBones);
         CheckTrue("and is not playing", !window.IsPlaying);
 
-        // Both ticks exist and neither draws anything on its own. Follow travel moves the character
-        // along the path the clip carries, which is invisible otherwise, since motion is extracted in
-        // this format and the bones play on the spot.
+
+
+
         var ticks = Find<CheckBox>(window).Select(c => c.Content?.ToString()).ToList();
         CheckTrue("the reference pose tick is there", ticks.Contains("Reference pose"));
         CheckTrue("and the follow travel tick", ticks.Contains("Follow travel"));
@@ -274,19 +274,19 @@ public static class Smoke
             CheckTrue($"{idle} is disabled with nothing loaded",
                 Find<Button>(window).First(b => b.Content?.ToString() == idle).IsEnabled == false);
 
-        // The Java picker is the recovery path out of read only, so it must stay hidden while nothing
-        // is wrong: a permanently visible one reads as a step everybody has to take.
+
+
         CheckTrue("the Java picker stays hidden until Java is actually missing",
             Find<Button>(window).First(b => b.Content?.ToString() == "Find Java...").IsVisible == false);
 
-        // Opening a real file through the window, so what the panel actually says is checked rather
-        // than assumed from what the reader returns. Paths come in on the command line because the
-        // game's own files cannot be committed here.
+
+
+
         foreach (string path in args.Where(System.IO.File.Exists))
         {
             window.Open(path);
-            // The panel has to be the selected tab or it is never built, so searching the visual
-            // tree for its text finds nothing however correct the text is.
+
+
             tabs[0].SelectedIndex = headers.IndexOf("Animation");
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
@@ -302,8 +302,8 @@ public static class Smoke
             CheckTrue($"{name}: the animation panel says something", shown.Length > 0);
             Console.WriteLine($"        {shown}");
 
-            // The event summary is rows under an event, so it only exists once the Symbols tab has
-            // been built. A behaviour file that declares events has to say what each one is for.
+
+
             if (shown.StartsWith("This is a behaviour file", StringComparison.Ordinal))
             {
                 tabs[0].SelectedIndex = 2;
@@ -313,13 +313,13 @@ public static class Smoke
                 var said = Find<TextBlock>(window).Select(t => t.Text ?? "")
                     .Where(t => roles.Any(r => t.Contains(r, StringComparison.Ordinal))).ToList();
 
-                // Both of these are built from the file's own bytes now, so both are asserted with
-                // or without Java rather than one of them being excused.
-                //
-                // The roles were the last thing here still needing hkxpack. What an event is used for
-                // is a scan of every place an index is written, including inside structs nested
-                // deeper than the graph model carries, so the model genuinely cannot answer it. That
-                // was read as needing the text form. It needs the places, and the bytes have them.
+
+
+
+
+
+
+
                 CheckTrue($"{name}: the symbols are built from the file itself",
                           window.SymbolGrid.RowCount > 0);
                 CheckTrue($"{name}: events say who sends and who listens", said.Count > 0);
@@ -332,9 +332,9 @@ public static class Smoke
                                   (window.LoadedXml.Length == 0 ? "  (read with no Java)" : ""));
             }
 
-            // The canvas is drawn from the model, and the model comes from the file's own bytes, so
-            // it fills whether or not Java is present. Checked outside the text guard below on
-            // purpose: inside it, a window that drew nothing would skip the check and pass.
+
+
+
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -344,10 +344,10 @@ public static class Smoke
                 CheckTrue($"{name}: the canvas draws the graph", drawn > 0);
             }
 
-            // The graph is the primary workspace. The optional legend and details areas must start
-            // closed, while properties remain ready for the first selected node. The test drives the
-            // same state changes as the pane buttons, rather than inspecting layout implementation
-            // details, so a later layout implementation can keep this contract.
+
+
+
+
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -484,25 +484,25 @@ public static class Smoke
                 CheckTrue($"{name}: closing details hides their contents again", !window.GraphDrawerContentsVisible);
             }
 
-            // Playback has a separate renderer. Its mesh must stay inside the viewport rather than
-            // painting across the playback controls or outside the tab.
+
+
             {
                 tabs[0].SelectedIndex = 5;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 CheckTrue($"{name}: playback viewport clips mesh drawing", window.PlaybackViewportClips);
             }
 
-            // Folding a branch. Two things have to be true and they fail separately: the right nodes
-            // go, and the room they were taking comes back. A fold that only stopped drawing them
-            // would leave a hole the size of the whole subtree, which is worse than not folding.
+
+
+
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 var canvas = Find<GraphView>(window).First();
 
-                // A branch in the middle rather than the root. Folding the root is a real case and
-                // a useless check: it takes the whole graph off and proves nothing about the rest of
-                // it staying put.
+
+
+
                 string parent = canvas.DrawnIds
                     .Where(id => canvas.OwnedCount(id) >= 3 && canvas.OwnedCount(id) <= canvas.DrawnCount / 4)
                     .OrderByDescending(canvas.OwnedCount)
@@ -537,8 +537,8 @@ public static class Smoke
                 }
             }
 
-            // Sharing is the ordinary case in a shipped behaviour, so a real file has to produce
-            // some. A check that passed because nothing was shared would be testing nothing.
+
+
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -558,13 +558,13 @@ public static class Smoke
                               !canvas.SharedBy(each).Contains(each));
                 }
 
-                // A node with one parent is not marked, or the mark means nothing.
+
                 var only = canvas.DrawnIds.FirstOrDefault(id => canvas.SharedBy(id).Count == 0
                                                              && canvas.OwnerOf(id).Length > 0);
                 CheckTrue($"{name}: a node with one parent carries no mark", only != null);
 
-                // The sentence is fixed, not whatever order an enumeration gives, and the owner
-                // leads because the node is sitting where the owner put it.
+
+
                 string one = shared[0];
                 string tip = canvas.SharedTip(one);
                 string ownerName = canvas.NameOf(canvas.OwnerOf(one));
@@ -575,8 +575,8 @@ public static class Smoke
                 Check($"{name}: it names every home once", canvas.SharedBy(one).Count + 1,
                       tip.Split(", ").Length);
 
-                // Folding the branch a node is borrowed from must not make it look exclusive, and
-                // folding is a full rebuild, so this checks the sentence survives one too.
+
+
                 string borrower = canvas.SharedBy(one).FirstOrDefault(b => canvas.DrawnIds.Contains(b)) ?? "";
                 string branch = borrower.Length > 0 ? canvas.OwnerOf(borrower) : "";
 
@@ -596,9 +596,9 @@ public static class Smoke
                 }
             }
 
-            // Several nodes picked and dragged together. The failure this guards is a node that is
-            // both explicitly selected and reached through its parent moving twice, drifting away
-            // from its own family at double speed.
+
+
+
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -615,7 +615,7 @@ public static class Smoke
                     Check($"{name}: both are selected", 2, canvas.SelectedIds.Count);
                     Check($"{name}: the primary is the first of them", parent, canvas.SelectedId);
 
-                    // The child is in the set once, not twice, even though it is reached both ways.
+
                     var moving = canvas.MovementSet(parent);
                     Check($"{name}: the movement set holds the child once",
                           1, moving.Count(m => m == child));
@@ -635,10 +635,10 @@ public static class Smoke
                 }
             }
 
-            // The run panel: a graph file starts stepping, lights its active states, and moves them
-            // when sent an event. A project or character file has no graph, so it must not pretend to
-            // run one. This is the window half of #37; the reachability behind it is checked headless
-            // in symrm, so here the question is only whether the panel is wired to it.
+
+
+
+
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -653,10 +653,10 @@ public static class Smoke
                     Console.WriteLine($"        run: {window.RunningCount} machine(s) running, " +
                                       $"{canvas.ActiveIds.Count} state(s) lit, {window.RunEventCount} event(s) to send");
 
-                    // Sending an event either moves something or does not, and both are fine; what is
-                    // checked is that the panel survives it and stays consistent with the canvas. A
-                    // real move is looked for across the declared events so a file whose first event
-                    // happens to be inert still exercises the moving path.
+
+
+
+
                     if (window.RunEventCount > 0)
                     {
                         var before = canvas.ActiveIds.ToHashSet();
@@ -670,14 +670,14 @@ public static class Smoke
                         CheckTrue($"{name}: the canvas stays lit after sending events", canvas.ActiveIds.Count > 0);
                         Console.WriteLine($"        run: sending events {(moved ? "moved a state" : "moved nothing, which some graphs do")}");
 
-                        // A behaviour opened out of a real project folder gets its clip lengths from
-                        // the animation files beside it, which is what lets a state leave because its
-                        // clip ended. Checked through the window rather than through the reader,
-                        // because the wiring is the part that breaks: the reader can be right while
-                        // the window never hands it the folder it is sitting in.
-                        // Only asserted when there are animations to read. A behaviour pulled out of
-                        // the archive on its own has no folder around it and correctly gets no
-                        // lengths, so requiring them everywhere would fail on the honest case.
+
+
+
+
+
+
+
+
                         string root = System.IO.Path.GetDirectoryName(
                                           System.IO.Path.GetDirectoryName(path) ?? "") ?? "";
                         bool hasAnimations = root.Length > 0 &&
@@ -690,9 +690,9 @@ public static class Smoke
                         Console.WriteLine($"        run: {window.TimedClipCount} clip(s) playing with a " +
                                           "length read from the animation beside the behaviour");
 
-                        // If any send left a transition blending, stepping the clock has to move it
-                        // along and, given enough steps, finish it. A blend that never settles would
-                        // leave two states lit forever.
+
+
+
                         if (window.RunBlending)
                         {
                             int steps = 0;
@@ -703,11 +703,11 @@ public static class Smoke
                         }
                     }
 
-                    // The variables a condition reads, and setting one.
-                    //
-                    // A transition gated on a variable can only be tried both ways if the variable can
-                    // be changed, so this walks the same controls a person uses: choose the variable,
-                    // type a value, press Set, and confirm the run holds the number afterwards.
+
+
+
+
+
                     Console.WriteLine($"        run: {window.RunVariables.Count} variable(s) to set");
                     if (window.RunVariables.Count > 0)
                     {
@@ -718,8 +718,8 @@ public static class Smoke
                         CheckTrue($"{name}: setting a variable through the box changes what the run holds",
                                   window.RunValueOf(variable) == 7);
 
-                        // A value that is not a number is refused and says so, rather than being read
-                        // as zero, which would silently change the variable to something it was not.
+
+
                         window.SetVariableForTest(variable, "not a number");
                         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                         CheckTrue($"{name}: nonsense is refused rather than read as zero",
@@ -728,21 +728,21 @@ public static class Smoke
                                   window.RunSummary.Contains(variable, StringComparison.Ordinal) &&
                                   window.RunSummary.Contains("not a number", StringComparison.Ordinal));
 
-                        // A variable the graph does not declare cannot be set, because nothing in the
-                        // graph could read it and accepting it would look like it had worked.
+
+
                         window.SetVariableForTest("noSuchVariableAnywhere", "1");
                         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                         CheckTrue($"{name}: a variable the graph does not declare is not offered",
                                   !window.RunVariables.Contains("noSuchVariableAnywhere"));
                     }
 
-                    // The held back line only appears when something is held back, so on a file where
-                    // nothing is, the check is that it stays away rather than sitting there empty.
+
+
                     CheckTrue($"{name}: transitions held back by a condition are reported, or the line is hidden",
                               window.RunHeldBack > 0 == window.RunHeldBackVisible);
 
-                    // A blender node shows its mix on the properties panel beside the canvas. This is
-                    // the weapon idle question answered on the node: how much of each child plays.
+
+
                     var blenderId = OpenCommonwealth.Services.Hkx.BehaviourGraphModel
                         .Parse(window.LoadedXml.Length > 0 ? window.LoadedXml : "")
                         .Objects.FirstOrDefault(o => o.Class == "hkbBlenderGenerator")?.Id;
@@ -767,13 +767,13 @@ public static class Smoke
                 }
             }
 
-            // The fields have to be reachable from the canvas, not only from the tree. A node's
-            // properties are useless in a tab that is not showing the node.
-            //
-            // Guarded on the file being a behaviour rather than only on it having a text form, because
-            // an animation clip opened with Java has a text form too and no states, transitions or
-            // clip generators in it, so these checks would fail on a file they were never about. An
-            // animation is exercised by the frame editing section below instead.
+
+
+
+
+
+
+
             bool isBehaviour = window.LoadedXml.Length > 0 &&
                 OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml)
                     .Objects.Any(o => o.Class == "hkbStateMachine");
@@ -798,8 +798,8 @@ public static class Smoke
                               boxes.Count >= fields.Count && fields.Count > 0);
                     Console.WriteLine($"        #{node}: {fields.Count} fields, {boxes.Count} boxes beside the canvas");
 
-                    // Double click is what the request asks for, so the wiring from the canvas to
-                    // the panel is what gets checked, not a synthetic mouse event.
+
+
                     canvas.Activated?.Invoke(node);
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                     CheckTrue($"{name}: double click still leaves the fields there",
@@ -811,8 +811,8 @@ public static class Smoke
                     Check($"{name}: and clearing it releases the canvas", "", canvas.HighlightId);
                 }
 
-                // Structured Flow is a second layout of the same graph, not a second graph. The
-                // hierarchy comes from ownership and its zoom bands only decide what is painted.
+
+
                 {
                     var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
                     string machineId = model.Objects
@@ -898,9 +898,9 @@ public static class Smoke
                     }
                 }
 
-                // Focus tree and static trace are view-only. Selection picks an object, focus hides
-                // everything outside one machine tree, and trace dims visible graph content without
-                // changing the loaded document or simulation state.
+
+
+
                 {
                     var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
                     string machineId = model.Objects
@@ -964,9 +964,9 @@ public static class Smoke
                     }
                 }
 
-                // Which event moves which state to which state, which is the thing the canvas has
-                // never been able to show: none of it is a reference in the file, so the ownership
-                // wires cannot carry it.
+
+
+
                 {
                     var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
                     var routes = OpenCommonwealth.Services.Hkx.StateRoutes.Of(model);
@@ -980,27 +980,27 @@ public static class Smoke
                           routes.Routes.Count, canvas.RouteCount);
                     CheckTrue($"{name}: and there are some to draw", canvas.RouteCount > 0);
 
-                    // A route the canvas cannot draw is one whose ends are missing from it, which
-                    // would make the picture quietly incomplete rather than visibly wrong.
+
+
                     Check($"{name}: every route has both ends on the canvas",
                           canvas.RouteCount, canvas.DrawableRouteCount);
 
-                    // A machine starts somewhere, and which state that is cannot be read off the
-                    // picture without the badge.
+
+
                     CheckTrue($"{name}: a start state is marked", canvas.StartStateIds.Count > 0);
                     CheckTrue($"{name}: and the node itself knows it is one",
                               canvas.StartStateIds.All(id => !canvas.DrawnIds.Contains(id) || canvas.IsStart(id)));
 
-                    // Every transition in a machine runs between two of its states. A wildcard is
-                    // written on the machine rather than on a state, but it fires from every state
-                    // the machine holds, so highlighting a state has to show it leaving that state
-                    // rather than leaving the machine.
+
+
+
+
                     var withWildcards = routes.MachineOfState.Keys
                         .Where(s => canvas.DrawnIds.Contains(s))
                         .FirstOrDefault(s => routes.LeavingState(s).Any(r => r.Wildcard)) ?? "";
 
-                    // A wildcard is not a line. With nothing picked out the canvas draws direct
-                    // transitions only, and every state a wildcard can enter says so on itself.
+
+
                     {
                         canvas.ClearHighlight();
                         int direct = routes.Routes.Count(r => !r.Wildcard &&
@@ -1017,8 +1017,8 @@ public static class Smoke
                         CheckTrue($"{name}: and the states a wildcard enters say so on themselves",
                                   marked > 0);
 
-                        // Every wildcard in the file has to reach the state it targets, or the
-                        // canvas has quietly dropped one by not drawing it as a line.
+
+
                         var targets = routes.Routes.Where(r => r.Wildcard && canvas.DrawnIds.Contains(r.ToId))
                                                    .Select(r => r.ToId).ToHashSet();
                         CheckTrue($"{name}: every state a wildcard targets is marked",
@@ -1037,13 +1037,13 @@ public static class Smoke
                         CheckTrue($"{name}: and every one of them leaves that state, not the machine",
                                   leaving.All(r => r.FromId == withWildcards));
 
-                        // A wildcard into the state you are already in is a self transition and is
-                        // not a way out of it.
+
+
                         CheckTrue($"{name}: none of them points back at the state itself",
                                   leaving.All(r => r.ToId != withWildcards));
 
-                        // The machine's own wildcard count is unchanged by any of this: the routes
-                        // are rewritten for drawing, not invented.
+
+
                         string machineId = routes.MachineOfState[withWildcards];
                         int onMachine = routes.Out.TryGetValue(machineId, out var fromMachine)
                             ? fromMachine.Count(r => r.Wildcard) : 0;
@@ -1051,9 +1051,9 @@ public static class Smoke
                                   wild == onMachine || wild == onMachine - 1);
                     }
 
-                    // Fitting has to actually fit. This used to set a fixed zoom and move the corner
-                    // into view, so on a graph nine thousand units across the button put you in the
-                    // top left of it and reported success.
+
+
+
                     {
                         var extent = canvas.Extent();
                         canvas.ClearHighlight();
@@ -1069,8 +1069,8 @@ public static class Smoke
                         CheckTrue($"{name}: and the whole of it down",
                                   seen.Height >= extent.Tall - 1);
 
-                        // And fitting one node's neighbourhood has to show less than everything, or
-                        // it is the same button twice.
+
+
                         canvas.Highlight(node);
                         canvas.FrameRelated();
                         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -1081,8 +1081,8 @@ public static class Smoke
                         canvas.ClearHighlight();
                     }
 
-                    // Picking a state out has to bring what it routes to with it. Ownership alone
-                    // answers what a state contains and says nothing about what enters or leaves it.
+
+
                     var routed = routes.Routes.FirstOrDefault(r => canvas.DrawnIds.Contains(r.FromId) &&
                                                                    canvas.DrawnIds.Contains(r.ToId));
                     if (routed != null)
@@ -1094,13 +1094,13 @@ public static class Smoke
                     }
                 }
 
-                // A transition array is the object the flat panel was worst at: every element
-                // carries the same field names, so five transitions arrived as eighty boxes with
-                // nothing saying where one ended and the next began. Each element is now behind a
-                // line naming its event and its target, and the boxes only exist once opened.
-                // The busiest array that is on the canvas, not the first: an array holding one
-                // transition proves nothing about a panel whose problem only appears when the same
-                // field names repeat.
+
+
+
+
+
+
+
                 var full = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
                 string array = OpenCommonwealth.Services.Hkx.HkxTextEdit
                     .IdsOfClass(window.LoadedXml, "hkbStateMachineTransitionInfoArray")
@@ -1121,12 +1121,12 @@ public static class Smoke
                     var blocks = Find<Expander>(window.GraphProperties);
                     int collapsed = Find<TextBox>(window.GraphProperties).Count;
 
-                    // What hovering a field name actually says is read from the built controls,
-                    // rather than inferred from the code that builds them.
-                    //
-                    // Opened first, because a collapsed element has built no field rows and there is
-                    // nothing to hover. Reading the tips without this found the summary lines on the
-                    // element headers and reported that no field said anything.
+
+
+
+
+
+
                     foreach (var block in blocks) block.IsExpanded = true;
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
@@ -1146,8 +1146,8 @@ public static class Smoke
                     if (explained != null)
                         Console.WriteLine("        a tip reads: " + explained.Replace("\n", " | "));
 
-                    // Put back, because a later check asserts every block starts closed and this is
-                    // the only thing that opened them.
+
+
                     foreach (var block in blocks) block.IsExpanded = false;
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
@@ -1161,12 +1161,12 @@ public static class Smoke
                               collapsed < flat);
                     CheckTrue($"{name}: every block starts closed", blocks.All(b => !b.IsExpanded));
 
-                    // The line is the whole point: it has to name the event, not the element index.
+
                     CheckTrue($"{name}: each block says which event it fires on",
                               blocks.Count == 0 || summaries.Values.All(s => s.Contains("->")));
 
-                    // Opening one has to produce the fields, or the grouping has hidden them rather
-                    // than tidied them.
+
+
                     if (blocks.Count > 0)
                     {
                         blocks[0].IsExpanded = true;
@@ -1176,9 +1176,9 @@ public static class Smoke
                     }
                 }
 
-                // Bone weight arrays used to be one opaque line of numbers. VertibirdBehavior has
-                // a real 73-entry instance and its extracted character tree carries the matching
-                // skeleton, so this is the direct UI path rather than a model-only substitute.
+
+
+
                 string boneWeights = OpenCommonwealth.Services.Hkx.HkxTextEdit
                     .IdsOfClass(window.LoadedXml, "hkbBoneWeightArray")
                     .Select(id => new
@@ -1255,14 +1255,14 @@ public static class Smoke
                     CheckTrue($"{name}: the full bone array scrolls to its final row",
                               scroll.Offset.Y > 0 && boxes[^1].Bounds.Width > 0 && boxes[^1].Bounds.Height > 0);
 
-                    // The edit is deliberately unsaved. Restore the original before the general
-                    // smoke walk below verifies undo and save state.
+
+
                     window.Open(path);
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 }
 
-                // The filter box sits above the tabs, so it has to work on whichever one is showing.
-                // Driving only the tree meant typing in it on the Graph tab did nothing at all.
+
+
                 int drawn = canvas.DrawnCount;
                 string needle = OpenCommonwealth.Services.Hkx.BehaviourGraphModel
                     .Parse(window.LoadedXml).Get(node)?.Str("name") ?? "";
@@ -1283,9 +1283,9 @@ public static class Smoke
                     Check($"{name}: and nothing was dropped from the canvas", drawn, canvas.DrawnCount);
                 }
 
-                // Dragging a wire out to empty canvas and picking a node type. The new node has to
-                // land under the cursor: laid out by depth it goes into a column of its own at the
-                // far end of the graph, which is where it used to appear.
+
+
+
                 string host = OpenCommonwealth.Services.Hkx.HkxTextEdit
                     .IdsOfClass(window.LoadedXml, "hkbStateMachineStateInfo")
                     .FirstOrDefault(id => canvas.DrawnIds.Contains(id)) ?? "";
@@ -1311,8 +1311,8 @@ public static class Smoke
                         .Parse(window.LoadedXml).Get(host);
                     Check($"{name}: wired into the slot the drag came from", added, owner?.Ref("generator") ?? "");
 
-                    // Undo has to put the document back and take the node off the canvas with it,
-                    // not only flip the unsaved marker.
+
+
                     string afterAdd = window.LoadedXml;
                     var save = Find<Button>(window).First(b => b.Content?.ToString() == "Save to .hkx");
                     var undo = Find<Button>(window).First(b => b.Content?.ToString() == "Undo");
@@ -1336,12 +1336,12 @@ public static class Smoke
 
                     PasteOnACopy(window, path, name);
 
-                    // Back to the file the run was given, since the paste walk opens a copy.
+
                     window.Open(path);
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
-                    // A file compared with itself is the one answer that cannot be wrong, and it
-                    // proves the unpack, the census and the walk all ran.
+
+
                     string said = window.CompareLoadedWith(path);
                     if (said.Length == 0)
                         Console.WriteLine("        compare: skipped, the window opened read only");
@@ -1349,8 +1349,8 @@ public static class Smoke
                         CheckTrue($"{name}: a file compared with itself reports no difference",
                                   said.Contains("same objects", StringComparison.Ordinal));
 
-                    // Object ids restart at #1 in the next file, so a remembered position, highlight
-                    // or filter would be applied to whatever now holds that number.
+
+
                     canvas.Highlight(added);
                     window.Filter("clip");
                     window.Open(path);
@@ -1362,13 +1362,13 @@ public static class Smoke
                 }
             }
 
-            // A paged view can drop the tail without saying so, which is the failure the old 300 row
-            // cap made visible and paging could hide. Walk every page and prove the frames shown add
-            // up to the frames the file has, with the last page ending on the last frame.
+
+
+
             if (window.AnimationFrameCount > 0)
             {
-                // The paging buttons only exist while their own tab is built, and the canvas section
-                // above leaves the Graph tab selected.
+
+
                 tabs[0].SelectedIndex = headers.IndexOf("Animation");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
@@ -1403,9 +1403,9 @@ public static class Smoke
                 CheckTrue($"{name}: the last page ends on frame {frames - 1}",
                           window.FramePageLabel.Contains($"to {frames - 1} ") || frames <= 300);
 
-                // The lookup the ticket asks for: a variable drives userControlledTimeFraction, and
-                // this says which pose that is. 0 and 1 have to land on the ends, and the view has to
-                // move to the frame rather than only printing its number.
+
+
+
                 window.LookUpFraction("0");
                 Check($"{name}: fraction 0 is the first frame", 0, window.AimedFrame);
                 window.LookUpFraction("1");
@@ -1418,9 +1418,9 @@ public static class Smoke
                 Check($"{name}: nonsense is refused rather than aimed at", -1, window.AimedFrame);
                 CheckTrue($"{name}: and it says so", window.FractionAnswer.Contains("not a number"));
 
-                // Filtering to one bone is the difference between a browser and a wall of 95 tracks.
-                // Counted against the tracks rather than against every row: annotations are rows too
-                // and they are not filtered, so a clip with seven of them is still showing seven.
+
+
+
                 int unfiltered = window.AnimationGrid.RowCount;
                 window.FilterBones("no-such-bone-xyzzy");
                 int filtered = window.AnimationGrid.RowCount;
@@ -1429,11 +1429,11 @@ public static class Smoke
                 window.FilterBones("");
                 Check($"{name}: clearing the filter brings the tracks back", unfiltered, window.AnimationGrid.RowCount);
 
-                // Changing a frame. A frame is not addressable by anything in the file, so it is
-                // picked by its row, and the whole path from picking to typing to the number
-                // actually moving is what this drives. The file is not written: saving is the same
-                // call the harness proves on real animations, and doing it here would rewrite the
-                // sample.
+
+
+
+
+
                 CheckTrue($"{name}: nothing is picked before a row is", !window.AnimationEdited);
 
                 if (window.PickFrame(0, 0))
@@ -1451,8 +1451,8 @@ public static class Smoke
                               Math.Abs(moved.Z - 33.75f) < 0.001f);
                     CheckTrue($"{name}: and the file counts as changed", window.AnimationEdited);
 
-                    // Refused rather than half applied, because two numbers where three are wanted
-                    // would otherwise land as a position nobody typed.
+
+
                     window.TypeFramePosition("1, 2");
                     var still = window.FramePosition(0, 0);
                     CheckTrue($"{name}: a position short of three numbers is refused",
@@ -1462,22 +1462,22 @@ public static class Smoke
 
                     SaveOnACopy(window, path, name);
 
-                    // Back to the file the run was given, so the checks after this see the file they
-                    // were pointed at rather than the copy.
+
+
                     window.Open(path);
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 }
             }
 
-            // Playback. Only reachable when a skeleton resolved for this file, which for a loose
-            // animation means a CharacterAssets folder beside it; when it did not, the window says so
-            // rather than drawing nothing, and there is no pose to check.
+
+
+
             tabs[0].SelectedIndex = headers.IndexOf("Playback");
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
-            // The tree has to reach the same place the canvas does. It used to fill only the
-            // properties panel, so a clip picked in the tree left the viewport empty and the tab
-            // looked broken from that side.
+
+
+
             if (window.LoadedXml.Length > 0)
             {
                 tabs[0].SelectedIndex = headers.IndexOf("Tree");
@@ -1501,9 +1501,9 @@ public static class Smoke
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
             }
 
-            // Selecting a clip is what loads a pose, so a behaviour needs one selected. Walked rather
-            // than taking the first: most clips in a graph name an animation the folder does not have,
-            // which is the ordinary case Check graph already warns about.
+
+
+
             if (window.PoseFrameCount == 0 && window.LoadedXml.Length > 0)
                 foreach (string clip in OpenCommonwealth.Services.Hkx.HkxTextEdit
                              .IdsOfClass(window.LoadedXml, "hkbClipGenerator"))
@@ -1535,10 +1535,10 @@ public static class Smoke
 
                 Check($"{name}: scrubbing to the last frame lands on it", frames - 1, window.PoseFrame);
 
-                // Against the middle as well as the end, because plenty of clips are loops and a
-                // loop ends where it began. Comparing only the two ends called a working idle
-                // broken, which is the check being wrong rather than the clip. What is really being
-                // asked is whether the pose moves at all as the clip runs.
+
+
+
+
                 CheckTrue($"{name}: and the pose moves as the clip runs",
                           frames < 2 ||
                           OpenCommonwealth.Services.Hkx.AnimationPose.Distance(atStart, atEnd) > 0.01f ||
@@ -1552,35 +1552,35 @@ public static class Smoke
                 window.ScrubTo(frames + 500);
                 Check($"{name}: and past the end clamps", frames - 1, window.PoseFrame);
 
-                // Play has to actually run a clock and stop when pressed again, not just relabel.
+
                 var play = Find<Button>(window).First(b => b.Content?.ToString() is "Play" or "Pause");
                 window.ScrubTo(0);
-                // Pressed without pumping the dispatcher. Play starts a repeating timer, and running
-                // jobs while it ticks never returns, so a pump here hangs the whole suite rather
-                // than failing it. IsPlaying is set as the button is pressed, so there is nothing to
-                // wait for anyway.
+
+
+
+
                 ClickOnly(play);
                 CheckTrue($"{name}: play starts a clock", window.IsPlaying || frames <= 1);
                 ClickOnly(play);
                 CheckTrue($"{name}: and pressing it again stops it", !window.IsPlaying);
 
-                // Scrubbing is a view of a file on disk. It must never make the graph dirty, or every
-                // look at an animation would arm the save button.
+
+
                 CheckTrue($"{name}: scrubbing leaves the document alone",
                           !Find<Button>(window).First(b => b.Content?.ToString() == "Save to .hkx").IsEnabled);
             }
         }
 
-        // Text typed into a property field only reaches the document when the field is left, so a
-        // value typed and then saved straight away used to be missing from what was written. Saving
-        // commits the pending fields first. This types without pressing Enter and without clicking
-        // away, then asks for that commit the way saving does, and checks the document caught it.
-        // It stops short of actually saving: writing the example file is not this test's business.
+
+
+
+
+
         foreach (string path in args.Where(System.IO.File.Exists))
         {
-            // Editing is done by rewriting the text form, so with no Java there is no document to
-            // type into and nothing here to check. The window is still readable, which is what the
-            // checks above cover.
+
+
+
             if (window.LoadedXml.Length == 0)
             {
                 Console.WriteLine("        editing: skipped, the window opened without a text form");
@@ -1590,10 +1590,10 @@ public static class Smoke
             string clip = OpenCommonwealth.Services.Hkx.HkxTextEdit
                 .IdsOfClass(window.LoadedXml, "hkbClipGenerator").FirstOrDefault() ?? "";
 
-            // An animation file holds no clip generator, and that is not a failure: it is a file of
-            // frames rather than a graph, and the frame editing above is what it gets checked on.
-            // Demanding one here reported every animation as broken. A behaviour with no clip in it
-            // is still a failure, so the check is kept for the files it means something for.
+
+
+
+
             bool graph = OpenCommonwealth.Services.Hkx.HkxTextEdit
                 .IdsOfClass(window.LoadedXml, "hkbBehaviorGraph").Count > 0;
 
@@ -1608,9 +1608,9 @@ public static class Smoke
             window.SelectNode(clip);
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
-            // A named field rather than whichever box comes first. The first one is
-            // variableBindingSet, which holds a reference and rightly refuses arbitrary text, so
-            // typing into it proves nothing about whether the commit ran.
+
+
+
             var box = FieldNamed(window.GraphProperties, "playbackSpeed");
             CheckTrue("and a field to type in", box != null);
             if (box == null) continue;
@@ -1634,12 +1634,12 @@ public static class Smoke
         return _failed == 0 ? 0 : 1;
     }
 
-    /// The clip list is built from clip generators and an animation file holds none, so Playback
-    /// opened on one with an empty panel. An empty panel reads as broken even when it is correct,
-    /// and every user pays for that once.
-    ///
-    /// Its own window rather than the one the loop above left behind, because the check counts rows
-    /// and a window that has held a behaviour has a list already filled from it.
+
+
+
+
+
+
     private static void StandaloneAnimationFillsTheClipList()
     {
         const string path = "dist/examples/Dogmeat/Animations/IdleOutroDogmeatWalkForward.hkx";
@@ -1661,13 +1661,13 @@ public static class Smoke
 
         Check("a standalone animation puts itself in the clip list", 1, window.ClipGrid.RowCount);
 
-        // Selected as well as listed, because the row exists to save the user a click they have no
-        // reason to know is needed: the animation is already the thing being played.
+
+
         CheckTrue("and the row is picked, so Playback behaves as if a clip had been chosen",
                   window.ClipGrid.HasSelection);
 
-        // What the row says, not merely that there is one. A row naming the wrong file or reading
-        // "0.00s, 0 frames" would pass a count and still tell the user nothing.
+
+
         var said = Find<TextBlock>(window.ClipGrid).Select(t => t.Text ?? "").ToList();
         CheckTrue("and it names the animation that is loaded",
                   said.Contains("IdleOutroDogmeatWalkForward"));
@@ -1728,27 +1728,27 @@ public static class Smoke
         CheckTrue("the extra nested animation has a pose to render", window.PoseNow != null);
     }
 
-    /// The archive browser, built on a real archive written here rather than one from the game, so
-    /// this runs on a build machine with no Fallout 4 on it.
-    ///
-    /// Its own window, so it needs walking the same way the tabs do: a control that is never shown
-    /// is never built, and a filter that throws would otherwise only be found by a person typing
-    /// into it.
-    /// Presses the save button for real, on a copy.
-    ///
-    /// Everything above it stops at the decoded animation held in memory, which proves the editing
-    /// and nothing about the writing. The write is the part that replaces a file on disk, so it is
-    /// driven here rather than assumed from the harness that proves the converter: a copy is opened,
-    /// a frame is moved, the button is pressed, and the file on disk is read back and asked whether
-    /// the frame moved. The copy is used so the sample this run was pointed at is left alone.
-    /// Copy a subtree and paste it back, through the window's own buttons rather than through the
-    /// class behind them.
-    ///
-    /// Done on a copy of the file, because pasting writes the file there and then. What this is for
-    /// is the wiring: that the button is offered only once something has been copied, that the slot
-    /// list follows the selection, and that the file on disk afterwards really holds more objects
-    /// than it did. Whether the references inside the copy are right is `symrm paste`, over all 531
-    /// behaviours rather than over this one.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static void PasteOnACopy(MainWindow window, string path, string name)
     {
         string copy = System.IO.Path.Combine(
@@ -1803,23 +1803,23 @@ public static class Smoke
         TemplatesOnACopy(window, copy, name);
     }
 
-    /// The template path through the window: keep the selected shape, then put it back.
-    ///
-    /// Walked here rather than only in `symrm test` because the wiring is the part that breaks. The
-    /// store can be right while the window never hands it the selection, never refreshes its list, or
-    /// leaves the button disabled, and none of that shows up in a check that calls the store directly.
+
+
+
+
+
     private static void TemplatesOnACopy(MainWindow window, string copy, string name)
     {
-        // A folder of this run's own, so a smoke test never reads or writes the templates belonging to
-        // whoever is running it.
+
+
         string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-templates");
         if (System.IO.Directory.Exists(folder)) System.IO.Directory.Delete(folder, true);
         OpenCommonwealth.Services.Hkx.TemplateStore.Folder = folder;
 
-        // A clip rather than the state the paste checks used. A state usually shares its generator
-        // with another state and so cannot be lifted at all, which would leave this only ever walking
-        // the refusal and never the path the feature exists for. Clips are the shape that lifts:
-        // `symrm template` counts 3,717 of 3,740 liftable against 1,696 of 5,320 states.
+
+
+
+
         string clip = OpenCommonwealth.Services.Hkx.HkxTextEdit
             .IdsOfClass(window.LoadedXml, "hkbClipGenerator").FirstOrDefault() ?? "";
         if (clip.Length == 0) return;
@@ -1831,9 +1831,9 @@ public static class Smoke
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         Console.WriteLine("        " + window.PasteAnswer);
 
-        // A shape sharing an object with the rest of its file cannot be lifted, and that is the
-        // ordinary answer for a state rather than a failure of this test, so both outcomes are
-        // allowed and only the wrong ones are not.
+
+
+
         if (window.TemplateNames.Count == 0)
         {
             CheckTrue($"{name}: a shape that cannot leave its file says so and names what it shares",
@@ -1849,9 +1849,9 @@ public static class Smoke
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         Console.WriteLine("        " + window.PasteAnswer);
 
-        // Specifically the fit, which is the thing only this line can say. "N object(s)" alone would
-        // also match the message left behind by keeping it, so the check would pass without the fit
-        // ever being worked out.
+
+
+
         CheckTrue($"{name}: choosing one says whether it fits this file before anything is applied",
                   window.PasteAnswer.Contains("already declared here", StringComparison.Ordinal) ||
                   window.PasteAnswer.Contains("Before this can go in", StringComparison.Ordinal));
@@ -1866,8 +1866,8 @@ public static class Smoke
         int now = new OpenCommonwealth.Services.Hkx.PackfileObjects(
             OpenCommonwealth.Services.Hkx.PackfileImage.Read(copy)).Instances.Count;
 
-        // Applying it into the file it came out of is the same file by name and a different one by
-        // history, so it goes down the ordinary path and must either land or say why not.
+
+
         if (window.PasteAnswer.StartsWith("Applied", StringComparison.Ordinal))
             CheckTrue($"{name}: applying a template adds objects to the file ({was} to {now})", now > was);
         else
@@ -1903,16 +1903,16 @@ public static class Smoke
                   window.FrameEditAnswer.StartsWith("Saved ", StringComparison.Ordinal));
         CheckTrue($"{name}: and nothing is left unsaved afterwards", !window.AnimationEdited);
 
-        // Read off the disk rather than out of the window, because the window reloads itself after a
-        // save and would report its own memory either way.
+
+
         var before = new OpenCommonwealth.Services.Hkx.HkxBinaryReader().ReadAnimation(path);
         var written = new OpenCommonwealth.Services.Hkx.HkxBinaryReader().ReadAnimation(copy);
 
-        // A spline clip is written back spline compressed, which is the win of the encoder and comes
-        // out smaller than the file it replaced. Only a lossless clip, which nothing re-encodes,
-        // falls back to uncompressed. So the class the save produces, and the tolerances the checks
-        // hold it to, follow the class it went in as: an exact hundredth for the exact path, and the
-        // codec's own quantisation for the spline one.
+
+
+
+
+
         bool wasSpline = before.AnimationClass == "hkaSplineCompressedAnimation";
         Check($"{name}: the saved file keeps its kind where it can be re-encoded",
               wasSpline ? "hkaSplineCompressedAnimation" : "hkaInterleavedUncompressedAnimation",
@@ -1925,8 +1925,8 @@ public static class Smoke
         float editDrift = (landed - new System.Numerics.Vector3(7.25f, -8.5f, 9.75f)).Length();
         CheckTrue($"{name}: and holds the frame that was typed ({editDrift:F4})", editDrift < editLimit);
 
-        // The clip is not only correct where it was edited. Every other frame has to survive the
-        // round trip through the writer, or a save would quietly flatten the rest of the animation.
+
+
         float worst = 0;
         for (int t = 0; t < before.NumTracks; t++)
             for (int f = 0; f < before.NumFrames; f++)
@@ -1945,7 +1945,7 @@ public static class Smoke
         string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-archive.ba2");
         WriteArchive(path, new[]
         {
-            "Meshes/Actors/Dogmeat/Behaviors/DogmeatRoot.hkx",
+            "Meshes/Actors/Canine/Behaviors/CanineRoot.hkx",
             "Meshes/Actors/Character/Behaviors/Behavior.hkx",
             "Meshes/Actors/Character/CharacterAssets/skeleton.nif",
         });
@@ -1960,11 +1960,11 @@ public static class Smoke
         Check("the browser has a list", 1, lists.Count);
         Check("and a filter box", 1, boxes.Count);
 
-        // The extension is the browser's, not the caller's afterthought: a .nif in the archive must
-        // not be offered as a behaviour to open.
+
+
         Check("only the two behaviours are offered", 2, lists[0].ItemCount);
 
-        boxes[0].Text = "dogmeat behaviors";
+        boxes[0].Text = "canine behaviors";
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         Check("typing words in any order narrows it", 1, lists[0].ItemCount);
 
@@ -1977,8 +1977,8 @@ public static class Smoke
         System.IO.File.Delete(path);
     }
 
-    /// The smallest valid BA2: a 24 byte header, one 36 byte entry per file, all stored plain, then
-    /// the name table. Enough for the browser to have something real to list.
+
+
     private static void WriteArchive(string path, string[] names)
     {
         using var stream = System.IO.File.Create(path);
@@ -2013,7 +2013,7 @@ public static class Smoke
         }
     }
 
-    /// The value box on the row whose label is this field's name.
+
     private static TextBox? FieldNamed(Visual panel, string name)
     {
         foreach (var row in Find<Grid>(panel))
@@ -2025,8 +2025,8 @@ public static class Smoke
         return null;
     }
 
-    /// Presses a button without pumping the dispatcher afterwards, for the ones that start
-    /// something repeating.
+
+
     private static void ClickOnly(Button button)
     {
         button.Command?.Execute(button.CommandParameter);

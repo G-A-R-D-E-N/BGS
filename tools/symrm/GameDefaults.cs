@@ -7,24 +7,24 @@ using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.Tools;
 
-// What the game says a field starts out as.
-//
-// The class table carries a default for 625 members and none at all for the ones whose value comes
-// from a fixed set, because it is generated from hkxpack's database and that database does not
-// record them. Havok's own headers record some, and the one case that could be checked they record
-// wrongly for this build: they say hkbStateMachine.selfTransitionMode starts at NO_TRANSITION and
-// the game says FORCE_TRANSITION_TO_START_STATE, which is also the value 22 of the 33 machines in
-// DogmeatDefault actually carry.
-//
-// So this reads the game instead. Every Havok class is registered at startup by a small generated
-// function that hands the class constructor its name, its parent, its size, its members and a blob
-// of defaults. Those functions are named in the symbol dump, they are all the same shape, and the
-// blob is an offset table: one int per declared member, -1 for "no default", otherwise where in the
-// blob the value sits.
-//
-// Nothing here is guessed. The reader checks the size, the member count and the version it recovers
-// against what the table already says, and anything it cannot decode is reported rather than
-// skipped, because a silently missing class would read as a class with no defaults.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public static class GameDefaults
 {
     public sealed record Found(string ClassName, int ObjectSize, int Members, int Version,
@@ -39,7 +39,7 @@ public static class GameDefaults
         public override string ToString() => $"{ClassName}: {Why}";
     }
 
-    /// A loaded executable, with enough of its headers read to turn an address into a file offset.
+
     private sealed class Image
     {
         public byte[] Bytes = Array.Empty<byte>();
@@ -94,11 +94,11 @@ public static class GameDefaults
         }
     }
 
-    /// Reads every class the executable registers, and says what it could not read.
-    ///
-    /// `symbolDump` is the flat function list from the reverse engineering folder. It is only used to
-    /// find the registration functions and how long each one is; nothing is taken from it on trust,
-    /// since everything it names is checked against the bytes.
+
+
+
+
+
     public static (List<Found> Read, List<Refusal> Refused) Of(string exePath, string symbolDump,
                                                                HavokClassTypes? types = null)
     {
@@ -112,8 +112,8 @@ public static class GameDefaults
         {
             if (!types.Knows(className))
             {
-                // Not a refusal. The game registers plenty of classes no behaviour file holds, and
-                // there is nothing to compare those against.
+
+
                 continue;
             }
 
@@ -155,7 +155,7 @@ public static class GameDefaults
         return (read, refused);
     }
 
-    /// The default at an address, spelt the way the class table spells one.
+
     private static string? Spell(Image image, int at, HavokClassTypes.Member member,
                                  HavokClassTypes types, string className)
     {
@@ -184,9 +184,9 @@ public static class GameDefaults
                 return BitConverter.ToUInt64(image.Bytes, at).ToString(CultureInfo.InvariantCulture);
 
             case "TYPE_REAL":
-                // Round trip rather than a fixed number of places. A default of 1.8e19 spelt to six
-                // decimals reads as a different number from the same value spelt by hkxpack, and the
-                // comparison then reports a disagreement that is only in the writing.
+
+
+
                 return BitConverter.ToSingle(image.Bytes, at).ToString("G9", CultureInfo.InvariantCulture);
 
             case "TYPE_VECTOR4":
@@ -195,8 +195,8 @@ public static class GameDefaults
                     .Select(i => BitConverter.ToSingle(image.Bytes, at + i * 4)
                                              .ToString("G9", CultureInfo.InvariantCulture))) + ")";
 
-            // An enum's storage width is its subtype, not four bytes, and reading it wide would pick
-            // up whatever default sits beside it.
+
+
             case "TYPE_ENUM":
             case "TYPE_FLAGS":
             {
@@ -217,15 +217,15 @@ public static class GameDefaults
     private sealed record Call(ulong Name, ulong Parent, int ObjectSize, ulong Defaults,
                                int Members, int Version);
 
-    /// The arguments the registration hands the class constructor.
-    ///
-    /// Not a disassembler. These functions are generated from one macro and use a handful of forms:
-    /// load a constant or an address into a register, put a register or a constant into a stack slot,
-    /// then call. Anything else appearing means this is not the shape being read, and the class is
-    /// refused rather than half decoded.
+
+
+
+
+
+
     private static Call? ReadCall(Image image, int at, int length, ulong va)
     {
-        var reg = new Dictionary<int, ulong>();      // 0 rax, 1 rcx, 2 rdx, 8 r8, 9 r9
+        var reg = new Dictionary<int, ulong>();
         var stack = new Dictionary<int, ulong>();
         var bytes = image.Bytes;
 
@@ -235,30 +235,30 @@ public static class GameDefaults
             int p = at + i;
             ulong here = va + (ulong)i;
 
-            // sub rsp, imm8 / add rsp, imm8
+
             if (bytes[p] == 0x48 && bytes[p + 1] == 0x83 && (bytes[p + 2] == 0xEC || bytes[p + 2] == 0xC4))
             { i += 4; continue; }
 
-            // mov DWORD PTR [rsp+imm8], imm32
+
             if (bytes[p] == 0xC7 && bytes[p + 1] == 0x44 && bytes[p + 2] == 0x24)
             { stack[bytes[p + 3]] = BitConverter.ToUInt32(bytes, p + 4); i += 8; continue; }
 
-            // xor r32, r32, which is how a null or a zero count is loaded
+
             if (bytes[p] == 0x33 && bytes[p + 1] == 0xC9) { reg[1] = 0; i += 2; continue; }
             if (bytes[p] == 0x33 && bytes[p + 1] == 0xD2) { reg[2] = 0; i += 2; continue; }
             if (bytes[p] == 0x33 && bytes[p + 1] == 0xC0) { reg[0] = 0; i += 2; continue; }
             if (bytes[p] == 0x45 && bytes[p + 1] == 0x33 && bytes[p + 2] == 0xC0) { reg[8] = 0; i += 3; continue; }
             if (bytes[p] == 0x45 && bytes[p + 1] == 0x33 && bytes[p + 2] == 0xC9) { reg[9] = 0; i += 3; continue; }
 
-            // lea, in both the forms these functions use: an address relative to the instruction,
-            // and a register plus a small constant. The second is the compiler writing `mov r9d, 48`
-            // as `lea r9d, [rcx+48]` because it already knows rcx is zero, which is why a reader
-            // that only understood the first form refused two thirds of the classes.
+
+
+
+
             if (bytes[p] == 0x8D || ((bytes[p] is 0x48 or 0x4C or 0x44) && bytes[p + 1] == 0x8D))
             {
                 bool rex = bytes[p] != 0x8D;
                 int op = rex ? p + 1 : p;
-                bool wideDest = rex && (bytes[p] & 0x04) != 0;   // REX.R picks r8..r15
+                bool wideDest = rex && (bytes[p] & 0x04) != 0;
 
                 byte modrm = bytes[op + 1];
                 int mod = modrm >> 6, field = (modrm >> 3) & 7, rm = modrm & 7;
@@ -271,8 +271,8 @@ public static class GameDefaults
                     continue;
                 }
 
-                // A SIB byte means an indexed address, which none of these use. Refusing keeps a
-                // half understood instruction from becoming a wrong argument.
+
+
                 if (rm == 4) return null;
 
                 int disp = mod switch
@@ -292,7 +292,7 @@ public static class GameDefaults
                 continue;
             }
 
-            // mov [rsp+imm8], r64
+
             if (bytes[p] == 0x48 && bytes[p + 1] == 0x89 && bytes[p + 3] == 0x24)
             {
                 int which = bytes[p + 2] switch { 0x44 => 0, 0x4C => 1, 0x54 => 2, _ => -1 };
@@ -302,7 +302,7 @@ public static class GameDefaults
                 continue;
             }
 
-            // mov [rsp+imm8], r32
+
             if (bytes[p] == 0x89 && bytes[p + 2] == 0x24)
             {
                 int which = bytes[p + 1] switch { 0x44 => 0, 0x4C => 1, 0x54 => 2, _ => -1 };
@@ -312,13 +312,13 @@ public static class GameDefaults
                 continue;
             }
 
-            // mov r32, imm32
+
             if (bytes[p] == 0x41 && (bytes[p + 1] == 0xB8 || bytes[p + 1] == 0xB9))
             { reg[bytes[p + 1] == 0xB8 ? 8 : 9] = BitConverter.ToUInt32(bytes, p + 2); i += 6; continue; }
             if (bytes[p] is 0xB9 or 0xBA)
             { reg[bytes[p] == 0xB9 ? 1 : 2] = BitConverter.ToUInt32(bytes, p + 1); i += 5; continue; }
 
-            // call rel32, which is where the arguments are all in place
+
             if (bytes[p] == 0xE8)
             {
                 if (!reg.TryGetValue(2, out ulong name) || !reg.TryGetValue(9, out ulong size))
@@ -338,7 +338,7 @@ public static class GameDefaults
         return null;
     }
 
-    /// The class registrations named in the symbol dump, as (class, rva, length).
+
     private static IEnumerable<(string Name, ulong Rva, int Size)> Registrations(string dump)
     {
         const string mark = "_dynamic_initializer_for__";

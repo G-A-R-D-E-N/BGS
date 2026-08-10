@@ -5,9 +5,9 @@ using Avalonia.LogicalTree;
 
 namespace BehaviourStudio.App;
 
-// The properties panel, as a control rather than a loose StackPanel, so the same panel can sit
-// beside the tree and beside the canvas. A node's fields are only useful next to the node, and the
-// canvas is where the node is.
+
+
+
 public sealed class Inspector : DockPanel
 {
     private readonly StackPanel _body = new() { Spacing = 6 };
@@ -26,8 +26,8 @@ public sealed class Inspector : DockPanel
         _header.Children.Add(title);
         SetDock(_header, Dock.Top);
         Children.Add(_header);
-        // Disabled rather than Auto: the panel is narrow and fixed, so anything that does not fit
-        // has to wrap or trim. Letting it scroll sideways instead just hid the left of every line.
+
+
         _scroll = new ScrollViewer
         {
             Content = _body,
@@ -45,9 +45,9 @@ public sealed class Inspector : DockPanel
 
     public void Add(Control control) => _body.Children.Add(control);
 
-    // A field cannot make the inspector wider than its host. The label remains readable enough to
-    // identify the member, while a long value is contained by the star column rather than pushing
-    // paint out through a scroll content's desired width.
+
+
+
     public Control TwoColumnRow(Control label, Control value, double labelWidth = 128)
     {
         label.ClipToBounds = true;
@@ -80,8 +80,8 @@ public sealed class Inspector : DockPanel
         _header.Children.Add(button);
     }
 
-    /// Puts the caret in the first value box, which is what a double click on a node is asking for:
-    /// the fields, ready to type into, without a second click to find one.
+
+
     public void FocusFirstField()
     {
         var box = _body.GetLogicalDescendants().OfType<TextBox>().FirstOrDefault();

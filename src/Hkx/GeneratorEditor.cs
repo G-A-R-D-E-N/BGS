@@ -4,9 +4,9 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Creating and deleting generator nodes: clips, blenders, modifier wrappers and selectors.
-// hkxpack requires the correct class signature when adding objects, so signatures come from the
-// shipped class table instead of generator-specific literals.
+
+
+
 public static class GeneratorEditor
 {
     public sealed class Kind
@@ -64,10 +64,10 @@ public static class GeneratorEditor
                 "            <hkparam name=\"modifier\">null</hkparam>\n" +
                 "            <hkparam name=\"generator\">{child}</hkparam>",
         },
-        // Bethesda's own generator: it plays a NiControllerSequence out of the NIF rather than a
-        // Havok animation, which is what every animated door, lift and switch is built from.
-        // pSequence is the sequence name in the mesh, and it is not always the node's own name:
-        // the garage door's "Closeing" state plays a sequence called "Closing".
+
+
+
+
         ["sequence"] = new Kind
         {
             Class = "BGSGamebryoSequenceGenerator",
@@ -98,13 +98,6 @@ public static class GeneratorEditor
 
     private const string BlenderChildClass = "hkbBlenderGeneratorChild";
 
-    private static string SignatureOf(string className)
-    {
-        var layout = HavokClassTypes.Shipped[className] ??
-            throw new InvalidOperationException($"no shipped class definition for {className}");
-        return $"0x{layout.Signature:x}";
-    }
-
     public static string Add(string xml, string kind, string name, string animation,
                              string childRef, out string newId)
     {
@@ -116,12 +109,12 @@ public static class GeneratorEditor
             .Replace("{animation}", animation)
             .Replace("{child}", string.IsNullOrEmpty(childRef) ? "null" : childRef);
 
-        return HkxTextEdit.AddObject(xml, spec.Class, SignatureOf(spec.Class), body, out newId);
+        return HkxTextEdit.AddObject(xml, spec.Class, HkxSignatures.Of(spec.Class), body, out newId);
     }
 
-    // A blender does not hold generators directly, it holds hkbBlenderGeneratorChild wrappers that
-    // carry the weight. Adding a raw generator reference to children produces a file the engine
-    // cannot read even though hkxpack accepts it.
+
+
+
     public static string AddBlenderChild(string xml, string blenderId, string generatorRef, float weight,
                                          out string childId)
     {
@@ -137,20 +130,20 @@ public static class GeneratorEditor
             $"            <hkparam name=\"weight\">{weight.ToString("0.0#####", System.Globalization.CultureInfo.InvariantCulture)}</hkparam>\n" +
             "            <hkparam name=\"worldFromModelWeight\">0.0</hkparam>";
 
-        xml = HkxTextEdit.AddObject(xml, BlenderChildClass, SignatureOf(BlenderChildClass), body, out childId);
+        xml = HkxTextEdit.AddObject(xml, BlenderChildClass, HkxSignatures.Of(BlenderChildClass), body, out childId);
         return HkxTextEdit.ArrayAppend(xml, blenderId, "children", $"                #{childId}");
     }
 
     public static string AttachToSelector(string xml, string selectorId, string generatorRef) =>
         HkxTextEdit.ArrayAppend(xml, selectorId, "generators", $"                {generatorRef}");
 
-    // Deleting a node means nothing else may still point at it, otherwise the graph has a dangling
-    // reference and the engine reads a null generator.
+
+
     public static List<string> ReferencesTo(BehaviourGraphModel model, string id)
     {
-        // One holder per object however many times it names the target, which is what the callers
-        // want: a list of things to go and clear, not a count of links. Object order is kept because
-        // the delete note names the first few and a shuffled list would reword it.
+
+
+
         var holders = new List<string>();
         foreach (var obj in model.Objects)
             if (HkReferences.In(obj).Any(site => site.Target == id))

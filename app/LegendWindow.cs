@@ -5,8 +5,8 @@ using Avalonia.Controls;
 
 namespace BehaviourStudio.App;
 
-// Legend is occasional reference material, so it gets an independent temporary window rather than
-// taking width from the graph or sharing the Workspace navigator surface.
+
+
 public sealed class LegendWindow : Window
 {
     private int _presentationRequests;

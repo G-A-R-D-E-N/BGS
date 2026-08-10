@@ -187,8 +187,8 @@ Things the format makes easy to get wrong, all handled here:
   and nothing moved that was not asked to move**, and the same 180 with Java hidden.
 - **Event ids hide under a member called `id`.** Every scalar named `*EventId` carries one, but so
   does the plain `id` member of an `hkbEventProperty` or `hkbEvent`, and that accounts for roughly a
-  third of the event references in a typical graph. The field table in `SymbolIndexFixup` was read
-  out of 132 vanilla files rather than recalled, and an index field it does not recognise makes a
+  third of the event references in a typical graph. The field table in `SymbolIndexFixup` is checked
+  against corpus coverage, and an index field it does not recognise makes a
   removal refuse rather than renumber around it.
 - **Values are words, not text.** A float goes in as its bit pattern: `0.25` is stored as
   `1048576000`.
@@ -211,35 +211,31 @@ driven. Set `mode = MODE_USER_CONTROLLED` and bind `userControlledTimeFraction` 
 0.25 puts the clip a quarter of the way in and holds it there.
 
 Bindings can be created from the properties panel, and the variable is declared for you if it does not
-exist yet. Open `Meshes\Pipboy\Behaviors\PipboyBehavior.hkx` in the Symbols tab to see the vanilla
-example.
-
-The full write up, including which of the Pip-Boy's four variables are actually used and how that was
-established, is in the wiki: **[Pip-Boy Variables](https://git.nomadicinteractive.dev/nomadic-interactive/behaviortoolstandalone/-/wikis/Pip-Boy-Variables)**.
+exist yet.
 
 ## Doors, lifts and switches are driven by events, not variables
 
-The Pip-Boy pattern above is the exception, not the rule, and it is worth knowing which one a job
-needs before building against the wrong half of the format.
+The user-controlled clip pattern above is the exception, not the rule, and it is worth knowing which
+one a job needs before building against the wrong half of the format.
 
 Every animated door, lift, periscope and switch checked declares **no variables at all**. They are
 state machines driven entirely by named events, and Papyrus sends those events:
 `ObjectReference.PlayAnimation(name)` is documented as "the name of the event to send to the object's
-animation graph", and `PlayAnimationAndWait(name, endEvent)` waits for one coming back. 177 vanilla
-base scripts drive animation this way.
+animation graph", and `PlayAnimationAndWait(name, endEvent)` waits for one coming back. Many base
+scripts drive animation this way.
 
 The names line up exactly on both sides:
 
-| behaviour file | events it declares | script that sends them |
+| behaviour shape | events it declares | script pattern that sends them |
 |---|---|---|
-| `SwitchDoors\SwitchDoorExLarge01` | `Play01 Trans01 Done Play02 StartOpen StartClosed Playing SoundPlay` | `DN151_DoorSeal.psc` sends `StartOpen`, `Open`, `StartClosed`, `Close` |
-| `Vault\Doors\VltGearDoor` | `stage1 stage2 stage3 stage4 reset SoundPlay SoundPlayAt KlaxonStop GameStart` | `DN142_GearDoorConsoleScript.psc` sends `stage2`, `stage3`, `reset` |
-| `GenericBehaviors\SpecialCaseDoors` | `Open Opened Close Closed reset SoundPlay SoundPlayAt AlternateClose AlternateClosed` | the garage door family |
+| switch door style graph | `Play01 Trans01 Done Play02 StartOpen StartClosed Playing SoundPlay` | script sends open, close, and finished events |
+| staged gear door style graph | `stage1 stage2 stage3 stage4 reset SoundPlay SoundPlayAt KlaxonStop GameStart` | script sends stage and reset events |
+| shared special-case door graph | `Open Opened Close Closed reset SoundPlay SoundPlayAt AlternateClose AlternateClosed` | door scripts send the standard route events |
 
-`MuseumDoorAnim01` shows the whole shape in four states. It starts in `Closed`, whose generator is
-`Open.hkt` in `MODE_USER_CONTROLLED` with nothing bound to it, so it holds frame zero: that is the
-closed pose, not a fault. Event `Open` moves it to a `MODE_SINGLE_PLAY` of the same animation, whose
-clip trigger fires `Done` and `Trans01` at the end of the clip, and `Trans01` carries it into a
+The small animated-door shape has four states. It starts in `Closed`, whose generator is
+user-controlled with nothing bound to it, so it holds frame zero: that is the closed pose, not a
+fault. Event `Open` moves it to a single-play version of the same animation, whose clip trigger fires
+the completion events at the end of the clip, and the completion route carries it into a
 looping `Opened`. `Close` runs the mirror of that back to `Closed`.
 
 So an unbound `MODE_USER_CONTROLLED` clip in a graph with no variables is a held rest pose and is
@@ -399,16 +395,16 @@ and checks it:
 dotnet run --project tools/symrm/symrm.csproj -- corpus "<Data>/Fallout4 - Animations.ba2" /tmp/beh
 dotnet run --project tools/symrm/symrm.csproj -- unpack /tmp/beh 4
 dotnet run --project tools/symrm/symrm.csproj -- check  /tmp/beh/xml
-dotnet run --project tools/symrm/symrm.csproj -- remove /tmp/beh/Meshes_Actors_Character_Behaviors_MTBehavior.hkx
+dotnet run --project tools/symrm/symrm.csproj -- remove /tmp/beh/Meshes_Actors_Character_Behaviors_Behavior.hkx
 ```
 
 The animation and repack checks need whole folders rather than loose files, so they have their own
 commands. Point `anims` at one behaviour, or at a directory to sweep every project root beneath it:
 
 ```
-dotnet run --project tools/symrm/symrm.csproj -- anims  <Data>/Meshes/Actors/Dogmeat/Behaviors/DogmeatDefault.hkx
+dotnet run --project tools/symrm/symrm.csproj -- anims  <Data>/Meshes/Actors/Character/Behaviors/Behavior.hkx
 dotnet run --project tools/symrm/symrm.csproj -- anims  <extracted Data folder>
-dotnet run --project tools/symrm/symrm.csproj -- repack <Data>/Meshes/Actors/Dogmeat/Behaviors/DogmeatDefault.hkx
+dotnet run --project tools/symrm/symrm.csproj -- repack <Data>/Meshes/Actors/Character/Behaviors/Behavior.hkx
 ```
 
 `cliptime` needs the same, and for the same reason: how long a clip plays for is in the animation file
@@ -519,12 +515,10 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   counted how many states OpenCommonwealth's Godot converter could map to an animation node, and the
   34 it could not are all `BSBehaviorGraphSwapGenerator` with a null `pDefaultGenerator`, a count that
   reproduces here exactly. This reader parses all 34 of them. See #18.
-- **One edit made with this tool has been loaded by Fallout 4 and worked**: the Red Rocket gas station
-  garage door, which sat permanently half open exactly as the edit asked, with no interaction needed.
-  The edit was three scalar values on one existing object, the `Closed` state's sequence generator:
-  `pSequence` from `Closed` to `Opening`, `eUseTimePercentage` to `USING_TIME_PERCENTAGE`, and
-  `fTimePercent` to `0.5`. The file has vanilla's 30 objects, 7 states and 11 events, and vanilla's
-  byte size. So what the engine has accepted is a **field value edit on an existing object**, written
+- **One edit made with this tool has been loaded by Fallout 4 and worked**: a door graph held
+  permanently half open exactly as the edit asked, with no interaction needed. The edit was three
+  scalar values on one existing sequence generator. The file kept the same object count, state count,
+  event count, and byte size. So what the engine has accepted is a **field value edit on an existing object**, written
   by this tool and repacked by hkxpack. That is the first time anything here has been proven against
   the engine rather than against hkxpack, and it moves the tool from "the file reads back correctly"
   to "the game accepted at least one of these".
@@ -553,11 +547,8 @@ to: it exits non zero if any binding or transition comes back resolving to a dif
   anything. See #19 and #34.
 - Clearing the last pointer into a node can still leave, say, a state with no generator.
   **Fallout 4 crashes while loading any graph that contains one**, before a state is entered, so
-  reachability does not save it. The engine's own graph walk pops every child a node reports and
-  reads its vtable pointer with no null check, so the null goes straight into an access violation:
-  `BShkbUtils::GraphTraverser::Next`, `Fallout4.exe+0x1705DDF`, under `LoadBehaviorHelper` on the
-  background clone thread. Measured on the Red Rocket garage door with one link cleared and nothing
-  else changed. The tree and the graph mark such a state, Check graph reports it as an error, and
+  reachability does not save it. Runtime testing showed the graph walk can dereference a null child
+  during load. The tree and the graph mark such a state, Check graph reports it as an error, and
   Save refuses to write the file at all. The refusal names the states and the machines they sit in,
   and says both ways out, because being stopped without being told which state or what to do about it
   is worse than not checking. Give each one a generator, or delete the state. See #16.

@@ -8,9 +8,9 @@ using Avalonia.Layout;
 
 namespace BehaviourStudio.App;
 
-// A reusable host for editor tools that support the graph without competing with its canvas. The
-// main window retains graph and simulation ownership; this window only chooses where that state is
-// presented and can therefore be hidden without changing it.
+
+
+
 public sealed class WorkspaceWindow : Window
 {
     private readonly TabControl _tabs = new();

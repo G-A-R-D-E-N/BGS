@@ -4,27 +4,27 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// What the file does with each event, and nothing about whether that is right.
-//
-// An event with listeners and no sender in this file is the ordinary case for a working graph, not a
-// fault. Papyrus sends events by name through ObjectReference.PlayAnimation, which 177 vanilla base
-// scripts call, and the engine sends more of them itself. So this reports who listens and who sends
-// here, and leaves the verdict to whoever is reading.
-//
-// The table below is not recalled. Every class and member in it was enumerated out of the 314 vanilla
-// behaviour files under Meshes\Actors, which between them write an event index in exactly 43 places;
-// all 43 are listed. Anything outside that set reports as referenced with no role rather than being
-// guessed at, which is also what BSLimbCycleModifier gets: its three members carry events, and which
-// direction they run in is not readable from the file.
+
+
+
+
+
+
+
+
+
+
+
+
 public static class EventUsage
 {
     public enum Role
     {
-        /// This file sends the event.
+
         Raised,
-        /// This file reacts to the event.
+
         Listened,
-        /// This file writes the event here, and the direction is not established.
+
         Referenced,
     }
 
@@ -81,18 +81,18 @@ public static class EventUsage
 
     public static string NoteFor(string site) => Table.TryGetValue(site, out var known) ? known.Note : "";
 
-    /// Every declared event's sites, keyed by event index. Events with no site are absent rather than
-    /// empty, so a caller has to decide what to say about them rather than being handed a verdict.
+
+
     public static Dictionary<int, List<Line>> ByEvent(string xml) =>
         Group(SymbolIndexFixup.Usages(xml, events: true));
 
-    /// The same thing from the file's own bytes, so an event still says what it is for on a machine
-    /// with no Java on it.
-    ///
-    /// This used to be the text form or nothing. The scan needs every place an index is written,
-    /// including inside structs nested deeper than the graph model carries, which is why it was the
-    /// last thing here still holding on to hkxpack: the model genuinely does not have the answer. The
-    /// bytes do, and walking them reaches the same places without a text form in between.
+
+
+
+
+
+
+
     public static Dictionary<int, List<Line>> ByEvent(PackfileObjects objects,
                                                       HavokClassTypes? types = null) =>
         Group(SymbolIndexFixup.Usages(objects, events: true, types));
@@ -119,7 +119,7 @@ public static class EventUsage
         _ => "referenced here",
     };
 
-    /// One line per event for a summary that is read rather than clicked through.
+
     public static string Summarise(IReadOnlyList<Line> lines)
     {
         if (lines.Count == 0) return "";

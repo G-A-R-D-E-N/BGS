@@ -7,17 +7,17 @@ using System.Text.Json;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// The skeleton as the file states it, in a form something outside .NET can read.
-//
-// Nothing is converted. Translations are raw Havok units, not metres and not Blender units, and the
-// axes are the game's. Whatever imports this owns the unit and axis change, because that choice
-// belongs with the tool that knows what it is importing into, and burying it here would leave every
-// consumer guessing whether it had already happened.
-//
-// Transforms are parent relative, verified rather than assumed: in the vanilla 95 bone character
-// skeleton every arm bone stores a pure X offset and the collarbone's (19.153, -0.510, 1.695)
-// composes to (-1.695, -0.628, 110.409), so the parent's rotation is turning an along-the-bone
-// offset into height. World positions are the consumer's to compose, as local * parentWorld.
+
+
+
+
+
+
+
+
+
+
+
 public static class SkeletonJson
 {
     public const string Format = "fo4-skeleton";
@@ -68,8 +68,8 @@ public static class SkeletonJson
         return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
-    // Reads back what Write produced, so the emitter can be checked against the reader it came from
-    // rather than trusted.
+
+
     public static HkxSkeleton Read(string json)
     {
         using var doc = JsonDocument.Parse(json);
@@ -117,7 +117,7 @@ public static class SkeletonJson
         return new Quaternion(a[0].GetSingle(), a[1].GetSingle(), a[2].GetSingle(), a[3].GetSingle());
     }
 
-    /// How many children each bone has, which is what a head and tail convention has to cope with.
+
     public static List<int> ChildCounts(HkxSkeleton skeleton)
     {
         var counts = new List<int>(new int[skeleton.BoneNames.Count]);

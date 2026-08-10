@@ -5,15 +5,14 @@ using System.Text;
 
 namespace OpenCommonwealth.Services.Nif;
 
-// The Gamebryo packfile Fallout 4 keeps meshes in. Enough of it to draw a skinned shape and no more:
-// geometry, skin weights, and the bone names a shape is weighted to.
-//
-// Every offset below was read off the game's own files rather than recalled, and the arithmetic
-// closes on itself, which is what makes that checkable. On Dogmeat.nif the block table's own sizes
-// sum to eight bytes short of the file, and those eight are the footer's root count and root
-// reference; each shape's declared dataSize equals numVertices * stride + numTriangles * 6 exactly;
-// and BSSkin::BoneData's block size is exactly four bytes of count plus 68 per bone, 68 being a
-// bounding sphere and a transform. None of that lines up by accident.
+
+
+
+
+
+
+
+
 public sealed class NifFile
 {
     public uint Version;
@@ -22,8 +21,8 @@ public sealed class NifFile
     public readonly List<string> BlockTypes = new();
     public readonly List<string> Strings = new();
 
-    /// The type of each block, and where its bytes start. Sizes come from the header rather than
-    /// being worked out while reading, so a block this does not understand costs nothing to skip.
+
+
     public readonly List<string> BlockType = new();
     public readonly List<int> BlockStart = new();
     public readonly List<int> BlockSize = new();
@@ -56,8 +55,8 @@ public sealed class NifFile
             throw new InvalidDataException(
                 $"{name} is BSVersion {nif.BsVersion}; only Fallout 4's 130 and above are read here");
 
-        // Author, process script and export script, then one more for 130 and up. Each is a byte of
-        // length and that length counts the trailing NUL.
+
+
         for (int i = 0; i < 4; i++)
         {
             int len = data[at++];
@@ -88,8 +87,8 @@ public sealed class NifFile
             at += sizes[i];
         }
 
-        // The footer is a root count and one reference per root. Anything else means the block sizes
-        // and the file disagree, which would put every block start after the first bad one wrong.
+
+
         int trailing = data.Length - at;
         if (trailing < 4)
             throw new InvalidDataException(
@@ -98,8 +97,8 @@ public sealed class NifFile
         return nif;
     }
 
-    /// The name of a block that carries one, or empty. Every NiObjectNET starts with its name as an
-    /// index into the string table, which is how a bone reference becomes a bone name.
+
+
     public string NameOf(int block)
     {
         if (block < 0 || block >= BlockCount) return "";

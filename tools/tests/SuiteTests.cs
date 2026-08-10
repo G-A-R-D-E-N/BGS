@@ -4,9 +4,9 @@ using Xunit;
 
 namespace BehaviourStudio.Tests;
 
-// Wraps the console suite so `dotnet test` reports the same checks with one named result each.
-// The checks themselves live in Tests.cs and are the same code the CI console runner walks, so the
-// two cannot report different things.
+
+
+
 public class SuiteTests
 {
     public static IEnumerable<object[]> Cases()

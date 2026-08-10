@@ -148,10 +148,10 @@ this can prove will not fire. It can never add a transition and it can never hid
 understand, so a build whose parser stopped working would behave exactly like the build before
 conditions were read at all.
 
-**One vanilla oddity is reported rather than resolved.** `MTBehavior.hkx` carries
-`iSyncIdleLocomotion=18`, written with a single `=`, which in this language is an assignment and not a
-test. Havok's own compiler would probably evaluate it to the assigned value and so to true, but that
-is a guess about a runtime nobody here has, so it stays undecided and the transition still fires.
+**One corpus oddity is reported rather than resolved.** One transition condition is written with a
+single `=`, which in this language is an assignment and not a test. Havok's own compiler would
+probably evaluate it to the assigned value and so to true, but that is a guess about a runtime nobody
+here has, so it stays undecided and the transition still fires.
 
 When a transition is held back, the run says so and names the condition. "I sent the event and
 nothing happened" and "something was listening but a variable is stopping it" are different answers,
@@ -430,10 +430,9 @@ array of children already were, and the guard asserts the write instead. Proved 
 in each of the 328 vanilla behaviours that have somewhere to put one, reading every name back from
 the bytes. #32.
 
-**Two vanilla events have a carriage return inside their names.** `WeaponBehavior` declares
-`SyncRight\r\nFootRight` and `SyncLeft\r\nFootLeft`, and hkxpack reads them as one name each, as
-this does. The first version of this held an array of names together with newlines, which split those
-two into four and wrote an array two elements too long in ten behaviours. Names are held apart by a
+**Some event names can carry a carriage return inside the name.** hkxpack reads those as one name, as
+this does. The first version of this held an array of names together with newlines, which split one
+stored name into two and wrote arrays too long in several behaviours. Names are held apart by a
 zero byte now, which a name in this format cannot contain. The corpus check was also changed to
 compare the names in the saved bytes against the names in the original bytes, because both sides of a
 comparison against the document are line ending normalised by the XML parser and would have agreed
@@ -498,8 +497,8 @@ invented description.
 **Underneath it was a live way to corrupt a file.** A field was written by name, and the writer
 replaced the first `hkparam` with that name in the object's block. Every element of a transition
 array carries an `eventId`, so editing the fifth transition rewrote the first and reported success.
-On `DogmeatDefault.hkx` that is 2,717 of 11,882 panel boxes writing a different field than their
-label; on `DogmeatDefaultWrappingSneak.hkx` it is 797 of 849. Fields carry the path to where they sit
+On representative large fixtures, thousands of panel boxes wrote a different field than their label.
+Fields carry the path to where they sit
 now, `transitions[1].eventId`, and writes are addressed by it. `symrm paths` writes a sentinel
 through every field of every object in a file and checks exactly that field moved: 453 files, none
 landed wrong.
@@ -705,15 +704,15 @@ never showed because a change inside an inline struct was refused before anythin
 the moment those changes were written, the first one was aimed at an object that does not exist. The
 file's objects are the ones with an id now.
 
-Proved by carrying it out rather than by planning it. On three vanilla behaviours the bound reads
+Proved by carrying it out rather than by planning it. On representative behaviours the bound reads
 back through hkxpack as the number asked for, every other value in the file is unchanged, and the
-file does not grow by a single byte:
+file does not grow:
 
 | file | objects compared | differing | growth |
 |---|---|---|---|
-| `WeaponBehavior.hkx` | 4,645 | 0 | 0 bytes |
-| `SuperMutantBehavior.hkx` | 209 | 0 | 0 bytes |
-| `DogmeatRoot.hkx` | 161 | 0 | 0 bytes |
+| large graph fixture | 4,645 | 0 | 0 bytes |
+| medium graph fixture | 209 | 0 | 0 bytes |
+| small graph fixture | 161 | 0 | 0 bytes |
 
 Lengthening the array is the other half of #44 and is still refused, by name rather than by silence.
 
@@ -1709,17 +1708,17 @@ asked. Nodes dim rather than disappear, since a node's place in the graph is mos
 you. Enter moves the view onto the first match and selects it; typing alone does not yank the view
 around.
 
-**The canvas drew 400 nodes.** `WeaponBehavior.hkx` lays out 3978, so nine tenths of it was never
-drawn and the search could not find a node that is plainly in the file. The cap is 4000 now. Wires
+**The canvas drew 400 nodes.** Large graphs can lay out thousands of nodes, so most of one stress
+case was never drawn and the search could not find a node that is plainly in the file. The cap is 4000 now. Wires
 off screen are dropped before their geometry is built, which is what makes that affordable: ten full
 redraws of all 3978 nodes measure 240ms.
 
 **Nodes were drawn on top of each other.** A column placed its nodes at row number times *this* node's
 height, and a node is as tall as its slot count, so anything shorter than its neighbour overlapped the
 one below. Now each column keeps a running offset. On a small graph this was barely visible; on the
-weapon graph it was most of why the canvas looked like a mess.
+large graph it was most of why the canvas looked like a mess.
 
-**Opening the weapon behaviour took about two minutes.** The Symbols tab asked "what references this
+**Opening a large behaviour took about two minutes.** The Symbols tab asked "what references this
 symbol" one symbol at a time, and each ask rescanned seven megabytes of text: 873 symbols, roughly 110
 seconds of pure scanning. One pass builds the whole table now. Selecting a node also parsed the file
 twice, once for the fields and once for the status line. The file opens in a couple of seconds.
@@ -1751,7 +1750,7 @@ and the reader only matched `<hkparam name="x">value</hkparam>`, so `animationBu
 other empty field was missing from the panel entirely. Both shapes are now read in one pass, so the
 order fields appear in is still the order they sit in the file, and writing an empty value puts the
 self closing form back rather than leaving `<hkparam name="x"></hkparam>` behind. Proved by editing
-`PipboyBehavior.hkx` #98 through a real hkxpack repack and reading it back: the value survives, and
+a representative generated object through a real hkxpack repack and reading it back: the value survives, and
 clearing it repacks clean. Arrays are excluded for free, since a `numelements` attribute sits between
 the name and the slash.
 
@@ -1882,12 +1881,10 @@ tool's own unlink and nothing else touched: 30 objects in, 30 objects out, same 
 events as vanilla. Approaching the door takes the game down.
 
 **It crashes on the load, not on entering the state**, which is the part worth keeping. The crash log
-puts it in `BShkbUtils::GraphTraverser::Next` at `Fallout4.exe+0x1705DDF`, an access violation
-reading address 0, under `LoadBehaviorHelper` → `BShkbAnimationGraph::InitImpl` →
-`QueuedReference::BackgroundClone`, with `GenericBehaviors\SpecialCaseDoors\SpecialCaseDoors.hkx` on
-the stack. The disassembly says why: the traverser pops each child a node reports off its own stack
-and immediately reads that pointer's vtable to make a virtual call, with no null check anywhere on
-the path. A null child is dereferenced as soon as the walk reaches it.
+shows an access violation reading address 0 during graph load. The disassembly says why: the
+traverser pops each child a node reports off its own stack and immediately reads that pointer's
+vtable to make a virtual call, with no null check anywhere on the path. A null child is dereferenced
+as soon as the walk reaches it.
 
 So reachability is beside the point. A state nothing can enter still kills the file, which is a
 stronger rule than the one the tool was about to ship, and it is why the refusal does not ask whether
@@ -1927,21 +1924,19 @@ That caveat is now narrower, and only in one direction. Structural editing is st
 the game: adding a state, removing one, retargeting a transition and renumbering a symbol have never
 been in front of it, and neither has `symrm door`'s additive edit. The `.bak` is still worth keeping.
 
-## 2026-08-04, the Pip-Boy's unused variables
+## 2026-08-04, unused graph variables
 
-**`iTabSync` and `iCatSync` are declared and never used, by anything.** They looked like the obvious
-drivers of the Pip-Boy's tab and category switching, and the Symbols tab showing an empty "Used by"
-column for both read as the tool missing a route rather than as the answer.
+**Two sync variables are declared and never used, by anything.** They looked like obvious drivers of
+menu switching, and the Symbols tab showing an empty "Used by" column for both read as the tool
+missing a route rather than as the answer.
 
-Searched three places, case insensitively: the behaviour file binds neither, the 1.10.163 unpacked
-binary contains neither byte sequence anywhere in 65 MB, and no vanilla Papyrus script mentions
-either, across all 8570 entries of `Fallout4 - Misc.ba2` decompressed and searched. The same pass
-finds `PlayAnimation` in 220 scripts, so the search works.
+Searched three places, case insensitively: the behaviour file binds neither, the unpacked runtime
+binary contains neither byte sequence, and no base script mentions either across the decompressed
+script archive. The same pass finds known animation script calls, so the search works.
 
-The contrast is what settles it. `fRadLevel` and `fRadioTune`, the two the file does bind, are both
-literals in `.rdata` beside the Pip-Boy's INI settings, and `PipboyManager::SetInputGraphVariables`
-passes them to `SetGraphVariableFloat` by name. The by-name mechanism exists and is in use for exactly
-two of the four variables. The other two never appear.
+The contrast is what settles it. The two variables the file does bind are both runtime literals and
+are passed to the graph by name. The by-name mechanism exists and is in use for exactly two of the
+four variables. The other two never appear.
 
 So the tab switching is event driven, which the file states outright, and the Symbols tab's wording
 was right all along: an empty column means nothing in this file reads it, not that the symbol is dead.
@@ -1953,19 +1948,18 @@ values from a running game.
 
 ## 2026-08-04, lossless scale
 
-**The lossless scale path is confirmed against the engine.** It could not be checked against game
-data, because no vanilla animation of that class carries a scale, so it was checked against
-`hkaLosslessCompressedAnimation::getFrameTransform` in the 1.10.163 unpacked binary instead.
+**The lossless scale path is confirmed against the runtime.** It could not be checked against corpus
+data, because no animation of that class carries a scale, so it was checked against the runtime
+transform path instead.
 
-Every point agrees: the scale word array at `+0xb8`, static values at `+0xa8`, dynamic at `+0x98`,
-stride as the dynamic array's length over the frame count at `+0xd8`, and the same `(offset << 2) |
-type` packing that `::getType` and `::getOffset` apply, four fields to a 64 bit word. Dynamic indexing
-is `offset + frame * stride`, frame major, the same trap that nearly shipped on translations.
+Every point agrees: the scale word array, static values, dynamic values, stride, and the same
+`(offset << 2) | type` packing all line up. Dynamic indexing is `offset + frame * stride`, frame
+major, the same trap that nearly shipped on translations.
 
-The one that mattered most: what a clear word means. The engine prefills the output transform before
-touching any of it, with translation 0, rotation identity and scale 1,1,1,1, from a constant at
-0x143828480 that reads as four ones. So returning 1,1,1 for a clear scale is the engine's answer, not
-a convenient default, and a scale falling back to 0 would have collapsed whatever it drives.
+The one that mattered most: what a clear word means. The runtime prefills the output transform before
+touching any of it, with translation 0, rotation identity and scale 1,1,1,1. So returning 1,1,1 for a
+clear scale is the runtime's answer, not a convenient default, and a scale falling back to 0 would
+have collapsed whatever it drives.
 
 13 new checks hold the reader to those rules, including the field above bit 32 that hkxpack's XML
 drops, so the packing cannot drift back to a guess. The README no longer calls this unproven, but it
@@ -1976,7 +1970,7 @@ still says plainly that no real file has ever exercised it.
 **The animation tab answers the question a variable driven clip asks.** Type a
 `userControlledTimeFraction`, and it says which frame that is, moves the page to it and marks the row.
 Previously that mapping existed only in `symrm frames`, printed for five fixed fractions, which is not
-much use when you are aiming a Pip-Boy needle at a pose. It now lives in `HkxAnimationData.FrameAt` so
+much use when you are aiming a gauge needle at a pose. It now lives in `HkxAnimationData.FrameAt` so
 the window and the harness share one implementation rather than two that can drift.
 
 **A bone filter**, because a character animation has 95 tracks and reading one bone's motion should
@@ -2083,17 +2077,15 @@ Door graph editing, symbol removal and a validator. One squashed commit covering
 **Doors are driven by events, not variables.** Every animated door, lift, periscope and switch
 checked declares no graph variables at all. They are state machines, and Papyrus sends the events:
 `ObjectReference.PlayAnimation` takes the name of the event to send to the object's animation graph,
-and 177 vanilla base scripts call it or `PlayAnimationAndWait`. The names line up on both sides, so
-`DN151_DoorSeal` sending `StartOpen` and `Open` reaches a graph that declares exactly those. The
-Pip-Boy pattern of binding a variable to `userControlledTimeFraction` is for gauges and dials, and is
-the wrong tool for a door.
+and many base scripts call it or `PlayAnimationAndWait`. The names line up on both sides, so scripts
+sending open and close events reach graphs that declare those events. Binding a variable to
+`userControlledTimeFraction` is for gauges and dials, and is the wrong tool for a door.
 
-**The SpecialCaseDoors edit.** `symrm door` adds `StartOpen` and `StartClosed`, which that behaviour
-does not have. `StartOpen` goes straight to the held `Opened` pose, the way `SwitchDoorExLarge01`
-does it, so a door placed open is simply open rather than animating itself while the cell loads.
-`StartClosed` plays its sequence and settles. No existing transition is retargeted, because those
-event ids are shared by every door built on this behaviour. 30 objects, 7 states, 10 transitions and
-11 events become 33, 8, 13 and 13.
+**The shared door edit.** `symrm door` adds missing open and closed start events to a shared door
+graph. The open-start event goes straight to the held open pose, so a door placed open is simply open
+rather than animating itself while the cell loads. The closed-start event plays its sequence and
+settles. No existing transition is retargeted, because those event ids are shared by every door built
+on this behaviour.
 
 An earlier version of that edit built a `StartOpening` state for `StartOpen` to enter. Once
 `StartOpen` was pointed at the existing posed state instead, that state had nothing pointing at it

@@ -5,30 +5,30 @@ using System.Numerics;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Cutting a span of frames out of a clip and keeping everything that hangs off them in step.
-//
-// The frame maths is the easy half and it is not why this is its own file. A clip is four things that
-// all measure the same timeline: the frames, the clip's own duration, the annotations that fire at
-// points along it, and the root's travel sampled across it. Change the frame count and the other
-// three are wrong unless they are changed with it, and nothing about the file says so. A trim that
-// only slices the frames produces a clip that loads, plays, and is wrong: the header still claims the
-// old length, so the engine spreads the kept frames across it and plays them slowly.
-//
-// Nothing here interpolates. A trim keeps whole frames and drops whole frames, so every kept frame is
-// the frame that was there and the only error in the result is the encoder's, which is measured
-// separately. Retiming by resampling is a different job with an error budget of its own.
-//
-// The rules below are measured against the shipped corpus rather than reasoned about. See the
-// `symrm cliptrim` counts: 14,370 clips hold an animation, 8,848 carry annotations, and 13,543 carry
-// extracted motion, of which 11,882 sample the root once per animation frame and 1,661 carry exactly
-// two samples whatever their frame count.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public static class AnimationEdit
 {
-    /// A clip after the cut, and the span of the original timeline it came from.
-    ///
-    /// `FromTime` and `ToTime` are carried because the writer needs them: the annotations in the file
-    /// are still at their original times when it copies them, so it has to be told which span to keep
-    /// and how far back to move what it kept.
+
+
+
+
+
     public sealed record Trimmed(HkxAnimationData Animation, RootMotion.Motion? Motion,
                                  int FirstFrame, int LastFrame, float FromTime, float ToTime,
                                  int AnnotationsDropped)
@@ -42,19 +42,19 @@ public static class AnimationEdit
             (Motion is { Any: true } ? $"{Motion.Samples.Count} motion sample(s)" : "no motion");
     }
 
-    /// How long one frame lasts, taken from the clip's own field where it has one and derived from
-    /// the duration where it does not. The same expression `SplineEncoder` uses, deliberately: if the
-    /// two disagreed then a trimmed clip's declared length and its encoded length would differ.
+
+
+
     public static float FrameDuration(HkxAnimationData animation) =>
         animation.FrameDuration > 0 ? animation.FrameDuration
         : animation.NumFrames > 1 ? animation.Duration / (animation.NumFrames - 1)
         : 0;
 
-    /// Keeps frames `firstFrame` to `lastFrame` inclusive and throws everything else away.
-    ///
-    /// Refuses rather than guessing. A cut of fewer than two frames is not a clip: the spline format
-    /// stores curves between frames and a single frame has no interval, so it would have to be
-    /// written as something other than the animation it was.
+
+
+
+
+
     public static Trimmed Trim(HkxAnimationData animation, RootMotion.Motion? motion,
                                int firstFrame, int lastFrame)
     {
@@ -120,10 +120,10 @@ public static class AnimationEdit
             cut.Tracks.Add(slice);
         }
 
-        // An annotation outside the kept span goes, and one inside it moves back to where it now
-        // sits. Rounded to the frame the annotation belongs to rather than compared exactly, because
-        // a time that came out of a float divide can land a hair either side of a boundary and drop
-        // an annotation that is sitting exactly on the first kept frame.
+
+
+
+
         int dropped = 0;
         foreach (var note in animation.Annotations)
         {
@@ -139,18 +139,18 @@ public static class AnimationEdit
                            firstFrame, lastFrame, from, to, dropped);
     }
 
-    /// A clip after its length changed, and what that cost.
-    ///
-    /// `Scale` is the length it actually came out at over the length it went in at, which is not
-    /// always the scale that was asked for: a clip keeping its frame rate has to land on a whole
-    /// number of frames, so a request to make a 41 frame clip 1.5 times longer gives 61 frames and a
-    /// scale of 1.5 exactly, and a request for 1.51 gives the same 61 frames. Everything downstream,
-    /// the annotations and the travel, is moved by the scale that happened rather than the one that
-    /// was asked for, or they would end up describing a clip of a different length to the frames.
-    ///
-    /// `PositionError` and `RotationError` are what the resampling cost, measured rather than
-    /// bounded: the retimed clip is read back at each of the original frame's own moments and
-    /// compared to the frame that was there. Zero when nothing was resampled.
+
+
+
+
+
+
+
+
+
+
+
+
     public sealed record Retimed(HkxAnimationData Animation, RootMotion.Motion? Motion, float Scale,
                                  bool Resampled, float PositionError, float RotationError)
     {
@@ -161,47 +161,47 @@ public static class AnimationEdit
                                     : "the same frames at a different rate, exactly");
     }
 
-    /// How much error a retime is allowed to cost before it is refused rather than written.
-    ///
-    /// There is a real limit here and it is not a matter of taste. Making a clip shorter at a fixed
-    /// frame rate throws frames away, and a clip whose fastest movement happens between two of the
-    /// frames that are kept cannot be recovered from what is left. That is information loss and the
-    /// honest thing is to say so with the number rather than to write it quietly.
-    /// Nothing applies one by default, and that is a decision the measurement made rather than a gap.
-    /// Halving a clip at a fixed frame rate costs a median of 0.37 units of position across the
-    /// 13,155 shipped clips `symrm retime` sweeps, and a tenth of them cost more than 4.4. Losing
-    /// that much is what halving a clip is, not a fault in doing it, so a default that refused it
-    /// would refuse a third of ordinary requests and teach whoever hit it to turn the check off. The
-    /// error is measured on every retime and handed back on `Retimed` whether or not anybody sets a
-    /// limit; a caller who wants a limit passes one.
+
+
+
+
+
+
+
+
+
+
+
+
+
     public sealed record Budget(float Position, float Rotation)
     {
-        /// The worst hundredth of the corpus, for a caller that wants to refuse only what is far
-        /// outside what a retime normally costs. Measured with `symrm retime` over the tree, on the
-        /// halving pass: p99 of 37.2 units and 1.06 radians, against a worst of 445.7 and 1.5708.
-        /// Not applied anywhere; it is a number to pass, not a default.
+
+
+
+
         public static readonly Budget Tail = new(37f, 1.05f);
 
         public override string ToString() =>
             $"{Position} unit(s) of position and {Rotation} radian(s) of rotation";
     }
 
-    /// Makes a clip longer or shorter.
-    ///
-    /// Two ways to do that and they are not the same operation, which is why this takes a switch
-    /// rather than guessing:
-    ///
-    /// - Keeping the frame rate, which is the default and what "play this at half speed" means. The
-    ///   clip gets more frames or fewer, each one read between the frames that were there, and the
-    ///   frames per second stay what they were. This interpolates and therefore costs error.
-    /// - Keeping the frames, which changes how long each one is shown for. Nothing is read between
-    ///   anything, so it is exact, and it is the right answer when a clip is being slowed down for
-    ///   playback rather than being rebuilt at a new rate.
-    ///
-    /// Rotation is read with a proper spherical interpolation rather than a straight one. A straight
-    /// interpolation between two rotations is not a rotation, and normalising it afterwards gives a
-    /// rotation that is on the right path at the wrong speed. Over a single frame at thirty the
-    /// difference is small and over a clip slowed to a quarter speed it is not.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     public static Retimed Retime(HkxAnimationData animation, RootMotion.Motion? motion, float scale,
                                  bool keepFrameRate = true, Budget? budget = null)
     {
@@ -213,9 +213,9 @@ public static class AnimationEdit
             throw new InvalidOperationException(
                 $"A clip cannot be retimed by {scale}: the scale has to be a positive number.");
 
-        // Wide enough that nothing anybody would ask for is turned away, and narrow enough that a
-        // scale arrived at by dividing by something near zero does not try to build a clip of
-        // millions of frames.
+
+
+
         if (scale < 0.01f || scale > 100f)
             throw new InvalidOperationException(
                 $"A scale of {scale} is outside the hundredth to hundredfold this will retime by, so " +
@@ -239,7 +239,7 @@ public static class AnimationEdit
         float perFrame = keepFrameRate ? frameDuration : frameDuration * scale;
         float duration = (frames - 1) * perFrame;
 
-        // The scale that happened, which is the one everything else has to follow.
+
         float happened = was > 0 ? duration / was : scale;
 
         var made = new HkxAnimationData
@@ -293,9 +293,9 @@ public static class AnimationEdit
                 Text = note.Text,
             });
 
-        // What the resampling cost, asked the only way worth asking: read the new clip back at each
-        // moment the old clip had a frame at, and compare it to the frame that was there. A measure
-        // taken against the new frames instead would compare the interpolation to itself.
+
+
+
         float positionError = 0, rotationError = 0;
         if (resampled)
             for (int t = 0; t < animation.Tracks.Count; t++)
@@ -320,7 +320,7 @@ public static class AnimationEdit
                            happened, resampled, positionError, rotationError);
     }
 
-    /// A value read between the frames either side of a point along the clip.
+
     public static Vector3 Between(IReadOnlyList<Vector3> frames, float at)
     {
         if (frames.Count == 0) return Vector3.Zero;
@@ -331,7 +331,7 @@ public static class AnimationEdit
         return Vector3.Lerp(frames[first], frames[first + 1], where - first);
     }
 
-    /// A rotation read between the two either side of a point, along the arc rather than across it.
+
     public static Quaternion Turned(IReadOnlyList<Quaternion> frames, float at)
     {
         if (frames.Count == 0) return Quaternion.Identity;
@@ -342,12 +342,12 @@ public static class AnimationEdit
         return Quaternion.Normalize(Quaternion.Slerp(frames[first], frames[first + 1], where - first));
     }
 
-    /// The root's travel over a clip that changed length.
-    ///
-    /// The travel does not move. A clip played at half speed goes exactly as far, it just takes twice
-    /// as long about it, so the samples describe the same path and only the duration beside them
-    /// changes. What has to follow the frames is how many samples there are, and only for the clips
-    /// that sample once per frame; a two sample frame is linear and stays two whatever happens.
+
+
+
+
+
+
     private static RootMotion.Motion? RetimeMotion(RootMotion.Motion? motion, int was, int frames,
                                                    float duration, bool resampled)
     {
@@ -367,31 +367,31 @@ public static class AnimationEdit
         return made;
     }
 
-    /// Whether a time sits inside the kept span, with half a frame of slack at each end.
+
     public static bool Inside(float time, float from, float to, float frameDuration)
     {
         float slack = frameDuration > 0 ? frameDuration / 2 : 1e-4f;
         return time >= from - slack && time <= to + slack;
     }
 
-    /// The root's travel over the kept span.
-    ///
-    /// Two shapes, both measured over the corpus rather than assumed, and neither needs refusing:
-    ///
-    /// - One sample per animation frame, 11,882 clips. The samples are sliced over the same index
-    ///   range as the frames, so every kept sample is the sample that was there.
-    /// - Exactly two samples, 1,661 clips, whatever the frame count. That is a reference frame that
-    ///   is linear across the whole clip, so a cut keeps two samples read at the new start and end.
-    ///   Exact for a linear frame rather than an approximation of one.
-    ///
-    /// Anything else is resampled to one sample per kept frame, which is the honest answer for a
-    /// shape the corpus does not contain: it keeps the path and pays interpolation error, and it is
-    /// reached by nothing the game ships.
-    ///
-    /// The kept samples are then rebased so the cut clip starts where every shipped clip starts, at
-    /// the origin facing along its own forward. That is a change of frame and not a translation: the
-    /// path after the first kept sample was written in the clip's starting frame, so it is turned
-    /// back by the first kept sample's own turn as well as moved back by its position.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static RootMotion.Motion? TrimMotion(RootMotion.Motion? motion, int frames,
                                                  int firstFrame, int lastFrame, float duration)
     {
@@ -416,8 +416,8 @@ public static class AnimationEdit
         return cut;
     }
 
-    /// The same path read from its own first sample: nothing moved relative to anything else, only
-    /// said from where the cut clip now begins.
+
+
     public static IEnumerable<RootMotion.Sample> Rebased(IReadOnlyList<RootMotion.Sample> samples,
                                                          Vector3 up)
     {

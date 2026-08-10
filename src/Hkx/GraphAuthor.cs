@@ -4,17 +4,17 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Creating a node and hanging it off an existing one.
-//
-// Each parent class holds its children differently, and the wrong shape gives a file hkxpack accepts
-// and the engine cannot read. A state machine does not hold generators, it holds state infos that
-// hold generators; a blender holds weighted child wrappers. Attaching is therefore per class rather
-// than one generic "add to children".
+
+
+
+
+
+
 public static class GraphAuthor
 {
     public static IEnumerable<string> Kinds => GeneratorEditor.Kinds.Keys;
 
-    // Parents that can take a generator, with the wording used in the status line.
+
     public static string AttachmentFor(string parentClass) => parentClass switch
     {
         "hkbBehaviorGraph" => "root generator",
@@ -57,8 +57,8 @@ public static class GraphAuthor
         }
     }
 
-    // Creates the node and attaches it in one step when a usable parent is given. An unattached node
-    // is still a real object in the file, it just has nothing pointing at it yet.
+
+
     public static string AddNode(string xml, string kind, string name, string animation,
                                  string parentId, out string newId, out string note)
     {
@@ -83,23 +83,23 @@ public static class GraphAuthor
         }
     }
 
-    // Objects nothing points at. A file can legitimately contain a few, but after an edit session
-    // these are usually nodes the user meant to hook up and did not.
+
+
     public static List<HkObject> Unattached(BehaviourGraphModel model)
     {
-        // Named nested objects, such as an event's payload, hold references too. Missing these
-        // reported every hkbStringEventPayload in a vanilla graph as unreachable. That is one of the
-        // reasons the walk moved to HkReferences: the lesson had been learned here and nowhere else.
+
+
+
         var referenced = HkReferences.Targets(model);
 
-        // The class filter is this caller's business, not the walk's. Only nodes are drawn, so only
-        // a node going unreferenced is worth reporting to someone editing a graph.
+
+
         return model.Objects.Where(o => !referenced.Contains(o.Id) && IsNode(o.Class)).ToList();
     }
 
-    // Deleting these takes the file with it: the graph header, the symbol tables and the container
-    // everything hangs off. Nothing else is protected, so a node that shipped with the game is as
-    // deletable as one just made.
+
+
+
     private static readonly HashSet<string> Structural = new(StringComparer.Ordinal)
     {
         "hkRootLevelContainer", "hkbBehaviorGraph", "hkbBehaviorGraphData",
@@ -109,9 +109,9 @@ public static class GraphAuthor
 
     public static bool CanDelete(string className) => !Structural.Contains(className);
 
-    // Removes a node and breaks every link into it first, which is what a blueprint editor does.
-    // Refusing while references exist made vanilla nodes undeletable in practice, since almost
-    // everything in a shipped graph is referenced by something.
+
+
+
     public static string DeleteNode(string xml, string id, out string note)
     {
         var model = BehaviourGraphModel.Parse(xml);
@@ -134,8 +134,8 @@ public static class GraphAuthor
             xml = Detach(xml, holder, id);
             cleared.Add($"#{holderId} {holder.Class}");
 
-            // A blender child exists only to hold one generator. Once that is gone it is litter the
-            // validator would report as unreachable, so it goes with it.
+
+
             if (holder.Class == "hkbBlenderGeneratorChild")
             {
                 xml = DeleteNode(xml, holderId, out _);
@@ -154,28 +154,28 @@ public static class GraphAuthor
         return xml;
     }
 
-    // Clears every reference to target held by this one object, whichever shape it is in.
-    /// Clears every place this holder names the target.
-    ///
-    /// Which places those are is HkReferences' answer, so this can no longer disagree with the
-    /// search that found the holder in the first place. A pointer inside an element of an array of
-    /// structs, which is where a transition keeps the effect it plays, was once found by that search
-    /// and then never cleared here: deleting a blending transition effect took the object out of the
-    /// document and left every transition still naming it. Nothing said so, because the save went
-    /// out through hkxpack, which was handed a file naming an object that was not in it. Sharing the
-    /// walk is what stops that being possible rather than merely fixed.
-    ///
-    /// What differs per kind is the writing, which is this method's own business. A list element is
-    /// dropped. Everything else is set to null in place: a transition with no effect is a transition
-    /// that snaps, which the format allows and vanilla files do, so dropping the element would
-    /// silently delete a route between two states instead.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static string Detach(string xml, HkObject holder, string targetId)
     {
         var sites = HkReferences.In(holder).Where(s => s.Target == targetId).ToList();
 
-        // A plain field keeps going through SetParam rather than the path writer. The two find the
-        // parameter differently, and this one has been writing scalars correctly for the whole life
-        // of the tool, so consolidating the search is not a reason to also change the write.
+
+
+
         foreach (var site in sites.Where(s => s.How == HkReferences.Held.Scalar))
             xml = HkxTextEdit.SetParam(xml, holder.Id, site.Field, "null");
 
@@ -183,7 +183,7 @@ public static class GraphAuthor
                                                    or HkReferences.Held.StructMember))
             xml = HkxTextEdit.SetParamAt(xml, holder.Id, site.Path(), "null");
 
-        // Back to front, because removing an element renumbers the ones after it.
+
         foreach (var site in sites.Where(s => s.How == HkReferences.Held.ListElement)
                                   .OrderByDescending(s => s.Index))
             xml = HkxTextEdit.ArrayRemoveAt(xml, holder.Id, site.Field, site.Index);
@@ -191,22 +191,22 @@ public static class GraphAuthor
         return xml;
     }
 
-    // Which objects the canvas should draw, and in which column.
-    //
-    // Walking outwards from the root alone is not enough. Retargeting a link, which is the ordinary
-    // way to change what a node points at, detaches whatever it used to point at along with
-    // everything under it. Those objects are still in the file and still referenced by their own
-    // parents, so they are neither reachable from the root nor unattached, and drawing only the two
-    // makes an entire subtree vanish the moment a link is dragged.
-    //
-    // So every detached subtree gets walked as well, from its own head.
-    /// Every node the canvas will draw, with its depth from the root and the node that reached it
-    /// first.
-    ///
-    /// That last value is what makes the canvas work rather than a detail of the walk. A node can be
-    /// pointed at by several parents, and the picture has to put it in one place, hide it under one
-    /// collapse and move it with one drag. The walk already decides which parent gets there first,
-    /// because it skips a node it has placed; this stops throwing that answer away.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     public static List<(HkObject Node, int Column, string OwnerId)> Layout(BehaviourGraphModel model, int max)
     {
         var placed = new Dictionary<string, int>();
@@ -236,8 +236,8 @@ public static class GraphAuthor
         queue.Enqueue((from, column));
         placed[from.Id] = column;
 
-        // A walk root is owned by nothing. There is one per detached subtree as well as the real
-        // root, and each is the top of its own family.
+
+
         order.Add((from, column, ""));
         int deepest = column;
 
@@ -260,14 +260,14 @@ public static class GraphAuthor
         return deepest;
     }
 
-    /// Everything the object points at, including references buried in array elements such as a
-    /// transition's blend effect, which the port list does not carry.
-    ///
-    /// Public because this is the definition of an edge on the canvas and more than one thing needs
-    /// it. The walk below uses it to decide ownership; anything asking how many parents a node has
-    /// has to ask the same question or it will disagree with where the node was put. Answering from
-    /// the port list alone under reports, because ownership can be settled through an array element
-    /// the ports never carried.
+
+
+
+
+
+
+
+
     public static IEnumerable<string> PointsAt(BehaviourGraphModel model, HkObject obj)
     {
         foreach (var slot in GraphLinks.OutSlots(model, obj))
@@ -284,9 +284,9 @@ public static class GraphAuthor
                 if (value.StartsWith('#')) yield return value[1..];
     }
 
-    // Only things that produce or shape a pose count. Vanilla ships plenty of unreferenced
-    // hkbStringEventPayload leftovers, and reporting those buries the one node the user forgot to
-    // hook up under sixteen that never mattered.
+
+
+
     public static bool IsNode(string className) =>
         className.EndsWith("Generator", StringComparison.Ordinal)
         || className.EndsWith("Modifier", StringComparison.Ordinal)

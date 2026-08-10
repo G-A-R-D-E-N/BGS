@@ -8,11 +8,11 @@ using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.Tools;
 
-// symrm: the checks behind the claims in the README, runnable rather than described.
-//
-// The point of this tool is that nothing it reports is taken on trust. A structural edit is proved
-// by repacking with hkxpack and reading the binary back, and the validator is proved by running it
-// over Bethesda's own shipping files, where anything it reports is by definition a false alarm.
+
+
+
+
+
 public static class Program
 {
     private static string _java = "";
@@ -401,14 +401,14 @@ public static class Program
               the gate: this has to reproduce all of them or it is reading the blob wrongly. Naming
               a class prints everything the game says about it instead of gating.
 
-          dotnet run --project tools/symrm/symrm.csproj -- door <SpecialCaseDoors Behavior.hkx> <out.hkx>
+          dotnet run --project tools/symrm/symrm.csproj -- door <door behaviour.hkx> <out.hkx>
               The additive door edit: two new events and two new states that give a door a way to
               be placed already open or already closed without playing the transition, in the shape
-              DN151_DoorSeal already drives. Touches no existing transition. Repacks, reads the
+              its script already drives. Touches no existing transition. Repacks, reads the
               binary back and runs the validator over the result.
         """);
 
-    // Walk up for the folder holding the csproj, so the tool does not care where it is run from.
+
     private static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -417,20 +417,20 @@ public static class Program
         return dir?.FullName ?? Directory.GetCurrentDirectory();
     }
 
-    /// Somewhere to unpack a file to, which is never the directory the file itself is in.
-    ///
-    /// These directories get emptied before use, and the name is built from the file's own name, so
-    /// pointing one of these commands at a file that already sits in a directory of that name
-    /// deletes the file being read. Found by doing it: a run of crosscheck against a file left in an
-    /// earlier crosscheck's working directory took the file with it.
-    /// What the game says every field starts out as, against what the class table believes.
-    ///
-    /// The table is generated from hkxpack's database, which records a default for 625 members and
-    /// none at all for the ones whose value comes from a fixed set. The game registers every class at
-    /// startup and hands the constructor a blob of defaults, so it knows all of them.
-    ///
-    /// The 625 the table already has are the gate. If this cannot reproduce those exactly then it is
-    /// reading the blob wrongly and nothing it says about the rest is worth having.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int Defaults(string[] argv)
     {
         if (argv.Length < 3)
@@ -443,8 +443,8 @@ public static class Program
         var types = HavokClassTypes.Shipped;
         var (read, refused) = GameDefaults.Of(argv[1], argv[2], types);
 
-        // Naming a class prints everything the game says about it, which is the shape a person wants
-        // when checking one field rather than gating the whole table.
+
+
         string? only = argv.Skip(3).FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
         if (only != null)
         {
@@ -485,8 +485,8 @@ public static class Program
                 }
                 if (game == null)
                 {
-                    // The blob only carries a default that is not zero. A field the game leaves out
-                    // starts as zero, which is what the table says for these, so the two agree.
+
+
                     if (IsZero(table)) { zeroed++; continue; }
                     lost++;
                     lostOnes.Add($"{found.ClassName}.{member.Name} = {table}");
@@ -534,23 +534,23 @@ public static class Program
             return WriteDefaults(read, types);
         }
 
-        // The gate. Reading the blob wrongly shows up here first, because these are the values two
-        // independent sources both claim to know.
+
+
         return differed == 0 ? 0 : 1;
     }
 
-    /// Whether two spellings of the same default mean the same thing. The table spells a real as
-    /// `0.000000` and this spells it `0.0`, which is a difference in the writing and not the value.
-    /// Folds the defaults the game knows and the table does not into `HavokClassTypes.json`.
-    ///
-    /// Additive only. A default the table already has is left alone even though the two agree,
-    /// because the table is generated from hkxpack's database and keeping its own values means a
-    /// rebuild by `symrm classes` changes only what it should.
-    ///
-    /// Written the way `symrm classes` writes it, one class per line, so the diff is the members
-    /// that gained a default and nothing else. A class that gains nothing is re-emitted from its own
-    /// parsed form, which is the check that this is writing the same shape: if it were not, every
-    /// line would move.
+
+
+
+
+
+
+
+
+
+
+
+
     private static int WriteDefaults(List<GameDefaults.Found> read, HavokClassTypes types)
     {
         string path = Path.Combine("src", "Hkx", "HavokClassTypes.json");
@@ -601,9 +601,9 @@ public static class Program
         return 0;
     }
 
-    /// What the class table says about itself, in one place because two commands write the file and
-    /// a note that drifted would be worse than none: the whole point of it is telling the next
-    /// person that a rebuild alone loses the defaults read out of the game.
+
+
+
     private static readonly string TableNote =
         "What a Havok class is made of. The member types, which members are ever written to a " +
         "file, the class of every inline struct and every enum's values come from the class " +
@@ -613,7 +613,7 @@ public static class Program
         "database records no default for a member whose value comes from a fixed set, and those " +
         "are read out of the game's own class registrations. A rebuild on its own drops them.";
 
-    /// Whether a spelling means zero, in any of the shapes the table writes one.
+
     private static bool IsZero(string value)
     {
         string t = value.Trim();
@@ -630,8 +630,8 @@ public static class Program
         if (float.TryParse(table, NumberStyles.Float, CultureInfo.InvariantCulture, out float a) &&
             float.TryParse(game, NumberStyles.Float, CultureInfo.InvariantCulture, out float b))
         {
-            // Relative, because these run from 0 to 1.8e19 and a fixed tolerance calls the big ones
-            // different when only their spelling is.
+
+
             float scale = Math.Max(Math.Abs(a), Math.Abs(b));
             return Math.Abs(a - b) <= (scale > 1 ? scale * 1e-6f : 1e-6f);
         }
@@ -661,10 +661,10 @@ public static class Program
     {
         if (argv.Length < 3) { Usage(); return 1; }
 
-        // The filter is a path substring and defaults to the behaviours, because that is what every
-        // existing gate is measured against and the numbers in the readme are counts of those 531.
-        // Passing an empty one pulls the animations out too, which is what the spline gate needs and
-        // what the behaviour corpus deliberately does not contain.
+
+
+
+
         string filter = argv.Length > 3 ? argv[3] : "behavior";
         int written = OpenCommonwealth.Services.Archive.Ba2.ExtractMatching(argv[1], filter, argv[2], ".hkx", Console.WriteLine);
         Console.WriteLine($"wrote {written} file(s) matching \"{filter}\" to {argv[2]}");
@@ -680,8 +680,8 @@ public static class Program
         return Directory.Exists(target) ? AnimsSweep(target) : AnimsOne(target);
     }
 
-    // Every behaviour under one project root shares that root's animation folder, so the chain is
-    // resolved once per root rather than once per file.
+
+
     private static int AnimsSweep(string root)
     {
         var roots = Directory.EnumerateDirectories(root, "Behaviors", SearchOption.AllDirectories)
@@ -753,8 +753,8 @@ public static class Program
         return errors == 0 ? 0 : 1;
     }
 
-    // The reading claim in the README, re-runnable. It walks with the tool's own model rather than
-    // a script, so what it reports is what the tool sees, not what a separate parser sees.
+
+
     private static int States(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -808,9 +808,9 @@ public static class Program
         return drift.Clean ? 0 : 1;
     }
 
-    // What the binary reader actually gets out of an animation, before any of it is put on screen.
-    // A directory reports one line per file, which is how a decode that works on one animation and
-    // quietly returns nothing on a hundred others gets caught.
+
+
+
     private static int Frames(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -857,8 +857,8 @@ public static class Program
             return threw == 0 && empty == 0 ? 0 : 1;
         }
 
-        // A digest the independent Python probe can produce too, so "the reader decodes it" can be
-        // checked against "the packing is right" rather than assumed from it.
+
+
         if (argv.Length > 2 && argv[2] == "--digest")
         {
             var a = new HkxBinaryReader().ReadAnimation(target);
@@ -916,15 +916,15 @@ public static class Program
                     ? $"pos {track.Translations[f].X,8:F3} {track.Translations[f].Y,8:F3} {track.Translations[f].Z,8:F3}" : "";
                 string rot = f < track.Rotations.Count
                     ? $"  rot {track.Rotations[f].X,7:F4} {track.Rotations[f].Y,7:F4} {track.Rotations[f].Z,7:F4} {track.Rotations[f].W,7:F4}" : "";
-                // A flat 1,1,1 on every row of every animation would bury the ones that really scale.
+
                 string scl = scaled && f < track.Scales.Count
                     ? $"  scale {track.Scales[f].X,7:F4} {track.Scales[f].Y,7:F4} {track.Scales[f].Z,7:F4}" : "";
                 Console.WriteLine($"    frame {f,4}  t={f * anim.FrameDuration,7:F3}s  {pos}{rot}{scl}");
             }
         }
 
-        // The question the clip work actually asks: a variable drives userControlledTimeFraction,
-        // and this says which frame that lands on.
+
+
         Console.WriteLine();
         foreach (float fraction in new[] { 0f, 0.25f, 0.5f, 0.75f, 1f })
             Console.WriteLine($"  userControlledTimeFraction {fraction:F2} -> frame {anim.FrameAt(fraction)} " +
@@ -933,10 +933,10 @@ public static class Program
         return 0;
     }
 
-    // An animation carries no bone names of its own. Its annotation tracks are named after bones by
-    // convention and are empty in plenty of vanilla files, so the real name comes from the skeleton
-    // through transformTrackToBoneIndices. The skeleton sits in the project's CharacterAssets, one
-    // level up from Animations, and reading it needs no JVM.
+
+
+
+
     private static HkxSkeleton? SiblingSkeleton(string animationPath)
     {
         var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(animationPath)) ?? "");
@@ -948,7 +948,7 @@ public static class Program
             foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
             {
                 try { return new HkxBinaryReader().ReadSkeleton(file); }
-                catch { /* not a skeleton, try the next */ }
+                catch { }
             }
         }
         return null;
@@ -966,9 +966,9 @@ public static class Program
         return annotation.Length > 0 ? annotation : $"track {track}";
     }
 
-    // Measures the summary the way the other checks were measured, because a table built from a
-    // corpus is only honest while the corpus still fits in it. Anything landing in "not recognised"
-    // is a class member pair the table has never seen.
+
+
+
     private static int Events(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -1028,9 +1028,9 @@ public static class Program
         return 0;
     }
 
-    // Scale was decoded and then never shown anywhere, so nothing said whether it was right. This
-    // sweeps for animations whose scale is not the identity and reports what came out, which is the
-    // only way to find real data to check the decode against.
+
+
+
     private static int Scale(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -1066,8 +1066,8 @@ public static class Program
                     {
                         if (v < lo) lo = v;
                         if (v > hi) hi = v;
-                        // A scale of zero collapses whatever it drives. Worth counting separately from
-                        // a merely unusual value, because it is the shape a decode bug takes.
+
+
                         if (v == 0f) zeroFrames++;
                         if (Math.Abs(v - 1f) > 0.0001f) odd = true;
                     }
@@ -1095,11 +1095,11 @@ public static class Program
     private static string Short(string file, string root) =>
         file.StartsWith(root, StringComparison.Ordinal) ? file[(root.Length + 1)..] : file;
 
-    // Answers one question before any rig work starts: is the reference pose stored parent relative
-    // or already in world space. Composing a chain and looking at where the bones land settles it,
-    // and guessing it wrong would put every bone in the wrong place.
-    // Anything out of a BA2 whose path contains a substring, which is how a corpus for the checks
-    // below gets built without a mod manager in the way.
+
+
+
+
+
     private static int Extract(string[] argv)
     {
         if (argv.Length < 4) { Usage(); return 1; }
@@ -1112,13 +1112,13 @@ public static class Program
         return written > 0 ? 0 : 1;
     }
 
-    /// The text form written from the bytes, set against the text hkxpack writes for the same file.
-    ///
-    /// This is the last thing holding the Java requirement. Reading a behaviour has not needed
-    /// hkxpack for a while, but an edit is made by rewriting the unpacked text, so with no hkxpack
-    /// there is no text to rewrite. Producing the same text ourselves removes that without touching
-    /// any of the consumers written against it, and the only measure that matters is whether the two
-    /// are the same line for line.
+
+
+
+
+
+
+
     private static int Xml(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -1131,8 +1131,8 @@ public static class Program
         string theirs = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, file, work));
         string ours = NativeXml.From(File.ReadAllBytes(file));
 
-        // Written out beside the reference, so a disagreement can be read in place rather than only
-        // through this summary.
+
+
         string beside = Path.Combine(work, "ours.xml");
         File.WriteAllText(beside, ours);
         Console.WriteLine($"ours written to {beside}");
@@ -1140,14 +1140,14 @@ public static class Program
         var mine = ours.Replace("\r\n", "\n").Split('\n');
         var them = theirs.Replace("\r\n", "\n").Split('\n');
 
-        // A real diff rather than comparing line one against line one. One extra line early on shifts
-        // every line after it, so an index by index comparison reports a whole file as different and
-        // buries the single rule that caused it. This walks both sides and resynchronises.
-        // Classes whose array elements hkxpack strides wrongly. Its own reading of one of these is
-        // misaligned from the second element on, which was measured and written up long before this:
-        // BSLookAtModifierBoneData is 528 bytes and hkxpack derives 520. Where our text differs
-        // inside one of those, hkxpack is the one that is wrong, so those differences are counted
-        // apart rather than chased.
+
+
+
+
+
+
+
+
         var strided = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (_, className) in new PackfileObjects(PackfileImage.Read(file)).ClassNames())
             foreach (var member in HavokClassTypes.Shipped.Members(className))
@@ -1157,16 +1157,16 @@ public static class Program
         var edits = Diff(them, mine);
         int differ = edits.Count;
 
-        // Which member names belong to one of those classes, so a differing line can be attributed to
-        // hkxpack's stride rather than merely coinciding with a file that holds one.
+
+
         var theirFields = new HashSet<string>(StringComparer.Ordinal);
         foreach (string className in strided)
             foreach (var member in HavokClassTypes.Shipped.Members(className))
                 theirFields.Add(member.Name);
 
-        // A comment counts as well as a value. The misaligned run inside one of these structs shifts
-        // its SERIALIZE_IGNORED lines along with its fields, and those carry the member name in a
-        // comment rather than in an attribute.
+
+
+
         bool Excused(string line)
         {
             var m = System.Text.RegularExpressions.Regex.Match(
@@ -1177,9 +1177,9 @@ public static class Program
             return theirFields.Contains(name);
         }
 
-        // The element boundaries around a misread struct, which carry no member name to attribute
-        // them by. Only counted in a file that holds one of those classes at all, and reported apart
-        // from the fields so the two are never one number.
+
+
+
         bool Boundary(string line) =>
             strided.Count > 0 && (line.Trim() == "<hkobject>" || line.Trim() == "</hkobject>");
 
@@ -1204,24 +1204,24 @@ public static class Program
                                        : "") +
                           (boundaries > 0 ? $" with {boundaries} element boundary line(s) around them" : ""));
 
-        // A file holding one of those classes cannot be compared line by line with any confidence:
-        // hkxpack's own reading of it is misaligned, so the two texts genuinely diverge and a diff
-        // resynchronising through the wreckage reports more than is really there. Said as a flag so a
-        // sweep can hold the two kinds of file apart rather than averaging them.
+
+
+
+
         Console.WriteLine(strided.Count > 0 ? "COMPARABLE=no" : "COMPARABLE=yes");
         return differ == 0 ? 0 : 1;
     }
 
-    /// The lines one side has and the other does not.
-    ///
-    /// Walks both sides together and, where they part, looks ahead on each for the nearest place they
-    /// agree again. That is the right shape for this comparison: the two texts are meant to be the
-    /// same file, so a disagreement is a handful of lines and not a rewrite, and a full longest
-    /// common subsequence over thirty thousand lines is nine hundred million cells for an answer that
-    /// resynchronises within twenty.
-    ///
-    /// The look ahead is bounded. Past the bound the two are not the same file with a rule wrong in
-    /// it, and saying so beats grinding.
+
+
+
+
+
+
+
+
+
+
     private static List<(char Side, int At, string Line)> Diff(string[] left, string[] right)
     {
         const int Reach = 400;
@@ -1232,8 +1232,8 @@ public static class Program
         {
             if (left[a] == right[b]) { a++; b++; continue; }
 
-            // The nearest resynchronisation, preferring the shortest run of lines dropped from
-            // either side, so one inserted line is reported as one line and not as two.
+
+
             int found = -1, skipLeft = 0, skipRight = 0;
             for (int d = 1; d <= Reach && found < 0; d++)
             {
@@ -1260,7 +1260,7 @@ public static class Program
         return edits;
     }
 
-    /// The first variableBounds element's min or max, out of hkxpack's text.
+
     private static string FirstBound(string xml, string which)
     {
         int start = xml.IndexOf("name=\"variableBounds\"", StringComparison.Ordinal);
@@ -1272,12 +1272,12 @@ public static class Program
         return m.Success ? m.Groups[1].Value : "absent";
     }
 
-    /// Where a clip travels, read off its extracted motion.
-    ///
-    /// A walk does not move its bones across the ground: it plays on the spot and carries a separate
-    /// track saying where the character has got to. Point this at a folder to see which animations
-    /// carry one at all, which is the number worth knowing, since an idle carrying root motion and a
-    /// walk carrying none are both worth a second look.
+
+
+
+
+
+
     private static int Motion(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -1322,27 +1322,27 @@ public static class Program
         Console.WriteLine($"up {motion.Up.X:F0} {motion.Up.Y:F0} {motion.Up.Z:F0}, " +
                           $"forward {motion.Forward.X:F0} {motion.Forward.Y:F0} {motion.Forward.Z:F0}");
 
-        // Every eighth, because a walk carries dozens and the shape of the path is what is being
-        // looked at rather than each step of it.
+
+
         for (int i = 0; i < motion.Samples.Count; i += Math.Max(1, motion.Samples.Count / 8))
             Console.WriteLine($"  sample {i,3}  {motion.Samples[i]}");
 
         Console.WriteLine($"  sample {motion.Samples.Count - 1,3}  {motion.Samples[^1]}");
 
-        // Reading between samples is what the viewport does, so it is checked here rather than only
-        // on screen. Halfway has to land between the ends and not outside them.
+
+
         var half = RootMotion.At(motion, 0.5f);
         Console.WriteLine($"halfway through: {half}");
         return 0;
     }
 
-    /// Reads an archive's index and finds files in it without unpacking anything, which is what the
-    /// window's own archive browser does.
-    ///
-    /// The index is the whole point. Fallout4 - Animations.ba2 holds 29,716 entries and reaching one
-    /// of them used to mean writing the other 29,715 to disk first. Reading one file out of it is
-    /// checked here rather than only in the window, because a file pulled out of an archive has to be
-    /// byte for byte what the same file is on disk.
+
+
+
+
+
+
+
     private static int Ba2Browse(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -1364,9 +1364,9 @@ public static class Program
         if (found.Count > 20) Console.WriteLine($"  and {found.Count - 20} more");
         if (found.Count == 0) return 1;
 
-        // Reading one, so the index is not the only thing proved. A behaviour that comes out of the
-        // archive has to be one our own reader can take apart, which is the whole reason for opening
-        // it from here rather than extracting it first.
+
+
+
         var first = found[0];
         byte[] bytes = archive.Read(first);
         Console.WriteLine($"\nread {first.FileName}: {bytes.Length} bytes" +
@@ -1391,23 +1391,23 @@ public static class Program
         }
     }
 
-    // The pose the viewport draws, printed. Same AnimationPose call the window makes, so a shape that
-    // looks wrong on screen can be read as numbers here rather than argued about.
-    // Puts a real edit through the whole save path and then checks the file that came out, which is
-    // a stronger question than whether reading agrees. Changes a few values, writes them into the
-    // bytes, and then asks three things of the result: hkxpack can still read it, every value in it
-    // still agrees with our reading of it, and it differs from the original only where it was meant
-    // to. The last is the one that catches a save that quietly damages something elsewhere.
+
+
+
+
+
+
+
     private static int SaveCheck(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
         NeedHkxPack();
 
         string file = Path.GetFullPath(argv[1]);
-        // Named after the file rather than shared. savecheck calls crosscheck, which unpacks into a
-        // directory of its own, and a fixed name means one run wiping the directory another run is
-        // still reading from. That showed up as hkxpack "produced no XML" on a file that passes on
-        // its own, which reads as a bug in the save rather than in the harness around it.
+
+
+
+
         string work = WorkDirectory("symrm-savecheck-", file);
         if (Directory.Exists(work)) Directory.Delete(work, true);
 
@@ -1427,9 +1427,9 @@ public static class Program
         string edited = original;
         foreach (var (was, now) in edits) edited = ReplaceFirst(edited, was, now);
 
-        // A brand new object, added the way the editor adds one, with something in the file pointed
-        // at it. This is the case a longer array does not cover: the array work only ever moved
-        // pointers at objects that were already there.
+
+
+
         var host = System.Text.RegularExpressions.Regex.Match(
             original, "<hkobject class=\"hkbClipGenerator\" name=\"#[0-9]+\" " +
                       "signature=\"(?<sig>0x[0-9a-f]+)\">");
@@ -1448,7 +1448,7 @@ public static class Program
             edited = edited.Remove(lastGenerator.Index, lastGenerator.Length)
                            .Insert(lastGenerator.Index, pointer);
 
-            // Two things to find afterwards: the object itself and the pointer at it.
+
             edits.Add(("", $"name=\"#{added}\""));
             edits.Add(("", pointer));
         }
@@ -1469,12 +1469,12 @@ public static class Program
         int changedBytes = Enumerable.Range(0, Math.Min(before.Length, saved.Length))
                                      .Count(i => before[i] != saved[i]);
 
-        // Two things legitimately change the length. Text grows it, because the new text goes on
-        // the end rather than over what was there. Clearing a pointer shrinks it, because a null
-        // pointer is the absence of a fixup rather than a fixup to nowhere, so the entry is dropped
-        // and the table is twelve bytes shorter, sixteen once it is padded back to the boundary.
-        // Anything else changing size means something moved, which is the fault this is watching
-        // for.
+
+
+
+
+
+
         int cleared = plan.Changes.Count(c => c.Ref && c.Value == "null");
         bool shrankAsExpected = cleared > 0 && before.Length > saved.Length
                                             && before.Length - saved.Length <= 16 * cleared;
@@ -1496,13 +1496,13 @@ public static class Program
         if (!sameSize && !(plan.Grows && saved.Length > before.Length) && !shrankAsExpected) return 1;
         if (!OnlyAppended(before, saved, plan)) return 1;
 
-        // The saved file has to survive being read by the other implementation, and then agree with
-        // ours field for field. Reusing crosscheck means the number quoted here is the same measure
-        // as the one quoted for an unedited file.
+
+
+
         int verdict = CrossCheck(new[] { "crosscheck", savedPath });
 
-        // And the change has to actually be in there, or a save that wrote nothing would pass every
-        // check above by doing nothing at all.
+
+
         string savedXml = HkxTextEdit.ReadXml(
             HkxTextEdit.Unpack(_java, _jar, savedPath, Path.Combine(work, "reread")));
 
@@ -1512,12 +1512,12 @@ public static class Program
         return verdict == 0 && landed == edits.Count ? 0 : 1;
     }
 
-    /// A few edits that exercise different widths: a float, a whole word, and a single byte flag.
-    /// Picked out of the file rather than fixed, so this runs on whatever it is pointed at.
-    /// Saving a file without changing anything has to give back the file that went in, byte for byte.
-    /// This is the check that matters most before saving is switched over: it is the one case where
-    /// the right answer is known exactly and in advance, so any drift at all is the writer's fault
-    /// and not a judgement call. Every other check compares one reading to another reading.
+
+
+
+
+
+
     private static bool NullSaveIsByteIdentical(string file, string originalXml)
     {
         var plan = NativeSave.Compare(originalXml, originalXml);
@@ -1559,26 +1559,26 @@ public static class Program
         return true;
     }
 
-    /// The one case the writer cannot handle is anything that changes a size, because every offset in
-    /// a packfile is derived from the sizes of what precedes it. That has to be a hard refusal rather
-    /// than a best effort, so this hands it a longer string and requires two things: that the plan
-    /// says no, and that applying that plan throws rather than writing something.
-    /// A file that grew will differ from the original over thousands of bytes, and almost all of that
-    /// is innocent: the fixup tables follow the data inside the section, so appending text pushes
-    /// them along without changing a word of what they say. A raw byte count cannot tell that apart
-    /// from real damage, so this compares the pieces instead of the bytes. Everything must be
-    /// unchanged except the data the text was added to, and the destination of the fixups that were
-    /// deliberately repointed.
+
+
+
+
+
+
+
+
+
+
     private static bool OnlyAppended(byte[] before, byte[] after, NativeSave.Plan plan)
     {
         var was = PackfileImage.Read(before);
         var now = PackfileImage.Read(after);
 
-        // How many pointer entries each planned change is allowed to move. A repointed field moves
-        // one. A resized array moves every element it had and every element it now has, because the
-        // run moved to the end of the section and each element's fixup names a position inside it.
-        // Counted from the original file rather than assumed, so an array that was longer than the
-        // plan expects cannot hide extra movement inside the allowance.
+
+
+
+
+
         int allowedPointerMoves = plan.Changes.Count(c => c.Ref);
         if (plan.Changes.Any(c => c.Array))
         {
@@ -1613,11 +1613,11 @@ public static class Program
                 return false;
             }
 
-            // The data the text was added to also holds the values written over in place, so it is
-            // not expected to be identical. What it must not do is differ anywhere else: a value
-            // write touches at most the four bytes of the field it names.
-            // A pointer change writes nothing into the data at all. It moves an entry in the
-            // pointer table, so it buys no allowance here and the data has to be untouched by it.
+
+
+
+
+
             int touched = Enumerable.Range(0, a.Data.Length).Count(k => a.Data[k] != b.Data[k]);
             int allowed = 4 * plan.Changes.Count(c => !c.Text && !c.Ref);
             if (touched > allowed)
@@ -1627,9 +1627,9 @@ public static class Program
                 return false;
             }
 
-            // Every pointer the plan does not name has to be untouched, and no more of them may
-            // move than the plan repoints. Compared by source rather than by position: dropping an
-            // entry shifts every entry after it, which is not a change to any pointer.
+
+
+
             var wasBySource = a.Globals().ToDictionary(g => g.Source, g => (g.Section, g.Destination));
             var nowBySource = b.Globals().ToDictionary(g => g.Source, g => (g.Section, g.Destination));
 
@@ -1646,12 +1646,12 @@ public static class Program
                 return false;
             }
 
-            // One new entry per object added, and every entry that was there before untouched. The
-            // table says which class each object is, so an entry changing under an object that was
-            // already in the file would be that object turning into something else.
-            // Objects only live in the data section, so only that one gains entries. Counting the
-            // added ones against every section would demand a new object in the class name section
-            // too, which is not a thing.
+
+
+
+
+
+
             int added = a.Tag == "__data__" ? plan.Changes.Count(c => c.Added) : 0;
             var wasVirtual = a.Virtuals().ToList();
             var nowVirtual = b.Virtuals().ToList();
@@ -1666,10 +1666,10 @@ public static class Program
 
             var (locals, wasLocals) = (b.Locals().ToList(), a.Locals().ToList());
 
-            // The local table gains an entry when an array goes from empty to holding something,
-            // and loses one when it goes the other way, so its length is only fixed while no array
-            // changes. Compared by source rather than by position for the same reason as the global
-            // table: an entry appearing or going shifts the rest without changing any pointer.
+
+
+
+
             var wasLocalsBySource = wasLocals.ToDictionary(l => l.Source, l => l.Destination);
             var nowLocalsBySource = locals.ToDictionary(l => l.Source, l => l.Destination);
 
@@ -1691,12 +1691,12 @@ public static class Program
         return true;
     }
 
-    /// Growing an array of strings, which is what declaring an event or a variable is.
-    ///
-    /// This guard used to assert the opposite, that the edit was refused, and it was right to: an
-    /// array cannot grow where it sits and there was nowhere for the rest of the file to go. The run
-    /// is appended now, so the guard asserts the write instead, and that the file comes back holding
-    /// the longer array.
+
+
+
+
+
+
     private static bool GrowingAnArrayOfStringsWorks(string file, string originalXml)
     {
         var match = System.Text.RegularExpressions.Regex.Match(
@@ -1728,8 +1728,8 @@ public static class Program
             return false;
         }
 
-        // Read back from the bytes rather than from the plan, since the plan saying it wrote
-        // something is exactly what is in question.
+
+
         var objects = new PackfileObjects(PackfileImage.Read(after));
         var holder = objects.Instances.FirstOrDefault(i => i.ClassName == "hkbBehaviorGraphStringData");
         var names = holder == null ? null : objects.ReadStringArray(holder, field);
@@ -1772,23 +1772,23 @@ public static class Program
         Try("<hkparam name=\"ignoreStartTime\">false</hkparam>",
             "<hkparam name=\"ignoreStartTime\">true</hkparam>");
 
-        // An animation carries none of the fields above, and it is the case worth proving: the old
-        // route refused to write one at all, because the XML cannot carry a lossless compressed
-        // animation without cutting it short. duration is a plain real on hkaAnimation, so changing
-        // it exercises a real save of the very format that used to be refused.
+
+
+
+
         Try("<hkparam name=\"duration\">[0-9.]+</hkparam>",
             "<hkparam name=\"duration\">3.5</hkparam>");
 
-        // A name longer than the one it replaces, which is the case a value save could not do at all
-        // until strings were written by appending. Longer on purpose: a shorter one could be written
-        // over the old bytes and would prove nothing.
+
+
+
         Try("<hkparam name=\"animationName\">[^<]{3,}</hkparam>",
             "<hkparam name=\"animationName\">Animations\\Renamed_By_Symrm_Longer.hkx</hkparam>");
 
-        // Rewiring a node, which is a structural edit to the graph and not one to the file: no
-        // object moves, nothing is appended, and one entry in the pointer table names a different
-        // destination. The target is taken from a second generator field in the same file rather
-        // than invented, so it is an id the file actually has.
+
+
+
+
         var generators = System.Text.RegularExpressions.Regex
             .Matches(xml, "<hkparam name=\"generator\">#(?<id>[0-9]+)</hkparam>")
             .Select(m => m.Groups["id"].Value).Distinct().ToList();
@@ -1797,16 +1797,16 @@ public static class Program
             Try($"<hkparam name=\"generator\">#{generators[0]}</hkparam>",
                 $"<hkparam name=\"generator\">#{generators[1]}</hkparam>");
 
-        // And the other direction: a pointer set to nothing, which drops the fixup rather than
-        // aiming it at offset zero. Aiming it at zero would quietly point the field at whichever
-        // object sits first.
+
+
+
         Try("<hkparam name=\"variableBindingSet\">#[0-9]+</hkparam>",
             "<hkparam name=\"variableBindingSet\">null</hkparam>");
 
-        // An array of object pointers made one element longer, by repeating an element it already
-        // holds. Longer on purpose: a shorter one could be written over the run that is already
-        // there and would prove nothing about appending. The element is one the array already names
-        // rather than an invented id, so the target is an object the file has.
+
+
+
+
         var array = System.Text.RegularExpressions.Regex.Match(
             xml, "<hkparam name=\"(?<field>states|children|generators|modifiers|layers)\" " +
                  "numelements=\"(?<n>[1-9][0-9]*)\">(?<body>[^<]*)</hkparam>");
@@ -1835,20 +1835,20 @@ public static class Program
         return at < 0 ? text : text[..at] + now + text[(at + was.Length)..];
     }
 
-    // Reads every field we can out of the raw bytes and compares it to what hkxpack says the same
-    // field holds. Two independent readings of the same file: ours by byte offset from layouts read
-    // out of the game, hkxpack's by its own schema. Agreement across a whole file is what turns
-    // "these offsets look plausible" into "these offsets are right", and it is the check that has to
-    // pass before anything writes bytes for real.
-    /// Builds `HavokClassTypes.json` out of the class database hkxpack carries inside its own jar,
-    /// merged with the instance sizes read out of the game.
-    ///
-    /// The jar is opened as what it is, a zip, so this runs Java no more than unzipping does. What
-    /// comes out is the half of a class description the game's own startup code does not keep: which
-    /// members are ever written to a file, what class an inline struct is, and every enum's values.
-    ///
-    /// One class per line on purpose. It is a generated file either way, and a generated file that
-    /// cannot be read in a diff hides its own mistakes.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int Classes(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -1880,8 +1880,8 @@ public static class Program
                 foreach (var m in root.Element("members")?.Elements("member")
                                   ?? Enumerable.Empty<System.Xml.Linq.XElement>())
                 {
-                    // Trimmed: a handful of entries in the database carry a stray space beside the
-                    // flag, and a flag compared as text is a flag that goes unnoticed when it does.
+
+
                     string flags = (m.Attribute("flags")?.Value ?? "").Trim();
                     bool written = !flags.Split('|').Any(f => f.Trim() == "SERIALIZE_IGNORED");
                     int size = int.Parse(m.Attribute("arrsize")?.Value ?? "0");
@@ -1959,12 +1959,12 @@ public static class Program
         return reread.Count == classes.Count ? 0 : 1;
     }
 
-    /// Every class every file names, against the definition this build holds for it.
-    ///
-    /// A packfile stores four bytes in front of each class name, and those four bytes are what a
-    /// class definition is: change a member's type or add one and the signature changes with it. So
-    /// this is the one check that can say a file was written against the same classes we read it
-    /// with, rather than merely that it parsed.
+
+
+
+
+
+
     private static int Signatures(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -1999,13 +1999,13 @@ public static class Program
         return problems.Count == 0 && read > 0 ? 0 : 1;
     }
 
-    /// The gate on the class table: build the list of fields a file holds from the table alone, and
-    /// compare it to the list hkxpack writes for the same file.
-    ///
-    /// This is the whole question the table exists to answer. The panel's field list comes from
-    /// hkxpack's XML today, and it can only stop doing that if the table produces the same list —
-    /// the same names, in the same order, including the fields of every struct written inline, which
-    /// is where the count of elements has to be read out of the file itself.
+
+
+
+
+
+
+
     private static int Fields(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -2063,31 +2063,31 @@ public static class Program
         return wrong == 0 && unresolved == 0 && exact > 0 ? 0 : 1;
     }
 
-    /// What the properties panel would show for every object in a file, against what hkxpack says
-    /// about the same fields.
-    ///
-    /// Not the same question as `crosscheck`, and that is the point of having both. Crosscheck asks
-    /// whether the byte reader agrees with hkxpack. This asks whether the values that reach the
-    /// window agree with hkxpack, which is a different thing, because between the two sits the
-    /// choice of which fields come from the bytes and which fall back. A fallback that silently
-    /// returned the wrong value instead of falling back would pass the first check and fail this
-    /// one.
-    ///
-    /// It calls the same `PanelFields.For` the window calls, so what it reports is what is on
-    /// screen rather than a second implementation of it.
-    /// How much of a state machine's routing an arrow from one state to another can actually carry.
-    ///
-    /// Drawing transitions on the canvas is only worth doing if a transition is mostly one state to
-    /// one state. Two things would make it not worth doing, and both are countable rather than
-    /// arguable:
-    ///
-    /// A `toNestedStateId` other than zero means the transition enters a state *and* sets the
-    /// machine inside that state to a particular state of its own. One arrow cannot say that, so
-    /// every such transition is either drawn as a stop or drawn wrongly.
-    ///
-    /// Density is the other. A machine with two hundred transitions in it draws as a hairball
-    /// whether or not each arrow is honest, so the count per machine decides whether labels can ever
-    /// be on screen at once or only ever on selection.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int Nesting(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -2126,9 +2126,9 @@ public static class Program
             }
             filesRead++;
 
-            // A machine sitting in another machine's state, which is the hierarchy the graph already
-            // draws through ownership. Counted to say how common nesting is at all, separately from
-            // whether a single transition crosses a level.
+
+
+
             var machineIds = model.Objects.Where(o => o.Class == "hkbStateMachine")
                                           .Select(o => o.Id).ToList();
             var nestedInside = new HashSet<string>(StringComparer.Ordinal);
@@ -2152,10 +2152,10 @@ public static class Program
                 var rows = StateEditor.Transitions(model, id);
                 perMachine.Add(rows.Count);
 
-                // What drawing a wildcard the obvious way would cost. A wildcard fires from any
-                // state, so showing it as "from each state to the target" is one line per state per
-                // wildcard. Drawing it from the machine instead is one line, and says the same
-                // thing: the machine is what any state has in common.
+
+
+
+
                 int wildcardsHere = rows.Count(r => r.Wildcard);
                 naiveWildcardLines += (long)wildcardsHere * states.Count;
                 fromMachineLines += wildcardsHere;
@@ -2174,21 +2174,21 @@ public static class Program
 
                     nestedTo++;
 
-                    // What a nested id is has to be established rather than assumed. The reading
-                    // being tested is that it names a state of the machine sitting inside the state
-                    // being entered. If that holds for every one of them, the reading is right; if
-                    // it holds for none, it means something else entirely and nothing should be
-                    // drawn for it.
+
+
+
+
+
                     string? entered = states.FirstOrDefault(s => s.StateId == row.ToStateId)?.GeneratorRef;
                     var inner = model.Get(entered?.TrimStart('#'));
 
-                    // A machine is often not the state's generator directly: a modifier generator or
-                    // a bone switch wraps it, and looking only at the immediate generator counts
-                    // those as unexplained. Walk the wrappers before giving up.
-                    //
-                    // The canvas's own walk, not a second one written here: a measurement that says
-                    // every route resolves is worth nothing if the thing drawing the routes resolves
-                    // them differently.
+
+
+
+
+
+
+
                     var machine = StateRoutes.MachineUnder(model, inner, 0);
                     if (machine == null)
                     {
@@ -2203,10 +2203,10 @@ public static class Program
                     else nestedUnresolved++;
                 }
 
-                // fromNestedStateId sits on the same struct and the reader does not surface it, so
-                // it is read here directly rather than assumed to be zero. The flags come off the
-                // same pass: a wildcard declares whether it is local to this machine or global, and
-                // that is the difference between "any state in here" and "any state at all".
+
+
+
+
                 foreach (var array in model.Objects)
                 {
                     if (array.Class != "hkbStateMachineTransitionInfoArray") continue;
@@ -2221,11 +2221,11 @@ public static class Program
                         if (element.TryGetValue("fromNestedStateId", out var from) &&
                             int.TryParse(from, out int value) && value != 0) nestedFrom++;
 
-                        // Decoded a bit at a time rather than by the text, because the text is
-                        // hkxpack's spelling: it prints a name when the value is exactly one
-                        // declared flag and the bare number when it is a combination, and a
-                        // combination is the common case here. Counting the strings counts 1536 and
-                        // 2560 as two unrelated things when they share a bit.
+
+
+
+
+
                         element.TryGetValue("flags", out var flags);
                         long bits = FlagBits(flags ?? "", declaredFlags);
                         string side = wild ? "wildcard  " : "direct    ";
@@ -2247,9 +2247,9 @@ public static class Program
             }
         }
 
-        // What the canvas will actually draw, counted the same way. A route that resolves in the
-        // measurement above and then does not come back from StateRoutes is a route the picture
-        // silently drops, which is the failure this is here to catch.
+
+
+
         long drawable = 0, drawableNested = 0, startStates = 0;
         long waysOut = 0, rewriteWrong = 0, notAState = 0, selfDirect = 0;
         foreach (string file in files)
@@ -2262,24 +2262,24 @@ public static class Program
                 drawableNested += routes.Routes.Count(r => r.IntoId.Length > 0);
                 startStates += routes.StartStates.Count;
 
-                // Every way out of every state, which is what the canvas draws once a state is
-                // picked out. A wildcard is rewritten to leave the state being asked about rather
-                // than the machine, so this checks the rewrite keeps every route between two real
-                // states and drops only self transitions.
+
+
+
+
                 foreach (string stateId in routes.MachineOfState.Keys)
                 {
                     var leaving = routes.LeavingState(stateId).ToList();
                     waysOut += leaving.Count;
 
-                    // A route that does not leave the state it was asked for, or lands somewhere
-                    // that is not a state, is the rewrite being wrong.
+
+
                     if (leaving.Any(r => r.FromId != stateId)) rewriteWrong++;
                     if (leaving.Any(r => !routes.MachineOfState.ContainsKey(r.ToId))) notAState++;
 
-                    // A state transitioning to itself is real and is counted rather than faulted. A
-                    // wildcard into the state you are standing in is dropped, since it is a self
-                    // transition the machine declares for everybody; one a state writes on itself is
-                    // that state saying so, and belongs on screen.
+
+
+
+
                     selfDirect += leaving.Count(r => r.ToId == stateId && !r.Wildcard);
                     if (leaving.Any(r => r.ToId == stateId && r.Wildcard)) rewriteWrong++;
                 }
@@ -2337,9 +2337,9 @@ public static class Program
         return drawable == transitions && rewriteWrong == 0 && notAState == 0 ? 0 : 1;
     }
 
-    /// The state machine a state's generator leads to, through whatever wraps it. A machine is often
-    /// not the generator itself: a modifier generator or a bone switch holds it, and a behaviour
-    /// reference generator loads another file entirely and leads nowhere this file can see.
+
+
+
     private static HkObject? MachineUnder(BehaviourGraphModel model, HkObject? generator, int depth)
     {
         if (generator == null || depth > 6) return null;
@@ -2357,13 +2357,13 @@ public static class Program
     private static string Percent(long part, long whole) =>
         whole == 0 ? "n/a" : $"{100.0 * part / whole:0.00}%";
 
-    /// What the panel puts at the head of each element of an array of structs, printed.
-    ///
-    /// The panel collapses an element behind this line, so a wrong line hides a wrong element rather
-    /// than showing one. Printing them for a whole file is how they get read against the file's own
-    /// XML, which is what people were reading before the panel could group anything.
-    ///
-    /// Needs no Java.
+
+
+
+
+
+
+
     private static int Elements(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -2390,8 +2390,8 @@ public static class Program
             var lines = ElementSummary.For(model, obj.Id);
             if (lines.Count == 0)
             {
-                // An array nothing points at. Its numbers cannot be resolved, because a toStateId
-                // only means something inside the machine that owns the array.
+
+
                 unnamed++;
                 Console.WriteLine($"  #{obj.Id}  no state machine points at this array");
                 continue;
@@ -2400,8 +2400,8 @@ public static class Program
             summarised += lines.Count;
             string machine = ElementSummary.MachineOwning(model, obj.Id);
             Console.WriteLine($"  #{obj.Id}  on #{machine} {model.Get(machine)?.Str("name")}");
-            // By element number, not by the text of the key: sorting `transitions[10]` as a string
-            // puts it before `transitions[2]`, which reads as a file whose transitions are shuffled.
+
+
             foreach (var key in lines.Keys.OrderBy(ElementNumber))
                 Console.WriteLine($"      {key,-16} {lines[key]}");
         }
@@ -2411,9 +2411,9 @@ public static class Program
         return 0;
     }
 
-    /// A flags value from the text, however hkxpack chose to spell it: a bare number for a
-    /// combination, a single declared name when the value is exactly one flag, and names joined by
-    /// bars when something has already decoded it.
+
+
+
     private static long FlagBits(string text, List<KeyValuePair<string, long>> declared)
     {
         text = text.Trim();
@@ -2436,17 +2436,17 @@ public static class Program
         return bracket >= 0 && int.TryParse(group[(bracket + 1)..].TrimEnd(']'), out int n) ? n : 0;
     }
 
-    /// Every field on the panel, written by its path, checked to have moved that field and nothing
-    /// else.
-    ///
-    /// The panel's boxes and the file's values line up by position, and that is the assumption the
-    /// whole panel rests on. Naming a field does not preserve it: an array of structs repeats every
-    /// name once per element, so a write by name lands on the first of them however far down the
-    /// panel the box was. Writing a sentinel through each path and reading the whole object back is
-    /// the check that says box N moves value N, for every box of every object in a real file rather
-    /// than for a fixture built to pass.
-    ///
-    /// Needs no Java: the text comes from NativeXml, the same way the window builds it.
+
+
+
+
+
+
+
+
+
+
+
     private static int Paths(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -2488,16 +2488,16 @@ public static class Program
             var before = HkxTextEdit.ReadParams(xml, ids[i]);
             if (before.Count != fields.Count)
             {
-                // The two readings disagree about what is in this object, which the panel already
-                // refuses to work from. Nothing to prove about addressing until that is settled.
+
+
                 unaddressable += fields.Count;
                 continue;
             }
 
             for (int f = 0; f < fields.Count; f++)
             {
-                // A sentinel no vanilla value takes, so a field that did not change cannot be
-                // mistaken for one that did.
+
+
                 const string Sentinel = "-987654321";
                 string after;
                 try
@@ -2515,10 +2515,10 @@ public static class Program
                 checkedFields++;
                 if (fields[f].Group.Length > 0) elementFields++;
 
-                // What the same box did before it carried a path. Addressing by name reaches the
-                // first field with that name, so every later one wrote somebody else's value and
-                // said it had worked. Counted rather than described, because the size of it is the
-                // reason the path exists.
+
+
+
+
                 if (before.FindIndex(p => p.Name == fields[f].Name) != f) byNameWrong++;
 
                 var now = HkxTextEdit.ReadParams(after, ids[i]);
@@ -2548,9 +2548,9 @@ public static class Program
         if (argv.Length < 2) { Usage(); return 1; }
         NeedHkxPack();
 
-        // A directory sweeps every file under it, the same way model, consumers and walk do. It did
-        // not before, and pointing it at one made it try to unpack the directory itself and fall over
-        // with a permission error, which reads as a broken tool rather than a wrong argument.
+
+
+
         string target = Path.GetFullPath(argv[1]);
         if (Directory.Exists(target))
         {
@@ -2612,28 +2612,28 @@ public static class Program
                 }
                 else fromBytes++;
 
-                // Against hkxpack's own text for the same field, whichever way the value came. A
-                // fallback compares to the thing it was taken from and must therefore always agree;
-                // if one ever does not, the fallback is not doing what it says.
-                // hkxpack's text is read out of the file rather than parsed, so an escape is still
-                // an escape: `Speed &gt; TrotMaxSpeed`. The bytes hold the character itself. The
-                // panel is right to show the character, so the escape is undone here rather than
-                // counted as a difference.
+
+
+
+
+
+
+
                 string theirs = System.Net.WebUtility.HtmlDecode(xml[f].Value);
-                // Against the raw form as well as the shown one: an enum shows its name and
-                // hkxpack sometimes prints the number, and those are the same value.
+
+
                 if (Same(fields[f].Raw, theirs) || Same(fields[f].Value, theirs))
                 {
                     agreed++;
                     continue;
                 }
 
-                // Not every disagreement is ours. A struct holding a vector is sixteen aligned, so
-                // the compiler pads it and the game records the padded size; hkxpack has no size in
-                // its data and rounds the end of the last member up to eight, so from the second
-                // element of an array of one of those onwards it reads from the wrong place. Those
-                // are counted apart and named, because calling them our disagreements would be
-                // wrong and dropping them would be worse.
+
+
+
+
+
+
                 if (fields[f].Owner.Length > 0 &&
                     HavokClassTypes.Shipped.PaddedBeyondHkxPack(fields[f].Owner))
                 {
@@ -2665,14 +2665,14 @@ public static class Program
         return shown == agreed + strided ? 0 : 1;
     }
 
-    /// Two readings of one file, set beside each other field by field.
-    ///
-    /// Both readings come from the same producer at the moment, which sounds like a command that
-    /// cannot say anything and is the point: it is how the comparison gets to report zero before
-    /// anything is asked of it. The second reading becomes the byte reader when there is one, and
-    /// this is what will say whether it agrees. The faults the comparison has to catch are in the
-    /// suite rather than here, because deliberately breaking a file to prove a checker works is a
-    /// test, not a thing to run over a corpus.
+
+
+
+
+
+
+
+
     private static int Model(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -2706,10 +2706,10 @@ public static class Program
             var first = BehaviourGraphModel.Parse(xml);
             var second = SecondReading(xml, file);
 
-            // Not a disagreement. The reading refuses whole rather than coming back with holes in it
-            // when the class table cannot describe everything in the file, and saying so is the
-            // point: a file counted as agreeing because neither side read it would be the worst
-            // possible way to pass.
+
+
+
+
             if (second == null)
             {
                 unreadable++;
@@ -2748,13 +2748,13 @@ public static class Program
         return bad == 0 ? 0 : 1;
     }
 
-    /// What the tool does with each of the two readings, set beside each other.
-    ///
-    /// The model command says the readings hold the same values. This says the tool behaves the same
-    /// way on them: the same wires on the canvas, the same variables and events, the same findings
-    /// from the checker, the same rows in every state machine. If the fields agree these agree too,
-    /// which is exactly why it is worth running: it is what catches a field comparison that passed
-    /// for the wrong reason.
+
+
+
+
+
+
+
     private static int Consumers(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -2794,11 +2794,11 @@ public static class Program
                 continue;
             }
 
-            // What each event is used for, from the text and from the bytes. Not part of the model
-            // comparison because it is not read from the model: it is a walk of every place an index
-            // is written, including nesting the model does not carry, which is why it was the last
-            // thing here still needing Java. Compared here because this is where both readings of a
-            // file are already open.
+
+
+
+
+
             var told = Roles(EventUsage.ByEvent(xml));
             var read = Roles(EventUsage.ByEvent(objects));
             roleLines += Math.Max(told.Count, read.Count);
@@ -2838,17 +2838,17 @@ public static class Program
         return bad == 0 && roleDiffering == 0 ? 0 : 1;
     }
 
-    /// What order the two pointer tables are in, worked out from the classes and checked against
-    /// the file.
-    ///
-    /// The rule itself lives in FixupOrder, because writing has to reproduce it. This is what says
-    /// the rule is the file's own and not our idea of it.
-    /// Adds one object to a real file and checks what hkxpack makes of the result.
-    ///
-    /// The count is not the check. A count matches even when every object after an insertion point
-    /// shifted by one, which is exactly the failure worth catching, so this compares the class of
-    /// every number before and after and then asserts the new object is the last number rather than
-    /// somewhere in the middle.
+
+
+
+
+
+
+
+
+
+
+
     private static int Append(string[] argv)
     {
         if (argv.Length < 3) { Usage(); return 1; }
@@ -2857,8 +2857,8 @@ public static class Program
         string file = Path.GetFullPath(argv[1]);
         string className = argv[2];
 
-        // A save that changes nothing has to give back the same bytes, or nothing measured after an
-        // append can be attributed to the append.
+
+
         var original = File.ReadAllBytes(file);
         if (!PackfileImage.Read(original).Rebuild().SequenceEqual(original))
         {
@@ -2876,9 +2876,9 @@ public static class Program
         var added = NativeAppend.Object(image, className);
         Console.WriteLine($"appended {className} as {added}");
 
-        // Attaching is the half that makes it an edit rather than an orphan. Given a source object
-        // and one of its pointer fields, the new object is wired into the graph and the round trip
-        // below has to show hkxpack reading that field as the new number.
+
+
+
         string attachTo = argv.Length > 4 ? argv[4] : "";
         int attachFrom = argv.Length > 3 && int.TryParse(argv[3], out int f) ? f : -1;
 
@@ -2891,8 +2891,8 @@ public static class Program
         string written = Path.Combine(work, "appended.hkx");
         image.Save(written);
 
-        // Read back from disk rather than from the image in memory, so anything the rebuild gets
-        // wrong shows up here rather than being carried over.
+
+
         var reloaded = new PackfileObjects(PackfileImage.Read(written));
         Console.WriteLine($"reloaded from disk: {reloaded.Instances.Count} object(s), " +
                           $"last is {reloaded.Instances[^1].ClassName}");
@@ -2912,8 +2912,8 @@ public static class Program
 
         bool numbered = read.TryGetValue(added.Id, out string? newClass) && newClass == className;
 
-        // Read out of hkxpack's own text rather than out of our reading of the file, because the
-        // question is whether hkxpack sees the wire, not whether we do.
+
+
         bool wired = attachFrom < 0 || attachTo.Length == 0;
         if (!wired)
         {
@@ -2926,10 +2926,10 @@ public static class Program
                               $"expected #{added.Id}");
         }
 
-        // The editor's save path adds an object too, and it used to answer a class the file has
-        // never named by refusing while this path named it. There is one answer now, and this is
-        // what says so: the same addition made through NativeSave lands the same class name in the
-        // same section, on the file hkxpack just agreed about.
+
+
+
+
         string viaSave = Path.Combine(work, "via-save.hkx");
         File.WriteAllBytes(viaSave, original);
 
@@ -2939,9 +2939,9 @@ public static class Program
         var saved = PackfileImage.Read(NativeSave.Apply(viaSave, plan));
         var savedObjects = new PackfileObjects(saved);
 
-        // Both read back off their written bytes rather than one out of memory, because the name
-        // table is trimmed of its 0xFF filler while a name is being added and padded again on the
-        // way out, so an in memory section and a written one differ for a reason that is not this.
+
+
+
         bool agrees = savedObjects.Instances.Count == reloaded.Instances.Count &&
                       savedObjects.Instances[^1].ClassName == className &&
                       saved.Section("__classnames__")!.Data
@@ -2958,14 +2958,14 @@ public static class Program
         return moved == 0 && numbered && wired && agrees && read.Count == told.Count + 1 ? 0 : 1;
     }
 
-    /// Takes an object out of the graph without taking it out of the file, and checks what hkxpack
-    /// makes of the result.
-    ///
-    /// The check is not that the object is gone, because it is not meant to be. It is that nothing
-    /// reaches it any more, that it still holds the class it held, that every other number is
-    /// untouched, and that an array which held it got shorter rather than gaining a null. That last
-    /// one matters more than it looks: the engine reads a child's vtable without a null check, so a
-    /// null left in a children array is a crash on load.
+
+
+
+
+
+
+
+
     private static int Orphan(string[] argv)
     {
         if (argv.Length < 3) { Usage(); return 1; }
@@ -3006,8 +3006,8 @@ public static class Program
         int left = References(afterXml, id);
         bool present = read.ContainsKey(id) && read[id] == told.GetValueOrDefault(id);
 
-        // A null child is the thing that must not appear. Counted across the whole file rather than
-        // in the arrays that changed, because an orphan that pushes one anywhere is still a crash.
+
+
         int nullsBefore = Nulls(beforeXml), nullsAfter = Nulls(afterXml);
 
         Console.WriteLine($"\nhkxpack read {told.Count} object(s) before and {read.Count} after, " +
@@ -3019,21 +3019,21 @@ public static class Program
                && nullsAfter == nullsBefore ? 0 : 1;
     }
 
-    /// How many places in the text point at an object, not counting the line that declares it.
-    /// hkxpack writes the object's own id as its name attribute, and counting that as a reference
-    /// makes an orphan look like it is still reached from one place.
+
+
+
     private static int References(string xml, int id) =>
         System.Text.RegularExpressions.Regex.Matches(xml, $@"#{id}\b").Count
         - System.Text.RegularExpressions.Regex.Matches(xml, $@"name=""#{id}""").Count;
 
-    /// Null elements inside an array of object pointers, which is the shape the engine crashes on.
+
     private static int Nulls(string xml) =>
         System.Xml.Linq.XDocument.Parse(xml).Descendants("hkparam")
             .Where(p => p.Attribute("numelements") != null && !p.Elements().Any())
             .Sum(p => (p.Value ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
                                      .Count(t => t == "null"));
 
-    /// Every object hkxpack numbers, by number, with the class it holds.
+
     private static Dictionary<int, string> Numbered(string xml)
     {
         var found = new Dictionary<int, string>();
@@ -3078,12 +3078,12 @@ public static class Program
 
             bool ok = true;
 
-            // The object list is the virtual fixup table read in order, and an object's `#id` is its
-            // position in that list. Appending a new object puts its bytes at the end of the section
-            // and its entry at the end of this table, and that only gives the new object the last
-            // number if table order and file order are already the same thing. Measured rather than
-            // assumed, because everything downstream of an append rests on it: the per class index a
-            // change names, and the `#id` hkxpack will print.
+
+
+
+
+
+
             var offsets = data.Virtuals().Select(v => v.Source).ToList();
             virtuals += offsets.Count;
             for (int at = 1; at < offsets.Count; at++)
@@ -3121,13 +3121,13 @@ public static class Program
         return bad == 0 ? 0 : 1;
     }
 
-    /// Where every event and variable index is written, read out of the text and out of the bytes,
-    /// set beside each other.
-    ///
-    /// This is the last thing the symbols tab needed hkxpack for. The graph model cannot answer it,
-    /// because these indices sit deeper than the one level of nesting the model records, so the byte
-    /// side walks the class table rather than the model. Two different walks over two different
-    /// forms of the same file, which is what makes agreement worth anything.
+
+
+
+
+
+
+
     private static int Symbols(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -3181,9 +3181,9 @@ public static class Program
                     }
             }
 
-            // What the symbols tab actually draws under each event, not only the sites it is built
-            // from. The rows are the thing a person sees, so agreeing on the sites and disagreeing
-            // on the rows would still be a different tab.
+
+
+
             var rowsText = EventUsage.ByEvent(xml);
             var rowsBytes = EventUsage.ByEvent(objects);
             compared += rowsText.Sum(e => e.Value.Count);
@@ -3234,7 +3234,7 @@ public static class Program
     private static string Spell(SymbolIndexFixup.Usage u) =>
         $"#{u.ObjectId} {u.OwnerClass} {u.Owner}.{u.Member}={u.Index}";
 
-    /// Every event's roles as lines, so two readings of them can be set beside each other.
+
     private static List<string> Roles(Dictionary<int, List<EventUsage.Line>> byEvent)
     {
         var lines = new List<string>();
@@ -3245,10 +3245,10 @@ public static class Program
         return lines;
     }
 
-    /// The fields hkxpack reads at the wrong stride: an array whose elements are a struct aligned to
-    /// sixteen, which it sizes by rounding the last member up to eight. Three classes in the vanilla
-    /// corpus qualify, and the size we use comes from the game's own class registration rather than
-    /// from a rule about where members end.
+
+
+
+
     private static bool MisStrided(string owningClass, string field)
     {
         var types = HavokClassTypes.Shipped;
@@ -3259,8 +3259,8 @@ public static class Program
         return false;
     }
 
-    /// The reading being checked. One line, and it is the whole of what changes when the byte reader
-    /// takes over, which is why it is a method rather than sitting inline in the loop above.
+
+
     private static BehaviourGraphModel? SecondReading(string xml, string hkxPath) =>
         NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(hkxPath)));
 
@@ -3270,8 +3270,8 @@ public static class Program
 
         NeedHkxPack();
 
-        // A directory sweeps every file under it, the same way model, consumers, walk and panel do.
-        // It did not before, and pointing it at one made it try to unpack the directory itself.
+
+
         string target = Path.GetFullPath(argv[1]);
         if (Directory.Exists(target))
         {
@@ -3296,12 +3296,12 @@ public static class Program
         var document = System.Xml.Linq.XDocument.Load(xmlFile);
         var objects = new PackfileObjects(PackfileImage.Read(file));
 
-        // hkxpack names its objects `#90`, `#91` and so on in the order they sit in the file, which
-        // is the order the virtual fixups give us, so the two lists line up position for position.
-        // That is checked rather than assumed: if it does not hold, references are compared by the
-        // class they point at instead of by which object exactly, and the file says so.
-        // An id, not any name: an inline struct carries a name attribute too, and it holds the
-        // field it sits in rather than an id, so counting those makes 1,519 objects out of 906.
+
+
+
+
+
+
         var named = document.Descendants("hkobject")
                             .Where(e => e.Attribute("name")?.Value.StartsWith('#') == true).ToList();
         bool idsLineUp = named.Count == objects.Instances.Count &&
@@ -3371,17 +3371,17 @@ public static class Program
                     string? actual = Rendered(objects, ours[i], member, indexOf, expected);
                     if (actual == null)
                     {
-                        // Counted rather than passed over. A field type nobody reads is the reason
-                        // hkxpack is still needed to open a file, so it has to show up somewhere.
+
+
                         unread[member.Type] = unread.GetValueOrDefault(member.Type) + 1;
                         continue;
                     }
 
                     compared++;
-                    // An array of inline structs is compared by how many elements it has and no
-                    // further: the layout dump does not name the struct's own class, so there is
-                    // nothing to read the elements with. Counted separately rather than presented
-                    // as a field we can read.
+
+
+
+
                     if (member.Type == "array of struct") countedOnly++;
                     if (Same(actual, expected)) { agreed++; continue; }
                     if (disagreements.Count < 12)
@@ -3407,20 +3407,20 @@ public static class Program
         return compared > 0 && compared == agreed && disagreements.Count == 0 ? 0 : 1;
     }
 
-    /// How hkxpack writes a value, so the two sides can be compared as text. An element it renders
-    /// as a nest of objects is reduced to how many there are, which is the part of it we can read;
-    /// the count is still a real check, since it comes from the array's own header.
+
+
+
     private static string Canonical(System.Xml.Linq.XElement p, Func<string, string> reference)
     {
         string raw = p.Value ?? "";
         string text = raw.Trim();
 
-        // A single value is taken exactly as it stands, spaces and all. Trimming it looked like
-        // tidying and was throwing data away: four state machines and a layer generator in vanilla
-        // are named with a leading space, and one event payload ends in one. Measured before
-        // changing it, across 374,120 single valued fields in the unpacked corpus: six carry a
-        // space that matters and not one runs over more than a line, so there is nothing here that
-        // trimming would have been normalising.
+
+
+
+
+
+
         if (p.Attribute("numelements") == null)
             return raw.StartsWith('#') ? reference(raw) : raw;
 
@@ -3431,18 +3431,18 @@ public static class Program
         if (strings.Count > 0)
             return List(count, strings.Select(s => (s.Value ?? "").Trim()));
 
-        // An element that is itself several numbers is written in brackets, so the brackets are the
-        // element boundary. Splitting on whitespace instead turns one vector into four elements and
-        // reports a file that agrees as a file that does not.
+
+
+
         if (text.Contains('('))
         {
             var groups = System.Text.RegularExpressions.Regex.Matches(text, @"\([^)]*\)")
                              .Select(m => m.Value).ToList();
 
-            // hkxpack writes one bracket per vector, so an element that is more than one vector
-            // arrives as several: a transform is a translation, a rotation and a scale, three
-            // brackets for one element. Put back together per element, or a skeleton's 9 element
-            // reference pose reads as 27 elements and disagrees with itself.
+
+
+
+
             if (count > 0 && groups.Count > count && groups.Count % count == 0)
             {
                 int per = groups.Count / count;
@@ -3463,13 +3463,13 @@ public static class Program
     private static string List(int count, IEnumerable<string> tokens) =>
         $"[{count}: {string.Join("|", tokens)}]";
 
-    /// An empty array has nothing in it to describe, however unreadable its elements would be, so it
-    /// reads the same on both sides rather than as a count with a word after it.
+
+
     private static string List(int count, string what) => count == 0 ? "[0: ]" : $"[{count}: {what}]";
 
-    /// One renderer, not two. The window reads a field through `FieldRender`, so a check that used
-    /// its own copy of the same switch would be checking something nobody runs. This is the shim
-    /// that spells a reference the way the checker wants it and hands the rest over.
+
+
+
     private static string? Rendered(PackfileObjects objects, PackfileObjects.Instance instance,
                                     HavokClasses.Member member,
                                     Dictionary<PackfileObjects.Instance, int> indexOf,
@@ -3480,10 +3480,10 @@ public static class Program
             : target != null && indexOf.TryGetValue(target, out int at) ? "@" + at
             : "a pointer landing where no object begins";
 
-        // The checker walks a class's members from the dump; the renderer works from the table.
-        // Where a member is in both, the offsets agree, which is a thing 3,894 comparisons say and
-        // not an assumption. Where it is only in the dump there is nothing to render it with, and
-        // it is counted as unread rather than guessed at.
+
+
+
+
         var described = HavokClassTypes.Shipped.Members(instance.ClassName)
                                        .FirstOrDefault(m => m.Name == member.Name);
         if (described == null) return null;
@@ -3492,9 +3492,9 @@ public static class Program
                                   described, Reference, expected);
     }
 
-    /// hkxpack and a raw read spell the same value differently: 1 against 1.0, true against 1, and a
-    /// null pointer against an empty element. Comparing the text as typed would report every one of
-    /// those as a disagreement and drown the real ones.
+
+
+
     private static List<float> Numbers(string text) =>
         System.Text.RegularExpressions.Regex.Matches(text, @"-?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?")
             .Select(m => float.Parse(m.Value, System.Globalization.CultureInfo.InvariantCulture))
@@ -3508,21 +3508,21 @@ public static class Program
         if (float.TryParse(ours, out float a) && float.TryParse(theirs, out float b))
             return Math.Abs(a - b) <= 1e-6f * Math.Max(1f, Math.Abs(b));
 
-        // An enum, carried as its number and its name. hkxpack prints one or the other, so whichever
-        // it printed is what gets compared.
+
+
         int colon = ours.IndexOf(':');
         if (colon > 0 && long.TryParse(ours[..colon], out long number))
             return long.TryParse(theirs, out long theirNumber)
                 ? number == theirNumber
                 : ours[(colon + 1)..] == theirs;
 
-        // A list: same length, then the same values, compared as numbers when both sides are
-        // numbers. The two spell a float differently, so comparing the text would report every
-        // array of reals as a disagreement.
+
+
+
         if (ours.StartsWith('[') && theirs.StartsWith('['))
         {
-            // Trimmed: the space after the count belongs to the list, not to its first element, and
-            // left on it the first element of every list of vectors stops looking like a vector.
+
+
             var mine = ours[(ours.IndexOf(':') + 1)..^1]
                 .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var yours = theirs[(theirs.IndexOf(':') + 1)..^1]
@@ -3531,9 +3531,9 @@ public static class Program
             return mine.Length == yours.Length && mine.Zip(yours).All(p => Same(p.First, p.Second));
         }
 
-        // A vector is a list of numbers and the two sides spell them differently: 0 against 0.0,
-        // and hkxpack breaks a transform over several lines. Compared number by number, which is
-        // the only comparison that says anything about the bytes.
+
+
+
         if (ours.StartsWith('(') && theirs.Contains('.'))
         {
             var mine = Numbers(ours);
@@ -3547,32 +3547,32 @@ public static class Program
             return theirs.Equals(ours, StringComparison.OrdinalIgnoreCase) ||
                    theirs == (ours == "true" ? "1" : "0");
 
-        // No last chance rule that ignores whitespace. Both sides now carry a value's spaces as
-        // they are, so a difference in them is a difference in the data and has to be reported as
-        // one rather than trimmed until it agrees.
+
+
+
         return false;
     }
 
-    // What the object layer sees in a file: every object, its class, and the fields of whichever
-    // class is asked about. The second half is the one that matters, because reading a field out of
-    // the bytes is checkable against the same field in hkxpack's XML, and the two agreeing is what
-    // says the offsets are right rather than merely plausible.
-    // Lengthening an array of structs, carried out rather than planned.
-    //
-    // Bounding a variable is the edit that needs it: the bounds array is positional, so a bound on
-    // variable 83 means an array 84 long, and it is empty in 224 of the 531 vanilla behaviours. The
-    // file is written, read back through hkxpack, and set against what the edit asked for, because a
-    // plan that says it can be written proves nothing about what lands in the bytes.
+
+
+
+
+
+
+
+
+
+
     private static int Grow(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
 
-        // Java is what makes this worth proving twice. With a runtime the written file is read back
-        // through hkxpack, which is a second implementation and therefore the stronger check. Without
-        // one the whole edit still has to work, because lengthening an array is exactly the operation
-        // that used to send bounds through hkxpack, and the reason for doing it natively was to stop
-        // needing Java at all. So the read and the read back go through our own reader instead, and
-        // the run says which of the two it was.
+
+
+
+
+
+
         bool java = false;
         try { NeedHkxPack(); java = true; }
         catch (InvalidOperationException) { }
@@ -3642,9 +3642,9 @@ public static class Program
             }
             else reread = NativeXml.From(written);
 
-            // What the edit asked for, and nothing else. Every object hkxpack reads out of the
-            // written file is set against the same object in the text the edit produced, so a value
-            // that moved anywhere it was not asked to move shows up as a difference.
+
+
+
             var wanted = RepackCheck.Take(bounded);
             var got = RepackCheck.Take(reread);
 
@@ -3672,14 +3672,14 @@ public static class Program
         return wrong == 0 ? 0 : 1;
     }
 
-    /// One element of the bounds array as hkxpack wrote it, so a bound can be read back by position
-    /// rather than by hunting for the first one in the file.
+
+
     private static string BoundAt(string xml, int index)
     {
-        // Read through the document rather than off the text. A bound is two objects nested inside
-        // an element of an array, so the closing tag that ends the array is not the first one after
-        // it, and a reader that takes it as the first one reports an array of nothing however many
-        // bounds are really there.
+
+
+
+
         var array = System.Xml.Linq.XDocument.Parse(xml).Descendants("hkparam")
             .FirstOrDefault(p => p.Attribute("name")?.Value == "variableBounds");
         if (array == null) return "absent";
@@ -3696,43 +3696,43 @@ public static class Program
         return $"{Side("min")} to {Side("max")}";
     }
 
-    // Writing an animation out uncompressed, and reading it back to see whether it survived.
-    //
-    // The check is the whole point. A compressed clip is decoded, written out frame by frame, and
-    // decoded again from the file that was produced, and every frame of every track has to come back
-    // the same. Nothing else in the file may move: the same skeleton, the same bone names, the same
-    // annotations, the same duration.
-    //
-    // Tolerance is not zero on purpose. Both compressed formats decode through floating point, and
-    // the written file stores exactly what came out of that, so the two decodes agree exactly on
-    // everything except the rotation, which is normalised on the way in the way Havok normalises it.
-    // Blend weights and transition timing, over one file or the corpus.
-    //
-    // This is the part the weapon idle work asks for: how much of each animation a blender is
-    // actually playing, and what a transition looks like part way through rather than only at its
-    // ends. Neither can be read off a static graph.
-    //
-    // What it checks over the corpus is consistency, since there is no runtime to check against. A
-    // plain blender's resolved shares must sum to one, or be all zero when every child is switched
-    // off. A transition blend must start at nothing of the new state and reach all of it, and no
-    // sooner than its own duration. Anything it cannot resolve, a parametric blender driven by a
-    // variable or a child weight bound to one, is reported as driven and counted, not guessed.
-    // What trimming or retiming a clip would have to deal with, counted before any of it is built.
-    //
-    // Step one of #35's remaining half. The frame operation itself is the easy part; the save path is
-    // the part that cannot express either operation today, because `NativeAnimation.Recompress` takes
-    // a clip's duration from the original file rather than from the decoded data and copies the
-    // annotation run wholesale. Both are right for an in place frame edit, where neither changes, and
-    // wrong for a cut or a retime, where both do.
-    //
-    // So this counts the three populations that decide how much work that is: how many clips carry
-    // annotations that would have to move or be dropped, how many carry extracted motion, which is
-    // the root's travel held in a separate object and would desync from frames that were cut, and
-    // what the frame counts and durations actually look like.
-    //
-    // Counted here rather than by grepping `symrm frames`, which in sweep mode prints a per file
-    // summary only for the files it has a complaint about, so counting its output measures the
-    // problems and not the corpus.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int ClipTrim(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -3775,9 +3775,9 @@ public static class Program
             int floats = objects.ReadInt(animation, "numberOfFloatTracks") ?? 0;
             if (floats > 0) withFloatTracks++;
 
-            // Frames live on the concrete class rather than on hkaAnimation, and only the spline one
-            // names them directly, so a clip that is not spline compressed contributes no frame count
-            // rather than a made up one.
+
+
+
             int frames = objects.ReadInt(animation, "numFrames") ?? 0;
             if (frames > 0) frameCounts.Add(frames);
 
@@ -3786,10 +3786,10 @@ public static class Program
             {
                 withMotion++;
 
-                // Whether the root's travel is sampled once per animation frame decides how a cut
-                // treats it. One sample per frame means slicing the same index range as the frames.
-                // Anything else means resampling against time, which is a different and lossier job,
-                // so this is measured rather than assumed.
+
+
+
+
                 var samples = objects.ReadArray(motion, "referenceFrameSamples");
                 float motionDuration = objects.ReadFloat(motion, "duration") ?? 0;
 
@@ -3877,19 +3877,19 @@ public static class Program
         return 0;
     }
 
-    // What a clip's own length would buy the stepper, counted before any of it is built.
-    //
-    // The stepper leaves a state when an event moves it and never when the clip it is playing runs
-    // out. The mechanism that would change that is not a state machine field at all: a clip carries a
-    // trigger array, and a trigger at a point in the clip raises an event. A trigger marked
-    // `relativeToEndOfClip` is the one that says "when this animation finishes", and its absolute time
-    // cannot be worked out without the animation file, because the length lives there.
-    //
-    // So this counts three separate things, and they are worth telling apart before designing
-    // anything: how many clips carry a trigger at all, how many of those triggers need a length that
-    // is not in the behaviour, and how many of the events they raise are actually listened for by a
-    // transition in the same file. The last is the one that says whether closing this gap moves any
-    // answer the tool gives, rather than only adding a number to it.
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int ClipTime(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -3897,9 +3897,9 @@ public static class Program
         string target = Path.GetFullPath(argv[1]);
         var files = Directory.Exists(target)
             ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
-                       // The same filter the corpus itself is built with, so the file count here is
-                       // the corpus's 531 rather than a subset of it that happens to sit in a folder
-                       // called Behaviors.
+
+
+
                        .Where(f => f.Contains("behavior", StringComparison.OrdinalIgnoreCase))
                        .OrderBy(f => f, StringComparer.Ordinal).ToArray()
             : new[] { target };
@@ -3919,8 +3919,8 @@ public static class Program
         var perCharacterExamples = new List<string>();
         var listenedExamples = new List<string>();
 
-        // A chain is five files and resolving it reads three of them, so it is worked out once per
-        // project root rather than once per behaviour.
+
+
         var rootOf = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var lengths = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
         var reader = new HkxBinaryReader();
@@ -3997,10 +3997,10 @@ public static class Program
 
             }
 
-            // Running the clock on this file, which is the only way to see the feature do anything.
-            // Everything above counts what is written down; this checks that stepping it moves states
-            // and that it never steps somewhere the file's own reachability analysis rules out, which
-            // is the invariant the event driven half already holds itself to.
+
+
+
+
             var run = GraphRun.Start(model);
             if (run.RootId.Length == 0) continue;
 
@@ -4013,10 +4013,10 @@ public static class Program
 
             foreach (var clip in timed.Values)
             {
-                // A clip whose length could not be worked out must offer no triggers at all. This is
-                // the safety rule the whole feature rests on: a trigger measured back from an end
-                // nobody knows would fire at an invented moment, and 44 of the corpus's clips name an
-                // animation that is not on disk, so the rule is exercised rather than theoretical.
+
+
+
+
                 if (!clip.Known) untimedTriggers += clip.Triggers.Count;
 
                 foreach (var trigger in clip.Triggers)
@@ -4030,11 +4030,11 @@ public static class Program
                         continue;
                     }
 
-                    // A trigger written as relative to the end with nothing subtracted is the clip
-                    // finishing, so it has to land on the clip's own length. This is the one shape of
-                    // the end relative reading the corpus can check for itself, and it is worth
-                    // checking because reading those triggers as absolute times leaves every one of
-                    // them inside its clip and breaks no other rule here.
+
+
+
+
+
                     if (!trigger.RelativeToEnd) continue;
                     atEnd++;
                     if (Math.Abs(trigger.LocalTime) > 0.0001f) continue;
@@ -4056,17 +4056,17 @@ public static class Program
             var allowed = run.Reachable();
             int firedHere = 0;
 
-            // Ten seconds a tenth at a time, which is longer than all but a handful of the corpus's
-            // clips and fine enough that a trigger cannot be stepped over.
+
+
             for (int step = 0; step < 100; step++)
                 firedHere += run.Advance(0.1f).Count;
 
-            // Stepping from the start configuration alone barely touches this: a clip that ends a
-            // state can only do so while something is sitting in that state, and the states holding
-            // most of these clips are several events deep. So the graph is driven the way the
-            // conditions gate drives its variables, by sending each declared event and letting the
-            // clock run after it. The number that measures the reading is this one; the number from
-            // the start configuration measures only where the graph happens to begin.
+
+
+
+
+
+
             foreach (string name in run.Events)
             {
                 run.Send(name);
@@ -4086,19 +4086,19 @@ public static class Program
                 }
         }
 
-        // The length itself, which is the environmental half: it is in the animation file, and that
-        // file is found through the project root rather than beside the behaviour. Every clip goes
-        // through this, not only the ones carrying a trigger, or the denominator is the wrong
-        // population and the resolution rate reads better than it is.
+
+
+
+
         void ResolveLength(string file, string root, string animation)
         {
             if (animation.Length == 0) return;
 
-            // A behaviour with no project file above it has no root to resolve against. That is not a
-            // broken file: `Meshes\Actors\Shared` and `Meshes\GenericBehaviors` hold behaviours that
-            // several characters run, and the animations they name belong to whichever character is
-            // running them. Counted rather than skipped, because it is the population the phrase
-            // "per character" in the ticket is about.
+
+
+
+
+
             if (string.IsNullOrEmpty(root)) { rootless++; return; }
 
             string path = ProjectChain.ResolvePath(root, animation);
@@ -4109,16 +4109,16 @@ public static class Program
                 return;
             }
 
-            // The path a clip names is not always a file. Dogmeat's character declares
-            // `Animations\WalkForward_B.hkt`, nothing of that name is on disk, and two files of that
-            // name sit in `Animations\Default\Neutral` and `Animations\Default\Sneak`. Those folders
-            // are variants the game swaps between while it runs, so the clip names a base and the
-            // running character decides which copy plays.
-            //
-            // That matters here only if the copies differ in length, so this counts the candidates and
-            // whether their durations agree. Where they agree the length is knowable without knowing
-            // the variant; where they do not, the honest answer is a range or a refusal rather than
-            // whichever copy was found first.
+
+
+
+
+
+
+
+
+
+
             var candidates = Variants(root, animation);
             if (candidates.Count == 0)
             {
@@ -4189,19 +4189,19 @@ public static class Program
         return outOfRange + impossible + endMisplaced + untimedTriggers == 0 ? 0 : 1;
     }
 
-    /// A playback mode's name, so a count reads as a mode rather than as a number.
+
     private static string ModeName(int mode) =>
         HavokClassTypes.Shipped.Enum("hkbClipGenerator", "PlaybackMode")
                        ?.FirstOrDefault(v => v.Value == mode).Key ?? $"mode {mode}";
 
-    /// Every file under the project that could be the animation a clip names, when the name itself is
-    /// not a file.
-    ///
-    /// Matched on the leaf name under the folder the clip points into, which is what the variant
-    /// folders differ in: `Animations\WalkForward_B.hkt` against
-    /// `Animations\Default\Neutral\WalkForward_B.hkx`. This is a measurement of how many copies exist
-    /// and whether they agree, not a rule for picking one. Picking one would be a guess about which
-    /// variant the character is in, and that is a runtime fact this tool does not have.
+
+
+
+
+
+
+
+
     private static List<string> Variants(string root, string animation)
     {
         string cleaned = animation.Replace('\\', Path.DirectorySeparatorChar)
@@ -4218,7 +4218,7 @@ public static class Program
         catch (Exception) { return new List<string>(); }
     }
 
-    /// An animation's length, read once per file. Zero means it did not decode.
+
     private static float Length(HkxBinaryReader reader, Dictionary<string, float> cache, string path)
     {
         if (cache.TryGetValue(path, out float seconds)) return seconds;
@@ -4260,8 +4260,8 @@ public static class Program
                 }
                 drivenChildren += blend.Children.Count(c => c.WeightDriven);
 
-                // A resolved mix has to add up. The only way out is every child switched off, which
-                // is a real state and sums to zero rather than one.
+
+
                 if (blend.Mode == BlendWeights.Mode.Mix)
                 {
                     float sum = blend.Children.Where(c => !c.WeightDriven).Sum(c => c.Contribution);
@@ -4275,7 +4275,7 @@ public static class Program
                 }
             }
 
-            // Every transition's blend, walked from nothing to all of the new state.
+
             var run = GraphRun.Start(model);
             foreach (var route in StateRoutes.Of(model).Routes)
             {
@@ -4285,9 +4285,9 @@ public static class Program
             }
         }
 
-        // The blend curve itself, checked on a made up transition so it does not depend on a file: at
-        // the start the new state holds nothing, at the end all of it, and halfway a fraction in
-        // between, never past its ends.
+
+
+
         if (!BlendRamps(out string why))
         {
             badBlend++;
@@ -4308,9 +4308,9 @@ public static class Program
 
     private static float TransitionSeconds(BehaviourGraphModel model, StateRoutes.Route route)
     {
-        // Reads the effect the same way GraphRun does, off the transition row. Kept here as a small
-        // reimplementation rather than exposed from GraphRun, because it is one field lookup and
-        // widening the run's surface for a measurement is the wrong trade.
+
+
+
         var machine = model.Get(route.MachineId);
         string arrayId = route.Wildcard
             ? machine?.Ref("wildcardTransitions") ?? ""
@@ -4331,7 +4331,7 @@ public static class Program
         return 0;
     }
 
-    /// The transition blend, on a two state machine built in memory so it needs no file.
+
     private static bool BlendRamps(out string why)
     {
         why = "";
@@ -4341,19 +4341,19 @@ public static class Program
         string startState = run.Where().First().StateId;
         run.Send("Go");
 
-        // At the instant it fires, the new state holds nothing and the old one holds all of it.
+
         var atStart = run.Where();
         var incoming = atStart.FirstOrDefault(a => !a.Fading);
         var outgoing = atStart.FirstOrDefault(a => a.Fading);
         if (incoming == null || outgoing == null) { why = "a transition with a duration did not blend two states"; return false; }
         if (incoming.Weight > 0.01f) { why = $"the new state started at {incoming.Weight:F2} rather than nothing"; return false; }
 
-        run.Advance(0.25f);   // half of the fixture's 0.5s duration
+        run.Advance(0.25f);
         var half = run.Where();
         float mid = half.First(a => !a.Fading).Weight;
         if (mid < 0.4f || mid > 0.6f) { why = $"halfway the new state was {mid:F2} rather than about half"; return false; }
 
-        run.Advance(0.5f);    // past the end
+        run.Advance(0.5f);
         var done = run.Where();
         if (done.Count != 1) { why = "the blend did not finish after its duration"; return false; }
         if (done[0].Weight < 0.999f) { why = $"the settled state held {done[0].Weight:F2} rather than all of it"; return false; }
@@ -4379,17 +4379,17 @@ public static class Program
         return 0;
     }
 
-    // Stepping the graph, over one file or over the corpus.
-    //
-    // There is no reference implementation to check this against: Havok never shipped the behaviour
-    // product's source. So the check is vanilla itself, and it is a check of self consistency rather
-    // than of correctness. Over the corpus it reports three things that would each be a fault if they
-    // came out wrong, and prints them rather than asserting a number nobody has justified.
-    //
-    // The one thing it does assert is the comparison against the validator's own reachability rule.
-    // That rule works one machine at a time; the run crosses machine boundaries and follows a reached
-    // state into what it holds. So the run must reach a superset of what the validator reaches, on
-    // every file. A file where the run reaches less is a fault in the run, and it exits non-zero.
+
+
+
+
+
+
+
+
+
+
+
     private static int Run(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -4437,17 +4437,17 @@ public static class Program
                     noGraphObject++;
             }
 
-            // The comparison against the validator's own reachability rule.
-            //
-            // The two do not answer the same question and the difference is the interesting part. The
-            // validator works one machine at a time and assumes every machine in the file is running,
-            // so it reaches states inside machines nothing ever enters. The run starts at the graph's
-            // root and only counts a machine once something reaches it, and in exchange it crosses
-            // machine boundaries, which the validator cannot.
-            //
-            // So the assertion is the part where they do answer the same question: inside a machine
-            // the run actually entered, the run applies the validator's rule and more, so it must
-            // reach at least as much. A file where it does not is a fault in the run.
+
+
+
+
+
+
+
+
+
+
+
             var validatorSays = ValidatorReaches(model);
             var entered = reach.Reachable
                 .Select(id => model.Get(id))
@@ -4456,12 +4456,12 @@ public static class Program
                 .Where(m => m.Length > 0)
                 .ToHashSet(StringComparer.Ordinal);
 
-            // Stepping has to agree with the analysis.
-            //
-            // Reachable() works out where the graph can get to without ever moving it. Send() actually
-            // moves it. They are separate code and they can disagree, and the direction that matters
-            // is a step landing somewhere the analysis says is impossible: that is either the analysis
-            // being too narrow or the stepper going somewhere it should not, and both are faults.
+
+
+
+
+
+
             var stepped = StepEverywhere(model, out int heldBack, out int weighed);
             blockedByCondition += heldBack;
             conditionsWeighed += weighed;
@@ -4517,12 +4517,12 @@ public static class Program
         return narrower + walkedOff == 0 ? 0 : 1;
     }
 
-    /// Every state a run actually lands in, by sending each declared event in turn until nothing new
-    /// happens.
-    ///
-    /// Deliberately not a search over every ordering. The point is to move the graph for real and see
-    /// where it ends up, not to enumerate; a fixed number of sweeps over the event list reaches a
-    /// settled set on every file in the corpus and keeps the whole gate under two seconds.
+
+
+
+
+
+
     private static HashSet<string> StepEverywhere(BehaviourGraphModel model, out int heldBack,
                                                   out int weighed)
     {
@@ -4551,7 +4551,7 @@ public static class Program
         return landed;
     }
 
-    /// The machine a state info object belongs to, by asking which machine lists it.
+
     private static readonly Dictionary<BehaviourGraphModel, Dictionary<string, string>> _machineOf = new();
 
     private static string MachineOf(BehaviourGraphModel model, string stateId)
@@ -4567,11 +4567,11 @@ public static class Program
         return map.TryGetValue(stateId, out var found) ? found : "";
     }
 
-    /// What GraphValidator's reachability rule reaches, as state object ids, one machine at a time.
-    ///
-    /// Reimplemented here rather than exported from the validator, because the validator reports
-    /// what it cannot reach and this needs what it can. Kept deliberately identical in rule: start
-    /// state, then any transition whose from state is reached, wildcards always live.
+
+
+
+
+
     private static HashSet<string> ValidatorReaches(BehaviourGraphModel model)
     {
         var reached = new HashSet<string>(StringComparer.Ordinal);
@@ -4604,7 +4604,7 @@ public static class Program
         return reached;
     }
 
-    /// One file, optionally with a list of events to send.
+
     private static int RunOne(string file, string[] events)
     {
         PackfileObjects objects;
@@ -4620,9 +4620,9 @@ public static class Program
         var run = GraphRun.Start(model);
         if (run.RootId.Length == 0) { Console.WriteLine("this file has no generator to start from"); return 1; }
 
-        // The clip lengths, read out of the animation files the project around this behaviour points
-        // at. Handed over before anything is stepped, so a clip reaching its own end can raise what it
-        // carries from the first step rather than from the second.
+
+
+
         var timed = ClipTiming.All(objects, SymbolEditor.EventNames(model), ClipTiming.FromDisk(file));
         run.Time(timed);
 
@@ -4639,8 +4639,8 @@ public static class Program
 
         foreach (string name in events)
         {
-            // A step is written as a number of seconds rather than as an event name, so one command
-            // line can say "send this, then let a second pass, then send that".
+
+
             if (float.TryParse(name, out float seconds) && seconds > 0)
             {
                 var byTime = run.Advance(seconds);
@@ -4677,17 +4677,17 @@ public static class Program
         return 0;
     }
 
-    // Editing a frame and saving it, the whole way the window does.
-    //
-    // The window lets a person pick a frame, change a bone's position, and save. That is three things
-    // in a row and the last of them, the save, re-encodes the whole clip. So the question this answers
-    // is the one the feature lives or dies on: after all that, does the frame that was changed come
-    // back changed, and does every frame that was not stay where it was.
-    //
-    // It edits a bone's translation because that is the plainest edit and the one most likely to catch
-    // a fault: a channel a vanilla clip left undriven has to become a curve the moment a single frame
-    // of it differs, which is exactly the case a naive encoder drops. The edit is a value no vanilla
-    // frame holds, so a frame that comes back near it came back because of the edit and not by luck.
+
+
+
+
+
+
+
+
+
+
+
     private static int EditFrame(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -4701,8 +4701,8 @@ public static class Program
         if (everyNth > 1) Console.WriteLine($"every {everyNth}th file");
 
         var edit = new System.Numerics.Vector3(11.5f, -22.25f, 33.75f);
-        const float keptLimit = 0.1f;      // the edited frame has to come back within this
-        const float elsewhereLimit = 0.1f; // and no other frame may move by more than this
+        const float keptLimit = 0.1f;
+        const float elsewhereLimit = 0.1f;
 
         string work = Path.Combine(Path.GetTempPath(), "symrm-editframe");
         Directory.CreateDirectory(work);
@@ -4731,8 +4731,8 @@ public static class Program
             done++;
             int track = 0, frame = before.NumFrames / 2;
 
-            // The frames as they were, to measure what the edit disturbed. A copy, because the edit
-            // and the re-encode both run over the same lists.
+
+
             var wasTranslations = before.Tracks[track].Translations.ToList();
             before.Tracks[track].Translations[frame] = edit;
 
@@ -4756,8 +4756,8 @@ public static class Program
             float keptDrift = (after.Tracks[track].Translations[frame] - edit).Length();
             if (keptDrift > worstKept) { worstKept = keptDrift; worstKeptFile = Path.GetFileName(file); }
 
-            // Every other frame of that channel, against where it was. Editing one frame must not drag
-            // its neighbours, which a curve fitted too loosely would.
+
+
             float elsewhere = 0;
             for (int fr = 0; fr < before.NumFrames && fr < after.Tracks[track].Translations.Count; fr++)
             {
@@ -4790,27 +4790,27 @@ public static class Program
         return lost + disturbed + refused == 0 ? 0 : 1;
     }
 
-    // Cutting a span out of a clip, saving it, and reading back everything the cut had to keep in
-    // step. The gate for #35's trim.
-    //
-    // A trim touches four things that all measure the same timeline and only one of them is the
-    // frames. So checking that the frames came back is checking a quarter of it, and the other three
-    // quarters are where a trim goes wrong in a way that still loads: a header still claiming the old
-    // length plays the kept frames slowly, an annotation left at its old time fires at the wrong
-    // moment or past the end, and a travel object still sampled over the old frames walks the
-    // character somewhere the animation no longer goes.
-    //
-    // Every clip is cut the same way, to its middle half, because that is the cut that exercises all
-    // of it at once: frames go from both ends, so annotations are dropped from both ends and every
-    // surviving one has to move, and the travel is sliced rather than truncated.
-    //
-    // The kept frames are compared against the frames they came from, so the only error allowed is
-    // the encoder's, and the limits are the ones `savespline` already holds the codec to rather than
-    // looser ones chosen to let this pass.
-    //
-    // The output is a break matrix rather than a pass count: every check against how many clips it
-    // held for and how many it did not, so a change that fixes the frames and breaks the annotations
-    // reads as that rather than as a number going down.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int Trim(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -4824,8 +4824,8 @@ public static class Program
         int everyNth = argv.Length > 2 && int.TryParse(argv[2], out int n) && n > 0 ? n : 1;
         if (everyNth > 1) Console.WriteLine($"every {everyNth}th file");
 
-        // The same limits `savespline` holds the codec to. A trim adds no error of its own, so
-        // anything past these is the trim rather than the encoder.
+
+
         const float positionLimit = 0.05f;
         const float rotationLimit = 0.01f;
 
@@ -4835,8 +4835,8 @@ public static class Program
         var reader = new HkxBinaryReader();
         int done = 0, skipped = 0, refused = 0, threw = 0, unreadable = 0;
 
-        // The break matrix. Every check is counted both ways rather than only when it fails, so a
-        // check that stopped running at all shows up as a row that stopped counting.
+
+
         var held = new Dictionary<string, int>();
         var broke = new Dictionary<string, int>();
         var firstBreak = new Dictionary<string, string>();
@@ -4861,9 +4861,9 @@ public static class Program
         string worstPosFile = "", worstRotFile = "";
         long before = 0, after = 0;
 
-        // Whether the shipped clips really do all start their travel at the origin, which is the
-        // invariant a cut's rebasing is written to keep. Counted here rather than asserted, because
-        // if it is not true of the corpus then rebasing is the wrong rule and not a detail.
+
+
+
         int motionSeen = 0, motionAtOrigin = 0;
 
         for (int i = 0; i < files.Length; i++)
@@ -4938,8 +4938,8 @@ public static class Program
             Check("frame duration", MathF.Abs(now.FrameDuration - was.FrameDuration) <= 1e-5f, file,
                   $"{now.FrameDuration:F6} against {was.FrameDuration:F6}");
 
-            // Pose for pose against the frames the cut kept, not against the whole clip: frame f of
-            // the result is frame first + f of the original and has to be that frame.
+
+
             float pos = 0, rot = 0;
             int comparable = Math.Min(kept, now.NumFrames);
             for (int t = 0; t < was.Tracks.Count && t < now.Tracks.Count; t++)
@@ -4962,10 +4962,10 @@ public static class Program
             Check("annotations kept", now.Annotations.Count == cut.Animation.Annotations.Count, file,
                   $"{now.Annotations.Count} annotation(s) against the {cut.Animation.Annotations.Count} the cut kept");
 
-            // The times alone are not the annotation. A run copied off the old object and sharing
-            // the old object's text loses the text when the old object goes, and the count and the
-            // times both survive that, so a check on either would have said the annotations were
-            // fine while every one of them came back blank.
+
+
+
+
             var texts = cut.Animation.Annotations.Select(a => a.Text).OrderBy(t => t, StringComparer.Ordinal);
             var back = now.Annotations.Select(a => a.Text).OrderBy(t => t, StringComparer.Ordinal);
             Check("annotations keep their text", texts.SequenceEqual(back, StringComparer.Ordinal), file,
@@ -4981,8 +4981,8 @@ public static class Program
 
             if (!motion.Any) continue;
 
-            // The rule the corpus was measured against: one sample per frame is sliced to one sample
-            // per kept frame, and a two sample frame is linear across the clip and stays two samples.
+
+
             int wanted = motion.Samples.Count == was.NumFrames ? kept
                        : motion.Samples.Count == 2 ? 2
                        : kept;
@@ -5000,8 +5000,8 @@ public static class Program
             Check("motion starts at the origin", started, file,
                   nowMotion.Samples.Count > 0 ? $"starts at {nowMotion.Samples[0]}" : "has no samples");
 
-            // One file at a time is somebody looking at a particular clip rather than sweeping, so
-            // it gets the values themselves instead of only whether they held.
+
+
             if (files.Length > 1) continue;
 
             Console.WriteLine($"{Path.GetFileName(file)}: frames {first} to {last} kept");
@@ -5046,27 +5046,27 @@ public static class Program
         return broke.Values.Sum() + threw + unreadable + refused == 0 ? 0 : 1;
     }
 
-    // Making a clip longer and shorter, saving it, and reading back everything that had to follow.
-    // The gate for #35's retime.
-    //
-    // A retime is the same four things a cut is, moved rather than sliced, plus one a cut does not
-    // have: error. A cut keeps whole frames, so the only error in it is the encoder's. A retime at a
-    // fixed frame rate reads between the frames that were there, and when it makes a clip shorter it
-    // throws frames away, which is information loss and not rounding. So the question this answers
-    // is not only whether a retimed clip is consistent with itself. It is how far the retimed clip is
-    // from the clip it came from, measured at the moments the original had frames at, which is what
-    // the error budget in `AnimationEdit.Budget` has to be set from rather than chosen.
-    //
-    // Three passes, because they fail differently:
-    //
-    //   twice as long        more frames read between the ones that were there. Every original frame
-    //                        lands on a new frame exactly, so this should cost nothing but the
-    //                        encoder, and a number here that is not tiny means the resampling is
-    //                        wrong rather than lossy.
-    //   half as long         half the frames, so the ones between them are gone for good. This is the
-    //                        pass the budget is measured from.
-    //   twice, same frames   the frames untouched and each shown for twice as long. Exact by
-    //                        construction, so it is checked pose for pose against the original.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int Retime(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -5119,8 +5119,8 @@ public static class Program
         var refusals = new SortedDictionary<string, int>(StringComparer.Ordinal);
         int done = 0, skipped = 0, refused = 0, threw = 0, unreadable = 0;
 
-        // What the resampling costs, kept per pass so the lossy direction can be told from the one
-        // that should cost nothing. These are the numbers the budget is set from.
+
+
         var cost = passes.ToDictionary(p => p.Name, _ => new List<(float Position, float Rotation)>());
         var overBudget = passes.ToDictionary(p => p.Name, _ => 0);
 
@@ -5148,8 +5148,8 @@ public static class Program
             {
                 AnimationEdit.Retimed made;
 
-                // Measured without a budget on purpose. Refusing here would leave the very clips the
-                // budget is meant to describe out of the measurement it is set from.
+
+
                 try { made = AnimationEdit.Retime(was, motion, scale, keepRate); }
                 catch (InvalidOperationException e)
                 {
@@ -5210,9 +5210,9 @@ public static class Program
                       wanted.SequenceEqual(back, StringComparer.Ordinal), file,
                       $"came back as [{string.Join(", ", back)}] against [{string.Join(", ", wanted)}]");
 
-                // The times as well as the count and the text. A retime that left every annotation
-                // where it was would pass both of those and fire every one of them at the wrong
-                // moment, which is the whole failure a retime has that a cut does not.
+
+
+
                 var wantTimes = made.Animation.Annotations.Select(a => a.Time).OrderBy(t => t).ToList();
                 var haveTimes = now.Annotations.Select(a => a.Time).OrderBy(t => t).ToList();
                 float moved = wantTimes.Count == haveTimes.Count && wantTimes.Count > 0
@@ -5240,17 +5240,17 @@ public static class Program
                           $"the travel says {nowMotion.Duration:F4}s and the clip says " +
                           $"{made.Animation.Duration:F4}s");
 
-                    // A clip played slower goes exactly as far, it just takes longer about it. A
-                    // retime that scaled the samples as well as the duration would move the
-                    // character twice as far, which nothing else here would catch.
+
+
+
                     float went = motion.Travel.Length(), goes = nowMotion.Travel.Length();
                     Check(name, "travels the same distance",
                           MathF.Abs(went - goes) <= MathF.Max(0.5f, went * 0.02f), file,
                           $"travelled {went:F2} units and now travels {goes:F2}");
                 }
 
-                // Only the pass that resamples nothing can be asked this, and it is the pass where
-                // the answer has to be yes: the frames were not touched, so they have to come back.
+
+
                 if (keepRate) continue;
 
                 float pos = 0, rot = 0;
@@ -5330,11 +5330,11 @@ public static class Program
         return broke.Values.Sum() + threw + unreadable + refused == 0 ? 0 : 1;
     }
 
-    /// A value at a fraction of the way through a sorted list.
+
     private static float At(List<float> sorted, float fraction) =>
         sorted.Count == 0 ? 0 : sorted[Math.Clamp((int)(fraction * (sorted.Count - 1)), 0, sorted.Count - 1)];
 
-    /// The first sentence of a message, so counting reasons counts reasons rather than file names.
+
     private static string Head(string message)
     {
         int stop = message.IndexOf(". ", StringComparison.Ordinal);
@@ -5342,16 +5342,16 @@ public static class Program
         return head.Length > 140 ? head[..140] : head;
     }
 
-    // The same trip as `spline`, but through a real file rather than a blob held in memory.
-    //
-    // `spline` proves the codec. This proves the file: the animation is written into the packfile as
-    // a new object, the file is rebuilt, and it is read back with the ordinary reader that knows
-    // nothing about any of this. Everything between the two is the part `spline` cannot see, which is
-    // the object's header fields, its four arrays, the blob's own run, and every pointer in the file
-    // that named the animation being aimed at the new one.
-    //
-    // A file that comes back with the right frames but the wrong duration still plays wrongly, so the
-    // header is compared too rather than only the motion.
+
+
+
+
+
+
+
+
+
+
     private static int SaveSpline(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -5436,9 +5436,9 @@ public static class Program
             if (now.Annotations.Count != was.Annotations.Count)
                 wrong.Add($"{now.Annotations.Count} annotations against {was.Annotations.Count}");
 
-            // The text as well as the count, because they fail separately. A save that copies the
-            // annotations off the object it is replacing and shares that object's text loses every
-            // one of them when the replaced object is dropped, and the count survives it intact.
+
+
+
             else if (!was.Annotations.Select(a => a.Text).OrderBy(t => t, StringComparer.Ordinal)
                         .SequenceEqual(now.Annotations.Select(a => a.Text)
                         .OrderBy(t => t, StringComparer.Ordinal), StringComparer.Ordinal))
@@ -5493,20 +5493,20 @@ public static class Program
         return bad + refused == 0 ? 0 : 1;
     }
 
-    // The spline codec, measured on every animation the game ships.
-    //
-    // Take a vanilla clip, decode it, encode those frames again, decode the result, and compare the
-    // two sets of frames. That is the whole gate, and what it proves is bounded: it says the encoder
-    // and the decoder agree about a format, and that the motion survives the trip within a stated
-    // distance. It does not say the engine will accept the file, which is #19 and needs a Windows
-    // machine.
-    //
-    // What it does rule out is the failure that matters most here, which is a blob that decodes to
-    // something plausible rather than to what went in. A wrong stride or a missed pad does not throw;
-    // it shifts a run and comes back as a different pose, and only comparing values catches that.
-    //
-    // The comparison is per bone rather than averaged. A mean over a hundred bones hides one bone
-    // being wrong, and one bone being wrong is a broken animation.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int Spline(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -5519,10 +5519,10 @@ public static class Program
         int everyNth = argv.Length > 2 && int.TryParse(argv[2], out int n) && n > 0 ? n : 1;
         if (everyNth > 1) Console.WriteLine($"every {everyNth}th file");
 
-        // The limits the gate holds the codec to. Position is in Havok units, where a human is about
-        // 115 tall, and rotation is in radians. Both are far below anything that could be seen, and
-        // they are stated here rather than buried in the encoder so a run that loosens them is a
-        // visible change to the gate rather than a quiet change to a default.
+
+
+
+
         const float positionLimit = 0.05f;
         const float rotationLimit = 0.01f;
         const float scaleLimit = 0.01f;
@@ -5607,9 +5607,9 @@ public static class Program
             if (fileRot > worstRot) { worstRot = fileRot; worstRotFile = Path.GetFileName(file); }
             if (fileScale > worstScale) { worstScale = fileScale; worstScaleFile = Path.GetFileName(file); }
 
-            // The size comparison is the point of the whole issue, so it is measured rather than
-            // claimed. The original is the blob the game shipped, not the file around it, because
-            // everything else in the file is unchanged by this.
+
+
+
             originalBytes += OriginalBlobSize(file);
             writtenBytes += blob.Data.Length;
 
@@ -5639,7 +5639,7 @@ public static class Program
         return bad + refused == 0 ? 0 : 1;
     }
 
-    /// The size of the blob a file already carries, for comparing against what the encoder produces.
+
     private static long OriginalBlobSize(string file)
     {
         try
@@ -5656,17 +5656,17 @@ public static class Program
         return 0;
     }
 
-    // What the game's own compressor chose, counted across every animation it shipped.
-    //
-    // An encoder has a lot of free choices: how many frames go in a block, how finely to quantise,
-    // what degree of curve to fit. Every one of them is a guess unless the shipped files are counted,
-    // and the shipped files are the only statement available about what the engine is known to
-    // accept, since nothing here can ask the engine directly.
-    //
-    // The masks are read straight off the front of each block, where they need no walk. The degree is
-    // read only where it can be located without one, which is a block whose first track opens with a
-    // position spline: that puts the degree byte immediately after the masks. That is a subset of
-    // blocks rather than all of them, and it is reported as a count so it cannot be mistaken for all.
+
+
+
+
+
+
+
+
+
+
+
     private static int SplineStats(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -5723,8 +5723,8 @@ public static class Program
                 framesTotal += numFrames;
                 blockSizes[perBlock] = blockSizes.GetValueOrDefault(perBlock) + 1;
 
-                // Stated as a formula rather than a number: the interesting thing is whether it is
-                // ever anything other than four bytes a track, not what it comes to on one file.
+
+
                 string shape = maskSize == 4 * numTracks ? "4 per track"
                              : maskSize == SplineFormat.Align(4 * numTracks, 16) ? "4 per track, rounded to 16"
                              : $"other ({maskSize} for {numTracks})";
@@ -5750,8 +5750,8 @@ public static class Program
                         scaleFlags[s] = scaleFlags.GetValueOrDefault(s) + 1;
                     }
 
-                    // Only where it needs no walk to find, which is a block opening on a position
-                    // spline: the count and degree sit right after the last mask.
+
+
                     byte first = data.Data[blockStart + 1];
                     bool opensOnPosSpline = (first & 0x70) != 0;
                     int degreeAt = blockStart + maskSize + 2;
@@ -5796,13 +5796,13 @@ public static class Program
         return 0;
     }
 
-    // One number for what the whole corpus decodes to.
-    //
-    // The evaluator that turns control points into frames is shared by the reader and the encoder, so
-    // a change meant for one silently reaches the other. Nothing else here would notice: an encoder
-    // fitted with a changed curve and read back with the same changed curve agrees with itself
-    // perfectly while every vanilla file quietly decodes to something new. This is the number that
-    // does notice, and it is meant to be compared across a change rather than read on its own.
+
+
+
+
+
+
+
     private static string DecodeFingerprint(IEnumerable<string> files)
     {
         var reader = new HkxBinaryReader();
@@ -5812,9 +5812,9 @@ public static class Program
 
         void Feed(float v)
         {
-            // Rounded before hashing, because the last bit of a float moves with the order the
-            // compiler happens to fold a sum in and the question here is whether the frames moved,
-            // not whether the arithmetic is bit for bit the same.
+
+
+
             int q = (int)MathF.Round(v * 4096f);
             for (int b = 0; b < 4; b++)
             {
@@ -5857,9 +5857,9 @@ public static class Program
         string work = Path.Combine(Path.GetTempPath(), "symrm-interleave");
         Directory.CreateDirectory(work);
 
-        // hkxpack is a second implementation, so a file it reads is a file whose layout is not just
-        // ours read back by ourselves. It is not required: without Java the round trip through our
-        // own reader still says whether the frames survived.
+
+
+
         bool java = false;
         try { NeedHkxPack(); java = true; }
         catch (InvalidOperationException) { }
@@ -5905,7 +5905,7 @@ public static class Program
                 continue;
             }
 
-            // Every frame of every track, both ways.
+
             float worstT = 0, worstR = 0, worstS = 0;
             int compared = 0;
             string mismatch = "", worstWhere = "";
@@ -5966,9 +5966,9 @@ public static class Program
                                                                    Math.Abs(p.First.Time - p.Second.Time) < 1e-6f);
             bool sameDuration = Math.Abs(before.Duration - after.Duration) < 1e-6f;
 
-            // A hundredth of a degree, and a thousandth of a unit on a body measured in tens of
-            // units. Anything real is orders of magnitude above this; float rounding is orders
-            // below.
+
+
+
             const float Place = 0.001f, Degree = 0.01f;
             bool right = mismatch.Length == 0 && worstT < Place && worstS < Place && worstR < Degree &&
                          sameNames && sameAnnotations && sameDuration && secondAgrees;
@@ -5984,10 +5984,10 @@ public static class Program
             Console.WriteLine($"  file grew by {written.Grew} bytes");
             if (!right && worstWhere.Length > 0) Console.WriteLine("  worst rotation at " + worstWhere);
 
-            // Writing a clip back unchanged is the machinery, not the point. The point is changing
-            // one, so one frame of one track is moved by a known amount and the file is asked
-            // whether that is what happened: the nudged frame moved by exactly that, and nothing
-            // else moved at all.
+
+
+
+
             if (right) right = Nudged(reader, file, before, work, ref mismatch);
 
             Console.WriteLine("  " + (right ? "GOOD" : "WRONG"));
@@ -5999,20 +5999,20 @@ public static class Program
         return wrong == 0 ? 0 : 1;
     }
 
-    /// Moves one frame of one track and checks that the file says so.
-    ///
-    /// A clip that survives being written out unchanged proves the format was written correctly and
-    /// nothing about editing. This changes one number by an amount no animation would produce on its
-    /// own, writes it, reads it back, and requires two things: the frame that was moved moved by
-    /// exactly that, and every other frame of every other track did not move at all.
+
+
+
+
+
+
     private static bool Nudged(HkxBinaryReader reader, string file, HkxAnimationData before,
                                string work, ref string why)
     {
         var by = new System.Numerics.Vector3(1.5f, -2.25f, 0.75f);
         int track = before.NumTracks / 2, frame = before.NumFrames / 2;
 
-        // Decoded again rather than reused, so the comparison below is against a reading that this
-        // edit has not touched.
+
+
         var edited = reader.ReadAnimation(file);
         var was = edited.Tracks[track].Translations[frame];
         edited.Tracks[track].Translations[frame] = was + by;
@@ -6047,26 +6047,26 @@ public static class Program
         return ok;
     }
 
-    /// How far apart two rotations are, in degrees, which is the only comparison that means anything
-    /// for a quaternion. Two things make comparing the components directly misleading: the same
-    /// rotation can be written two ways, negated throughout, and a quaternion of any length stands
-    /// for the same rotation as the unit one along it. The compressed decoders return rotations a
-    /// little off unit length, so without normalising both first this reports a fraction of a degree
-    /// of disagreement between two rotations that are the same rotation.
-    ///
-    /// Not `acos` of the dot product, which is the formula everyone writes and is useless here.
-    /// Near zero disagreement the dot product is near one, where `acos` has an infinite slope, so a
-    /// rounding error of one part in ten million comes out as four hundredths of a degree. That is
-    /// large enough to fail a threshold, and it reads as the data being wrong when the arithmetic
-    /// is. Measured the other way round instead, from how far apart the two lie, where the same
-    /// rounding error stays a rounding error.
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static float Angle(System.Numerics.Quaternion a, System.Numerics.Quaternion b)
     {
         a = System.Numerics.Quaternion.Normalize(a);
         b = System.Numerics.Quaternion.Normalize(b);
 
-        // A rotation and its negation are the same rotation, so the nearer of the two is the one
-        // that means anything.
+
+
         double near = Math.Min(Distance(a, b, 1), Distance(a, b, -1));
         return (float)(2 * Math.Asin(Math.Clamp(near / 2, 0, 1)) * 180 / Math.PI);
     }
@@ -6077,14 +6077,14 @@ public static class Program
         return Math.Sqrt(x * x + y * y + z * z + w * w);
     }
 
-    // The two lanes of a transform that nothing reads, counted in the game's own files.
-    //
-    // A Havok transform is 48 bytes: a translation, a rotation and a scale, each four floats wide.
-    // Only three of the four are the value. Writing a transform means writing the fourth as well,
-    // and it is the one nobody can look up: the decoders never produce it, the class table only says
-    // the field is a transform, and reasoning from Havok's identity constructor gives an answer about
-    // Havok rather than about Bethesda's data. So it is counted here out of every reference pose in
-    // every skeleton it is given, which is real vanilla transform data sitting in the same files.
+
+
+
+
+
+
+
+
     private static int QsTransform(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -6149,13 +6149,13 @@ public static class Program
         return 0;
     }
 
-    // What the top bits of an array's capacity word hold, across the corpus.
-    //
-    // Growing an array means writing a capacity for it, and the existing writer keeps whatever flags
-    // were there and rewrites only the length. That is right for an array that already holds
-    // something and says nothing about one that starts empty, whose flags may be nothing like the
-    // flags a full array carries. Since the flag is what tells the game whether it owns the memory,
-    // getting it wrong is not cosmetic, so it is counted rather than reasoned about.
+
+
+
+
+
+
+
     private static int Capacity(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -6164,8 +6164,8 @@ public static class Program
             ? Directory.EnumerateFiles(argv[1], "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToList()
             : new List<string> { Path.GetFullPath(argv[1]) };
 
-        // Keyed by whether the array holds anything and what its top two bits are, then by the same
-        // split again for arrays of structs on their own, since those are the ones being grown.
+
+
         var all = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var structs = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var mismatched = new SortedDictionary<string, int>(StringComparer.Ordinal);
@@ -6209,8 +6209,8 @@ public static class Program
                     Count(all, key);
                     if (member.VSub == "TYPE_STRUCT") Count(structs, key);
 
-                    // The length half of the word against the count beside it. If they part company
-                    // in vanilla data then rewriting the length from the count is not safe either.
+
+
                     if ((capacity & 0x3FFFFFFFu) != (uint)count)
                         Count(mismatched, $"{instance.ClassName}.{member.Name} count={count} " +
                                           $"capacity={capacity & 0x3FFFFFFFu}");
@@ -6289,8 +6289,8 @@ public static class Program
         return 0;
     }
 
-    /// A field narrower than four bytes still reads as four, so the extra has to be masked off or a
-    /// one byte flag reports whatever its neighbours happen to hold.
+
+
     private static string Narrow(int? value, string type)
     {
         if (value is not int raw) return "?";
@@ -6303,45 +6303,45 @@ public static class Program
         };
     }
 
-    // Whether the data section can be laid out from scratch rather than edited in place.
-    //
-    // Rebuilding a file today keeps the data section's bytes exactly as they were read and
-    // recomputes only the offsets around them, which is why `symrm packfile` matches on all 531
-    // files while removing an object is still refused. Removing one means every later object moves,
-    // and moving them means knowing where the writer would have put everything.
-    //
-    // Two claims decide whether that is knowable, and both are measured here rather than argued
-    // about:
-    //
-    //   Everything a file points at is allocated in walk order, so the walk that already reproduces
-    //   both fixup tables also says what order the bytes were written in.
-    //   An object's runs sit between that object and the next one, rather than after all of them.
-    //
-    // If both hold, laying a file out from scratch is arithmetic over what is already read. If
-    // either does not, the ordering rule is not the one assumed and a writer built on it would
-    // produce a file the game reads wrongly rather than one it refuses.
-    //
-    // The first thing measured here was neither of those. It was that objects are packed back to
-    // back, and they are not: 19 of Dogmeat's 906 land where packing predicts, because what an
-    // object points at is written straight after it rather than after the last object.
-    //
-    // Both claims hold on all 531 vanilla behaviours, so the last thing needed is where each item
-    // starts, and that is the rule this ended up measuring:
-    //
-    //   An object is written at the size the game registers for its class, not at the end of its
-    //   last member. BSRootTwistModifier is 144 bytes registered and 112 to the end of its members,
-    //   and the shorter reading puts the next string 32 bytes early.
-    //   Objects and array runs start on a sixteen byte boundary. No exceptions in 36,340 objects
-    //   and 17,000 runs.
-    //   A string that is an element of an array of strings is packed against the one before it on a
-    //   two byte boundary.
-    //   A string that is a field of its own starts on a sixteen byte boundary, unless it is the
-    //   first thing written after an array run, in which case it starts at that run's last byte.
-    //
-    // That last clause is not a guess dressed up. Three rules were tried before it and each was
-    // measured: aligning strings to two everywhere gets 2,019 of Dogmeat's 2,493 items right,
-    // sixteen everywhere gets 2,064, and treating every record as a fresh block gets 2,296.
-    // The rule above gets all 138,420 items in all 531 files.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int Layout(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -6359,9 +6359,9 @@ public static class Program
         int cleanFiles = 0, oddFiles = 0, skipped = 0;
         var notes = new List<string>();
 
-        // Where each kind of thing starts within a sixteen byte boundary. A kind that only ever
-        // starts at nought is written on a sixteen byte boundary; one that starts at nought or eight
-        // is on an eight byte one; one that lands anywhere has no alignment at all.
+
+
+
         var padding = new Dictionary<string, Dictionary<int, int>>(StringComparer.Ordinal);
         void Pad(string kind, int amount)
         {
@@ -6391,9 +6391,9 @@ public static class Program
 
             bool odd = false;
 
-            // Objects in the order the virtual table lists them, which is the order they sit in.
-            // The stretch after one object's body and before the next object starts is where that
-            // object's runs have to be if they are written straight after it.
+
+
+
             var starts = objects.Instances.Select(i => i.Offset).ToList();
             int Owner(int offset)
             {
@@ -6409,9 +6409,9 @@ public static class Program
                 if (size > 0) gapBytes += Math.Max(0, next - (instance.Offset + size));
             }
 
-            // Everything pointed at, in the order the walk reaches it. A destination seen before is
-            // counted apart: the writer is free to point two fields at one run, and that is a reuse
-            // rather than a step backwards.
+
+
+
             var order = FixupOrder.Sources(objects, types, data, global: false);
             var aims = new Dictionary<int, int>();
             foreach (var (source, destination) in data.Locals()) aims[source] = destination;
@@ -6423,9 +6423,9 @@ public static class Program
                 if (!aims.TryGetValue(source, out int destination)) continue;
                 runsSeen++;
 
-                // Whose run it is: the object the pointer sits in, or, for a pointer sitting inside
-                // a run of its own, the object that run belongs to. Both are the last object to
-                // start before it.
+
+
+
                 int owner = Owner(source);
                 int endOfOwner = owner < 0 ? data.Data.Length
                                  : starts.FirstOrDefault(s => s > starts[owner], data.Data.Length);
@@ -6450,24 +6450,24 @@ public static class Program
                 }
             }
 
-            // What the runs occupy, to say whether the gaps between objects are them and not padding.
+
             runBytes += seen.Count;
 
-            // The same walk again, this time carrying how long each thing is, so the space the
-            // writer left before it can be read off rather than reasoned about.
-            // Where each thing starts, modulo sixteen. Read off the file rather than from a running
-            // cursor: a cursor carries any mistake about one thing's length into every thing after
-            // it, and the first attempt at this said strings were padded to eight for that reason.
-            //
-            // Then the thing this is all for: every offset predicted from nothing but the walk, the
-            // lengths and the alignment those columns imply. A file whose every offset comes out
-            // right is a file that could have been written rather than edited.
+
+
+
+
+
+
+
+
+
             var items = PackfileLayout.Of(image, types);
             if (items == null) { skipped++; continue; }
 
-            // Anything the walk did not reach. This used to pass files it had only half read,
-            // because a stretch nothing accounts for looks the same as padding when all you check
-            // is whether the items you did find are where you predicted.
+
+
+
             if (!PackfileLayout.Accounted(items, data.Data.Length))
             {
                 odd = true;
@@ -6519,16 +6519,16 @@ public static class Program
         return oddFiles == 0 && skipped == 0 ? 0 : 1;
     }
 
-    // What the panel can say about a field when somebody hovers over its name.
-    //
-    // Two numbers, and the gap between them is the point. Every field can be described, because the
-    // class table knows what shape it is. Almost none can be explained, because there is nowhere
-    // honest to get a sentence from, and writing plausible sentences from field names would produce
-    // something that reads exactly like
-    // the handful that were actually established.
-    //
-    // So this reports the coverage rather than hiding it, and the explained count is meant to go up
-    // one finding at a time.
+
+
+
+
+
+
+
+
+
+
     private static int Notes(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -6556,10 +6556,10 @@ public static class Program
                 if (!types.Knows(instance.ClassName)) continue;
                 classes.Add(instance.ClassName);
 
-                // The panel's own field list rather than the class's members, so the fields inside
-                // an array element are counted too. Those are most of what a state machine shows,
-                // and counting only an object's own members put the transitions outside the measure
-                // entirely.
+
+
+
+
                 var shown = ClassFields.Of(objects, instance, types);
                 if (shown == null) continue;
 
@@ -6591,12 +6591,12 @@ public static class Program
         return described == fields ? 0 : 1;
     }
 
-    // The project around a file: which character, which skeleton, which animations it declares.
-    //
-    // This reads other files, and until now it read them through hkxpack, so the Chain tab and the
-    // Check project button were the last two things in the window that asked for Java after opening
-    // a file stopped needing it. Run this with Java hidden and with Java present and the output has
-    // to be the same, which is the whole point.
+
+
+
+
+
+
     private static int Chain(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -6618,8 +6618,8 @@ public static class Program
 
         foreach (string problem in chain.Problems) Console.WriteLine("  problem: " + problem);
 
-        // The other half of what the Check project button does, and the other thing that used to
-        // demand Java. Every behaviour in the project read and run through the validator.
+
+
         var checkResult = ProjectCheck.Run(chain, java, jar);
         int unread = checkResult.Files.Count(f => f.Error.Length > 0);
 
@@ -6632,13 +6632,13 @@ public static class Program
         return chain.Links.Count == 0 || unread > 0 ? 1 : 0;
     }
 
-    // Lengthening an array of plain numbers, the last kind of array that needed a rebuild.
-    //
-    // Simpler than the array of names in the same position: nothing inside it points anywhere, so it
-    // is one run and one fixup rather than a run of pointers with a fixup each.
-    //
-    // The array is given one more element than it had, and the result has to read back at the new
-    // length with the old values still in front of the new one.
+
+
+
+
+
+
+
     private static int SaveNumbers(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -6668,9 +6668,9 @@ public static class Program
                 continue;
             }
 
-            // An array written as inline whole numbers, which is the shape a run of them takes. Ids
-            // are excluded by requiring no hash anywhere in the body, since an array of pointers is
-            // written the same way otherwise.
+
+
+
             var found = System.Text.RegularExpressions.Regex.Match(
                 xml, "<hkparam name=\"(?<field>[A-Za-z0-9_]+)\" numelements=\"(?<n>[1-9][0-9]*)\">(?<body>[-0-9 \\r\\n\\t]+)</hkparam>");
             if (!found.Success) { none++; continue; }
@@ -6761,15 +6761,15 @@ public static class Program
         return wrong == 0 && refused == 0 ? 0 : 1;
     }
 
-    // Writing a vector or a transform, which are fixed width and were refused anyway.
-    //
-    // These move nothing: a vector is sixteen bytes wherever it sits and writing one over another
-    // leaves the file exactly as long as it was. They were refused because nothing parsed the
-    // spelling back, so any file with one of these edited went out through hkxpack.
-    //
-    // The edit is made through the document, the way the window makes one, and the result is read
-    // back from the bytes and set against what was asked for. The file must also be the same length
-    // afterwards, since a wide field that grew would mean it was not written where it sits.
+
+
+
+
+
+
+
+
+
     private static int SaveWide(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -6801,9 +6801,9 @@ public static class Program
                 continue;
             }
 
-            // A vector written as four numbers in brackets, anywhere in the document. Replaced with
-            // one that cannot be there already, so finding it afterwards proves the write and not a
-            // coincidence.
+
+
+
             var found = System.Text.RegularExpressions.Regex.Match(
                 xml, "<hkparam name=\"(?<field>[A-Za-z0-9_]+)\">\\((?<body>[-0-9.e ]+)\\)</hkparam>");
             if (!found.Success) { none++; continue; }
@@ -6884,16 +6884,16 @@ public static class Program
         return wrong == 0 && refused == 0 ? 0 : 1;
     }
 
-    // Declaring an event the way the window does it, all the way through to the bytes.
-    //
-    // This was the last refusal standing between a person and authoring without Java. Adding an
-    // event lengthens an array of strings, a run cannot grow where it sits, and every save that hit
-    // it went out through hkxpack instead. `symrm savecheck`'s resize guard asserted that refusal on
-    // purpose, which is how it was known to still be there.
-    //
-    // The result is asked the questions that would catch a bad write: does it read back, is the name
-    // in it, is it the last one, is the array one longer, and does every pointer still land inside
-    // something written.
+
+
+
+
+
+
+
+
+
+
     private static int SaveEvent(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -6919,10 +6919,10 @@ public static class Program
                 var objects = new PackfileObjects(image);
                 xml = NativeXml.From(objects, image);
 
-                // The names as the file itself holds them, read from the bytes. Both sides of a
-                // comparison against the document are line ending normalised by the XML parser, so
-                // a name losing its carriage return would agree with itself and prove nothing. Two
-                // vanilla events carry one.
+
+
+
+
                 var holder = objects.Instances.FirstOrDefault(i => i.ClassName == "hkbBehaviorGraphStringData");
                 was = holder == null ? new List<string?>()
                                      : (objects.ReadStringArray(holder, "eventNames") ?? new List<string?>()).ToList();
@@ -6992,12 +6992,12 @@ public static class Program
         return wrong == 0 && refused == 0 ? 0 : 1;
     }
 
-    /// Whether a file that just had an event declared really carries it, read back from its bytes.
-    ///
-    /// Set against the edited document element for element rather than by counting. Counting with a
-    /// regex was the first attempt and it was wrong: an empty name is written as a self closing tag,
-    /// so `<hkcstring>` misses it and thirteen files reported an array two longer than expected when
-    /// the array was right and the count was not.
+
+
+
+
+
+
     private static string Named(byte[] after, string edited, List<string?> was, string added)
     {
         PackfileImage image;
@@ -7032,8 +7032,8 @@ public static class Program
         if (names.Count == 0 || names[^1] != added)
             return "the name added is not the last one in the array";
 
-        // Bytes against bytes. Everything above went through a parser that normalises line endings,
-        // so this is the only check here that would notice a name coming back subtly different.
+
+
         for (int e = 0; e < was.Count; e++)
             if (names[e] != was[e])
                 return $"eventNames[{e}] was '{was[e]}' in the file and reads '{names[e]}' now";
@@ -7047,17 +7047,17 @@ public static class Program
         return "";
     }
 
-    // The class table set against the game's own account of itself.
-    //
-    // Every offset this tool writes comes from HavokClassTypes.json, which was built from hkxpack's
-    // class data. That is one source, and the whole write path rests on it. Fallout 4's startup
-    // initializers carry the same information, read straight out of the binary rather than out of
-    // anybody's tool, so the two can be set against each other and neither has to be trusted.
-    //
-    // What a disagreement means depends which way it goes. A different offset for a field is a bug
-    // in one of them and would put a value in somebody else's field. A class one has and the other
-    // does not is usually coverage rather than error, since the dump has every class the game
-    // registers and this tool only needs the ones that appear in files.
+
+
+
+
+
+
+
+
+
+
+
     private static int ClassCheck(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -7084,8 +7084,8 @@ public static class Program
                 sizes[current] = int.Parse(isHead.Groups["size"].Value, System.Globalization.CultureInfo.InvariantCulture);
                 fromGame[current] = new List<(int, string, string)>();
 
-                // The dump names a parent the way the binary does, by its class object:
-                // `hkbGeneratorClass` for `hkbGenerator`. A dash means there is no parent.
+
+
                 string parent = isHead.Groups["parent"].Value;
                 if (parent != "-")
                     parents[current] = parent.EndsWith("Class", StringComparison.Ordinal)
@@ -7100,14 +7100,14 @@ public static class Program
                                    isMember.Groups["name"].Value, isMember.Groups["type"].Value));
         }
 
-        // The dump lists what a class declares itself and names its parent. This table flattens the
-        // chain, so the comparison has to flatten the dump the same way or every inherited member
-        // reads as one the game does not have. That was the first answer this gave and it was an
-        // artefact: 3,185 members supposedly undeclared, every one of them inherited.
-        // Parent first, then each class's own, which is the order this table flattens a chain in and
-        // the order the file is written in. Building it the other way round matched an inherited
-        // member against a class's own member of the same name: hkbRadialSelectorGenerator declares
-        // a `pad` and so does hkbNode above it, and comparing those two reads as a wrong offset.
+
+
+
+
+
+
+
+
         List<(int At, string Name, string Type)> Whole(string className)
         {
             var chain = new List<string>();
@@ -7143,9 +7143,9 @@ public static class Program
                 }
             }
 
-            // Walked in step rather than looked up by name, so the order is checked as well as the
-            // offsets. A member this table does not carry is skipped over rather than desyncing the
-            // rest, which matters because there are a few the game declares and no file writes.
+
+
+
             int at = 0;
             foreach (var mine in types.Members(name))
             {
@@ -7194,15 +7194,15 @@ public static class Program
         return sizeDiffered == 0 && offsetDiffered == 0 && missingFromGame == 0 ? 0 : 1;
     }
 
-    // Deleting a node the way the window does it, all the way through to the bytes.
-    //
-    // `delete` proves the library call. This proves the path a person actually takes: the editable
-    // text is written from the file's own bytes, GraphAuthor takes the node out of it and detaches
-    // everything pointing at it, NativeSave works out what changed, and NativeSave.Apply writes it.
-    // No Java anywhere in that, which is the other thing being checked.
-    //
-    // The node chosen is the last one the author will agree to delete, so the same file gives the
-    // same answer every run.
+
+
+
+
+
+
+
+
+
     private static int SaveDelete(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -7291,8 +7291,8 @@ public static class Program
             saved++;
             objectsGone += plan.Gone.Count;
 
-            // Written only when asked, so the sweep stays a read only measurement. One file and a
-            // path is the case where somebody wants the result to put in front of another reader.
+
+
             if (files.Length == 1 && argv.Length > 2)
             {
                 File.WriteAllBytes(argv[2], after);
@@ -7316,8 +7316,8 @@ public static class Program
         return wrong == 0 ? 0 : 1;
     }
 
-    /// Whether a saved file is sound: it reads, it holds the objects expected, every byte in it is
-    /// accounted for, and no pointer aims anywhere that is not written.
+
+
     private static string Sound(byte[] after, int expected)
     {
         PackfileImage image;
@@ -7345,17 +7345,17 @@ public static class Program
         return "";
     }
 
-    // The gate on deleting an object for real, rather than leaving it in the file unreferenced.
-    //
-    // Deleting takes the object out of the virtual fixup table, which is the object list, so every
-    // object after it renumbers and every byte after it moves. This does one to each file and then
-    // asks the result the questions that would catch a bad write: does it read back, does it hold
-    // exactly one object fewer, is that object's class the one that went, is the section still fully
-    // accounted for, and does every pointer in it still land inside something.
-    //
-    // The object chosen is the last one in the file, orphaned first so nothing points at it. Last
-    // because it is the case where the fewest things move, which makes a failure easier to read, and
-    // orphaned first because deleting something still pointed at is refused on purpose.
+
+
+
+
+
+
+
+
+
+
+
     private static int DeleteObject(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -7434,7 +7434,7 @@ public static class Program
         return wrong == 0 ? 0 : 1;
     }
 
-    /// What is wrong with a file an object was just deleted from, or nothing.
+
     private static string Wrong(byte[] after, int wasCount, List<string> wasClasses, string className)
     {
         PackfileImage image;
@@ -7461,9 +7461,9 @@ public static class Program
         if (!PackfileLayout.Accounted(items, data.Data.Length))
             return "the result has bytes in it nothing accounts for";
 
-        // Every pointer has to land inside something. A fixup left aiming into the hole is the
-        // failure this whole check exists for, and it does not announce itself: the file reads, it
-        // just crashes the game.
+
+
+
         var spans = items.Select(i => (i.At, End: i.At + i.Length)).OrderBy(x => x.At).ToList();
         bool Lands(int offset) => spans.Exists(sp => offset >= sp.At && offset < sp.End);
 
@@ -7482,11 +7482,11 @@ public static class Program
         return "";
     }
 
-    /// What the expression language a file can carry actually says, counted rather than guessed at.
-    ///
-    /// The stepper treats a transition carrying a condition as able to fire, because nothing here
-    /// evaluates one. Whether that is a small gap or a large one depends entirely on what the
-    /// expressions are, and that is a question about the shipped data rather than about the format.
+
+
+
+
+
     private static int Conditions(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -7534,8 +7534,8 @@ public static class Program
                 parsedOk++;
                 if (parsed.IsAssignment) assignments.Add($"{Path.GetFileName(file)}: {text}");
 
-                // Every name a condition uses has to be a variable the file declares, or the answer
-                // can never be anything but Unknown and the condition is dead text.
+
+
                 foreach (string name in parsed.Names)
                     if (!declared.ContainsKey(name))
                         undeclared.Add($"{Path.GetFileName(file)}: \"{text}\" names {name}, which this file does not declare");
@@ -7546,9 +7546,9 @@ public static class Program
                 else falseAtStart++;
             }
 
-            // The same language, reached from the other direction. An expression modifier assigns
-            // the result of one of these to a variable or sends an event, so anything that evaluates
-            // a condition can evaluate these too, and they are the larger population.
+
+
+
             foreach (var instance in objects.OfClass("hkbExpressionDataArray"))
             {
                 var array = objects.ReadArray(instance, "expressionsData");
@@ -7573,9 +7573,9 @@ public static class Program
         foreach (var (text, count) in conditions.OrderByDescending(c => c.Value))
             Console.WriteLine($"  {count,5}  {text}");
 
-        // Where the conditional transitions actually sit, which is the difference between a reading
-        // that changes what the stepper does and one that changes nothing. A condition on a
-        // transition out of a state nothing enters can never hold anything back.
+
+
+
         foreach (string file in files)
         {
             BehaviourGraphModel? model;
@@ -7601,15 +7601,15 @@ public static class Program
             sweepEnters += stepReaches;
             falseNow += wouldHold;
 
-            // The causal half, and the one that means something.
-            //
-            // A count of how many conditions came out false at the values the file happens to ship
-            // with proves nothing about the reading being live: an evaluator that returned False for
-            // everything would score well on it. So every condition is driven instead. Its variables
-            // are set to each of a spread of values through the run's own setter, and the condition
-            // has to come out true for some of them and false for others. One that never changes its
-            // mind whatever its variables hold is being read, if at all, by something that is not
-            // looking at the variables.
+
+
+
+
+
+
+
+
+
             foreach (var (route, condition, _) in withCondition)
             {
                 var parsed = Expression.Parse(condition);
@@ -7664,25 +7664,25 @@ public static class Program
         foreach (var (text, count) in expressions.OrderByDescending(c => c.Value).Take(15))
             Console.WriteLine($"  {count,5}  {text}");
 
-        // A condition this cannot read is not a soft failure. It means the stepper is back to firing
-        // that transition whatever the variables hold, silently, which is the state this work exists
-        // to leave behind.
-        // A condition that cannot be read, or one that never changes its mind whatever its variables
-        // hold, both mean the same thing in the end: the stepper is back to firing that transition
-        // regardless, silently, which is the state this work exists to leave behind.
+
+
+
+
+
+
         return unparsed == 0 && stuck.Count == 0 ? 0 : 1;
     }
 
-    /// Values to drive a condition's variables through. Chosen to straddle every constant the vanilla
-    /// conditions compare against, which `symrm conditions` prints: 0, 1, 2, 3, 5, 9, 10, 18, 20.
+
+
     private static readonly double[] Spread = { -1, 0, 1, 2, 3, 5, 9, 10, 18, 20, 21, 100 };
 
-    /// What a file's variables are called and what they start at, as numbers.
-    ///
-    /// A word value is thirty two bits whose meaning is the variable's declared type, so a real is
-    /// stored as the bit pattern of its float and reading it as a whole number gives something like
-    /// 1065353216 for 1.0. The type comes from `variableInfos`, positionally, which is the only key
-    /// the format has.
+
+
+
+
+
+
     private static Dictionary<string, double> VariableTable(PackfileObjects objects)
     {
         var table = new Dictionary<string, double>(StringComparer.Ordinal);
@@ -7715,38 +7715,38 @@ public static class Program
                 type = objects.ReadNarrowAt(infos.At + i * infoStride + typeMember.Offset,
                                             HavokClassTypes.Width(typeMember.VType)) ?? 0;
 
-            // VARIABLE_TYPE_REAL is 2 in the enum the game registers, and it is the only one whose
-            // word is not already the number.
+
+
             table[name] = type == 2 ? BitConverter.Int32BitsToSingle(word) : word;
         }
 
         return table;
     }
 
-    /// The gate on copying a subtree and pasting it.
-    ///
-    /// The fault this exists to catch does not announce itself. A paste that leaves one pointer
-    /// naming an object of the original draws the same tree, passes the checker, reads back with the
-    /// right number of objects of the right classes, and plays the original's child. So the headline
-    /// check is not "did it come back" but "does anything inside the copy still name an original",
-    /// asked of every pointer in the pasted stretch of the section rather than of the fields anybody
-    /// thought to look at.
-    ///
-    /// Two passes. Within a file, over every behaviour that has a subtree worth copying. Between
-    /// files, the same subtree into the next file along, which is where symbols and shared objects
-    /// decide whether it is taken or refused.
-    // What a lifted template could actually be, counted before any of it is built.
-    //
-    // A template is a subtree lifted out of a real behaviour and kept, so the question that decides
-    // whether the idea works at all is how many subtrees can survive leaving their file. Two things
-    // stop one. It can share an object with the rest of the file it came from, which a paste into a
-    // different file refuses outright because there is nothing there to point at. Or it can use an
-    // event or variable by name that the file it lands in does not declare, which is refused with a
-    // list of what to declare.
-    //
-    // The three shapes this issue names are counted separately, because "templates are mostly
-    // unusable" and "templates are mostly usable but need two events declaring first" are different
-    // answers and only the second is worth building.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int Template(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -7824,14 +7824,14 @@ public static class Program
         Console.WriteLine($"symbol uses across every liftable subtree: {symbolsUsed}");
         foreach (string line in examples) Console.WriteLine($"  {line}");
 
-        // Measuring what could be lifted says nothing about whether lifting works, so every Nth
-        // liftable root is actually lifted, kept, and applied into a different file on disk.
-        //
-        // The target is a copy of the file the shape came from. That is not a same file paste: it is
-        // a different file, taken down the cross file path with its shared object check and its
-        // symbol remapping, and it is the only target guaranteed to declare the symbols the shape
-        // uses. A target picked at random would mostly be refused for symbols it does not declare,
-        // which is correct behaviour and would measure nothing about the copy itself.
+
+
+
+
+
+
+
+
         Console.WriteLine();
         int lifted = 0, applied = 0, wrong = 0, refused = 0;
         int sharing = 0, properlyRefused = 0, wronglyKept = 0;
@@ -7868,11 +7868,11 @@ public static class Program
                     try { tree = NativePaste.Of(image, id); }
                     catch (Exception) { continue; }
 
-                    // A subtree that shares has to be refused, and the corpus has thousands of them,
-                    // so the refusal is checked against real data rather than only against the one
-                    // built by hand. Without this the sweep would only ever exercise the shapes that
-                    // were going to work anyway, and a build that had stopped refusing would sail
-                    // through it.
+
+
+
+
+
                     if (tree.Shared.Count > 0)
                     {
                         if (sharing++ % nth != 0) continue;
@@ -8034,8 +8034,8 @@ public static class Program
             rewritten += result.Pointers;
             sharedKept += tree.Shared.Count;
 
-            // A paste that turns out to be the wrong thing has to be undoable, or trying one is a one
-            // way door on the file. Deleting exactly what the paste added has to give the file back.
+
+
             try
             {
                 var undo = PackfileImage.Read(after);
@@ -8060,9 +8060,9 @@ public static class Program
                 if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: cannot undo the paste: {e.Message}");
             }
 
-            // The other half of the ticket's last line: a pasted root that is given somewhere to hang.
-            // A state carries a number unique inside its machine, so the one case worth checking is a
-            // state going into a machine that already has states.
+
+
+
             if (tree.RootClass != "hkbStateMachineStateInfo") continue;
 
             try
@@ -8104,9 +8104,9 @@ public static class Program
             }
         }
 
-        // The other half of the ticket. A subtree only goes into another file when everything it
-        // needs is there, so the interesting number here is not how many were taken but that the ones
-        // turned away were turned away for a reason that names what is missing.
+
+
+
         for (int i = 0; i < files.Length && files.Length > 1; i++)
         {
             if (!chosen.TryGetValue(files[i], out var pick)) continue;
@@ -8145,9 +8145,9 @@ public static class Program
             }
         }
 
-        // The one thing the ownership rule is soft about, counted rather than asserted. Two objects in
-        // a pointer cycle each wait for the other, so neither is ever taken into a copy and both come
-        // out shared. That is the safe way round and it would still be worth knowing about.
+
+
+
         int cycles = 0, cyclicFiles = 0;
         foreach (string file in files)
         {
@@ -8178,9 +8178,9 @@ public static class Program
         return wrong == 0 ? 0 : 1;
     }
 
-    /// How many objects in a file sit on a cycle of pointers. Read off the same fixup table the
-    /// ownership rule reads, by Tarjan's strongly connected components: anything in a component of
-    /// more than one object, or pointing at itself, is on a cycle.
+
+
+
     private static int PointerCycles(PackfileImage image)
     {
         var data = image.Section("__data__");
@@ -8240,8 +8240,8 @@ public static class Program
         {
             if (index[start] >= 0) continue;
 
-            // Iterative, because a behaviour is deep enough that recursion here would be a stack
-            // overflow on a real file rather than on a pathological one.
+
+
             var work = new Stack<(int Node, int Edge)>();
             work.Push((start, 0));
             index[start] = low[start] = next++;
@@ -8289,8 +8289,8 @@ public static class Program
         return onCycle;
     }
 
-    /// The numbers the states of a machine carry, which are unique inside that machine and nowhere
-    /// else, so a pasted state cannot keep the one it was copied with.
+
+
     private static List<int> StateIds(PackfileObjects objects, PackfileObjects.Instance machine)
     {
         var ids = new List<int>();
@@ -8299,8 +8299,8 @@ public static class Program
         return ids;
     }
 
-    /// A refusal grouped by what it was about, so a new reason shows up rather than being lost among
-    /// one line per file.
+
+
     private static string Kind(string message) =>
         message.Contains("does not declare", StringComparison.Ordinal)
             ? "an event or variable the other file does not declare"
@@ -8310,8 +8310,8 @@ public static class Program
             ? "an index pointing past the end of the file's own symbol list"
         : message;
 
-    /// The subtree worth copying out of a file: the largest owned by one of the shapes a person
-    /// actually duplicates. Deterministic, so a run of this gate compares against the last one.
+
+
     private static NativePaste.Subtree? BiggestSubtree(PackfileImage image)
     {
         string[] wanted =
@@ -8336,7 +8336,7 @@ public static class Program
         return best is { Ids.Count: > 1 } ? best : null;
     }
 
-    /// What is wrong with a file a subtree was just pasted into, or nothing.
+
     private static string PasteWrong(byte[] bytes, List<string> wasClasses, List<string> copiedClasses,
                                      NativePaste.Subtree tree, HashSet<int> ownedWas,
                                      HashSet<int> sharedWas, string was, NativePaste.Result result)
@@ -8354,8 +8354,8 @@ public static class Program
         if (objects.Instances.Count != expected)
             return $"holds {objects.Instances.Count} object(s), expected {expected}";
 
-        // Nothing below the paste may have moved in the list, because a renumber there would aim
-        // every id anybody already holds one object early.
+
+
         for (int i = 0; i < wasClasses.Count; i++)
             if (objects.Instances[i].ClassName != wasClasses[i])
                 return $"object {i} was a {wasClasses[i]} and is now a {objects.Instances[i].ClassName}";
@@ -8389,10 +8389,10 @@ public static class Program
 
         bool InCopy(int offset) => mineSpans.Exists(s => offset >= s.At && offset < s.End);
 
-        // The check this whole gate exists for. Every pointer stored anywhere inside the pasted
-        // stretch has to land on one of the pasted objects, or on one of the objects the subtree
-        // shares with the rest of the file. Landing on an object the copy was made from is the fault
-        // that looks exactly like success.
+
+
+
+
         foreach (var (source, which, destination) in data.Globals())
         {
             if (which != section || !InCopy(source)) continue;
@@ -8416,20 +8416,20 @@ public static class Program
         return "";
     }
 
-    /// A subtree written out as text, so two of them can be compared without comparing offsets.
-    ///
-    /// Everything that is a value goes in as it stands, every string goes in as its text, every array
-    /// as its length, and a pointer goes in as the position of whatever it names within this walk, so
-    /// an original and its copy read the same while naming different objects.
+
+
+
+
+
     private static string Shape(PackfileImage image, PackfileObjects objects, int rootId)
     {
         var types = HavokClassTypes.Shipped;
         var data = image.Section("__data__")!;
         int section = image.Sections.IndexOf(data);
 
-        // An event or a variable is stored as a number and the number is the one thing a paste into
-        // another file deliberately changes, so comparing the bytes would report every correct
-        // remap as a difference. The name is what has to survive, so the name is what goes in.
+
+
+
         var symbols = new Dictionary<int, string>();
         foreach (bool events in new[] { true, false })
         {
@@ -8570,13 +8570,13 @@ public static class Program
         return names == null ? new List<string>() : names.Select(n => n ?? "").ToList();
     }
 
-    // The gate on removing an object, and on anything else that moves one.
-    //
-    // `packfile` proves the arithmetic around the data section while keeping the section itself
-    // exactly as it was read. This throws the section away and writes it again from nothing: every
-    // object and every run placed by the walk, every entry in all three tables moved to match. A
-    // vanilla file laid out this way has to come back as the file it already was, because no offset
-    // in it was carried over from the file it came from.
+
+
+
+
+
+
+
     private static int Relayout(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -8633,10 +8633,10 @@ public static class Program
         return differed == 0 && refused == 0 ? 0 : 1;
     }
 
-    // The gate on writing .hkx bytes ourselves. Reading a file apart and putting it back has to
-    // produce the same file: every offset in a packfile is derived from the sizes of what came
-    // before it, so a byte for byte match means the derivation is right, and one wrong byte means it
-    // is not. Nothing here needs the game, which is the point of doing it this way first.
+
+
+
+
     private static int Packfile(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -8760,9 +8760,9 @@ public static class Program
                 if (!data.RotationAnimated) noRot++;
                 if (!anyScale) noScale++;
 
-                // The disagreement: Havok puts an undriven channel at zero, one, or no rotation,
-                // while the reference pose puts it wherever the rig does. Anything away from
-                // Havok's constant means the two readings draw a different skeleton.
+
+
+
                 if (bone >= skeleton.ReferencePose.Count) continue;
                 var rest = skeleton.ReferencePose[bone];
 
@@ -8836,12 +8836,12 @@ public static class Program
         return 0;
     }
 
-    /// Draws the posed mesh to a PNG, so how it looks is something that can be answered here rather
-    /// than only by a person with the window open.
-    ///
-    /// Two views, front and side, side by side. Bones can be picked out by name and are drawn in
-    /// their own colour, which is the whole point: a mesh where one bone out of thirteen sits wrong
-    /// is a question about that bone, and grey wireframe on grey wireframe does not answer it.
+
+
+
+
+
+
     private static int DrawMesh(string[] argv)
     {
         if (argv.Length < 4) { Usage(); return 1; }
@@ -8851,7 +8851,7 @@ public static class Program
         var skeleton = new HkxBinaryReader().ReadSkeleton(Path.GetFullPath(argv[2]));
         string outPath = Path.GetFullPath(argv[3]);
 
-        // Bones named on the command line get a colour each, in this order.
+
         var wanted = argv.Skip(4).ToList();
         var colours = new (byte R, byte G, byte B)[]
         {
@@ -8889,8 +8889,8 @@ public static class Program
         float scale = (Height - 60) / span;
         var centre = (min + max) * 0.5f;
 
-        // Front looks down the Y axis and side looks down the X, which for this game's axes puts the
-        // character upright in both.
+
+
         (int X, int Y) Place(System.Numerics.Vector3 p, bool front)
         {
             float across = front ? p.X - centre.X : p.Y - centre.Y;
@@ -8903,8 +8903,8 @@ public static class Program
         int marked = 0;
         foreach (var (shape, posed) in drawn)
         {
-            // Which bone owns each vertex, by the heaviest weight, so a vertex is drawn in the colour
-            // of the bone that actually moves it rather than of whichever slot came first.
+
+
             var owner = new int[shape.Vertices.Count];
             System.Array.Fill(owner, -1);
 
@@ -8943,8 +8943,8 @@ public static class Program
             }
         }
 
-        // Where each named bone's vertices actually land, which is the number behind whatever the
-        // picture looks like.
+
+
         foreach (string name in wanted)
         {
             float lo = float.MaxValue, hi = float.MinValue;
@@ -8996,9 +8996,9 @@ public static class Program
                shape.BoneNames[b].Equals(boneName, StringComparison.OrdinalIgnoreCase);
     }
 
-    // What the mesh reader got out of a NIF, and how well it lines up with a skeleton. The bone
-    // matching is the part worth printing: a mesh bone with no skeleton bone of that name is the
-    // failure that shows up as a limb quietly missing from a drawing.
+
+
+
     private static int Mesh(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -9026,9 +9026,9 @@ public static class Program
             Console.WriteLine($"  {s.Name,-26} {binding}");
             unmatched += binding.Unmatched.Count;
 
-            // The mesh is authored on the skeleton's own reference pose, so posing it back onto that
-            // pose must not move it. Anything above about half a unit means the bind transforms are
-            // being composed wrongly, whatever the drawing looks like.
+
+
+
             float drift = OpenCommonwealth.Services.Nif.SkinnedMesh
                 .BindError(s, binding, skeleton, out int measured);
             if (measured > 0) worstDrift = Math.Max(worstDrift, drift);
@@ -9068,19 +9068,19 @@ public static class Program
             if (drift > DriftLimit) worstShare = Math.Max(worstShare, PerBone(s, binding, rest));
         }
 
-        // A bone the skeleton does not have is reported and not failed: a shared mesh naming a bone a
-        // particular rig lacks is ordinary.
+
+
         Console.WriteLine(unmatched == 0
             ? "\nevery mesh bone found a skeleton bone"
             : $"\n{unmatched} mesh bone reference(s) had no skeleton bone of that name");
 
-        // What fails is a fault in how the transforms are composed, and that is not the same thing as
-        // the worst single number. Reading the stored rotation the wrong way round is wrong for every
-        // bone at once, because each bone is turned differently, so it shows up as most of them
-        // disagreeing. One bone out of thirteen is authoring: the vanilla male body's LLeg_Toe1 sits
-        // 5.140 units away from where the other twelve agree the mesh is, and its own right hand
-        // twin is 0.172, so the mesh disagrees with the skeleton about that toe rather than the
-        // reader disagreeing with itself.
+
+
+
+
+
+
+
         bool ok = worstShare <= 0.25f;
         Console.WriteLine(ok
             ? $"PASS  at most {worstShare:P0} of a shape's matched bones disagree by more than " +
@@ -9090,13 +9090,13 @@ public static class Program
         return ok ? 0 : 1;
     }
 
-    /// Which bones a drifting mesh is drifting on.
-    ///
-    /// A mesh is authored on the skeleton's reference pose, so on that pose every bone's composed
-    /// transform has to leave a point where it found it. Printing the per bone error turns "this mesh
-    /// is 120 units out" into "these bones are and those are not", which is the question worth asking
-    /// next. It only prints when something is already wrong, because on a mesh that passes it is 95
-    /// lines of zeroes.
+
+
+
+
+
+
+
     private static float PerBone(OpenCommonwealth.Services.Nif.NifShape shape,
                                  OpenCommonwealth.Services.Nif.SkinnedMesh.Binding binding,
                                  AnimationPose.Pose rest)
@@ -9128,8 +9128,8 @@ public static class Program
         Console.WriteLine($"    per bone, on the reference pose: {clean} of {rows.Count} matched " +
                           "bones agree with the first one");
 
-        // Where each one puts the origin, because a bone that only translates and a bone that also
-        // turns are different faults and the number on its own does not tell them apart.
+
+
         foreach (var r in rows.OrderByDescending(r => r.Error).Take(12))
             Console.WriteLine($"      {r.Name,-28} {r.Error,9:F3} over {r.Vertices,5} vertices, " +
                               $"origin to {r.Off.X,8:F2} {r.Off.Y,8:F2} {r.Off.Z,8:F2}" +
@@ -9138,9 +9138,9 @@ public static class Program
         return rows.Count == 0 ? 0 : (float)(rows.Count - clean) / rows.Count;
     }
 
-    // Half a unit per vertex. Half precision vertex positions alone cost about a quarter of a unit on
-    // a body a hundred units long, so this is loose enough not to trip on the format and tight enough
-    // that any transform read the wrong way round, which costs tens of units, cannot pass.
+
+
+
     private const float DriftLimit = 0.5f;
 
     private static int Skeleton(string[] argv)
@@ -9151,8 +9151,8 @@ public static class Program
         Console.WriteLine($"{skeleton.Name}: {skeleton.BoneNames.Count} bones, " +
                           $"{skeleton.ParentIndices.Count} parent indices, {skeleton.ReferencePose.Count} poses");
 
-        // Composed through AnimationPose rather than here, so the corpus tool and the viewport cannot
-        // disagree about where a bone is.
+
+
         var rest = AnimationPose.ReferencePose(skeleton);
 
         string wanted = argv.Length > 2 ? argv[2] : "Hand";
@@ -9175,8 +9175,8 @@ public static class Program
         return 0;
     }
 
-    // Emits the skeleton as JSON and immediately reads it back, because an emitter that quietly
-    // drops or reorders a bone produces a file that looks fine and rigs wrong. A directory sweeps.
+
+
     private static int Rig(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -9275,8 +9275,8 @@ public static class Program
         NeedHkxPack();
 
         int everyNth = argv.Length > 2 ? int.Parse(argv[2]) : 4;
-        // Unpack copies the input next to its output, so the destination has to be a different
-        // folder from the corpus or every file collides with itself.
+
+
         string outDir = argv.Length > 3 ? argv[3] : Path.Combine(argv[1], "xml");
         Directory.CreateDirectory(outDir);
 
@@ -9345,10 +9345,10 @@ public static class Program
         Report("BEFORE", xml);
         var before = Resolved(xml);
 
-        // Bounding a variable, which is the one symbol edit that has to lengthen a positional array
-        // to reach the variable it is about. Reported rather than assumed: whether it can be written
-        // into the file's own bytes or has to go back through hkxpack is worth knowing, since one of
-        // those needs Java and the other does not.
+
+
+
+
         {
             var names0 = SymbolEditor.VariableNames(BehaviourGraphModel.Parse(xml));
             if (names0.Count > 0)
@@ -9368,8 +9368,8 @@ public static class Program
                     ? $"  written into the bytes: {plan.Changes.Count} change(s), grows={plan.Grows}"
                     : $"  needs hkxpack: {plan.Refusal}");
 
-                // Changing a bound the array already holds is a different question from adding one:
-                // nothing is lengthened, so it is a value write like any other.
+
+
                 if (had > 0)
                 {
                     string edited = SymbolEditor.SetVariableBounds(xml, 0, "-2", "9");
@@ -9379,9 +9379,9 @@ public static class Program
                           $"{inPlace.Changes.Count} change(s)"
                         : $"  changing a bound already there: needs hkxpack, {inPlace.Refusal}");
 
-                    // Carried out, not merely planned. The file is written, read back, and set
-                    // against hkxpack's own reading of it, because a plan that says it can be
-                    // written proves nothing about what lands in the bytes.
+
+
+
                     if (inPlace.Possible)
                     {
                         byte[] written = NativeSave.Apply(argv[1], inPlace);
@@ -9393,15 +9393,15 @@ public static class Program
                         HkxTextEdit.ResetDirectory(check);
                         string reread = HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, boundedPath, check));
 
-                        // Read out of the text rather than through the model, because a bound sits in
-                        // a nested object and the model records anything with contents of its own as
-                        // an empty string.
+
+
+
                         Console.WriteLine($"  read back through hkxpack: bound 0 is " +
                                           $"{FirstBound(reread, "min")} to {FirstBound(reread, "max")}");
 
-                        // Nothing else moved. Every value hkxpack reads out of the written file has
-                        // to match what it read out of the edited text, or the write went somewhere
-                        // it was not asked to go.
+
+
+
                         var wanted = RepackCheck.Take(edited);
                         var got = RepackCheck.Take(reread);
 
@@ -9477,11 +9477,11 @@ public static class Program
         return ok && errors == 0 ? 0 : 1;
     }
 
-    // What the canvas will actually draw, before and after a link is retargeted.
-    //
-    // Retargeting is the ordinary way to change what a node points at, and it detaches whatever the
-    // link used to lead to. Drawing only what the root reaches makes all of that vanish, which is
-    // what "I dragged something and all my other nodes were removed" was.
+
+
+
+
+
     private static int Draw(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -9539,8 +9539,8 @@ public static class Program
         return seen.Count;
     }
 
-    // Exercises the wiring the graph view performs when a link is dragged between two ports. The
-    // canvas cannot be driven from a script, so this drives the same calls it makes.
+
+
     private static int Link(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -9624,17 +9624,17 @@ public static class Program
         return HkxTextEdit.ReadXml(HkxTextEdit.Unpack(_java, _jar, packed, Path.Combine(dir, "back")));
     }
 
-    // Adds DN151_DoorSeal's StartOpen and StartClosed to SpecialCaseDoors, which does not have them.
-    //
-    // Strictly additive. Two events, two states, two sequence generators, and four new transition
-    // entries. No existing transition is retargeted, because the same event ids are shared across
-    // every door that uses this behaviour and changing one would change all of them.
-    //
-    // Each new event enters a state that PLAYS its sequence and then moves on to the resting state
-    // when the sequence sends its end event. Worth knowing that vanilla does the opposite:
-    // SwitchDoorExLarge01 points StartOpen straight at its held pose state and reaches the playing
-    // states through Play01 instead, so there a door placed open is simply open, with no animation.
-    // Sending StartOpen here will make the door visibly open itself as the cell loads.
+
+
+
+
+
+
+
+
+
+
+
     private static int Door(string[] argv)
     {
         if (argv.Length < 3) { Usage(); return 1; }
@@ -9661,18 +9661,18 @@ public static class Program
             return i >= 0 ? i : throw new InvalidOperationException($"this graph declares no event called {name}");
         }
 
-        // Reuse whatever blending effect the door's own transitions already use rather than
-        // inventing one, so the new transitions blend exactly like the existing ones.
+
+
         string effect = FirstTransitionEffect(model, machine, xml);
         Console.WriteLine($"  reusing transition effect {effect}");
 
         int openedState = StateIdNamed("Opened");
         int closedState = StateIdNamed("Closed");
 
-        // enterState is where the new event actually lands. StartOpen goes straight to the held open
-        // pose, because that is what vanilla does: SwitchDoorExLarge01 sends StartOpen to its posed
-        // state and reaches the playing states through Play01. A door placed open should be open,
-        // not open itself while the cell is still loading. StartClosed keeps the playing shape.
+
+
+
+
         foreach (var (eventName, stateName, sequence, endEvent, target, poseEntry) in new[]
                  {
                      ("StartOpen", "StartOpening", "Opening", "Opened", openedState, true),
@@ -9682,18 +9682,18 @@ public static class Program
             xml = SymbolEditor.AddEvent(xml, eventName, out int eventId);
             int enterState = target;
 
-            // A pose entry event needs no state of its own. It lands on one the door already has,
-            // and building a playing state for it would leave that state with nothing pointing at
-            // it, duplicating the Open state the graph already has.
+
+
+
             if (!poseEntry)
             {
                 xml = GeneratorEditor.Add(xml, "sequence", stateName, sequence, "", out string generator);
                 xml = StateEditor.AddState(xml, machine, stateName, "#" + generator, out string stateObject, out enterState);
-                // Out of the new state on the event the sequence itself sends when it finishes.
+
                 xml = StateEditor.AddTransition(xml, machine, stateObject, target, EventNamed(endEvent), effect);
             }
 
-            // Into it from anywhere, which is how this graph already handles pose entry events.
+
             xml = StateEditor.AddTransition(xml, machine, "", enterState, eventId, effect);
 
             Console.WriteLine(poseEntry
@@ -9778,8 +9778,8 @@ public static class Program
 
     private sealed record Snapshot(List<string> Bindings, List<string> Transitions);
 
-    // Resolve every index to the name it lands on. A renumbering that went wrong then shows up as a
-    // changed name rather than a changed number, which is the only comparison worth making.
+
+
     private static Snapshot Resolved(string xml)
     {
         var model = BehaviourGraphModel.Parse(xml);

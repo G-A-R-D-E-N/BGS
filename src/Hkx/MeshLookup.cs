@@ -5,16 +5,16 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Finding the model that goes with a behaviour, without guessing.
-//
-// A behaviour names its skeleton and its animations but never its model, because the game decides
-// that elsewhere. So there is nothing to look up and the only honest options are to find exactly one
-// obvious candidate on disk or to ask. Picking one of several would put a stranger's mesh on the
-// skeleton and look like a bug in the binding rather than a bad guess.
-//
-// Folders are searched in order and the FIRST one holding any .nif decides the outcome. It is
-// tempting to keep looking when that folder holds several, but "several here, one over there" is
-// still a guess about which the user meant, so several is an answer, not a reason to continue.
+
+
+
+
+
+
+
+
+
+
 public static class MeshLookup
 {
     public sealed record Result(string? Path, string Reason)
@@ -22,9 +22,9 @@ public static class MeshLookup
         public bool Found => Path != null;
     }
 
-    /// The folders worth looking in, nearest first: beside the behaviour, then the project root,
-    /// then beside the skeleton. The skeleton's folder earns its place because the mesh binds to the
-    /// skeleton, and vanilla keeps the two together in CharacterAssets.
+
+
+
     public static IEnumerable<string> Places(string behaviourPath, string? projectRoot,
                                              string? skeletonPath)
     {

@@ -9,14 +9,14 @@ using OpenCommonwealth.Services.Archive;
 
 namespace BehaviourStudio.App;
 
-// Picking one file out of a BA2 without unpacking the archive.
-//
-// Every behaviour in the game lives inside Fallout4 - Animations.ba2, which holds 29,716 entries.
-// Reaching one of them used to mean writing the other 29,715 to disk first. Reading the index is
-// about a second and touches none of the file data, so the list below is the archive itself rather
-// than a folder somebody prepared earlier.
-//
-// Read only, which is what an archive is. Nothing here writes back into it.
+
+
+
+
+
+
+
+
 public sealed class ArchiveBrowser : Window
 {
     private readonly Ba2 _archive;
@@ -24,7 +24,7 @@ public sealed class ArchiveBrowser : Window
     private readonly TextBox _filter = Ux.Field();
     private readonly TextBlock _count = Ux.Label("");
 
-    /// The entry the user settled on, or null if they closed the window without choosing.
+
     public Ba2.Entry? Chosen { get; private set; }
 
     public ArchiveBrowser(Ba2 archive, string extension)
@@ -38,9 +38,9 @@ public sealed class ArchiveBrowser : Window
 
         _filter.Watermark = "words to look for, in any order, such as: dogmeat behavior";
 
-        // Filtering on every keystroke rather than on Enter. 29,716 string comparisons is nothing,
-        // and a list that narrows as you type is how you find a file whose exact path you do not
-        // remember, which is the whole case for this window.
+
+
+
         _filter.PropertyChanged += (_, e) =>
         {
             if (e.Property == TextBox.TextProperty) Fill(extension);
@@ -101,9 +101,9 @@ public sealed class ArchiveBrowser : Window
         return c;
     }
 
-    // A cap rather than the whole archive, because an empty filter matches 29,716 rows and Avalonia
-    // draws every one of them into the visual tree. The count above the list always says the real
-    // number, so a capped list never reads as a complete one.
+
+
+
     private const int Shown = 400;
 
     private void Fill(string extension)

@@ -4,9 +4,9 @@ using System.IO;
 
 namespace BehaviourStudio.App;
 
-// Where the last opened path and any hand-set java or hkxpack location live. Deliberately a plain
-// key=value file in the user's config directory: it is meant to be readable and correctable by
-// hand when a path is wrong, which is the only reason anyone opens it.
+
+
+
 public static class Settings
 {
     private static readonly string Path = System.IO.Path.Combine(
@@ -32,7 +32,7 @@ public static class Settings
         }
         catch (IOException)
         {
-            // A read-only or missing config directory must not stop the tool opening a file.
+
         }
     }
 

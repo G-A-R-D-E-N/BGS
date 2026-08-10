@@ -5,26 +5,20 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Variables and events: their names, their declared types, their initial values, and the parallel
-// arrays that have to stay the same length as each other.
-//
-// A variable lives in up to four places. hkbBehaviorGraphStringData holds the name,
-// hkbBehaviorGraphData holds one variableInfos element and sometimes a variableBounds element, and
-// hkbVariableValueSet holds one value.
-//
-// variableBounds is the short one. Across the 531 vanilla files it is empty in 224, the same length
-// as the variable list in 17, and shorter in 87. It is still positional: hkbVariableBounds is 8
-// bytes holding min and max and nothing else, so the struct carries no way to say which variable it
-// belongs to and position is the only key there can be. A short array therefore means the variables
-// past its end have no bound, and an unbounded variable in the middle is written as 0..0.
+
+
+
+
+
+
+
+
+
+
+
+
 public static class SymbolEditor
 {
-    // From PipboyBehavior.hkx: hkbRoleAttribute on a variableInfos element.
-    private const string RoleAttributeSignature = "0xfecef669";
-
-    // From 1HM_MeleeWrappingBehavior.hkx: hkbVariableValue inside a variableBounds element.
-    private const string VariableValueSignature = "0xb99bd6a";
-
     public enum VariableType { Int32, Real, Bool }
 
     private static string TypeName(VariableType type) => type switch
@@ -45,7 +39,7 @@ public static class SymbolEditor
         public int EventInfos;
 
         public bool BoundsAreParallel => Bounds == Names;
-        // Vanilla ships partial bounds arrays, so only an over-long one is actually broken.
+
         public bool VariablesConsistent =>
             Names == Infos && Names == Values && Bounds <= Names;
         public bool EventsConsistent => EventNames == EventInfos;
@@ -86,8 +80,8 @@ public static class SymbolEditor
         return rows.Select(r => r.TryGetValue("value", out var v) ? v : "").ToList();
     }
 
-    // hkbVariableValueSet stores every variable as a 32 bit word, so a float is written as its bit
-    // pattern reinterpreted as an int, not as "0.5".
+
+
     public static string EncodeValue(VariableType type, string text)
     {
         switch (type)
@@ -141,7 +135,7 @@ public static class SymbolEditor
         var values = VariableValues(BehaviourGraphModel.Parse(xml));
         if (index < 0 || index >= values.Count) throw new ArgumentOutOfRangeException(nameof(index));
 
-        // Element by element replacement, because every element has the same parameter name.
+
         xml = HkxTextEdit.ArrayRemoveAt(xml, ids[0], "wordVariableValues", index);
         return HkxTextEdit.ArrayInsertAt(xml, ids[0], "wordVariableValues", index,
             "                <hkobject>\n" +
@@ -149,7 +143,7 @@ public static class SymbolEditor
             "                </hkobject>");
     }
 
-    // Declares a variable in all three places at once and returns its index.
+
     public static string AddVariable(string xml, string name, VariableType type, out int index)
     {
         var stringIds = HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphStringData");
@@ -165,7 +159,7 @@ public static class SymbolEditor
             xml = HkxTextEdit.ArrayAppend(xml, dataIds[0], "variableInfos",
                 "                <hkobject>\n" +
                 "                    <hkparam name=\"role\">\n" +
-                $"                        <hkobject class=\"hkbRoleAttribute\" name=\"role\" signature=\"{RoleAttributeSignature}\">\n" +
+                $"                        <hkobject class=\"hkbRoleAttribute\" name=\"role\" signature=\"{HkxSignatures.Of("hkbRoleAttribute")}\">\n" +
                 "                            <hkparam name=\"role\">ROLE_DEFAULT</hkparam>\n" +
                 "                            <hkparam name=\"flags\">FLAG_NONE</hkparam>\n" +
                 "                        </hkobject>\n" +
@@ -186,8 +180,8 @@ public static class SymbolEditor
         return xml;
     }
 
-    /// The min and max a variable is bounded by, as stored, or empty strings where the array stops
-    /// short of it. Positional like everything else here: element n bounds variable n.
+
+
     public static List<(string Min, string Max)> VariableBounds(BehaviourGraphModel model)
     {
         var data = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraphData");
@@ -201,16 +195,16 @@ public static class SymbolEditor
         return bounds;
     }
 
-    /// Gives a variable a min and a max, extending the array to reach it when it stops short.
-    ///
-    /// The array is allowed to be shorter than the variable list and usually is: across the 531
-    /// vanilla files it is empty in 224 and shorter in 87. So bounding variable 9 in a file with two
-    /// bounds means writing seven unbounded entries before it, and 0 to 0 is what the file already
-    /// means by unbounded inside the array. Anything else would be inventing a bound for a variable
-    /// nobody asked to bound.
-    ///
-    /// Values are encoded the same way an initial value is, because a bound on a real is a float's
-    /// bit pattern in an int and not the text "0.5".
+
+
+
+
+
+
+
+
+
+
     public static string SetVariableBounds(string xml, int index, string encodedMin, string encodedMax)
     {
         var dataIds = HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphData");
@@ -226,8 +220,8 @@ public static class SymbolEditor
         for (int i = have; i <= index; i++)
             xml = HkxTextEdit.ArrayAppend(xml, dataIds[0], "variableBounds", BoundsElement());
 
-        // Element by element replacement, because every element carries the same parameter names and
-        // there is nothing else to tell one from another.
+
+
         xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], "variableBounds", index);
         return HkxTextEdit.ArrayInsertAt(xml, dataIds[0], "variableBounds", index,
                                          BoundsElement(encodedMin, encodedMax));
@@ -243,7 +237,7 @@ public static class SymbolEditor
 
     private static string BoundsMember(string name, string value) =>
         $"                    <hkparam name=\"{name}\">\n" +
-        $"                        <hkobject class=\"hkbVariableValue\" name=\"{name}\" signature=\"{VariableValueSignature}\">\n" +
+        $"                        <hkobject class=\"hkbVariableValue\" name=\"{name}\" signature=\"{HkxSignatures.Of("hkbVariableValue")}\">\n" +
         $"                            <hkparam name=\"value\">{value}</hkparam>\n" +
         "                        </hkobject>\n" +
         "                    </hkparam>\n";
@@ -268,10 +262,10 @@ public static class SymbolEditor
         return xml;
     }
 
-    // Removing a symbol shifts every index above it, so the parallel arrays and every reference in
-    // the file have to move in the same pass. blockers lists whatever still points at the exact
-    // index being removed; with force those references are left pointing at whatever slides into
-    // the slot, which is nearly always wrong, so the caller should show them first.
+
+
+
+
     public static string RemoveVariable(string xml, int index, bool force, out List<string> blockers) =>
         Remove(xml, variable: true, index, force, out blockers);
 
@@ -296,9 +290,9 @@ public static class SymbolEditor
         {
             var before = Audit(BehaviourGraphModel.Parse(xml));
             xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], variable ? "variableInfos" : "eventInfos", index);
-            // Bounds are positional and can stop short, so a removal inside the array has to take
-            // its entry with it or every bound above it slides onto the wrong variable. Past the
-            // end there is nothing to remove, which is why a short array is not a reason to skip.
+
+
+
             if (variable && index < before.Bounds)
                 xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], "variableBounds", index);
         }
@@ -313,8 +307,8 @@ public static class SymbolEditor
         return SymbolIndexFixup.ShiftDown(xml, events: !variable, index, out _);
     }
 
-    // Renaming is index preserving on purpose. Transitions store an eventId, not a name, so a rename
-    // must not reorder anything or every transition in the file would point somewhere else.
+
+
     public static string Rename(string xml, bool variable, int index, string newName)
     {
         var ids = HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphStringData");

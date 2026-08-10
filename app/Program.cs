@@ -19,10 +19,10 @@ public class App : Application
             var window = new MainWindow();
             desktop.MainWindow = window;
 
-            // Anything on the command line that is a file gets opened, which is what a file manager
-            // will do when the exe is set as a handler for .hkx. A .nif alongside it is the mesh to
-            // draw: nothing in a behaviour, a character or a skeleton names one, so being told is
-            // the only way to know until the race record lookup exists.
+
+
+
+
             var args = desktop.Args ?? Array.Empty<string>();
             foreach (string arg in args)
                 if (File.Exists(arg) && !arg.EndsWith(".nif", StringComparison.OrdinalIgnoreCase))
@@ -66,9 +66,9 @@ public static class Program
     }
 }
 
-// Opening a file and checking it without a display, so a change can be made and proved in a
-// terminal or on a build runner. This and the window share one path into the format layer, so what
-// this reports is what the window would show.
+
+
+
 public static class Headless
 {
     public static int Run(string[] args)

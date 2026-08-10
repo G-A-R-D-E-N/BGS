@@ -4,17 +4,11 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Adding and removing states and transitions. Sits on the same depth-aware array primitives in
-// HkxTextEdit that the binding work uses, because an element carries its own hkparam children and a
-// naive scan edits the inside of element zero.
+
+
+
 public static class StateEditor
 {
-    // Signatures come from vanilla files; hkxpack validates them on repack.
-    // Read out of a vanilla file, not guessed; hkxpack validates them on repack.
-    private const string StateInfoSignature = "0x39d76713";
-    private const string TransitionArraySignature = "0x704a19af";
-    private const string TimeIntervalSignature = "0x60a881e5";
-
     public sealed class StateRow
     {
         public string Id = "";
@@ -132,8 +126,8 @@ public static class StateEditor
         return used.Count == 0 ? 0 : used.Max() + 1;
     }
 
-    // Adds a state to a machine, pointing at an existing generator. Returns the new object id and the
-    // state id the engine will address it by.
+
+
     public static string AddState(string xml, string machineId, string name, string generatorRef,
                                   out string newObjectId, out int newStateId)
     {
@@ -156,12 +150,13 @@ public static class StateEditor
             "            <hkparam name=\"probability\">1.0</hkparam>\n" +
             "            <hkparam name=\"enable\">true</hkparam>";
 
-        xml = HkxTextEdit.AddObject(xml, "hkbStateMachineStateInfo", StateInfoSignature, inner, out newObjectId);
+        xml = HkxTextEdit.AddObject(xml, "hkbStateMachineStateInfo",
+                                    HkxSignatures.Of("hkbStateMachineStateInfo"), inner, out newObjectId);
         return HkxTextEdit.ArrayAppend(xml, machineId, "states", $"                #{newObjectId}");
     }
 
-    // Removing a state also strips every transition that pointed at it, otherwise the graph keeps
-    // edges to a state id that no longer exists.
+
+
     public static string RemoveState(string xml, string machineId, string stateObjectId, out int strippedTransitions)
     {
         var model = BehaviourGraphModel.Parse(xml);
@@ -184,8 +179,8 @@ public static class StateEditor
         return HkxTextEdit.ArrayRemoveAt(xml, machineId, "states", position);
     }
 
-    // Adds a transition. Wildcard transitions live on the machine's own array and can fire from any
-    // state; a normal one lives on the source state's array.
+
+
     public static string AddTransition(string xml, string machineId, string fromStateObjectId,
                                        int toStateId, int eventId, string effectRef)
     {
@@ -224,13 +219,13 @@ public static class StateEditor
             return HkxTextEdit.ArrayAppend(xml, arrayRef, "transitions", element);
 
         string inner = $"            <hkparam name=\"transitions\" numelements=\"1\">\n{element}\n            </hkparam>";
-        xml = HkxTextEdit.AddObject(xml, "hkbStateMachineTransitionInfoArray", TransitionArraySignature,
-                                    inner, out string arrayId);
+        xml = HkxTextEdit.AddObject(xml, "hkbStateMachineTransitionInfoArray",
+                                    HkxSignatures.Of("hkbStateMachineTransitionInfoArray"), inner, out string arrayId);
         return HkxTextEdit.SetParam(xml, owner, field, "#" + arrayId);
     }
 
     private static string Interval(string name) =>
-        $"                        <hkobject class=\"hkbStateMachineTimeInterval\" name=\"{name}\" signature=\"{TimeIntervalSignature}\">\n" +
+        $"                        <hkobject class=\"hkbStateMachineTimeInterval\" name=\"{name}\" signature=\"{HkxSignatures.Of("hkbStateMachineTimeInterval")}\">\n" +
         "                            <hkparam name=\"enterEventId\">-1</hkparam>\n" +
         "                            <hkparam name=\"exitEventId\">-1</hkparam>\n" +
         "                            <hkparam name=\"enterTime\">0.0</hkparam>\n" +

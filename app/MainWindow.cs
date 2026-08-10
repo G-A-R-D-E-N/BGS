@@ -85,14 +85,14 @@ public class MainWindow : Window
     private int _frameStart;
     private int _aimedFrame = -1;
 
-    /// Which frame the boxes above are showing, as the track and the frame it came from, or -1 for
-    /// neither. A frame is not addressable by anything in the file, so it is addressed by where it
-    /// sits, and the row carries that.
+
+
+
     private int _editTrack = -1, _editFrame = -1;
 
-    /// Whether a frame has been changed since the file was opened. Kept apart from the behaviour
-    /// graph's own dirty flag: an animation is a different kind of file, saved a different way, and
-    /// running the two together would offer to write a clip out of a behaviour.
+
+
+
     private bool _animationEdited;
 
     private readonly TextBox _symbolName = Ux.Field("name", 170);
@@ -113,10 +113,10 @@ public class MainWindow : Window
     private HkxAnimationData? _poseAnimation;
     private string _poseSource = "";
 
-    /// Where the open clip travels, which the drawn pose does not show. Motion is extracted in this
-    /// format: a walk plays on the spot and carries its displacement separately, so the bones stay
-    /// put no matter how far the clip takes you. Measured rather than assumed: a Dogmeat walk that
-    /// travels 1,060 units moves its root bone 0.000 and its centre of mass 0.312.
+
+
+
+
     private RootMotion.Motion _poseMotion = new();
     private bool _followTravel;
     private int _poseFrame;
@@ -125,9 +125,9 @@ public class MainWindow : Window
     private HkxSkeleton? _cachedSkeleton;
     private string _cachedSkeletonFor = "";
 
-    // The mesh, its edges worked out once, and which skeleton bone each of its own bones is. All
-    // three are per shape and none of them change while scrubbing, so only the vertex positions are
-    // recomputed per frame.
+
+
+
     private readonly List<(NifShape Shape, SkinnedMesh.Binding Binding, List<(int From, int To)> Edges)>
         _meshShapes = new();
     private string _meshPath = "";
@@ -141,7 +141,7 @@ public class MainWindow : Window
     private readonly HkGrid _problems = new(("", 70), ("Object", -3), ("What is wrong", -7));
     private readonly TextBlock _problemBar = new() { Foreground = Ux.MetaBrush, FontSize = 12, Margin = new Thickness(2, 6, 2, 2) };
 
-    /// The graph, stepped rather than only drawn. Null until a runnable behaviour is open.
+
     private GraphRun? _run;
     private readonly ComboBox _runEvents = new()
         { MinWidth = 190, MaxWidth = 260, Foreground = Ux.CodeBrush, FontSize = 12 };
@@ -167,12 +167,12 @@ public class MainWindow : Window
           Margin = new Thickness(2, 4, 2, 2) };
     private Button _step = Ux.Secondary("Step 0.1s");
 
-    /// The variables a condition can read, and the box that sets one.
-    ///
-    /// A transition can be gated on a variable, and until the variable can be changed the answer to
-    /// "does this ever fire" is whatever the file happened to ship the variable at. 107 transitions
-    /// in the corpus carry a condition and 29 of them are false at the shipped values, so without
-    /// this those 29 could only ever be watched not firing.
+
+
+
+
+
+
     private readonly ComboBox _runVariables = new()
         { MinWidth = 170, MaxWidth = 230, Foreground = Ux.CodeBrush, FontSize = 12 };
     private readonly TextBox _runValue = new()
@@ -182,9 +182,9 @@ public class MainWindow : Window
         { Foreground = Ux.WarnBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
           Margin = new Thickness(2, 4, 2, 2) };
 
-    /// The subtree waiting to be pasted. Static so it survives opening the file it is going into,
-    /// which is what makes copying between two files a thing a person can actually do: there is one
-    /// window, so the second file is the same window with something else open in it.
+
+
+
     private static NativePaste.Clip? _clip;
     private readonly ComboBox _pasteInto = new()
         { MinWidth = 210, MaxWidth = 300, Foreground = Ux.CodeBrush, FontSize = 12 };
@@ -202,26 +202,26 @@ public class MainWindow : Window
     private HashSet<string> _emptyStates = new();
     private List<string> _objectIds = new();
 
-    // The open file's own bytes, which is where the properties panel gets its values. Null when the
-    // file could not be taken apart, in which case the panel falls back to hkxpack for everything.
+
+
     private PackfileObjects? _bytes;
 
-    // Fields changed since the file was read, as "objectId.field". An edit lands in the text form
-    // and not in the bytes until it is saved, so for these the text form is the newer of the two and
-    // reading the bytes would put the old value back on screen under the person typing.
+
+
+
     private readonly HashSet<string> _editedFields = new(StringComparer.Ordinal);
 
-    // Why the bytes are not being read, when they are not. Kept rather than printed on the spot,
-    // because the load says several things after this point and the last one wins the status line.
+
+
     private string _classWarning = "";
     private List<HkxBehaviorParser.BehaviorNode> _objects = new();
     private HkxBehaviorParser.BehaviorNode? _root;
 
     private string _hkxPath = "";
 
-    /// Set when the open file is a copy pulled out of a BA2 rather than a file on disk. The copy is
-    /// in a temporary folder, so saving into it would write somewhere the user will never look and
-    /// leave the archive untouched, which is worse than refusing.
+
+
+
     private bool _readOnly;
     private string _readOnlyWhy = "";
     private string _xmlPath = "";
@@ -231,10 +231,10 @@ public class MainWindow : Window
     private readonly List<Action> _fieldCommits = new();
     private bool _dirty;
 
-    // The document is one string, so a step back is a copy of it. Every mutation goes through Commit,
-    // which is the only place _xmlText is allowed to change outside a load, so nothing can edit
-    // behind the stack's back. Depth is capped because a long session on a seven megabyte weapon
-    // behaviour would otherwise keep every version of it alive.
+
+
+
+
     private const int UndoDepth = 100;
     private readonly List<string> _undo = new();
     private readonly List<string> _redo = new();
@@ -389,8 +389,8 @@ public class MainWindow : Window
         };
     }
 
-    // The last control in the row is the one that stretches, unless a later one is a button, which
-    // is the layout every bar in this window happens to want.
+
+
     private static Control Bar(params Control[] controls)
     {
         var panel = new DockPanel { LastChildFill = true };
@@ -417,16 +417,16 @@ public class MainWindow : Window
         return grid;
     }
 
-    // The graph owns the middle of the workspace. Supporting information keeps its own pane instead
-    // of claiming height until somebody asks for it, so a behaviour stays readable at ordinary window
-    // sizes. The existing controls are deliberately moved, not redesigned, in this first layout pass.
+
+
+
     private Control BuildGraphTab()
     {
         _problems.SelectionChanged += OnProblemSelected;
 
-        // A behaviour lays out several screens across. Without a way back to the whole of it, being
-        // anywhere in particular means being lost, and the answer to a graph feeling overwhelming is
-        // usually being able to see all of it rather than there being less of it.
+
+
+
         var fitAll = Ux.Secondary("Fit all");
         fitAll.Click += (_, _) =>
         {
@@ -434,9 +434,9 @@ public class MainWindow : Window
             _graph.FrameAll();
         };
 
-        // With a node picked out, its own neighbourhood filling the view. This is the one that makes
-        // a big file workable: a machine and its states are a readable picture, and the rest of the
-        // file being off screen is the point rather than a loss.
+
+
+
         var fitPicked = Ux.Secondary("Fit selection");
         fitPicked.Click += (_, _) =>
         {
@@ -545,9 +545,9 @@ public class MainWindow : Window
         return graphWorkspace;
     }
 
-    // View actions change what is visible around the graph. Keeping them behind one menu avoids a
-    // second permanent toolbar for occasional panels while giving every top-level tool window an
-    // obvious, consistent route back.
+
+
+
     private Button BuildViewMenu(Control fitAll, Control fitPicked)
     {
         var button = Ux.Secondary("View ▾");
@@ -649,13 +649,13 @@ public class MainWindow : Window
         grid.Children.Add(control);
     }
 
-    /// The controls that step the graph: pick an event, send it, and see which states go active.
-    ///
-    /// The event is a dropdown of the graph's own declared events rather than a free text box on
-    /// purpose. An event the file never declares cannot move anything, and offering to send one would
-    /// only produce the answer "nothing happened" for a reason the box hid. What it does not have yet
-    /// is a clock: nothing here advances time, so a transition's blend plays instantly and the answer
-    /// is which state you land in, not what the blend looks like part way. That is the rest of #37.
+
+
+
+
+
+
+
     private Control BuildRunControls()
     {
         var send = Ux.Primary("Send");
@@ -665,19 +665,19 @@ public class MainWindow : Window
         ToolTip.SetTip(restart, "Put the graph back in the state it starts in.");
         restart.Click += (_, _) => StartRun("Back at the start.");
 
-        // Advances the clock a tenth of a second, which moves any transition still blending along.
-        // A tenth because a blend is a fifth to a half of a second in the corpus, so this is a few
-        // steps across one, enough to watch the weights move without a slider nobody asked for.
+
+
+
         _step = Ux.Secondary("Step 0.1s");
         ToolTip.SetTip(_step, "Advance time so a transition in progress blends further.");
         _step.Click += (_, _) =>
         {
             if (_run == null) return;
 
-            // A step now moves clips as well as blends, so it can move a state on its own: a clip
-            // reaching a point in itself raises the event it carries, and a transition listening for
-            // that event fires without anybody sending anything. That is the thing worth saying out
-            // loud, because a state changing with no event typed in otherwise reads as a bug.
+
+
+
+
             var byTime = _run.Advance(0.1f);
             if (byTime.Count > 0)
             {
@@ -689,9 +689,9 @@ public class MainWindow : Window
             RefreshRun(_run.Blending ? "Stepped 0.1s, still blending." : "Stepped 0.1s, blend finished.");
         };
 
-        // Clicking a running machine jumps the canvas to the state it is in, which is the point of
-        // the list: on a real character a dozen machines are live at once and finding them by eye on
-        // the canvas is the thing this is meant to save.
+
+
+
         _running.SelectionChanged += () =>
         {
             if (_running.SelectedTag is string id && id.Length > 0 && _graph.FocusOn(id))
@@ -702,8 +702,8 @@ public class MainWindow : Window
         label.FontSize = 11;
         label.Margin = new Thickness(2, 0, 0, 0);
 
-        // Variables are runtime data, not permanent toolbar controls. Their editor lives in the
-        // separate Runtime window, while these controls remain the short event-driving strip.
+
+
         _runValue.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) SetRunVariable(); };
         _runVariables.SelectionChanged += (_, _) => ShowRunVariable();
         ToolTip.SetTip(_setRunVariable, "Change a simulation variable before sending the next event.");
@@ -718,16 +718,16 @@ public class MainWindow : Window
         return left;
     }
 
-    /// Copy and paste of a whole subtree, which is the thing that turns building the same generator
-    /// shape once per idle into one action.
-    ///
-    /// Copy takes the selected node and everything it owns. Paste puts a fresh set of objects into
-    /// whatever file is open now, with every reference inside them aimed at the copies rather than at
-    /// the originals, and hangs the new root off the slot chosen in the box beside the button.
-    ///
-    /// Paste writes the file there and then, the same way saving an edited clip does, rather than
-    /// waiting for Save. It is not an edit to the text form the rest of the editor works on, so
-    /// there is nothing for Save to write, and a file is kept as .bak before it is replaced.
+
+
+
+
+
+
+
+
+
+
     private Control BuildPasteControls()
     {
         var copy = Ux.Secondary("Copy subtree");
@@ -749,10 +749,10 @@ public class MainWindow : Window
             Margin = new Thickness(0, 0, 8, 0),
         };
 
-        // Templates are the same copy, kept. Save takes whatever is selected, the same shape Copy
-        // takes, and writes it where it survives the session. Apply puts one back into whatever file
-        // is open, into the same slot the paste box chose, because a template is a paste and not a
-        // second way of adding objects.
+
+
+
+
         var save = Ux.Secondary("Save as template");
         ToolTip.SetTip(save, "Keep the selected node and everything it owns, so it can be used again " +
                              "in another file later.");
@@ -763,9 +763,9 @@ public class MainWindow : Window
         ToolTip.SetTip(_applyTemplate,
             "Put a kept shape into this file and save it. The file is kept as .bak first.");
 
-        // Choosing one says whether it fits this file before anybody presses anything, because a
-        // template carries its source file's event and variable names and the answer depends on where
-        // it is going.
+
+
+
         _templates.SelectionChanged += (_, _) => DescribeTemplate();
 
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -783,12 +783,12 @@ public class MainWindow : Window
         return bar;
     }
 
-    /// Where a pasted root could hang, which is every field of the selected node that holds a pointer
-    /// or an array of them, plus the option of leaving it loose.
-    ///
-    /// Loose is offered rather than being the fallback because the useful shape to copy is often not
-    /// one the selected node has a slot for, and a node nothing reaches is a state the checker already
-    /// reports and the canvas already draws. It is a step in the work rather than a broken file.
+
+
+
+
+
+
     private void RefreshPasteSlots()
     {
         var slots = new List<string> { Unattached };
@@ -864,8 +864,8 @@ public class MainWindow : Window
         if (_clip == null) { SetPasteSummary("Nothing has been copied yet.", Ux.MutedBrush); return; }
         if (_readOnly) { SetPasteSummary("Not pasted: " + _readOnlyWhy, Ux.BadBrush); return; }
 
-        // The paste goes into the file rather than into the text form the rest of the editor edits,
-        // so anything typed and not yet saved would be thrown away by the reload that follows.
+
+
         if (_dirty)
         {
             SetPasteSummary("Save your other changes first. Pasting writes the file and reads it " +
@@ -895,8 +895,8 @@ public class MainWindow : Window
 
             string said = written.Note + $" The file before this is kept as {Path.GetFileName(backup)}.";
 
-            // Reloaded first and told afterwards, because opening a file clears this line and saying
-            // it beforehand would put the message up and wipe it in the same breath.
+
+
             Load();
             SelectObjectId(written.RootId.ToString());
             SetPasteSummary(said, Ux.MetaBrush);
@@ -908,12 +908,12 @@ public class MainWindow : Window
         }
     }
 
-    /// Keeps the selected shape so it can be used in another file later.
-    ///
-    /// Refused when the shape shares an object with the rest of its file, because such a shape can
-    /// never be pasted into a different file and a template that only works where it came from is not
-    /// a template. That is the common case for a state: `symrm template` counts 3,624 of the corpus's
-    /// 5,320 state infos sharing something, usually a generator a second state also uses.
+
+
+
+
+
+
     private void SaveTemplate()
     {
         if (_bytes == null || _hkxPath.Length == 0)
@@ -956,7 +956,7 @@ public class MainWindow : Window
         }
     }
 
-    /// Puts a kept shape into the file that is open, down the same path a paste takes.
+
     private void ApplyStoredTemplate()
     {
         if (_templates.SelectedItem as string is not { } slug || slug.Length == 0)
@@ -970,8 +970,8 @@ public class MainWindow : Window
 
         if (_readOnly) { SetPasteSummary("Not applied: " + _readOnlyWhy, Ux.BadBrush); return; }
 
-        // Same reason a paste refuses here: applying writes the file and reads it back, which would
-        // throw away anything typed and not yet saved.
+
+
         if (_dirty)
         {
             SetPasteSummary("Save your other changes first. Applying a template writes the file and " +
@@ -1013,7 +1013,7 @@ public class MainWindow : Window
         }
     }
 
-    /// The templates on disk, in the box.
+
     private void RefreshTemplates()
     {
         var kept = TemplateStore.All();
@@ -1022,12 +1022,12 @@ public class MainWindow : Window
         if (kept.Count > 0 && _templates.SelectedItem == null) _templates.SelectedIndex = 0;
     }
 
-    /// Says whether the chosen template fits the file that is open, before anybody applies it.
-    ///
-    /// This is the whole reason the fit is worked out separately from applying. A template carries the
-    /// event and variable names of the file it was lifted from, so the same template is fine in one
-    /// file and refused in another, and "declare these two first" is a useful sentence where "that
-    /// failed" is not.
+
+
+
+
+
+
     private void DescribeTemplate()
     {
         if (_templates.SelectedItem as string is not { } slug) return;
@@ -1062,7 +1062,7 @@ public class MainWindow : Window
         _pasteSummary.Foreground = brush;
     }
 
-    /// Test hooks for the template path, so the headless smoke test can walk it too.
+
     public IReadOnlyList<string> TemplateNames =>
         (_templates.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
     public bool CanApplyTemplate => _applyTemplate.IsEnabled;
@@ -1075,15 +1075,15 @@ public class MainWindow : Window
     {
         if (!TemplateNames.Contains(slug)) return;
 
-        // Described explicitly rather than leaning on the selection changing. Saving a template
-        // already selects it, so setting the same item again raises nothing, and a check that read
-        // the line afterwards would be reading the message the save left behind.
+
+
+
         _templates.SelectedItem = slug;
         DescribeTemplate();
     }
     public void ApplyTemplateForTest() => ApplyStoredTemplate();
 
-    /// Test hooks, so the headless smoke test can walk the copy and paste path.
+
     public string ClipSummary => _clip == null ? "" : Held(_clip);
     public IReadOnlyList<string> PasteSlots =>
         (_pasteInto.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
@@ -1096,7 +1096,7 @@ public class MainWindow : Window
         PasteSubtree();
     }
 
-    /// Puts the graph in its starting configuration and lists what is running.
+
     private void StartRun(string note = "Started at the graph's root.")
     {
         _graph.ClearActive();
@@ -1131,9 +1131,9 @@ public class MainWindow : Window
             return;
         }
 
-        // The clip lengths, read out of the animation files the project around this behaviour points
-        // at. Without them the clock moves blends and nothing else, which is what it did before, so a
-        // file opened on its own with no project folder around it still runs rather than refusing.
+
+
+
         if (_bytes != null && _hkxPath.Length > 0)
         {
             try
@@ -1143,8 +1143,8 @@ public class MainWindow : Window
             }
             catch (Exception)
             {
-                // A file this build cannot lay out is already reported everywhere else in the window,
-                // and a run without clip lengths is worth more than no run at all.
+
+
             }
         }
 
@@ -1177,9 +1177,9 @@ public class MainWindow : Window
         foreach (var move in fired)
             _runLog.Add(null, $"Transition: {move.Event} to {move.ToStateName}").Tag(move.ToStateId);
 
-        // The two nothings are different answers and saying so is the point. Nothing listening means
-        // the event is not wired to anything running; something listening but held back means it is
-        // wired and a variable is stopping it, which is a thing the person can then go and change.
+
+
+
         string said = fired.Count == 0
             ? held == 0
               ? $"Sent {name}. Nothing in a running state was listening for it."
@@ -1190,7 +1190,7 @@ public class MainWindow : Window
         RefreshRun(said);
     }
 
-    /// Puts the value of the chosen variable in the box, so it can be read before it is changed.
+
     private void ShowRunVariable()
     {
         if (_run == null || _runVariables.SelectedItem is not string name) return;
@@ -1228,7 +1228,7 @@ public class MainWindow : Window
         }
     }
 
-    /// Redraws the active states on the canvas and rebuilds the running list.
+
     private void RefreshRun(string note)
     {
         if (_run == null) return;
@@ -1249,22 +1249,22 @@ public class MainWindow : Window
                 $"{active.Weight * 100:F0}%")
                 .Tag(active.StateId);
 
-            // A state mid-blend is dimmed so the settled ones read as where the graph is and the
-            // fading one as where it was.
+
+
             if (active.Fading) row.Colour(0, Ux.MutedBrush).Colour(1, Ux.MutedBrush).Colour(2, Ux.MutedBrush);
         }
         _running.IsVisible = true;
 
-        // Step only matters while a transition is still blending; otherwise it is a button that does
-        // nothing, which reads as broken.
+
+
         _step.IsEnabled = _run.Blending;
 
         _runStopsGrid.Clear();
         foreach (var stop in _run.Stops)
             _runStopsGrid.Add(null, stop.ClassName, stop.Why).Tag(stop.ObjectId);
 
-        // "I sent the event and nothing happened" is the question this answers. A transition held
-        // back by its condition is the commonest reason, and it is invisible unless it is said.
+
+
         _runHeldBackGrid.Clear();
         foreach (var held in _run.HeldBack)
             _runHeldBackGrid.Add(null, held.Event + " to " +
@@ -1292,15 +1292,15 @@ public class MainWindow : Window
         _runOutput.Text = string.Join(Environment.NewLine, _runOutputLines);
     }
 
-    /// What everything on the canvas means, in the words somebody reading a graph would use.
-    ///
-    /// Every colour here is asked for by class name rather than written down again, so the legend
-    /// cannot come to disagree with the picture. A legend that is wrong is worse than none: it is
-    /// read as the answer rather than checked against the thing it describes.
+
+
+
+
+
     private Control BuildLegend()
     {
-        // The scroll viewer measures this body to the width its pane assigns. Unlike the earlier
-        // fixed-width version, each explanation can wrap when a person resizes the Legend.
+
+
         var body = new StackPanel { Spacing = 4 };
 
         void Heading(string text)
@@ -1391,10 +1391,10 @@ public class MainWindow : Window
                             "Written on the state rather than drawn as a line, because a wildcard " +
                             "fires from every state and so has no one place a line could start.");
 
-        // Drawn at the size it is on a node rather than the size the row would like. The first
-        // version squeezed it into a twelve pixel strip with eight point text, which is the one
-        // sample in the legend nobody could read, and the point of a sample is that it is
-        // recognisable when you next meet it.
+
+
+
+
         Swatch(new Border
         {
             CornerRadius = new CornerRadius(3),
@@ -1482,8 +1482,8 @@ public class MainWindow : Window
         return split;
     }
 
-    // Read only, for the window checks. Which page is showing and how many rows it drew are the two
-    // things a paged view can lie about.
+
+
     public HkGrid AnimationGrid => _animation;
     public string FramePageLabel => _framePage.Text ?? "";
     public int AnimationFrameCount => _animationData?.NumFrames ?? 0;
@@ -1493,8 +1493,8 @@ public class MainWindow : Window
     public string FractionAnswer => _fractionAnswer.Text ?? "";
     public int AimedFrame => _aimedFrame;
 
-    // The frame editing boxes, which are only meaningful together: what they hold, whether a frame
-    // is picked at all, and whether anything has been changed since the file was opened.
+
+
     public string FrameEditAnswer => _frameEditAnswer.Text ?? "";
     public string FramePositionText => _framePosition.Text ?? "";
     public string FrameRotationText => _frameRotation.Text ?? "";
@@ -1509,9 +1509,9 @@ public class MainWindow : Window
     public GraphView Canvas => _graph;
     public GraphLayoutMode GraphLayoutModeForTest => _graph.LayoutMode;
 
-    // The workspace state is exposed to the headless smoke checks so they can exercise the real pane
-    // buttons' behavior. These are layout controls only: the graph and every existing data panel stay
-    // responsible for their own content.
+
+
+
     public bool GraphLeftPanePresent => false;
     public bool GraphRightPaneOpen => _graphRightOpen;
     public bool GraphDrawerOpen => _graphDrawerOpen;
@@ -1639,22 +1639,22 @@ public class MainWindow : Window
 
     public void OpenLegendForTest() => OpenLegendWindow();
 
-    /// Read-only hooks for the window checks, so the run panel can be exercised headless.
+
     public bool RunReady => _run != null;
     public bool RunBlending => _run?.Blending ?? false;
     public int RunEventCount => _run?.Events.Count ?? 0;
     public IReadOnlyList<string> RunEvents => _run?.Events ?? Array.Empty<string>();
 
-    /// Advances the clock, the way the Step button does.
+
     public void StepForTest(float seconds) { _run?.Advance(seconds); RefreshRun("stepped"); }
 
-    /// How many clips the run found a length for, so a check can tell a graph that was given clip
-    /// timing from one that was opened without a project folder around it and got none.
+
+
     public int TimedClipCount => _run?.Playing().Count(p => p.Clip.Known) ?? 0;
     public int RunningCount => _running.RowCount;
     public bool RunningVisible => _running.IsVisible;
 
-    /// Selects an event and sends it, the way clicking the dropdown and Send does.
+
     public void SendEventForTest(string name)
     {
         _runEvents.SelectedItem = name;
@@ -1669,7 +1669,7 @@ public class MainWindow : Window
     public string RunSummary => _runSummary.Text ?? "";
     public double? RunValueOf(string name) => _run?.ValueOf(name);
 
-    /// Sets a variable, the way choosing it and typing a value and pressing Set does.
+
     public void SetVariableForTest(string name, string value)
     {
         _runVariables.SelectedItem = name;
@@ -1677,12 +1677,12 @@ public class MainWindow : Window
         SetRunVariable();
     }
 
-    /// Selects through the same handler a click on the canvas uses, so a check exercises the path a
-    /// person takes rather than a parallel one.
+
+
     public void SelectNode(string objectId) => SelectObjectId(objectId);
 
-    /// The same, from the tree's end: sets the tree's own selection and lets its handler run, rather
-    /// than calling what that handler calls. The two used to reach different places.
+
+
     public bool SelectFromTree(string objectId)
     {
         int index = _objectIds.IndexOf(objectId);
@@ -1693,8 +1693,8 @@ public class MainWindow : Window
         return false;
     }
 
-    /// Drives the fraction lookup the way a person does, through the same field and the same handler,
-    /// so a check exercises what the button exercises rather than a parallel path.
+
+
     public void LookUpFraction(string typed)
     {
         _fraction.Text = typed;
@@ -1707,7 +1707,7 @@ public class MainWindow : Window
         ShowAnimationFrames();
     }
 
-    /// Picks a frame row the way clicking one does, so the boxes fill through the same handler.
+
     public bool PickFrame(int track, int frame)
     {
         bool found = _animation.SelectByTag($"f:{track}:{frame}");
@@ -1715,14 +1715,14 @@ public class MainWindow : Window
         return found;
     }
 
-    /// Types a position into the box and presses the button, which is the whole edit path.
+
     public void TypeFramePosition(string text)
     {
         _framePosition.Text = text;
         SetFrame();
     }
 
-    /// Presses the save button. Only worth driving on a copy: it writes the file.
+
     public void PressSaveAnimation() => SaveAnimation();
 
     private Control BuildAnimationTab()
@@ -1747,9 +1747,9 @@ public class MainWindow : Window
         DockPanel.SetDock(bar, Dock.Top);
         panel.Children.Add(bar);
 
-        // The question a variable driven clip actually asks: I am about to set the fraction to this,
-        // which pose am I asking for. Answering it needs the page to move to that frame, not just a
-        // number printed somewhere, so this jumps and marks the row.
+
+
+
         var aim = Ux.Secondary("Find frame");
         aim.Click += (_, _) => AimAtFraction();
         _fraction.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) AimAtFraction(); };
@@ -1763,10 +1763,10 @@ public class MainWindow : Window
         DockPanel.SetDock(tools, Dock.Top);
         panel.Children.Add(tools);
 
-        // Changing a frame. A spline compressed clip is written back spline compressed and comes out
-        // smaller than it went in; only a lossless clip, which nothing here re-encodes, falls back to
-        // uncompressed and grows. Which of the two happened, and by how much, is said on the answer
-        // line after a save rather than promised on the button.
+
+
+
+
         var apply = Ux.Secondary("Set frame");
         apply.Click += (_, _) => SetFrame();
         var write = Ux.Primary("Save changes");
@@ -1787,8 +1787,8 @@ public class MainWindow : Window
         return panel;
     }
 
-    /// Fills the boxes from whichever frame row is selected, so a frame is changed by picking it
-    /// rather than by typing where it is.
+
+
     private void ShowSelectedFrame()
     {
         var anim = _animationData;
@@ -1833,10 +1833,10 @@ public class MainWindow : Window
     private static string F(float value) =>
         value.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
 
-    /// Writes the boxes back into the frame they came from.
-    ///
-    /// Only into the decoded animation held in memory. Nothing reaches the file until it is saved,
-    /// which is what makes several frames changeable before anything is written.
+
+
+
+
     private void SetFrame()
     {
         var anim = _animationData;
@@ -1864,8 +1864,8 @@ public class MainWindow : Window
             track.Rotations[_editFrame] =
                 new System.Numerics.Quaternion(rotation[0], rotation[1], rotation[2], rotation[3]);
 
-        // A track with no scale of its own prints none, so an empty box means leave it as it was
-        // rather than set it to nothing.
+
+
         if (Numbers(_frameScale.Text, 3, out float[] scale) && _editFrame < track.Scales.Count)
             track.Scales[_editFrame] = new System.Numerics.Vector3(scale[0], scale[1], scale[2]);
 
@@ -1893,13 +1893,13 @@ public class MainWindow : Window
         return true;
     }
 
-    /// Writes the clip back, as the kind of animation it was where that is possible.
-    ///
-    /// A spline compressed clip is written back spline compressed, and the file comes out smaller
-    /// than the one it replaced. Anything else still goes back as
-    /// `hkaInterleavedUncompressedAnimation`, every frame of every track stored as it is, which is
-    /// exact and several times the size. That is the only option for a lossless compressed clip,
-    /// since nothing here re-encodes one.
+
+
+
+
+
+
+
     private void SaveAnimation()
     {
         var anim = _animationData;
@@ -1938,18 +1938,18 @@ public class MainWindow : Window
 
             _animationEdited = false;
 
-            // The size is worth saying either way round, because the two paths differ by about a
-            // factor of six and somebody who saves a clip and finds the file has grown should be able
-            // to see from this line why.
+
+
+
             string size = written.Grew >= 0 ? $"{written.Grew} bytes larger" : $"{-written.Grew} bytes smaller";
             string said =
                 $"Saved {written.Frames} frame(s) of {written.Tracks} track(s) " +
                 (asSpline ? "spline compressed" : "uncompressed") +
                 $", {size}. The original is kept as {Path.GetFileName(backup)}.";
 
-            // Reloaded first and told afterwards. Opening a file clears these boxes, which is right
-            // when a different file is opened and wrong here: saying it before the reload put the
-            // message up and wiped it in the same breath, so pressing Save appeared to do nothing.
+
+
+
             Load();
             _frameEditAnswer.Text = said;
             _frameEditAnswer.Foreground = Ux.MetaBrush;
@@ -1962,8 +1962,8 @@ public class MainWindow : Window
         }
     }
 
-    /// userControlledTimeFraction is what a bound variable drives, so this is the lookup the clip work
-    /// needs: type the fraction, land on the frame, see the transform that plays there.
+
+
     private void AimAtFraction()
     {
         var anim = _animationData;
@@ -1992,13 +1992,13 @@ public class MainWindow : Window
             $"of {Math.Max(anim.NumFrames - 1, 0)}, at {_aimedFrame * anim.FrameDuration:F3}s{clamped}";
         _fractionAnswer.Foreground = Ux.MetaBrush;
 
-        // Land the page on the frame rather than leaving the reader to find it.
+
         _frameStart = _aimedFrame / FramesPerPage * FramesPerPage;
         ShowAnimationFrames();
     }
 
-    // A page of frames rather than a cap. The old grid stopped at 300 rows per track and said how
-    // many it had dropped, which is honest but leaves the rest of a long animation unreachable.
+
+
     private void PageFrames(int by)
     {
         if (_animationData == null) return;
@@ -2014,18 +2014,18 @@ public class MainWindow : Window
         ShowAnimationFrames();
     }
 
-    // An animation is a different kind of file from a behaviour, so this runs on its own rather than
-    // hanging off the behaviour parse. A class the reader cannot decode has to say so here, in the
-    // panel, and not only on the console: the whole point of making the reader refuse loudly was
-    // that somebody using the window finds out.
+
+
+
+
     private bool BuildAnimation(string path)
     {
         _animation.Clear();
         _animationData = null;
         _animationSkeleton = null;
         _frameStart = 0;
-        // A frame aimed at in the last file means nothing in this one, and neither does a frame
-        // picked for editing or a change made to one.
+
+
         _aimedFrame = -1;
         _editTrack = _editFrame = -1;
         _animationEdited = false;
@@ -2104,8 +2104,8 @@ public class MainWindow : Window
             int frames = Math.Max(Math.Max(track.Translations.Count, track.Rotations.Count), track.Scales.Count);
             bool scaled = HkxTrackData.IsScaled(track);
 
-            // Filtering to one bone is what makes this a browser rather than a wall: a character
-            // animation has 95 tracks, and reading one bone's motion means seeing only that bone.
+
+
             var head = _animation.Add(null, name, frames.ToString(), "", "", "", scaled ? "scaled" : "")
                                  .Colour(0, Ux.TitleBrush).Colour(1, Ux.DisabledBrush).Colour(5, Ux.BadBrush);
             if (needle.Length == 0) head.Collapse();
@@ -2116,13 +2116,13 @@ public class MainWindow : Window
                     ? $"{track.Translations[f].X:F3}, {track.Translations[f].Y:F3}, {track.Translations[f].Z:F3}" : "";
                 string rot = f < track.Rotations.Count
                     ? $"{track.Rotations[f].X:F4}, {track.Rotations[f].Y:F4}, {track.Rotations[f].Z:F4}, {track.Rotations[f].W:F4}" : "";
-                // Only the tracks that carry a scale print one. Filling every row of every animation
-                // with 1.000, 1.000, 1.000 would bury the 130 vanilla animations that actually scale.
+
+
                 string scl = scaled && f < track.Scales.Count
                     ? $"{track.Scales[f].X:F4}, {track.Scales[f].Y:F4}, {track.Scales[f].Z:F4}" : "";
                 bool aimed = f == _aimedFrame;
-                // Tagged with where it sits, because nothing in the file names a frame. That is what
-                // makes a row selectable and therefore changeable.
+
+
                 _animation.Add(head, aimed ? "->" : "", f.ToString(), $"{f * anim.FrameDuration:F3}s", pos, rot, scl)
                           .Tag($"f:{t}:{f}")
                           .Colour(0, Ux.AccentBrush)
@@ -2136,9 +2136,9 @@ public class MainWindow : Window
                       .Colour(0, Ux.MutedBrush).Colour(1, Ux.DisabledBrush);
     }
 
-    // The bone names live in the skeleton, not the animation. An animation's annotation tracks are
-    // named after bones by convention and are empty in plenty of vanilla files, so the real name
-    // comes through transformTrackToBoneIndices.
+
+
+
     private static HkxSkeleton? SiblingSkeleton(string animationPath)
     {
         string? assets = FindSiblingSkeletonFolder(animationPath);
@@ -2147,14 +2147,14 @@ public class MainWindow : Window
         foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
         {
             try { return new HkxBinaryReader().ReadSkeleton(file); }
-            catch { /* not a skeleton, try the next */ }
+            catch { }
         }
         return null;
     }
 
-    /// Animation folders can be nested as deeply as an author needs. The relevant skeleton is the
-    /// CharacterAssets sibling of the directory that owns the Animations folder, never a similarly
-    /// named folder farther up the drive.
+
+
+
     internal static string? FindSiblingSkeletonFolder(string animationPath)
     {
         var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(animationPath)) ?? "");
@@ -2185,9 +2185,9 @@ public class MainWindow : Window
         return annotation.Length > 0 ? annotation : $"track {track}";
     }
 
-    // A clip generator names an animation, and until now the only way to know what that animation was
-    // was to remember it. Nothing here writes to the document: scrubbing and playing are views of a
-    // file on disk, so they take no undo step and cannot make the graph dirty.
+
+
+
     private Control BuildPlaybackTab()
     {
         _playButton.Click += (_, _) => TogglePlay();
@@ -2243,8 +2243,8 @@ public class MainWindow : Window
 
         _scrub.PropertyChanged += (_, e) =>
         {
-            // Set from code as well as dragged, so without this every ShowFrame would call itself
-            // back through the slider.
+
+
             if (e.Property != Avalonia.Controls.Primitives.RangeBase.ValueProperty || _scrubbing) return;
             ShowFrame((int)Math.Round(_scrub.Value), stop: true);
         };
@@ -2272,16 +2272,16 @@ public class MainWindow : Window
         _playbackViewportHost.ClipToBounds = true;
         panel.Children.Add(WithClipPicker(_playbackViewportHost));
 
-        // Says that a model is a second, separate step. What plays here is the skeleton, and waiting
-        // for a character to appear on its own is waiting for something that never happens.
+
+
         SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
                            "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
         return panel;
     }
 
-    /// The rig this behaviour belongs to. The behaviour file does not name one; the character does,
-    /// which is why this comes off the chain rather than off the open file. Cached because selecting
-    /// a clip resolves it, and re-reading a 95 bone skeleton off disk on every click is felt.
+
+
+
     private HkxSkeleton? PoseSkeleton()
     {
         if (_cachedSkeletonFor == _hkxPath && _cachedSkeleton != null) return _cachedSkeleton;
@@ -2291,9 +2291,9 @@ public class MainWindow : Window
         return _cachedSkeleton;
     }
 
-    // Selecting a clip is what asks the question, so selecting one is what answers it. Silent when
-    // the selection is not a clip, or names an animation that is not on disk: a behaviour is mostly
-    // nodes that play nothing, and a message per click would be noise.
+
+
+
     private void LoadPoseFromSelection(bool announce)
     {
         if (_xmlText.Length == 0 || _selectedId.Length == 0)
@@ -2356,8 +2356,8 @@ public class MainWindow : Window
         if (refusal != null)
         {
             SetPlaybackSummary($"{label}: {refusal}", Ux.WarnBrush);
-            // The rig is still worth drawing: it is the thing the reader is trying to place the
-            // animation onto, and an empty box says nothing at all.
+
+
             if (_poseSkeleton != null) _skeleton.Show(AnimationPose.ReferencePose(_poseSkeleton));
             _poseAnimation = null;
             _poseSource = "";
@@ -2369,8 +2369,8 @@ public class MainWindow : Window
         _poseSource = animationPath;
         _poseFrame = 0;
 
-        // Read off the file rather than off the decoded tracks, because it is not in them: the
-        // displacement lives in its own object and never reaches a bone.
+
+
         try { _poseMotion = RootMotion.Read(animationPath); }
         catch { _poseMotion = new RootMotion.Motion(); }
 
@@ -2387,9 +2387,9 @@ public class MainWindow : Window
         int driven = 0;
         foreach (int track in AnimationPose.TracksByBone(_poseSkeleton!, animation)) if (track >= 0) driven++;
 
-        // Travel is said here whether or not it is being drawn, because it is invisible otherwise:
-        // the bones stay on the spot, so a clip that takes the character 1,060 units looks exactly
-        // like one that goes nowhere until this line says so.
+
+
+
         string travelled = _poseMotion.Any
             ? $"   travels {_poseMotion.Travel.Length():F0} units" +
               (Math.Abs(_poseMotion.Turn) > 0.02f
@@ -2404,16 +2404,16 @@ public class MainWindow : Window
         UpdateFrameLabel();
     }
 
-    /// Opens a behaviour straight out of a BA2, without unpacking the archive around it.
-    ///
-    /// Every behaviour in the game is inside Fallout4 - Animations.ba2, and reaching one of them used
-    /// to mean writing all 29,716 entries to disk first. Reading the index takes about a second and
-    /// touches no file data, so the browser lists the archive itself.
-    ///
-    /// The chosen file is written to a temporary folder and opened from there, because everything
-    /// downstream of here works on a path: the project chain, the animation reader, the mesh, the
-    /// validator. What it is not is somewhere to save. The window goes read only, and says so, rather
-    /// than letting an edit land in a temporary file the user will never find again.
+
+
+
+
+
+
+
+
+
+
     private async Task OpenFromArchive()
     {
         var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -2450,9 +2450,9 @@ public class MainWindow : Window
 
             try
             {
-                // Under a folder named for the archive, so two files of the same name out of two
-                // archives do not land on top of each other, and the folder is one a person can find
-                // if they want the copy afterwards.
+
+
+
                 string folder = Path.Combine(Path.GetTempPath(), "BehaviourGraphStudio",
                                              Path.GetFileNameWithoutExtension(archivePath));
                 Directory.CreateDirectory(folder);
@@ -2477,9 +2477,9 @@ public class MainWindow : Window
         }
     }
 
-    // The behaviour chain names no mesh, and neither does the skeleton, so the only honest way to
-    // find one today is to be told. Pointing at a .nif is that, and the race record lookup that would
-    // do it automatically is a separate job.
+
+
+
     private async Task PickMesh()
     {
         var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -2498,8 +2498,8 @@ public class MainWindow : Window
         if (path != null) LoadMesh(path);
     }
 
-    /// Returns false when the mesh could not be drawn, having already said why. The caller must not
-    /// then overwrite that with a message about the mesh it thinks it loaded.
+
+
     private bool LoadMesh(string path)
     {
         var skeleton = PoseSkeleton();
@@ -2540,8 +2540,8 @@ public class MainWindow : Window
         int vertices = _meshShapes.Sum(m => m.Shape.Vertices.Count);
         int edges = _meshShapes.Sum(m => m.Edges.Count);
 
-        // A bone the mesh names and the skeleton does not is the failure that shows up as a limb
-        // quietly missing, so it is named here rather than left to be noticed.
+
+
         var missing = _meshShapes.SelectMany(m => m.Binding.Unmatched).Distinct().ToList();
         float drift = _meshShapes.Max(m => SkinnedMesh.BindError(m.Shape, m.Binding, skeleton));
 
@@ -2559,9 +2559,9 @@ public class MainWindow : Window
         return true;
     }
 
-    /// Writes beside the target and moves the finished file into place. WriteAllBytes truncates
-    /// before it writes, so a disk filling up or a mod manager taking the file mid write would leave
-    /// the game's own file empty, with nothing but the backup to show it ever had contents.
+
+
+
     private static void ReplaceFile(string path, byte[] bytes)
     {
         string staging = path + ".writing";
@@ -2584,8 +2584,8 @@ public class MainWindow : Window
         _skeleton.ShowMesh(null);
     }
 
-    // Only the vertex positions are recomputed per frame. The edge list and the bone matching are
-    // worked out when the mesh is loaded and do not change while scrubbing.
+
+
     private void UpdateMesh(AnimationPose.Pose pose, HkxSkeleton skeleton)
     {
         if (_meshShapes.Count == 0) { _skeleton.ShowMesh(null); return; }
@@ -2610,8 +2610,8 @@ public class MainWindow : Window
         _poseAnimation = null;
         _poseSource = "";
         _poseFrame = 0;
-        // Left behind, the last clip's travel would be reported for the next one, and a stationary
-        // clip would be drawn walking down the path of the one before it.
+
+
         _poseMotion = new RootMotion.Motion();
         _cachedSkeleton = null;
         _cachedSkeletonFor = "";
@@ -2621,14 +2621,14 @@ public class MainWindow : Window
         _scrubbing = false;
         _skeleton.Reset();
         _frameLabel.Text = "";
-        // Says that a model is a second, separate step. What plays here is the skeleton, and waiting
-        // for a character to appear on its own is waiting for something that never happens.
+
+
         SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
                            "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
     }
 
-    // Every clip in the file down the right hand side, with its own properties under it, so a clip
-    // can be found, played and changed without leaving playback for the tree or the graph.
+
+
     private Control WithClipPicker(Control viewport)
     {
         _clips.SelectionChanged += () =>
@@ -2665,9 +2665,9 @@ public class MainWindow : Window
         return split;
     }
 
-    // Hangs the character's own model on the skeleton when there is exactly one obvious candidate.
-    // Loading it here rather than on the first frame means the viewport is still empty until a clip
-    // is picked, which is what a mesh with no pose should look like.
+
+
+
     private void FindMeshForFile()
     {
         var found = MeshLookup.Find(_hkxPath, _projectChain?.Root, _projectChain?.SkeletonPath);
@@ -2683,8 +2683,8 @@ public class MainWindow : Window
                            Ux.MutedBrush);
     }
 
-    /// Everything the clip list ever holds, so there is one answer to what is in it rather than one
-    /// per path that happens to reach it.
+
+
     private void BuildClipList(BehaviourGraphModel model)
     {
         _clips.Clear();
@@ -2700,25 +2700,25 @@ public class MainWindow : Window
         if (_clips.RowCount == 0) ShowLoneAnimation();
     }
 
-    /// The one row a file holding an animation and no clip generator gets.
-    ///
-    /// The list is built from clip generators, and an animation file has none, so it came up empty
-    /// and the Playback panel looked broken. It was not: there is genuinely nothing to pick, because
-    /// the animation is already the thing being played. Saying that costs a row and saves everyone
-    /// working out the distinction before they can use the tab.
-    ///
-    /// Gated on the list being empty rather than on the file failing to parse as a behaviour, which
-    /// was the obvious guess and cannot work. `ParseBehavior` documents why: an animation resolves a
-    /// root like anything else, so it takes the same path a behaviour does.
-    ///
-    /// Only ever called by `BuildClipList` on finding nothing to list, so the list has one filler and
-    /// the rule for when this row appears lives in one place.
+
+
+
+
+
+
+
+
+
+
+
+
+
     private void ShowLoneAnimation()
     {
         if (_animationData is not { NumFrames: > 0 }) return;
 
-        // Deliberately untagged. The selection handler reads the tag as an object id and returns
-        // when it is not a string, so a row naming no object needs no guard added to it.
+
+
         _clips.Add(null, Path.GetFileNameWithoutExtension(_hkxPath),
                    $"{_animationData.Duration:F2}s, {_animationData.NumFrames} frames")
               .Colour(0, Ux.TitleBrush)
@@ -2737,24 +2737,24 @@ public class MainWindow : Window
 
         if (_clock != null) { Stop(); return; }
 
-        // The selected clip's own playbackSpeed, so changing it here shows the change here. Without
-        // this the preview always ran at the animation's native rate and an edited speed looked like
-        // an edit that had not taken, when it had and had been saved.
+
+
+
         _clock = new DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(
                 Math.Clamp(_poseAnimation.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4)),
         };
-        // Looping rather than stopping at the end: nearly every clip in a behaviour graph is a loop,
-        // and one that is not still reads better repeating than freezing on its last frame.
+
+
         _clock.Tick += (_, _) => ShowFrame(_poseFrame + 1 > _scrub.Maximum ? 0 : _poseFrame + 1, stop: false);
         _clock.Start();
         _playButton.Content = "Pause";
     }
 
-    /// How fast the selected clip says to play, or full speed when nothing sensible is set. Zero and
-    /// negative are treated as full speed rather than as a stopped or reversed preview: the engine
-    /// reads them as its own thing, and guessing which would be inventing behaviour.
+
+
+
     private float SelectedPlaybackSpeed()
     {
         if (_xmlText.Length == 0 || _selectedId.Length == 0) return 1f;
@@ -2780,8 +2780,8 @@ public class MainWindow : Window
 
         _poseFrame = Math.Clamp(frame, 0, Math.Max(0, _poseAnimation.NumFrames - 1));
 
-        // Update, not Show: re-fitting on every frame would jump the camera about as the pose's own
-        // bounds change under it.
+
+
         var posed = AnimationPose.At(_poseSkeleton, _poseAnimation, _poseFrame);
         if (_followTravel) posed = WithTravel(posed);
 
@@ -2794,12 +2794,12 @@ public class MainWindow : Window
         UpdateFrameLabel();
     }
 
-    /// The same pose, moved along the path the clip carries.
-    ///
-    /// Motion is extracted in this format, so a walk plays on the spot and the displacement lives in
-    /// its own object. Drawing it means putting the two back together, which is what the game does to
-    /// the object rather than to the rig. The turn is about the animation's own up axis rather than
-    /// an assumed one, because the file states which axis that is.
+
+
+
+
+
+
     private AnimationPose.Pose WithTravel(AnimationPose.Pose pose)
     {
         if (!_poseMotion.Any || _poseAnimation == null) return pose;
@@ -2841,22 +2841,22 @@ public class MainWindow : Window
         _playbackSummary.Foreground = brush;
     }
 
-    /// Read only, for the window checks.
+
     public SkeletonView Viewport => _skeleton;
     public int PoseFrame => _poseFrame;
     public int PoseFrameCount => _poseAnimation?.NumFrames ?? 0;
     public string PlaybackSummary => _playbackSummary.Text ?? "";
     public bool IsPlaying => _clock != null;
 
-    /// Drives playback through the same handlers the buttons use.
+
     public void ScrubTo(int frame) => ShowFrame(frame, stop: true);
     public void LoadPoseFrom(string animationPath) => LoadPose(animationPath, Path.GetFileName(animationPath));
     public AnimationPose.Pose? PoseNow =>
         _poseSkeleton == null ? null : AnimationPose.At(_poseSkeleton, _poseAnimation, _poseFrame);
 
-    // Two mods edit one behaviour and the question is what each of them touched. The object walk is
-    // the same one the repack guard uses; the only difference is that it is pointed at somebody
-    // else's file instead of at this file's own repack.
+
+
+
     private Control BuildDiffTab()
     {
         var compare = Ux.Secondary("Compare with...");
@@ -2925,9 +2925,9 @@ public class MainWindow : Window
         ShowDiff(Path.GetFileName(other), result);
     }
 
-    /// The other file's text, written from its bytes where the class table describes it and unpacked
-    /// with hkxpack where it does not. Same order as opening a file, and for the same reason:
-    /// comparing is a reading, and a reading should not need Java.
+
+
+
     private static string TextOf(string path, string? java, string? jar)
     {
         try
@@ -2958,8 +2958,8 @@ public class MainWindow : Window
         return BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(theirs));
     }
 
-    /// Runs the comparison through the same code the picker feeds, so a check exercises what a person
-    /// does rather than a parallel path. Returns what the panel now says.
+
+
     public string CompareLoadedWith(string other)
     {
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
@@ -3006,11 +3006,11 @@ public class MainWindow : Window
         _diffSummary.Foreground = brush;
     }
 
-    /// Read only, for the window checks.
+
     public HkGrid DiffGrid => _diff;
 
-    /// Read only, for the window checks. Named rather than found by position on the Playback tab,
-    /// which is one refactor away from being the wrong grid.
+
+
     public HkGrid ClipGrid => _clips;
 
     private Control BuildSymbolsTab()
@@ -3064,9 +3064,9 @@ public class MainWindow : Window
         return panel;
     }
 
-    // A transition can listen for an event nothing in its own file sends, which looks broken and
-    // usually is not: the sender is a script. Pointing at the Papyrus sources answers it. Optional
-    // throughout, and silent when it is not set.
+
+
+
     private async Task PickScriptsFolder()
     {
         var picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
@@ -3086,9 +3086,9 @@ public class MainWindow : Window
         if (_xmlText.Length > 0) BuildSymbols(Model());
     }
 
-    // Opens where the last file came from. Behaviours, characters, skeletons and animations all sit
-    // in sibling folders of one project, so the next file wanted is nearly always a couple of clicks
-    // from the last one rather than somewhere new.
+
+
+
     private async Task Browse()
     {
         var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -3134,8 +3134,8 @@ public class MainWindow : Window
         Load();
     }
 
-    /// The mesh to draw on this file's skeleton, named from outside because nothing inside a
-    /// behaviour, a character or a skeleton names one.
+
+
     public void OpenMesh(string nifPath) => LoadMesh(nifPath);
 
     public int MeshEdges => _skeleton.DrawnEdges;
@@ -3151,14 +3151,14 @@ public class MainWindow : Window
         _editedFields.Clear();
         _xmlText = "";
         _xmlPath = "";
-        // Cleared with the text. Left behind, the previous file's reading would answer for a file
-        // that failed to open.
+
+
         _reading = new BehaviourGraphModel();
         _selectedId = "";
         _projectChain = null;
         _emptyStates = new HashSet<string>();
-        // Object ids start again at #1 in the next file, so anything the canvas remembers by id is
-        // about to be applied to a different object entirely.
+
+
         _graph.Reset();
         BuildMachineNavigator(new BehaviourGraphModel());
         SetMachineNavigatorActive(Array.Empty<string>());
@@ -3171,9 +3171,9 @@ public class MainWindow : Window
         if (path.Length == 0) { SetSummary("Enter the path to a .hkx file.", Ux.MutedBrush); return; }
         if (!File.Exists(path))
         {
-            // Says where a relative path actually landed. Relative to the working directory the app
-            // was started in, not to the file box, so the same text works from one place and not
-            // another and the bare path in the message looks correct while being wrong.
+
+
+
             string full = Path.GetFullPath(path);
             SetSummary(full == path ? "Not found: " + path
                                     : $"Not found: {path}, which from here means {full}", Ux.BadBrush);
@@ -3185,9 +3185,9 @@ public class MainWindow : Window
             return;
         }
 
-        // Animations are read on their own path. A behaviour file simply has no animation object in
-        // it and the tab says so, but an animation file has no behaviour root, so this has to happen
-        // before the root check below rejects it.
+
+
+
         bool isAnimation = BuildAnimation(path);
 
         var root = HkxBehaviorParser.ParseBehavior(path);
@@ -3201,21 +3201,21 @@ public class MainWindow : Window
                 : "Parsed as FO4 hkx, but no root object was resolved.", Ux.MutedBrush);
             SetStatus(_animationSummary.Text ?? "", _animationSummary.Foreground ?? Ux.MutedBrush);
 
-            // Nothing was read, so the list is built from nothing. It still runs, because a file with
-            // no objects can still hold an animation and that row is the only thing Playback would
-            // otherwise show. Handed an empty reading rather than skipped, so the clip list is filled
-            // from one place on every path that reaches it.
+
+
+
+
             BuildClipList(new BehaviourGraphModel());
 
-            // An animation opened on its own has no clip pointing at it, so the selection path never
-            // fires. It is still the thing on screen, so it is what plays.
+
+
             if (_animationData != null) LoadPose(path, Path.GetFileName(path));
             return;
         }
 
-        // A behaviour is a different layout entirely and the animation reader refuses it outright,
-        // which is true but reads as a fault. Once the behaviour parse has succeeded, say the plain
-        // thing instead.
+
+
+
         if (!isAnimation)
         {
             _animationSummary.Text = "This is a behaviour file. It holds no animation.";
@@ -3229,19 +3229,19 @@ public class MainWindow : Window
         _objects = new List<HkxBehaviorParser.BehaviorNode>(HkxBehaviorParser.LastObjects);
         for (int i = 0; i < _objects.Count; i++) _offsetToIndex[_objects[i].Offset] = i;
 
-        // Not fatal if it fails: the panel falls back to hkxpack field by field, so a file this
-        // cannot take apart still shows its values, just none of them from the bytes.
+
+
         _classWarning = "";
         try
         {
             var bytes = new PackfileObjects(PackfileImage.Read(path));
 
-            // A packfile stores the signature of every class it names, and a signature is what a
-            // class definition is. If the file's disagrees with ours then this build's idea of where
-            // a field sits was written for a different version of that class, and reading a value
-            // out of it would be quiet nonsense rather than an error. So the bytes are put aside
-            // and the panel goes back to reading through hkxpack, which reads the file's own
-            // definitions rather than ours.
+
+
+
+
+
+
             var problems = HavokClassTypes.Shipped.SignatureProblems(bytes.ClassNames());
             if (problems.Count > 0)
             {
@@ -3254,8 +3254,8 @@ public class MainWindow : Window
         }
         catch (Exception) { _bytes = null; }
 
-        // Whether a template can go anywhere depends on there being a file open to put it in, so the
-        // list and its button follow the file rather than being settled once when the window is built.
+
+
         RefreshTemplates();
 
         var classes = new HashSet<string>();
@@ -3266,9 +3266,9 @@ public class MainWindow : Window
             if (!string.IsNullOrEmpty(o.AnimationName)) clips++;
         }
 
-        // The class warning goes here rather than on the status line because the status line has
-        // four ways out of PrepareEditing and only one of them was carrying it: a file with classes
-        // we do not describe *and* no Java present reported the Java and swallowed the rest.
+
+
+
         SetSummary(isAnimation
                        ? $"{Path.GetFileName(path)}   an animation, not a behaviour. See the Animation and Playback tabs."
                        : $"{Path.GetFileName(path)}   root {root.ClassName}   {_objects.Count} objects   " +
@@ -3281,18 +3281,18 @@ public class MainWindow : Window
         Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
         PrepareEditing();
 
-        // An animation file parses as a graph of objects too, so it comes down this path rather than
-        // the one above. Either way, if the open file holds frames then it is the thing on screen and
-        // it is what plays.
+
+
+
         if (_animationData != null) LoadPose(path, Path.GetFileName(path));
     }
 
-    /// The reading everything else works from.
-    ///
-    /// The text is authoritative while there is any, because an edit is made by rewriting it and the
-    /// bytes on disk are then out of date until the file is saved. With no text there is nothing to
-    /// be out of date, so the reading taken from the file when it was opened is the answer. That is
-    /// what lets the graph, the symbols and the properties fill on a machine with no Java on it.
+
+
+
+
+
+
     private BehaviourGraphModel Model() =>
         _xmlText.Length > 0 ? BehaviourGraphModel.Parse(_xmlText) : _reading;
 
@@ -3306,20 +3306,20 @@ public class MainWindow : Window
 
         _findJava.IsVisible = java == null;
 
-        // The graph comes out of the file's own bytes now. It used to come out of hkxpack's text,
-        // which is why a machine without Java showed a tree and four empty tabs. The two readings
-        // were compared field by field and consumer by consumer across every vanilla behaviour and
-        // came out the same, so this is the same picture drawn without the dependency.
+
+
+
+
         var reading = _bytes == null ? null : NativeGraphModel.From(_bytes);
 
-        // Editing needs a lossless text form. The native writer is enough for graph reading but can
-        // omit a real-valued array while still accounting for every object, so when hkxpack is
-        // available it is the authoritative editable form.
-        //
-        // The two texts were set against each other line by line across every vanilla behaviour. Of
-        // the 370 files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them.
-        // The other 128 hold a class hkxpack strides wrongly, so its own text is misaligned and there
-        // is nothing there to match.
+
+
+
+
+
+
+
+
         bool own = false;
         if (!text && _bytes != null && reading != null)
         {
@@ -3329,12 +3329,12 @@ public class MainWindow : Window
                                            Path.GetFileNameWithoutExtension(_hkxPath));
                 HkxTextEdit.ResetDirectory(work);
 
-                // Written to disk as well as held in memory, because saving a structural change still
-                // packs this file back through hkxpack when Java is there to do it.
+
+
                 _xmlPath = Path.Combine(work, Path.GetFileNameWithoutExtension(_hkxPath) + ".xml");
-                // Read off disk rather than from the objects already in hand, because the writer
-                // needs the file's header as well as its objects and the file has not changed since
-                // it was opened.
+
+
+
                 _xmlText = NativeXml.From(File.ReadAllBytes(_hkxPath));
                 File.WriteAllText(_xmlPath, _xmlText);
 
@@ -3366,8 +3366,8 @@ public class MainWindow : Window
                 _xmlText = HkxTextEdit.ReadXml(_xmlPath);
                 _objectIds = HkxTextEdit.ObjectIds(_xmlText);
 
-                // Editing works by rewriting the text, so a text form that does not line up with the
-                // file is not something to edit through. The picture below still draws.
+
+
                 if (_objectIds.Count != _objects.Count)
                 {
                     _xmlText = "";
@@ -3406,13 +3406,13 @@ public class MainWindow : Window
             return;
         }
 
-        // Both readings number the objects the same way, so either can say which id sits at which
-        // position. The text's list is preferred only because editing writes back through it.
+
+
         if (_objectIds.Count == 0) _objectIds = model.Objects.Select(o => o.Id).ToList();
         _reading = model;
 
-        // The tree drew before the model existed, so the states holding nothing were unknown when it
-        // was built. Now they are known, so it is built again.
+
+
         _emptyStates = GraphValidator.StatesWithNoGenerator(model);
         RebuildTree();
 
@@ -3537,8 +3537,8 @@ public class MainWindow : Window
         SetStatus("Select a visible graph node before tracing.", Ux.MutedBrush);
     }
 
-    // The properties panel is not cleared here: the tree is rebuilt on every keystroke in the filter,
-    // and the node whose fields are open is usually the reason the filter is being typed.
+
+
     private void RebuildTree()
     {
         _tree.Clear();
@@ -3565,9 +3565,9 @@ public class MainWindow : Window
         }
     }
 
-    // The box sits above the tabs and used to drive only the tree, so on the Graph tab typing in it
-    // did nothing at all. It filters whichever view is showing now. The canvas dims rather than
-    // jumping while you type; Enter is what moves the view onto the first match.
+
+
+
     private void ApplyFilter()
     {
         RebuildTree();
@@ -3599,7 +3599,7 @@ public class MainWindow : Window
         SelectObjectId(first);
     }
 
-    /// Drives the filter through the same handlers typing does.
+
     public void Filter(string needle)
     {
         _filter.Text = needle;
@@ -3620,8 +3620,8 @@ public class MainWindow : Window
 
         bool repeat = !seen.Add(node.Offset);
         string label = string.IsNullOrEmpty(node.NodeName) ? node.ClassName : node.NodeName;
-        // Offsets map to xml object ids the same way selection resolves them, so a state the graph
-        // marks as empty is the same row the tree marks.
+
+
         bool empty = IsEmptyState(node.Offset);
 
         var row = _tree.Add(parent, repeat ? label + "  (shown above)" : label,
@@ -3634,9 +3634,9 @@ public class MainWindow : Window
         foreach (var child in node.Children) AddTreeNode(child, row, seen, ref rows);
     }
 
-    // Through the same handler a canvas click uses, not a parallel one. Filling only the properties
-    // panel here is what left the tree unable to load a pose, and would leave it behind again the
-    // next time selecting a node has to do something else as well.
+
+
+
     private void OnTreeSelected()
     {
         ClearProps();
@@ -3653,18 +3653,18 @@ public class MainWindow : Window
         _selectedId = "";
         if (objectId.Length == 0 || _xmlText.Length == 0) return;
 
-        // One parse for both. On a weapon behaviour a parse is a tenth of a second, and selecting a
-        // node was paying for two of them.
+
+
         var model = Model();
         ShowProps(objectId, model);
         SetStatus(Describe(model, objectId), Ux.MetaBrush);
 
-        // Selecting a clip is what asks what it plays, so it is what answers it. Quiet when the
-        // selection plays nothing, which is most nodes in a graph.
+
+
         LoadPoseFromSelection(announce: false);
 
-        // Which slots a paste could hang off depends on what is selected, so the list follows the
-        // selection rather than being filled once when the file opens.
+
+
         RefreshPasteSlots();
     }
 
@@ -3686,16 +3686,16 @@ public class MainWindow : Window
         _clipProps.Clear();
     }
 
-    // Both panels are filled, because which one is on screen depends on the tab and a node can be
-    // reached from either. The model is parsed once and handed to both: on a shipped weapon graph
-    // that parse is the expensive part of selecting a node.
+
+
+
     private void ShowProps(string objectId) => ShowProps(objectId, Model());
 
     private void ShowProps(string objectId, BehaviourGraphModel model)
     {
         _selectedId = objectId;
-        // One list for all three panels, cleared once here rather than in FillProps, which runs
-        // three times and would leave only the last panel's boxes registered.
+
+
         _fieldCommits.Clear();
         FillProps(_treeProps, objectId, model);
         FillProps(_graphProps, objectId, model);
@@ -3703,9 +3703,9 @@ public class MainWindow : Window
         _clips.SelectByTag(objectId);
     }
 
-    /// The values the panel shows, read from the file's own bytes wherever they can be, and from
-    /// hkxpack's text for the fields they cannot: a struct written inline is the only kind left, and
-    /// a handful of those should not decide where the other forty values come from.
+
+
+
     private List<PanelFields.Field> PanelValues(string objectId,
                                                 IReadOnlyList<HkxTextEdit.Param> parameters)
     {
@@ -3717,9 +3717,9 @@ public class MainWindow : Window
                                                           PanelFields.Source.Fallback, p.Value))
                         .ToList();
 
-        // The id the rest of the window is keyed on, for whatever an object points at. Both lists are
-        // in file order and the load refuses to go on unless they are the same length, so the
-        // position in one is the position in the other.
+
+
+
         string Reference(PackfileObjects.Instance? target, bool wasNull)
         {
             if (wasNull) return "null";
@@ -3750,11 +3750,11 @@ public class MainWindow : Window
         if (AddBoneArraySection(panel, objectId, className))
             return;
 
-        // An array of structs is shown one element at a time rather than as one flat run of boxes.
-        // The file writes an element's fields together, so the fields sharing a group arrive
-        // together and a run of them is an element. A transition array with five transitions in it
-        // is eighty boxes laid out flat, with every name repeated once per element and nothing
-        // saying where one transition ends and the next begins.
+
+
+
+
+
         var summaries = ElementSummary.For(model, objectId);
 
         for (int i = 0; i < parameters.Count;)
@@ -3782,10 +3782,10 @@ public class MainWindow : Window
         AddBlendSection(panel, objectId, model, className);
     }
 
-    /// The two bone-array objects are ordinary arrays on disk, but treating their whole run as one
-    /// property box makes both kinds hard to read: a weight's bone is its position in the run, while
-    /// an index names a bone elsewhere in the skeleton. Show one editable value per row and keep the
-    /// existing array writer as the one place that changes the complete run.
+
+
+
+
     private bool AddBoneArraySection(Inspector panel, string objectId, string className)
     {
         bool weights = className == "hkbBoneWeightArray";
@@ -3864,12 +3864,12 @@ public class MainWindow : Window
         }
     }
 
-    /// When the selected node is a blender, the mix it plays: which child, and how much of it.
-    ///
-    /// This is the weapon idle question answered on the node itself. A plain blender shows a share
-    /// per child that adds to a hundred. A parametric one shows the axis position each child sits at
-    /// and, if the parameter is a number in the file, which of them is picked; if the parameter is a
-    /// variable, the variable is named and no share is invented.
+
+
+
+
+
+
     private void AddBlendSection(Inspector panel, string objectId, BehaviourGraphModel model, string className)
     {
         if (className != "hkbBlenderGenerator") return;
@@ -3909,11 +3909,11 @@ public class MainWindow : Window
         }
     }
 
-    /// One element of an array of structs, behind a line saying what it is.
-    ///
-    /// Collapsed to start with, because the point is that five transitions read as five lines. The
-    /// summary is what the element means rather than what it is called, and an element with no
-    /// summary shows its index alone: a made up description would read as a fact about the file.
+
+
+
+
+
     private static Control ElementBlock(string group, string summary, Control inside)
     {
         var header = new Grid { ClipToBounds = true };
@@ -3950,10 +3950,10 @@ public class MainWindow : Window
 
     private Control FieldRow(Inspector panel, PanelFields.Field p, string owner)
     {
-        // An enum whose values the class table declares becomes a list rather than a box. The names
-        // are the ones the game registers, not ours, and PanelFields only offers them when the value
-        // already in the file is one of them, so picking from the list can never be the only way to
-        // keep what is there.
+
+
+
+
         if (p.Options.Count > 0) return EnumRow(panel, p, owner);
 
         string address = p.Address;
@@ -3961,10 +3961,10 @@ public class MainWindow : Window
 
         var field = Ux.Field();
         field.Text = p.Value;
-        // Committing is driven by what the box holds, not by which box has focus. Focus is the
-        // usual trigger, but a window closing has no focus change to hang off, and asking every
-        // field whether it differs is both simpler and safe: one that has not been touched
-        // commits nothing, and one already committed commits nothing twice.
+
+
+
+
         void Commit()
         {
             if (field.Text == original) return;
@@ -3987,23 +3987,23 @@ public class MainWindow : Window
         return panel.TwoColumnRow(label, field);
     }
 
-    // The other direction of the usages question: not who touches this symbol, but which symbols this
-    // node touches. An index on its own says nothing, so each one is resolved to its declared name.
-    /// One property row whose value is chosen from a list rather than typed.
-    ///
-    /// Committing is driven by what the control holds, the same way a text box is, so a window
-    /// closing with a changed selection still writes it.
-    /// What hovering a field's name says.
-    ///
-    /// Three parts, and they are in this order because that is the order they can be relied on. The
-    /// address is always exact: the label is cut off when the name is long, and inside an array
-    /// element there are several fields with the same name, so the first thing the tip has to answer
-    /// is which field this is and where an edit goes. Then what the field is, which the class table
-    /// knows for certain. Then what it means, which is only there for the fields this project has
-    /// actually established, with where that came from.
-    ///
-    /// Nothing is written for a field nobody has checked. A plausible sentence would read with the
-    /// same authority as a measured one and there would be no way to tell them apart.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static string Tip(PanelFields.Field p)
     {
         var lines = new List<string> { p.Address };
@@ -4108,8 +4108,8 @@ public class MainWindow : Window
             panel.Add(row);
         }
 
-        // Stacked rather than one row: the member path alone is wider than this panel, and a row
-        // that does not fit gets its left end cut off rather than shrinking.
+
+
         var member = Ux.Field("member, e.g. userControlledTimeFraction");
         var variable = Ux.Field("variable name");
         var bind = Ux.Secondary("Bind");
@@ -4121,8 +4121,8 @@ public class MainWindow : Window
         panel.Add(bind);
     }
 
-    // Scanned once, on the first build that needs it, rather than at startup: a full Base folder is
-    // several thousand files and nobody who never opens the Symbols tab should pay for it.
+
+
     private void EnsurePapyrus()
     {
         if (_papyrusScanned) return;
@@ -4158,8 +4158,8 @@ public class MainWindow : Window
                                          i < values.Count ? SymbolEditor.DecodeValue(type, values[i]) : "",
                                          Users(readers, events: false, i)).Tag($"v:{i}"));
 
-            // Every reader as its own row, so "is this variable used" is answered by looking rather
-            // than by reading the whole file, and each answer can be clicked through to the node.
+
+
             var sites = variableSites.Where(u => u.Index == i)
                                      .GroupBy(u => (u.ObjectId, u.Owner, u.Member)).ToList();
             if (sites.Count == 0) continue;
@@ -4170,9 +4170,9 @@ public class MainWindow : Window
                             site.Count(), "");
         }
 
-        // The text form while there is one, because an edit rewrites it and the bytes on disk are
-        // out of date until the file is saved. The reading taken when the file was opened otherwise,
-        // which is what fills the roles with no Java on the machine.
+
+
+
         var usage = _xmlText.Length > 0 ? EventUsage.ByEvent(_xmlText)
                   : _bytes != null ? EventUsage.ByEvent(_bytes)
                   : new Dictionary<int, List<EventUsage.Line>>();
@@ -4205,8 +4205,8 @@ public class MainWindow : Window
                 }
             }
 
-            // Papyrus is reported as information, never as a verdict: the engine sends events itself,
-            // so a name no script sends is not evidence of anything.
+
+
             if (scripts.Length == 0) continue;
             if (lines == null) row.Collapse();
             _symbols.Add(row, "papyrus", "", scripts, "", "scripts address events by name, not by index")
@@ -4217,9 +4217,9 @@ public class MainWindow : Window
             _symbols.Add(null, "", "", "this graph declares no variables or events").Colour(2, Ux.DisabledBrush);
     }
 
-    // One place that names a symbol, tagged with the object so selecting it goes there. The object's
-    // own name is what a reader recognises; the class alone is not, since a graph holds hundreds of
-    // the same class.
+
+
+
     private void AddUsageRow(HkRow parent, string what, string objectId, string owner, string member,
                              int count, string note)
     {
@@ -4243,20 +4243,20 @@ public class MainWindow : Window
         .Colour(0, Ux.MutedBrush).Colour(1, Ux.DisabledBrush).Colour(2, Ux.TitleBrush).Colour(3, Ux.CodeBrush)
         .Colour(4, row.Text(4).StartsWith("nothing") ? Ux.DisabledBrush : Ux.MetaBrush);
 
-    // This column is what the file references, not everything that uses the symbol. Game code
-    // addresses both variables and events by name rather than index, so an empty column means no
-    // consumer was found in this file, not that the symbol is dead. The Pip-Boy's iTabSync and
-    // iCatSync are the worked example: nothing in the graph reads them, the game writes them and
-    // reads them back, and the tab switching itself runs on events.
-    // One scan for every index rather than one scan per symbol. A weapon behaviour declares 873
-    // symbols against seven megabytes of text, and asking one at a time took about two minutes of
-    // the load.
-    /// Where every index is written, out of the text while there is any and out of the file's own
-    /// bytes when there is not.
-    ///
-    /// The text is preferred for the same reason the model is: an edit rewrites it, so it is the
-    /// current state of the graph and the bytes on disk are behind until the file is saved. The two
-    /// walks were compared across every vanilla behaviour, 21,624 usages, and agreed on all of them.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private List<SymbolIndexFixup.Usage> Usages(bool events) =>
         _xmlText.Length > 0 ? SymbolIndexFixup.Usages(_xmlText, events)
         : _bytes != null ? SymbolIndexFixup.Usages(_bytes, events)
@@ -4321,12 +4321,12 @@ public class MainWindow : Window
         foreach (string v in values) _chain.Add(head, "", v).Colour(1, colour);
     }
 
-    // Selecting a row loads it into the edit boxes, so rename and set value act on what is on
-    // screen rather than on whatever was typed last.
+
+
     private void OnSymbolSelected()
     {
-        // A usage row is a place to go, not a symbol to edit. Same jump the problem list uses, so a
-        // result found here lands the same way a result found by Check graph does.
+
+
         if (_symbols.SelectedTag is string jump && jump.StartsWith('#'))
         {
             string id = jump[1..];
@@ -4353,16 +4353,16 @@ public class MainWindow : Window
             ? SymbolEditor.DecodeValue(type, values[index])
             : "";
 
-        // Empty rather than zero where the array stops short of this variable, because the array is
-        // allowed to stop short and an unbounded variable is not one bounded to zero.
+
+
         var bounds = SymbolEditor.VariableBounds(model);
         _symbolMin.Text = index < bounds.Count ? SymbolEditor.DecodeValue(type, bounds[index].Min) : "";
         _symbolMax.Text = index < bounds.Count ? SymbolEditor.DecodeValue(type, bounds[index].Max) : "";
     }
 
-    /// Gives the selected variable a min and a max, which nothing in the window could do before: the
-    /// array could be inherited from vanilla or lost, never authored, so a variable added here never
-    /// got a bound at all.
+
+
+
     private void SetSymbolBounds()
     {
         if (!SelectedSymbol(out bool variable, out int index) || !variable)
@@ -4393,8 +4393,8 @@ public class MainWindow : Window
     {
         variable = false;
         index = -1;
-        // Usage rows are tagged with an object id and live in the same tree, so the shape of the tag
-        // is what separates them, not its length.
+
+
         if (_symbols.SelectedTag is not string tag || tag.Length < 3 || tag[1] != ':') return false;
         variable = tag[0] == 'v';
         return int.TryParse(tag[2..], out index);
@@ -4432,9 +4432,9 @@ public class MainWindow : Window
             string name = (_symbolName.Text ?? "").Trim();
             if (name.Length == 0) throw new ArgumentException("type the new name first");
             xml = SymbolEditor.Rename(xml, variable, index, name);
-            // The name is the contract with everything outside the file: the engine's setters take
-            // a name and resolve it against variableNames, and Papyrus sends events by name. A
-            // rename breaks those callers silently, with no error anywhere.
+
+
+
             SetStatus($"renamed {(variable ? "variable" : "event")} {index} to '{name}'. " +
                       "Game code and scripts address it by name, so anything outside this file that " +
                       "used the old name now silently does nothing.   (unsaved)", Ux.CodeBrush);
@@ -4498,8 +4498,8 @@ public class MainWindow : Window
         }
     }
 
-    // A drag out to empty canvas says two things a right click does not: which slot wanted a node,
-    // and where. Both are held until the menu is answered, because the menu is what says what kind.
+
+
     private void ShowAddMenu(string fromId, string field, Point at)
     {
         if (_xmlText.Length == 0) return;
@@ -4565,9 +4565,9 @@ public class MainWindow : Window
 
         try
         {
-            // A drag names the slot, so the node goes into that one rather than whichever slot the
-            // parent's class would otherwise be given. Dragging off a clip's triggers and getting a
-            // generator hung on something else is not what the wire said.
+
+
+
             bool bySlot = field.Length > 0 && parentId.Length > 0;
             string xml = GraphAuthor.AddNode(_xmlText, kind, name, animation, bySlot ? "" : parentId,
                                              out string newId, out string note);
@@ -4586,8 +4586,8 @@ public class MainWindow : Window
                 }
             }
 
-            // Creating the node and wiring it up is one action to whoever did it, so it is one step
-            // back, not two.
+
+
             Commit(xml);
             SetStatus(note + $"   (#{newId}, unsaved)", Ux.CodeBrush);
             RefreshAfterEdit(newId);
@@ -4656,8 +4656,8 @@ public class MainWindow : Window
                 declared = $"declared variable '{variableName}' at index {index}, and ";
             }
 
-            // Declaring the variable and binding it is one action, so undo takes both back together
-            // rather than leaving an orphan variable behind.
+
+
             Commit(BindingEditor.AddBinding(xml, objectId, memberPath, index));
             SetStatus($"{declared}#{objectId}.{memberPath} driven by {variableName}   (unsaved)", Ux.CodeBrush);
             RefreshAfterEdit(objectId);
@@ -4691,11 +4691,11 @@ public class MainWindow : Window
         ShowProps(objectId);
     }
 
-    /// Commits anything typed into a property field but not yet left, as leaving it would. Saving
-    /// calls this first, so a value typed and not blurred is part of what gets written rather than
-    /// missing from it. Deliberately not called when the window closes: closing discards the whole
-    /// unsaved document anyway, and writing a game file on an accidental close is worse than losing
-    /// edits that were never saved.
+
+
+
+
+
     public void CommitPendingFields()
     {
         foreach (var commit in _fieldCommits.ToList()) commit();
@@ -4707,13 +4707,13 @@ public class MainWindow : Window
         if (!SetParam(objectId, address, field.Text ?? "")) field.Text = original;
     }
 
-    /// Writes one field and reports whether it took, so a control that has to put itself back on a
-    /// refusal can. Shared by the typed boxes and the enum lists rather than written twice.
-    ///
-    /// `address` is where the field sits rather than what it is called: `transitions[1].eventId` for
-    /// one element of an array of structs, and a bare name for a field the object holds directly,
-    /// which is the same string it always was. Naming the field alone reached the first one with
-    /// that name, so every box below the first element of an array wrote the first element's value.
+
+
+
+
+
+
+
     private bool SetParam(string objectId, string address, string value)
     {
         if (_xmlText.Length == 0) return false;
@@ -4724,8 +4724,8 @@ public class MainWindow : Window
             _editedFields.Add(objectId + "." + address);
             SetStatus($"#{objectId}.{address} = {value}   (unsaved)", Ux.CodeBrush);
 
-            // Retimes a preview that is already running, so an edited speed shows up without having
-            // to stop and start playback to see it.
+
+
             if (address == "playbackSpeed" && objectId == _selectedId && _clock != null)
                 _clock.Interval = TimeSpan.FromSeconds(
                     Math.Clamp(_poseAnimation!.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4));
@@ -4739,8 +4739,8 @@ public class MainWindow : Window
         }
     }
 
-    // hkxpack checks shape, not meaning, so this is the only thing standing between a bad edit and
-    // finding out in game.
+
+
     private void Validate()
     {
         if (_xmlText.Length == 0 && _reading.Objects.Count == 0)
@@ -4749,9 +4749,9 @@ public class MainWindow : Window
             return;
         }
 
-        // Every check runs either way now. With no text the model and the index walk both come from
-        // the file's own bytes, so the checker sees the same graph it would have seen through
-        // hkxpack rather than a smaller one.
+
+
+
         var findings = _xmlText.Length > 0
             ? GraphValidator.Check(_xmlText, _projectChain)
             : GraphValidator.Check(_reading, _projectChain, _bytes);
@@ -4793,9 +4793,9 @@ public class MainWindow : Window
                   errors.Count > 0 ? Ux.BadBrush : Ux.MutedBrush);
     }
 
-    // Most real problems only exist between files, so the same checks run over every behaviour the
-    // project owns and report once. Results carry a file, and a node in another file cannot be jumped
-    // to on this file's canvas, so the click handler says so rather than silently doing nothing.
+
+
+
     private async Task ValidateProject()
     {
         var chain = _projectChain;
@@ -4806,10 +4806,10 @@ public class MainWindow : Window
             return;
         }
 
-        // Java is not asked for. The files around this one are read the same way this one is, from
-        // their own bytes, and hkxpack is only reached for when a file holds a class this build
-        // cannot describe. A file that cannot be read either way is reported as one unread file
-        // rather than stopping the whole check.
+
+
+
+
         string? java = HkxTextEdit.FindJava(Settings.Get("java"));
         string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
 
@@ -4843,9 +4843,9 @@ public class MainWindow : Window
         SetStatus("Project checked. " + result, result.Errors > 0 ? Ux.BadBrush : Ux.MetaBrush);
     }
 
-    /// Writes the changed values straight into the file's own bytes, leaving everything else exactly
-    /// as it was on disk. Returns false when the edit is not one that can be written that way, which
-    /// is not a failure: the caller then does it the old way.
+
+
+
     private bool SavedInPlace()
     {
         NativeSave.Plan plan;
@@ -4874,9 +4874,9 @@ public class MainWindow : Window
 
             ResetHistory();
 
-            // Said plainly, because deleting is the one save that moves things. Every other kind
-            // leaves the rest of the file where it was, and somebody who has just deleted a node
-            // should be told that this one did not.
+
+
+
             string how = plan.Gone.Count > 0
                 ? $"and took out {plan.Gone.Count} object{(plan.Gone.Count == 1 ? "" : "s")}, " +
                   "so the file was laid out again and everything after them has moved. Object " +
@@ -4905,9 +4905,9 @@ public class MainWindow : Window
 
         if (_readOnly) { SetStatus("Not saved: " + _readOnlyWhy, Ux.BadBrush); return; }
 
-        // The graph checks apply whichever way the file gets written. The hkxpack round trip warning
-        // does not, because writing the bytes in place has no round trip to lose anything in, so it
-        // is asked for separately below rather than folded in here.
+
+
+
         string? refusal = GraphValidator.RefuseToSave(_xmlText, includeRepackLosses: false);
         if (refusal != null) { SetStatus(refusal, Ux.BadBrush); return; }
 
@@ -4918,12 +4918,12 @@ public class MainWindow : Window
         if (java == null) { SetStatus("Cannot save: no Java runtime found.", Ux.BadBrush); return; }
         if (jar == null) { SetStatus("Cannot save: hkxpack-cli.jar not found.", Ux.BadBrush); return; }
 
-        // Asked before packing rather than after. Packing a weapon behaviour takes seconds, and
-        // finding out at the end that the file was read only all along wastes all of them.
+
+
         string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
         if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return; }
 
-        // Only the rebuild loses things, so this is where the warning belongs.
+
         string? lossy = GraphValidator.RepackWouldLose(_xmlText);
         if (lossy != null) { SetStatus(lossy, Ux.BadBrush); return; }
 
@@ -4958,8 +4958,8 @@ public class MainWindow : Window
         }
     }
 
-    // Read the file hkxpack just wrote back out and count what is in it. Done before the original
-    // is overwritten, so a repack that silently drops objects costs nothing.
+
+
     private RepackCheck.Drift VerifyRepack(string java, string jar, string packed)
     {
         string work = Path.Combine(Path.GetTempPath(), "bgs_verify", Path.GetFileNameWithoutExtension(_hkxPath));
@@ -4979,8 +4979,8 @@ public class MainWindow : Window
         else if (e.Key == Avalonia.Input.Key.Y || (e.Key == Avalonia.Input.Key.Z && shift)) { Redo(); e.Handled = true; }
     }
 
-    /// The only place the loaded document changes outside a load. Every editing path routes here so
-    /// the step back is taken before the change lands, and so nothing can mutate around the stack.
+
+
     private void Commit(string newXml)
     {
         if (newXml == _xmlText) return;
@@ -5000,15 +5000,15 @@ public class MainWindow : Window
         RefreshDirty();
     }
 
-    // Dirty is measured against what was last written rather than latched on, so undoing back past
-    // the last save says so instead of claiming there is still something to write.
+
+
     private void RefreshDirty()
     {
         _dirty = _xmlText.Length > 0 && _xmlText != _savedXml;
 
-        // A file opened out of an archive can be edited and read, it just cannot be written back
-        // where it came from. Greying the button says that before an edit rather than after it, and
-        // Save refuses as well, so the answer does not depend on the button being right.
+
+
+
         _saveButton.IsEnabled = _dirty && !_readOnly;
         if (_readOnly) ToolTip.SetTip(_saveButton, _readOnlyWhy);
         _undoButton.IsEnabled = _undo.Count > 0;
@@ -5033,8 +5033,8 @@ public class MainWindow : Window
         AfterHistoryMove("Redone");
     }
 
-    // The tree, the canvas, the symbol table and the properties panel all read from the document, so
-    // all four are rebuilt. Leaving any of them showing the old version is worse than not having undo.
+
+
     private void AfterHistoryMove(string what)
     {
         RefreshDirty();
@@ -5053,8 +5053,8 @@ public class MainWindow : Window
                   Ux.MetaBrush);
     }
 
-    // Java that autodetection missed. Validated by running it rather than accepted on its name, so a
-    // wrong pick says so here instead of at the next save.
+
+
     private async Task PickJava()
     {
         var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -5081,8 +5081,8 @@ public class MainWindow : Window
         _findJava.IsVisible = false;
         SetStatus($"Java accepted: {version}", Ux.MetaBrush);
 
-        // Read only is lifted by redoing the unpack, not by flipping a flag: the four tabs that were
-        // empty are empty because the text form was never produced.
+
+
         if (_hkxPath.Length > 0 && _root != null) PrepareEditing();
     }
 

@@ -3,24 +3,24 @@ using System.Numerics;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Packing a rotation into the widths the format uses.
-//
-// The reading side of all of this has been in HkxBinaryReader since the beginning. This is the
-// inverse, and it is written here rather than beside the readers because the readers are private to
-// a class that only reads. Every one of these is checked against its own reader rather than against
-// a specification, by the pack-then-unpack tests: a writer that agrees with a description and not
-// with the reader beside it produces files nothing can read.
-//
-// The scheme in both narrow formats is the same one: a unit quaternion has one component whose size
-// is fixed by the other three, so the largest is dropped and its position and sign are recorded. The
-// three that survive are each at most one over root two, which is what sets the scale factors.
+
+
+
+
+
+
+
+
+
+
+
 public static class SplineQuat
 {
     private const float Fractal40 = 0.000345436f;
     private const float Fractal48 = 0.000043161f;
     private const int Mask15 = (1 << 15) - 1;
 
-    /// The largest component by size, which is the one the narrow formats leave out.
+
     private static int Largest(Quaternion q)
     {
         Span<float> c = stackalloc float[4] { q.X, q.Y, q.Z, q.W };
@@ -38,13 +38,13 @@ public static class SplineQuat
             if (i != skip) into[n++] = c[i];
     }
 
-    /// Five bytes: three twelve bit components, then the dropped one's position and sign.
-    ///
-    /// The scale factor cannot quite reach one over root two: the largest storable value is 0.70676
-    /// against a possible 0.70711. A rotation sitting exactly on that corner therefore comes back a
-    /// fraction short. That is the format's own limit rather than this writer's, it is what every
-    /// shipped animation is already stored with, and the reader normalises afterwards, which is where
-    /// it goes away.
+
+
+
+
+
+
+
     public static void Write40(Quaternion q, byte[] into, int at)
     {
         q = Quaternion.Normalize(q);
@@ -66,8 +66,8 @@ public static class SplineQuat
         for (int i = 0; i < 5; i++) into[at + i] = (byte)(raw >> (i * 8));
     }
 
-    /// Six bytes: three fifteen bit components, with the dropped one's position split across two of
-    /// the spare top bits and its sign in the third.
+
+
     public static void Write48(Quaternion q, byte[] into, int at)
     {
         q = Quaternion.Normalize(q);
@@ -84,8 +84,8 @@ public static class SplineQuat
             word[i] = (ushort)quantised;
         }
 
-        // The reader takes the low bit of the position from bit fifteen of the first word and the
-        // high bit from bit fifteen of the second, and the sign from bit fifteen of the third.
+
+
         if ((skip & 1) != 0) word[0] |= 1 << 15;
         if ((skip & 2) != 0) word[1] |= 1 << 15;
         if (negative) word[2] |= 1 << 15;
@@ -97,7 +97,7 @@ public static class SplineQuat
         }
     }
 
-    /// Sixteen bytes, four floats, which is what the format calls uncompressed.
+
     public static void WritePlain(Quaternion q, byte[] into, int at)
     {
         q = Quaternion.Normalize(q);
@@ -117,9 +117,9 @@ public static class SplineQuat
         }
     }
 
-    // The readers, in public form. HkxBinaryReader keeps its own private copies for the decode path
-    // it has always had; these exist so a fit can ask what a control point will actually come back as
-    // after it has been packed, which is the only rounding that matters to the error it reports.
+
+
+
 
     public static Quaternion Read40(byte[] from, int at)
     {
@@ -176,17 +176,17 @@ public static class SplineQuat
         _ => Read40(from, at),
     };
 
-    /// How far apart two rotations are, in radians, ignoring which of the two signs each carries.
-    ///
-    /// Not the obvious `2 * acos(dot)`. That form cannot resolve a small angle at all: acos near one
-    /// turns the last few bits of the dot product into the whole answer, so in single precision it
-    /// bottoms out around 0.0009 radians and reports that for everything closer. It looked like a
-    /// real measurement of the rotation codec until a packer known to be good measured the same
-    /// 0.0007 as everything else, which is the giveaway.
-    ///
-    /// The half angle form below is conditioned the other way round: the two lengths are large where
-    /// the answer is small, so it stays accurate all the way down. Done in double for the same
-    /// reason, since the inputs are single and the differences are where the answer lives.
+
+
+
+
+
+
+
+
+
+
+
     public static float AngleBetween(Quaternion a, Quaternion b)
     {
         a = Quaternion.Normalize(a);

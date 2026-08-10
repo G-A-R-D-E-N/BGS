@@ -4,8 +4,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-/// Static reachability over the relationships the canvas already understands. This is deliberately
-/// read-only: it does not author links, change StateRoutes, or broaden GraphAuthor.PointsAt.
+
+
 public static class GraphTrace
 {
     public enum Direction

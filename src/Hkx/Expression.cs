@@ -4,45 +4,45 @@ using System.Globalization;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// The little expression language a behaviour carries, and what it evaluates to.
-//
-// A transition can hold an `hkbExpressionCondition`, which is one line of text tested before the
-// transition is allowed to fire. Until now nothing here read that text, so the stepper treated every
-// conditional transition as able to fire and said so. That is the safe way round and it is also
-// wrong often enough to matter: a door whose transition reads `bPartialCover==1` fires in the
-// stepper whatever the variable holds.
-//
-// **The grammar is not guessed at, it is what the corpus contains.** `symrm conditions` reads every
-// condition out of the 531 vanilla behaviours: 49 of them, 34 distinct, across 13 files. Between
-// them they use exactly this much language:
-//
-//     a variable name, a number
-//     == != < > >= <=          (<= appears in no vanilla condition; it is here because leaving one
-//                               of a pair out is how a parser acquires a hole)
-//     && ||                    always parenthesised in vanilla, not required here
-//     !                        as in `!IsPlayer`
-//     a bare variable          as in `!bBlockMoveStop`, true when the variable is not zero
-//     ( )
-//
-// So this is a complete reading of the vanilla data rather than a subset of Havok's language. What
-// Havok's own compiler accepts is wider, and anything wider than the above comes back Unknown rather
-// than being approximated.
-//
-// **Unknown is the important part.** Three tri-state answers, and Unknown must always mean the
-// transition can still fire. That way reading a condition can only ever remove a transition this can
-// prove will not fire, and never adds one or hides one it did not understand. A build that stopped
-// parsing correctly would go back to behaving exactly as the build before conditions existed.
-//
-// **One vanilla oddity, reported rather than resolved.** `iSyncIdleLocomotion=18` is written with a
-// single `=`, which in this language is assignment and not a test. Havok's compiler would probably
-// evaluate it to the assigned value and so to true, but "probably" is a guess about a runtime nobody
-// here has, and this project does not guess about the runtime. It parses, it is classified as an
-// assignment, and it evaluates to Unknown so the transition still fires.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public static class Expression
 {
     public enum Verdict { Unknown, True, False }
 
-    /// A parsed condition, or the reason it is not one.
+
     public sealed record Parsed(Node? Root, string? Problem, bool IsAssignment,
                                 IReadOnlyList<string> Names)
     {
@@ -77,8 +77,8 @@ public static class Expression
             public override string ToString() => $"({Left} {(Or ? "||" : "&&")} {Right})";
         }
 
-        /// A single `=`, which is an assignment and not a test. Kept as its own shape so it is
-        /// reported rather than quietly read as `==`.
+
+
         public sealed record Assign(string Variable, Node Value) : Node
         {
             public override string ToString() => $"{Variable} = {Value}";
@@ -107,11 +107,11 @@ public static class Expression
         return new Parsed(node, null, node is Node.Assign, names);
     }
 
-    /// What a parsed condition comes to, given what the graph's variables hold.
-    ///
-    /// `value` answers with the variable's number, or null when the graph does not declare it. A
-    /// name nothing declares is Unknown rather than zero: zero is a real value a variable can hold
-    /// and would make `iIsInSneak == 0` come out true on a file that has no such variable at all.
+
+
+
+
+
     public static Verdict Evaluate(Parsed parsed, Func<string, double?> value)
     {
         if (!parsed.Ok || parsed.IsAssignment) return Verdict.Unknown;
@@ -130,9 +130,9 @@ public static class Expression
                 var left = Truth(both.Left, value);
                 var right = Truth(both.Right, value);
 
-                // Short circuits both ways round, so half an answer is still an answer where the
-                // operator allows it: false && anything is false even when the other half names a
-                // variable this file does not declare.
+
+
+
                 if (both.Or)
                 {
                     if (left == Verdict.True || right == Verdict.True) return Verdict.True;
@@ -172,8 +172,8 @@ public static class Expression
                 return answer ? Verdict.True : Verdict.False;
             }
 
-            // A bare variable, which is how `!IsPlayer` and `!bBlockMoveStop` are written. Anything
-            // that is not zero is true, which is what a bool variable stored as a word means.
+
+
             default:
                 if (Number(node, value) is not double alone) return Verdict.Unknown;
                 return alone != 0 ? Verdict.True : Verdict.False;
@@ -214,8 +214,8 @@ public static class Expression
                 continue;
             }
 
-            // The two character operators first, or `!=` scans as `!` followed by `=` and the parser
-            // sees a negation of an assignment.
+
+
             if (at + 1 < text.Length)
             {
                 string pair = text.Substring(at, 2);
@@ -270,9 +270,9 @@ public static class Expression
         var left = Unary(tokens, ref at, names);
         if (at >= tokens.Count) return left;
 
-        // A single `=` is an assignment. It is kept apart from `==` rather than folded into it,
-        // because reading it as a test would be inventing a meaning for a line one vanilla file
-        // carries and nothing here can check.
+
+
+
         if (tokens[at].Text == "=")
         {
             at++;
@@ -299,9 +299,9 @@ public static class Expression
             return new Node.Not(Unary(tokens, ref at, names));
         }
 
-        // A sign in front of a number, which the expression modifier lines use freely and a condition
-        // could. Folded into the number rather than becoming a node, since nothing here negates
-        // anything else.
+
+
+
         if (tokens[at].Text is "-" or "+")
         {
             bool negative = tokens[at].Text == "-";

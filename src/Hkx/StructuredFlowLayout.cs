@@ -4,8 +4,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-/// The state-machine hierarchy that Structured Flow draws. It reads the ownership answer already made
-/// by GraphAuthor.Layout and never invents another relationship from names or a second reference walk.
+
+
 public static class StructuredFlowLayout
 {
     public enum NodeKind

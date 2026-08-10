@@ -5,42 +5,42 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// How much each child of a blender actually contributes.
-//
-// This is the question the weapon idle work asks and the one a static picture cannot answer. A
-// blender mixes several animations, and which of them you are looking at, and how much, is the whole
-// point of a blend. The canvas can draw the children; it cannot say the mix.
-//
-// There are two kinds of blender and they read the same child `weight` field to mean opposite things,
-// which is the trap here. A plain blender mixes every child at once, each in proportion to its
-// weight. A parametric blender instead lines its children up along an axis, at the positions its
-// weights give, and a single blend parameter slides along that axis picking out the one or two
-// nearest. Treating one as the other is not a rounding error: it reports a walk cycle mixed evenly
-// into an idle when only one of them is playing.
-//
-// The two are told apart by a flag the game sets, checked against the shipped data rather than
-// assumed: bit 0x10 is set on every one of the 208 parametric blenders whose blend parameter is
-// driven by a variable, and on the 74 whose parameter is a constant, and on none of the 499 plain
-// ones. See `symrm weights`.
-//
-// What this refuses to invent: a mix driven by a variable. 208 of the 781 blenders in the corpus
-// slide their parameter from a variable set outside the graph, and 26 of 2,122 children have a
-// weight bound to a variable directly. None of that is in the file as a number, so it is reported as
-// driven from outside and named, not guessed at.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public static class BlendWeights
 {
-    /// hkbBlenderGenerator::BlenderFlags::FLAG_IS_PARAMETRIC. Set means the children are laid out
-    /// along an axis and picked by the blend parameter, not mixed all at once.
+
+
     public const int Parametric = 0x10;
 
     public enum Mode
     {
-        /// Every child mixed at once, in proportion to its weight.
+
         Mix,
-        /// Children laid along an axis, picked by a blend parameter this file carries as a number.
+
         Parametric,
-        /// Parametric, but the parameter is set by a variable outside the graph, so the mix is not
-        /// knowable from the file.
+
+
         ParametricDriven,
     }
 
@@ -58,7 +58,7 @@ public static class BlendWeights
     public sealed record Result(string BlenderId, string BlenderName, Mode Mode, string Parameter,
                                 float ParameterValue, IReadOnlyList<Child> Children)
     {
-        /// Whether the mix is a fact of the file rather than something a variable decides at runtime.
+
         public bool Resolved => Mode != Mode.ParametricDriven && Children.All(c => !c.WeightDriven);
 
         public override string ToString()
@@ -73,7 +73,7 @@ public static class BlendWeights
         }
     }
 
-    /// Works out the mix of one blender.
+
     public static Result Of(BehaviourGraphModel model, string blenderId)
     {
         var blender = model.Get(blenderId)
@@ -96,7 +96,7 @@ public static class BlendWeights
             raw.Add((generator, weight, driven, driver));
         }
 
-        // The blend parameter: a constant in the file, unless a binding slides it from a variable.
+
         var (paramDriven, paramName) = BlendParameterBinding(model, blender);
         float paramValue = Real(blender.Str("blendParameter"));
 
@@ -108,7 +108,7 @@ public static class BlendWeights
         {
             Mode.Mix => MixContributions(raw),
             Mode.Parametric => ParametricContributions(raw, paramValue),
-            _ => new float[raw.Count],   // unknowable, left at zero and reported as driven
+            _ => new float[raw.Count],
         };
 
         var children = new List<Child>();
@@ -123,14 +123,14 @@ public static class BlendWeights
             paramDriven ? paramName : "blendParameter", paramValue, children);
     }
 
-    /// Every blender in the file, resolved.
+
     public static IEnumerable<Result> All(BehaviourGraphModel model) =>
         model.Objects.Where(o => o.Class == "hkbBlenderGenerator").Select(o => Of(model, o.Id));
 
-    // A plain mix: each child in proportion to its weight, normalised so the shares sum to one. A
-    // child weighted zero contributes nothing, which is how vanilla switches a child off without
-    // removing it. If every weight is zero the blender contributes nothing and the shares are zero
-    // rather than a divide by zero.
+
+
+
+
     private static float[] MixContributions(List<(string Id, float Weight, bool Driven, string Driver)> raw)
     {
         float total = raw.Where(c => !c.Driven).Sum(c => Math.Max(0, c.Weight));
@@ -141,10 +141,10 @@ public static class BlendWeights
         return shares;
     }
 
-    // A parametric pick: the children sit at the positions their weights give, and the parameter
-    // slides along that axis. The two children bracketing it share the weight by how close the
-    // parameter sits to each; everything else is off. This is Havok's own parametric blend, and it is
-    // why a parametric blender's weights are positions and not shares.
+
+
+
+
     private static float[] ParametricContributions(
         List<(string Id, float Weight, bool Driven, string Driver)> raw, float parameter)
     {
@@ -152,7 +152,7 @@ public static class BlendWeights
         var points = raw.Select((c, i) => (Index: i, Pos: c.Weight)).OrderBy(p => p.Pos).ToList();
         if (points.Count == 0) return shares;
 
-        // Below the first or above the last, the nearest end takes it all.
+
         if (parameter <= points[0].Pos) { shares[points[0].Index] = 1; return shares; }
         if (parameter >= points[^1].Pos) { shares[points[^1].Index] = 1; return shares; }
 
@@ -176,11 +176,11 @@ public static class BlendWeights
     private static (bool Driven, string Driver) BlendParameterBinding(BehaviourGraphModel model, HkObject blender)
         => Binding(model, blender.Ref("variableBindingSet") ?? "", "blendParameter");
 
-    /// Whether a member of an object is bound to a variable, and which one.
-    ///
-    /// A binding names its member by a path and the variable by an index. The index is turned into a
-    /// name here, because a number names nothing to anyone reading the answer, and a driver reported
-    /// as "variable 7" is only nominally more use than not reporting it at all.
+
+
+
+
+
     private static (bool Driven, string Driver) Binding(BehaviourGraphModel model, string bindingSetId, string member)
     {
         if (bindingSetId.Length == 0) return (false, "");

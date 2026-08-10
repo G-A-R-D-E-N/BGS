@@ -4,35 +4,35 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Running the graph, rather than only drawing it.
-//
-// Everything else here is static. The canvas says a transition listens for `StartOpen`, and whether
-// sending `StartOpen` actually gets you there could only be answered by loading the game. A behaviour
-// graph is a small interpreter and this file parses all of it, so stepping it is a loop.
-//
-// What this is, stated plainly, because it matters: this is our reading of the format, not Havok's
-// runtime. Havok never shipped the behaviour product's source, so there is no reference
-// implementation to check against and nothing here can be proved correct the way the packfile writer
-// was proved against the game's own writer. What can be done is to refuse to guess. Anything this
-// cannot model is recorded as a stop and reported, rather than being quietly stepped through as
-// though it were understood.
-//
-// The corpus says the job is smaller than it looks. All 6,394 transitions in the 531 vanilla
-// behaviours carry an event id, so none of them fires on time alone, and only 115 of them carry a
-// condition. So an event driven reading covers 98% of the vanilla data exactly, and the rest is
-// named rather than assumed.
-//
-// What is deliberately not here yet: time, and therefore blend weights. A transition takes a
-// duration, a blender mixes its children by weight, and a clip has a length. None of that is stepped.
-// This answers which state you end up in, not what the character looks like part way there.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public sealed class GraphRun
 {
-    /// Generators that lead somewhere this file cannot see.
-    ///
-    /// A behaviour reference generator loads another behaviour by name, and a graph swap generator
-    /// replaces the running graph outright. Following either would mean opening another file and
-    /// guessing which, so the walk stops and says so. 81 states in the corpus sit on the first and 11
-    /// on the second.
+
+
+
+
+
+
     private static readonly HashSet<string> Opaque = new(StringComparer.Ordinal)
     {
         "hkbBehaviorReferenceGenerator",
@@ -47,16 +47,16 @@ public sealed class GraphRun
             (Weight < 0.999f ? $" at {Weight * 100:F0}%" : "");
     }
 
-    /// A transition part way through, blending the pose of the state it is leaving into the one it is
-    /// entering. The engine switches the active state to the target at once and blends the pose over
-    /// the effect's duration, so the target is what the machine is "in" while both are still drawn.
+
+
+
     private sealed record Blend(string MachineId, string FromStateId, string ToStateId,
                                 float Duration, float Elapsed)
     {
         public float Fraction => Duration <= 0 ? 1f : Math.Clamp(Elapsed / Duration, 0f, 1f);
     }
 
-    /// Somewhere the walk would have had to guess, recorded instead.
+
     public sealed record Stop(string ObjectId, string ClassName, string Why)
     {
         public override string ToString() => $"#{ObjectId} {ClassName}: {Why}";
@@ -70,11 +70,11 @@ public sealed class GraphRun
             (Conditional ? $" if {Condition}" : "");
     }
 
-    /// A transition that did not fire because its condition came out false.
-    ///
-    /// Recorded rather than skipped in silence. "I sent the event and nothing happened" is the
-    /// question this whole feature exists to answer, and an answer that is absent from the screen is
-    /// the same as no answer at all.
+
+
+
+
+
     public sealed record Blocked(string MachineId, string FromStateId, string ToStateId,
                                  string ToStateName, string Event, string Condition)
     {
@@ -86,67 +86,67 @@ public sealed class GraphRun
     private readonly StateRoutes _routes;
     private readonly List<string> _events;
 
-    /// What every variable the graph declares currently holds, as a number.
-    ///
-    /// A word value is thirty two bits whose meaning is the variable's declared type, so a real is
-    /// stored as the bit pattern of its float. Read as a whole number, 1.0 comes out as 1065353216
-    /// and every comparison against it is nonsense, so the type decides how the word is read.
+
+
+
+
+
     private readonly Dictionary<string, double> _variables = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SymbolEditor.VariableType> _variableTypes =
         new(StringComparer.Ordinal);
 
-    /// Conditions parsed once. A weapon behaviour is asked the same question on every send, and
-    /// parsing is the expensive half.
+
+
     private readonly Dictionary<string, Expression.Parsed> _parsed = new(StringComparer.Ordinal);
 
     private readonly List<Blocked> _blocked = new();
 
-    /// How many candidate transitions carrying a condition this run has weighed up. The denominator
-    /// for the number it held back, without which that number says nothing.
+
+
     public int ConditionsWeighed { get; private set; }
 
-    /// The active state of every machine the walk reaches, keyed by machine.
+
     private readonly Dictionary<string, string> _in = new(StringComparer.Ordinal);
     private readonly List<Stop> _stops = new();
 
-    /// Transitions still blending. Keyed by machine, because a machine blends one transition at a
-    /// time: a second event mid-blend replaces the blend rather than stacking on it, which is what
-    /// the engine does.
+
+
+
     private readonly Dictionary<string, Blend> _blending = new(StringComparer.Ordinal);
 
-    /// How far into itself every clip currently playing has got, in clip local seconds.
-    ///
-    /// Keyed by clip rather than by machine, because more than one clip plays at once: a blender runs
-    /// all of its children and a layer generator runs all of its layers, so a character normally has
-    /// dozens going at the same time and they do not share a clock.
+
+
+
+
+
     private readonly Dictionary<string, float> _playing = new(StringComparer.Ordinal);
 
-    /// Where each clip had got to before the current rebuild, so one still playing keeps its position
-    /// instead of starting again. Without this every event in the graph would restart every clip in
-    /// it, and a clip would never reach its own end while anything else was happening.
+
+
+
     private Dictionary<string, float>? _wasPlaying;
 
-    /// Every clip's length and the times its triggers go out, or empty when nobody supplied any.
-    ///
-    /// Empty is the ordinary case rather than a degraded one: a clip's length lives in the animation
-    /// file, and a caller with no folder around the behaviour genuinely cannot know it. With no table
-    /// the clock advances blends and nothing else, which is exactly what this did before.
+
+
+
+
+
     private IReadOnlyDictionary<string, ClipTiming.Clip> _clips =
         new Dictionary<string, ClipTiming.Clip>(StringComparer.Ordinal);
 
     public IReadOnlyList<Stop> Stops => _stops;
     public string RootId { get; private set; } = "";
 
-    /// Whether any transition is still part way through, so a caller knows there is a reason to keep
-    /// advancing the clock.
+
+
     public bool Blending => _blending.Count > 0;
 
-    /// Which state each running machine is in, and how much of the pose it holds.
-    ///
-    /// A settled machine holds its one state at full weight. A machine part way through a transition
-    /// holds two: the one it is entering at the blend's fraction, and the one it is leaving at the
-    /// rest. Both are returned so the mix reads on the canvas, which is the thing a static graph
-    /// cannot show and the whole point of stepping time.
+
+
+
+
+
+
     public IReadOnlyList<Active> Where()
     {
         var into = new List<Active>();
@@ -193,21 +193,21 @@ public sealed class GraphRun
         }
     }
 
-    /// The variables the graph declares, in the order it declares them.
+
     public IReadOnlyList<string> Variables => _variables.Keys.ToList();
 
-    /// What a variable holds, or null when the graph does not declare it. Null rather than zero on
-    /// purpose: zero is a value a variable really can hold, and reporting it for one that does not
-    /// exist would make `iIsInSneak == 0` come out true on a file with no such variable.
+
+
+
     public double? ValueOf(string name) =>
         _variables.TryGetValue(name, out double value) ? value : null;
 
     public SymbolEditor.VariableType TypeOf(string name) =>
         _variableTypes.TryGetValue(name, out var type) ? type : SymbolEditor.VariableType.Int32;
 
-    /// Sets a variable, which is what makes a conditional transition testable rather than only
-    /// reported. Refuses a name the graph does not declare rather than inventing one, because a
-    /// variable the graph never declared can never be read by anything in it.
+
+
+
     public void Set(string name, double value)
     {
         if (!_variableTypes.ContainsKey(name))
@@ -218,18 +218,18 @@ public sealed class GraphRun
 
         _variables[name] = value;
 
-        // What was held back was held back by the values as they were. Leaving that list up after a
-        // variable changes would show a reason that may no longer be the reason, which is worse than
-        // showing nothing, so it goes and the next send fills it in again.
+
+
+
         _blocked.Clear();
     }
 
-    /// The transitions the last send held back because their condition was false.
+
     public IReadOnlyList<Blocked> HeldBack => _blocked;
 
-    /// Every transition in the graph that carries a condition, with what that condition says right
-    /// now. Answers the question "which of these is actually stopping something", which a count of
-    /// 107 conditions across a corpus cannot.
+
+
+
     public IReadOnlyList<(StateRoutes.Route Route, string Condition, Expression.Verdict Verdict)> Conditions()
     {
         var found = new List<(StateRoutes.Route, string, Expression.Verdict)>();
@@ -243,12 +243,12 @@ public sealed class GraphRun
         return found;
     }
 
-    /// What a condition comes to right now, given what the variables hold.
-    ///
-    /// Unknown is the answer that matters and it always means "let it fire". Reading a condition can
-    /// only ever hold back a transition this can prove will not fire; it can never add one, and it
-    /// can never hide one it did not understand. A build whose parser stopped working would behave
-    /// exactly like the build before conditions were read at all.
+
+
+
+
+
+
     public Expression.Verdict Test(string condition)
     {
         if (condition.Length == 0) return Expression.Verdict.True;
@@ -259,11 +259,11 @@ public sealed class GraphRun
         return Expression.Evaluate(parsed, name => ValueOf(name));
     }
 
-    /// Puts the graph in the state it starts in.
-    ///
-    /// The root is the behaviour graph's own generator rather than the first state machine in the
-    /// file. Those are usually the same object and when they are not, picking the first machine
-    /// starts the run somewhere the game never starts it.
+
+
+
+
+
     public static GraphRun Start(BehaviourGraphModel model)
     {
         var run = new GraphRun(model);
@@ -273,9 +273,9 @@ public sealed class GraphRun
 
         if (root.Length == 0)
         {
-            // No behaviour graph object, which happens in files that are a fragment rather than a
-            // whole character. Falling back to a machine nothing points at is a guess, so it is
-            // recorded as one.
+
+
+
             var pointedAt = model.Objects
                 .SelectMany(o => GraphAuthor.PointsAt(model, o))
                 .ToHashSet(StringComparer.Ordinal);
@@ -294,18 +294,18 @@ public sealed class GraphRun
         return run;
     }
 
-    /// Walks down from a generator, switching on every machine it passes through.
-    ///
-    /// More than one machine can be running at once and that is not an edge case: a blender runs all
-    /// of its children and a layer generator runs all of its layers, so a character is normally
-    /// several machines deep in several places at the same time. Anything that only tracked one
-    /// active state would be describing a graph the game does not have.
+
+
+
+
+
+
     private void Enter(string generatorId, int depth, HashSet<string> onPath)
     {
         if (generatorId.Length == 0 || depth > 32) return;
 
-        // Guards a generator that reaches itself. The corpus has none, but a file being edited can
-        // have one for as long as it takes to wire the second half of a change.
+
+
         if (!onPath.Add(generatorId)) return;
 
         var node = _model.Get(generatorId);
@@ -327,24 +327,24 @@ public sealed class GraphRun
             int start = node.Int("startStateId");
             var into = states.FirstOrDefault(s => s.StateId == start);
 
-            // A machine that was already running stays where it was rather than being restarted,
-            // because a rebuild is working out what is running and not re-entering everything.
+
+
             if (_resume != null && _resume.TryGetValue(node.Id, out var was) &&
                 states.Any(s => s.Id == was))
                 into = states.First(s => s.Id == was);
 
             if (into == null)
             {
-                // A start state that is not in the machine is already an error the validator reports.
-                // Saying so again here would be noise; what matters to a run is that it cannot begin.
+
+
                 _stops.Add(new Stop(node.Id, node.Class,
                     $"its start state {start} is not one of its {states.Count} state(s), so it cannot be entered"));
                 onPath.Remove(generatorId);
                 return;
             }
 
-            // A start state selector picks the start state at runtime from something outside the
-            // graph, so which state this machine really begins in is not knowable from the file.
+
+
             if ((node.Ref("startStateIdSelector") ?? "").Length > 0)
                 _stops.Add(new Stop(node.Id, node.Class,
                     "its start state is chosen at runtime by a selector, so the state named here is " +
@@ -355,9 +355,9 @@ public sealed class GraphRun
             return;
         }
 
-        // A clip is a leaf: it carries nothing that runs, and it is the thing whose own length can end
-        // a state. Noted on the way past so the clock knows what is playing, keeping whatever position
-        // it already had if this walk is a rebuild that left it running.
+
+
+
         if (node.Class == "hkbClipGenerator")
         {
             _playing[node.Id] = _wasPlaying != null && _wasPlaying.TryGetValue(node.Id, out float was) ? was : 0;
@@ -369,7 +369,7 @@ public sealed class GraphRun
         onPath.Remove(generatorId);
     }
 
-    /// Puts a machine into a state and walks down into whatever that state generates.
+
     private void Switch(string machineId, string stateId, int depth, HashSet<string> onPath)
     {
         _in[machineId] = stateId;
@@ -377,18 +377,18 @@ public sealed class GraphRun
         if (generator.Length > 0) Enter(generator, depth + 1, onPath);
     }
 
-    // Which field of which class holds something that runs, taken from the class table rather than
-    // from a list written out by hand.
-    //
-    // The first attempt matched on the target's class name ending in Generator, which is wrong and
-    // wrong quietly. A layer generator holds `hkbLayer` and a blender holds `hkbBlenderGeneratorChild`
-    // and neither is a generator, so the walk stopped at the first one and reported Dogmeat as having
-    // exactly one machine running out of its thirty. It looked plausible: one machine, one active
-    // state, no errors.
-    //
-    // The table already knows. A field that carries something runnable is declared as a pointer or an
-    // array of pointers to `hkbGenerator`, so the set below is read off the game's own class layouts
-    // and covers classes nobody here has thought about.
+
+
+
+
+
+
+
+
+
+
+
+
     private static readonly Dictionary<string, HashSet<string>> Carries = BuildCarriers();
 
     private static Dictionary<string, HashSet<string>> BuildCarriers()
@@ -403,10 +403,10 @@ public sealed class GraphRun
                 if (member.CType != "hkbGenerator") continue;
                 if (member.VType is not ("TYPE_POINTER" or "TYPE_ARRAY")) continue;
 
-                // Two of these are not part of the running tree. A transition effect's generator is
-                // what plays *during* a transition rather than what the graph is in, and a set
-                // behaviour command is an instruction rather than a node. Walking either would report
-                // states as running that are not.
+
+
+
+
                 if (className is "hkbGeneratorTransitionEffect" or "hkbSetBehaviorCommand") continue;
 
                 if (!carriers.TryGetValue(className, out var fields))
@@ -415,33 +415,33 @@ public sealed class GraphRun
             }
         }
 
-        // A state machine held by a state manager's data is reached through a field declared as
-        // pointing at the machine rather than at a generator, so the table's own rule misses it.
+
+
         carriers["BSIStateManagerModifierBSiStateData"] = new HashSet<string>(StringComparer.Ordinal) { "pStateMachine" };
         return carriers;
     }
 
-    /// Classes that exist only to hold something runnable, rather than to run anything themselves.
-    ///
-    /// A blender's `children` array is declared as pointing at `hkbBlenderGeneratorChild`, not at
-    /// `hkbGenerator`, so the rule above does not reach it. The wrapper does hold a generator, which
-    /// is exactly what makes it a wrapper, so anything pointing at one is followed.
+
+
+
+
+
     private static readonly HashSet<string> Wrappers = Carries.Keys
         .Where(c => !c.EndsWith("Generator", StringComparison.Ordinal) && c != "hkbBehaviorGraph" &&
                     c != "hkbStateMachineStateInfo")
         .ToHashSet(StringComparer.Ordinal);
 
-    /// What a node runs, as opposed to everything it points at.
-    ///
-    /// Everything else a node points at is a modifier, a binding, an event or a payload, and running
-    /// those is not what this does. A state's own generator is followed by `Switch` rather than here,
-    /// because a machine's states are entered one at a time and not all together.
+
+
+
+
+
     private IEnumerable<string> Below(HkObject node)
     {
-        // Deliberately narrower than GraphAuthor.PointsAt, which is every reference the file holds.
-        // This is what the runtime descends into, and a machine's states are entered one at a time
-        // rather than all together, so following every edge here would light up states the graph is
-        // not in.
+
+
+
+
         Carries.TryGetValue(node.Class, out var fields);
 
         foreach (var slot in GraphLinks.OutSlots(_model, node))
@@ -465,12 +465,12 @@ public sealed class GraphRun
         return new Active(machineId, machine.Str("name"), stateId, state.Int("stateId"), state.Str("name"));
     }
 
-    /// Sends an event and returns every transition it fired.
-    ///
-    /// Every running machine gets the event, which is what the engine does: an event is raised on the
-    /// graph and not on one machine, so two machines listening for the same event both move. Within a
-    /// machine the highest priority transition wins, and declaration order breaks a tie, which is the
-    /// order the file lists them in.
+
+
+
+
+
+
     public IReadOnlyList<Fired> Send(string name)
     {
         int id = _events.IndexOf(name);
@@ -481,8 +481,8 @@ public sealed class GraphRun
         return Send(id);
     }
 
-    /// Whether the graph declares an event at all, so a caller can tell the two answers apart before
-    /// asking for one.
+
+
     public bool Declares(string name) => _events.Contains(name);
 
     public IReadOnlyList<string> Events => _events;
@@ -493,8 +493,8 @@ public sealed class GraphRun
         var moved = new Dictionary<string, string>(StringComparer.Ordinal);
         _blocked.Clear();
 
-        // Snapshotted first. A machine that moves must not then be re-examined with its new state in
-        // the same send, or one event walks a chain of transitions in a single step.
+
+
         foreach (var (machineId, stateId) in _in.ToList())
         {
             var candidates = _routes.LeavingState(stateId)
@@ -504,14 +504,14 @@ public sealed class GraphRun
                 .ThenBy(x => x.Detail.Order)
                 .ToList();
 
-            // The highest priority transition whose condition is not provably false. A condition
-            // this cannot decide counts as passing, so the only thing this skips is a transition the
-            // variables say cannot fire, and the next candidate down then gets its turn, which is
-            // what a condition is for in the first place.
-            // Every candidate whose condition the variables say cannot fire, not only the ones ahead
-            // of the winner. A transition held back behind a lower priority one that did fire is
-            // still the answer to "why did it go there and not there", and recording only the ones
-            // in front of the winner reported nothing at all across the whole corpus.
+
+
+
+
+
+
+
+
             foreach (var held in candidates)
             {
                 if (held.Detail.Condition.Length > 0) ConditionsWeighed++;
@@ -531,17 +531,17 @@ public sealed class GraphRun
 
             moved[machineId] = pick.Route.ToId;
 
-            // A transition with a duration blends its pose over that time rather than snapping, and a
-            // machine blends one at a time, so a new one replaces whatever was still fading. An
-            // instant transition, which is 443 of the 1,310 in the corpus, leaves nothing to blend and
-            // is dropped from the map rather than recorded as a zero length blend.
+
+
+
+
             if (pick.Detail.Duration > 0 && pick.Route.ToId != stateId)
                 _blending[machineId] = new Blend(machineId, stateId, pick.Route.ToId, pick.Detail.Duration, 0);
             else
                 _blending.Remove(machineId);
 
-            // A transition can name a state inside the machine the entered state holds, which puts
-            // that inner machine somewhere other than its own start state.
+
+
             if (pick.Route.IntoId.Length > 0)
             {
                 string inner = _routes.MachineOfState.TryGetValue(pick.Route.IntoId, out var m) ? m : "";
@@ -553,17 +553,17 @@ public sealed class GraphRun
         return fired;
     }
 
-    /// Advances the clock: every in-progress transition blend, and every clip that is playing.
-    ///
-    /// The second half is what lets a state leave because its clip ended rather than only because
-    /// somebody sent an event. It does not do that directly, and the indirection is the whole point:
-    /// nothing in a state machine says "leave when the clip finishes". A clip carries triggers, a
-    /// trigger raises an event at a point in the clip, and a trigger marked relative to the end raises
-    /// it when the animation runs out. So a clip ending is an ordinary event with an unusual sender,
-    /// and it goes through the same `Send` as one typed into the box.
-    ///
-    /// Returns what those triggers fired, so a caller can say a state moved on its own rather than
-    /// leaving the change to be noticed.
+
+
+
+
+
+
+
+
+
+
+
     public IReadOnlyList<Fired> Advance(float seconds)
     {
         var fired = new List<Fired>();
@@ -578,10 +578,10 @@ public sealed class GraphRun
 
         if (_clips.Count == 0 || _playing.Count == 0) return fired;
 
-        // Which events this step crosses, gathered before any of them is sent. Sending inside the
-        // walk would move states while their own clips are still being read, so a clip could be
-        // stopped half way through deciding what it had raised, and the result would depend on
-        // dictionary order.
+
+
+
+
         var raised = new List<string>();
 
         foreach (string clipId in _playing.Keys.ToList())
@@ -593,17 +593,17 @@ public sealed class GraphRun
 
             foreach (var trigger in clip.Triggers)
             {
-                // Crossed during this step. Half open at the start so a trigger sitting exactly on
-                // the position the clip is already at does not fire twice on consecutive steps, and
-                // closed at the end so one sitting exactly on the clip's length does fire.
+
+
+
                 if (trigger.At > from && trigger.At <= to && !raised.Contains(trigger.Event))
                     raised.Add(trigger.Event);
             }
 
-            // A clip that runs off its end starts again, which is what MODE_LOOPING does and what the
-            // corpus's clips overwhelmingly are. A clip that does not loop would stay at its end
-            // instead, and telling the two apart is `mode`, which is read where the table is built
-            // rather than here.
+
+
+
+
             _playing[clipId] = clip.Looping && to >= clip.Seconds
                 ? to % clip.Seconds
                 : Math.Min(to, clip.Seconds);
@@ -613,23 +613,23 @@ public sealed class GraphRun
         return fired;
     }
 
-    /// How far into itself a clip has played, in clip local seconds, or null when it is not playing.
+
     public float? PlayingAt(string clipId) => _playing.TryGetValue(clipId, out float at) ? at : null;
 
-    /// Every clip currently playing, with where it has got to and how long it lasts.
+
     public IReadOnlyList<(ClipTiming.Clip Clip, float At)> Playing() =>
         _playing.Where(p => _clips.ContainsKey(p.Key))
                 .Select(p => (_clips[p.Key], p.Value))
                 .OrderBy(p => p.Item1.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-    /// Gives the run the clip lengths it cannot work out for itself, and says what it could not time.
-    ///
-    /// A clip whose length is unknown is recorded as a stop rather than left silent. The run already
-    /// reports a generator that loads another file that way, and a clip whose animation is missing is
-    /// the same kind of thing: a place where the answer depends on something outside this file. Left
-    /// unreported it would look like a clip that simply never ends, which is a claim rather than an
-    /// absence.
+
+
+
+
+
+
+
     public void Time(IReadOnlyDictionary<string, ClipTiming.Clip> clips)
     {
         _clips = clips;
@@ -643,21 +643,21 @@ public sealed class GraphRun
         }
     }
 
-    /// Finishes every blend at once, for a caller that wants the settled result rather than a frame
-    /// part way through it.
+
+
     public void Settle() => _blending.Clear();
 
-    /// Works out which machines are running now, after some of them have moved.
-    ///
-    /// A machine runs because something above it is in a state that holds it, so leaving that state
-    /// stops it. Applying a transition in place and leaving the rest of the map alone does not model
-    /// that: the machines under the state just left stay in the active set for the rest of the run,
-    /// still answering events, and the set only ever grows. On a door that is one stale machine and
-    /// on a character it is most of them.
-    ///
-    /// So the configuration is derived from the root every time rather than edited. A machine still
-    /// reachable keeps where it was, and a machine reached for the first time starts at its own start
-    /// state, which is what entering a machine means.
+
+
+
+
+
+
+
+
+
+
+
     private void Rebuild(Dictionary<string, string> moved)
     {
         var keep = new Dictionary<string, string>(_in, StringComparer.Ordinal);
@@ -672,13 +672,13 @@ public sealed class GraphRun
         _wasPlaying = null;
     }
 
-    /// Where each machine was before the current rebuild, so one that is still running stays put.
+
     private Dictionary<string, string>? _resume;
 
-    /// The priority, declaration order and condition of a transition, read back off its own array.
-    ///
-    /// StateRoutes deliberately does not carry these: it exists to draw lines and a line has no
-    /// priority. Rather than widen it for one caller, the row is read again here.
+
+
+
+
     private (int Priority, int Order, string Condition, float Duration) Detail(StateRoutes.Route route)
     {
         var machine = _model.Get(route.MachineId);
@@ -719,11 +719,11 @@ public sealed class GraphRun
         return (0, 0, "", 0);
     }
 
-    /// How long a transition's blend lasts, read off the effect it points at.
-    ///
-    /// Two effect classes carry a duration and they name it differently: a blending effect calls it
-    /// `duration`, and a generator transition effect, which plays a whole generator across the gap,
-    /// blends in over `blendInDuration`. Anything else, or a null effect, is an instant switch.
+
+
+
+
+
     private float TransitionDuration(string? effectRef)
     {
         if (string.IsNullOrEmpty(effectRef) || effectRef == "null") return 0;
@@ -743,7 +743,7 @@ public sealed class GraphRun
             System.Globalization.CultureInfo.InvariantCulture, out float d) && d > 0 ? d : 0;
     }
 
-    /// Everywhere the graph can get to, and what it takes to get there.
+
     public sealed record Reach(
         IReadOnlyDictionary<string, SortedSet<string>> EventsInto,
         IReadOnlyCollection<string> Reachable,
@@ -751,37 +751,37 @@ public sealed class GraphRun
         IReadOnlyCollection<StateRoutes.Route> Dead,
         int Conditional);
 
-    /// Which states can be reached from the start, by any sequence of events.
-    ///
-    /// Run as a fixpoint over states rather than a search over whole configurations. A graph with
-    /// twenty machines has more configurations than there is any point enumerating, and the question
-    /// being asked does not need them: a state is reachable if something that can fire leads to it
-    /// from a state that is itself reachable.
-    ///
-    /// This is more permissive than the validator's own reachability check in two ways, both of them
-    /// real. It crosses machine boundaries, so a state entered as a nested target from another
-    /// machine counts, and it follows a reached state into the machines its generator holds. The
-    /// validator works one machine at a time and cannot see either.
-    ///
-    /// A transition with a condition counts as able to fire, and how many did is reported, because
-    /// nothing here evaluates an expression and calling such a transition dead would be a stronger
-    /// claim than the file supports.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     public Reach Reachable()
     {
         var reached = new HashSet<string>(StringComparer.Ordinal);
         var into = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
         int conditional = 0;
 
-        // Descending is tracked separately from reaching, and that separation is the whole of what
-        // makes this agree with actually stepping.
-        //
-        // The first version descended a state only at the moment it was first added, which reads as
-        // the same thing and is not. A state can arrive by a route that does no descent, as a
-        // transition's nested target does, and then never be descended from at all, because every
-        // later route into it finds it already present and moves on. The machines that state holds
-        // are then invisible to the analysis while a real run walks straight into them. It was 15 of
-        // the 531 files, and the only reason it is not still there is that stepping was measured
-        // against it rather than assumed to agree.
+
+
+
+
+
+
+
+
+
+
         var pending = new Queue<string>();
         var descended = new HashSet<string>(StringComparer.Ordinal);
 
@@ -797,8 +797,8 @@ public sealed class GraphRun
         {
             string stateId = pending.Dequeue();
 
-            // Reaching a state also starts whatever it holds, so the machines under it have a start
-            // state that is live too.
+
+
             if (descended.Add(stateId))
             {
                 var below = new GraphRun(_model);
