@@ -1631,6 +1631,7 @@ public static class Smoke
         VerificationFailureLeavesTheSourceUntouched();
 
         DirtyGraphSurvivesARejectedOpen();
+        GraphLayoutPersistsAcrossFreshWindow();
         DirtyAnimationSurvivesARejectedOpen();
         CloseCancelsWhileDirty();
         CloseDiscardsAfterExplicitChoice();
@@ -2493,6 +2494,24 @@ public static class Smoke
                   window.LoadedXml.Contains("playbackSpeed", StringComparison.Ordinal));
         CheckTrue("and the document is no longer dirty", !window.IsDirty);
         window.Close();
+    }
+
+    private static void GraphLayoutPersistsAcrossFreshWindow()
+    {
+        Console.WriteLine("\na graph layout persists across a fresh window");
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-layout-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        try
+        {
+            var first = new MainWindow(); first.Show(); first.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            const string id = "90";
+            first.Canvas.DragForTest(id, 73, -29); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            var moved = first.Canvas.PositionOf(id)!.Value;
+            var second = new MainWindow(); second.Show(); second.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Check("graph layout survives fresh-window reload", moved, second.Canvas.PositionOf(id)!.Value);
+            second.Close(); first.Close();
+        }
+        finally { System.IO.File.Delete(path); }
     }
 
     private static void DirtyAnimationSurvivesARejectedOpen()
