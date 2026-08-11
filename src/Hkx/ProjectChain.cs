@@ -31,9 +31,12 @@ public sealed class ProjectChain
     public HkxSkeleton? Skeleton;
     public string SkeletonPath = "";
 
-    public static ProjectChain Resolve(string anyHkxPath)
+    public static ProjectChain Resolve(
+        string anyHkxPath, Func<string, BehaviourGraphModel?>? modelReader = null)
     {
         var chain = new ProjectChain();
+        BehaviourGraphModel? ReadModel(string path) =>
+            modelReader == null ? Read(path, chain) : Read(path, chain, modelReader);
         string dir = Path.GetDirectoryName(Path.GetFullPath(anyHkxPath)) ?? "";
 
 
@@ -46,17 +49,30 @@ public sealed class ProjectChain
             ? Path.GetDirectoryName(dir) ?? dir
             : dir;
 
-        string? projectFile = Directory.EnumerateFiles(chain.Root, "*.hkx", SearchOption.TopDirectoryOnly)
-                                       .FirstOrDefault();
-        if (projectFile == null)
+        var projectCandidates = Directory
+            .EnumerateFiles(chain.Root, "*.hkx", SearchOption.TopDirectoryOnly)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .Select(path => (Path: path, Model: ReadModel(path)))
+            .Where(candidate => candidate.Model?.Objects.Any(
+                o => o.Class == "hkbProjectStringData") == true)
+            .ToList();
+        if (projectCandidates.Count == 0)
         {
-            chain.Problems.Add($"no project .hkx directly under {chain.Root}");
+            chain.Problems.Add(
+                $"no project .hkx containing hkbProjectStringData directly under {chain.Root}");
+            return chain;
+        }
+        if (projectCandidates.Count > 1)
+        {
+            chain.Problems.Add(
+                "ambiguous project files containing hkbProjectStringData: " +
+                string.Join(", ", projectCandidates.Select(c => Path.GetFileName(c.Path))));
             return chain;
         }
 
+        string projectFile = projectCandidates[0].Path;
+        var project = projectCandidates[0].Model;
         chain.Add("project", Path.GetFileName(projectFile), projectFile);
-
-        var project = Read(projectFile, chain);
         string characterRel = project?.Objects
             .FirstOrDefault(o => o.Class == "hkbProjectStringData")?.Strings("characterFilenames")
             .FirstOrDefault() ?? "";
@@ -71,7 +87,7 @@ public sealed class ProjectChain
         chain.Add("character", characterRel, characterPath);
         if (!File.Exists(characterPath)) return chain;
 
-        var character = Read(characterPath, chain);
+        var character = ReadModel(characterPath);
         var strings = character?.Objects.FirstOrDefault(o => o.Class == "hkbCharacterStringData");
         if (strings == null)
         {
@@ -184,11 +200,10 @@ public sealed class ProjectChain
         return link;
     }
 
-    private static BehaviourGraphModel? Read(string hkxPath, ProjectChain chain)
-    {
-        try
+    private static BehaviourGraphModel? Read(string hkxPath, ProjectChain chain) =>
+        Read(hkxPath, chain, path =>
         {
-            string xml = HkxTextEdit.TextOf(hkxPath);
+            string xml = HkxTextEdit.TextOf(path);
             if (xml.Length == 0)
             {
                 chain.Problems.Add($"could not read {Path.GetFileName(hkxPath)}: it holds a class this " +
@@ -197,6 +212,14 @@ public sealed class ProjectChain
             }
 
             return BehaviourGraphModel.Parse(xml);
+        });
+
+    private static BehaviourGraphModel? Read(
+        string hkxPath, ProjectChain chain, Func<string, BehaviourGraphModel?> reader)
+    {
+        try
+        {
+            return reader(hkxPath);
         }
         catch (Exception ex)
         {

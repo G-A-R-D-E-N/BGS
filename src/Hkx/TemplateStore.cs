@@ -123,6 +123,16 @@ public static class TemplateStore
         string rootClass = objects.Instances[rootId - NativeGraphModel.FirstId].ClassName;
 
         string slug = Slug(name);
+        string description = Path.Combine(Folder, slug + ".template");
+        if (File.Exists(description))
+        {
+            var existing = ReadDescription(description);
+            throw new InvalidOperationException(
+                $"A template already exists under the name '{existing?.Name ?? slug}' " +
+                $"(slug '{slug}'), so this one was not saved. " +
+                "Give it a name that normalizes differently.");
+        }
+
         Directory.CreateDirectory(Folder);
 
 

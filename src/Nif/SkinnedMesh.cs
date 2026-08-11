@@ -260,13 +260,19 @@ public static class SkinnedMesh
         var edges = new List<(int, int)>();
 
         for (int t = 0; t + 2 < shape.Indices.Count; t += 3)
-            for (int e = 0; e < 3; e++)
+        {
+            int a = shape.Indices[t];
+            int b = shape.Indices[t + 1];
+            int c = shape.Indices[t + 2];
+            if (a < 0 || a >= shape.Vertices.Count || b < 0 || b >= shape.Vertices.Count ||
+                c < 0 || c >= shape.Vertices.Count) continue;
+
+            foreach ((int x, int y) in new[] { (a, b), (b, c), (c, a) })
             {
-                int a = shape.Indices[t + e];
-                int b = shape.Indices[t + (e + 1) % 3];
-                long key = a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a;
-                if (seen.Add(key)) edges.Add((a, b));
+                long key = x < y ? ((long)x << 32) | (uint)y : ((long)y << 32) | (uint)x;
+                if (seen.Add(key)) edges.Add((x, y));
             }
+        }
 
         return edges;
     }

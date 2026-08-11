@@ -111,9 +111,19 @@ public sealed class WorkspaceWindow : Window
     private void RememberBounds()
     {
         if (WindowState != WindowState.Normal) return;
-        Settings.Set("workspace_width", Width.ToString(CultureInfo.InvariantCulture));
-        Settings.Set("workspace_height", Height.ToString(CultureInfo.InvariantCulture));
-        Settings.Set("workspace_x", Position.X.ToString(CultureInfo.InvariantCulture));
-        Settings.Set("workspace_y", Position.Y.ToString(CultureInfo.InvariantCulture));
+        foreach (var (key, value) in new[]
+        {
+            ("workspace_width", Width.ToString(CultureInfo.InvariantCulture)),
+            ("workspace_height", Height.ToString(CultureInfo.InvariantCulture)),
+            ("workspace_x", Position.X.ToString(CultureInfo.InvariantCulture)),
+            ("workspace_y", Position.Y.ToString(CultureInfo.InvariantCulture)),
+        })
+        {
+            if (!Settings.TrySet(key, value, out string failure))
+            {
+                System.Diagnostics.Trace.WriteLine($"workspace settings not saved: {failure}");
+                return;
+            }
+        }
     }
 }

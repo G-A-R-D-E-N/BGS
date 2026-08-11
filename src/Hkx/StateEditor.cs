@@ -145,7 +145,7 @@ public static class StateEditor
             "            <hkparam name=\"exitNotifyEvents\">null</hkparam>\n" +
             "            <hkparam name=\"transitions\">null</hkparam>\n" +
             $"            <hkparam name=\"generator\">{generatorRef}</hkparam>\n" +
-            $"            <hkparam name=\"name\">{name}</hkparam>\n" +
+            $"            <hkparam name=\"name\">{HkxTextEdit.EscapeXml(name)}</hkparam>\n" +
             $"            <hkparam name=\"stateId\">{newStateId}</hkparam>\n" +
             "            <hkparam name=\"probability\">1.0</hkparam>\n" +
             "            <hkparam name=\"enable\">true</hkparam>";

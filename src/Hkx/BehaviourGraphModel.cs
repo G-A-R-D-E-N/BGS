@@ -48,6 +48,14 @@ public sealed class BehaviourGraphModel
     public HkObject? Get(string? id) => id != null && ById.TryGetValue(id, out var o) ? o : null;
     public HkObject? Follow(HkObject? o, string field) => o == null ? null : Get(o.Ref(field));
 
+    // The model keeps logical (decoded) values: XML is only escaped at the export
+    // boundary (NativeGraphModel.Escaped / HkxTextEdit.EscapeXml) and re-read
+    // entity-aware by XDocument in NativeSave.Compare. Decoding here keeps the
+    // UI and the parser in the same representation.
+    internal static string DecodeXml(string value) =>
+        value.Replace("&lt;", "<").Replace("&gt;", ">").Replace("&quot;", "\"")
+             .Replace("&#13;", "\r").Replace("&amp;", "&");
+
     public static BehaviourGraphModel Parse(string xml)
     {
         var model = new BehaviourGraphModel();
@@ -69,7 +77,6 @@ public sealed class BehaviourGraphModel
     {
         int depth = 0;
         string current = "";
-        string nestedInto = "";
         List<Dictionary<string, string>>? structList = null;
         Dictionary<string, string>? element = null;
 
@@ -85,7 +92,6 @@ public sealed class BehaviourGraphModel
                 if (closing)
                 {
                     depth--;
-                    if (depth == 1) nestedInto = "";
                     if (depth == 0 && element != null && structList != null)
                     {
                         structList.Add(element);
@@ -123,7 +129,7 @@ public sealed class BehaviourGraphModel
                         l = new List<string>();
                         obj.Lists[current] = l;
                     }
-                    l.Add(inner);
+                    l.Add(DecodeXml(inner));
                 }
                 continue;
             }
@@ -147,28 +153,23 @@ public sealed class BehaviourGraphModel
                 }
                 if (isArray)
                 {
-                    var items = inner.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).ToList();
+                    var items = inner.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                                     .Select(DecodeXml).ToList();
                     obj.Lists[name] = items;
                 }
                 else if (inner.Length > 0)
                 {
-                    obj.Scalars[name] = inner;
+                    obj.Scalars[name] = DecodeXml(inner);
                     current = "";
                 }
             }
             else if (depth == 1 && element != null)
             {
-                element[name] = inner;
-                if (inner.Length == 0) nestedInto = name;
-            }
-            else if (depth == 2 && element != null && nestedInto.Length > 0 && inner.Length > 0)
-            {
-                if (!element.TryGetValue(nestedInto, out string? have) || have.Length == 0)
-                    element[nestedInto] = inner;
+                element[name] = DecodeXml(inner);
             }
             else if (depth == 1 && current.Length > 0 && obj.Structs.TryGetValue(current, out var st))
             {
-                st[name] = inner;
+                st[name] = DecodeXml(inner);
             }
         }
     }

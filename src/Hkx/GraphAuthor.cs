@@ -207,8 +207,13 @@ public static class GraphAuthor
 
 
 
-    public static List<(HkObject Node, int Column, string OwnerId)> Layout(BehaviourGraphModel model, int max)
+    public static List<(HkObject Node, int Column, string OwnerId)> Layout(BehaviourGraphModel model, int max) =>
+        Layout(model, max, out _);
+
+    public static List<(HkObject Node, int Column, string OwnerId)> Layout(BehaviourGraphModel model, int max,
+                                                                           out bool truncated)
     {
+        truncated = false;
         var placed = new Dictionary<string, int>();
         var order = new List<(HkObject, int, string)>();
 
@@ -226,6 +231,10 @@ public static class GraphAuthor
             deepest = Math.Max(deepest, Walk(model, detached, deepest + 1, placed, order, max));
         }
 
+        // The cap is the only reason a drawable node is missing: the root walk covers
+        // everything reachable and the detached pass covers everything else.
+        truncated = order.Count >= max &&
+                    model.Objects.Any(o => IsNode(o.Class) && !placed.ContainsKey(o.Id));
         return order;
     }
 
