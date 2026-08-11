@@ -15,6 +15,8 @@ public static class Settings
 {
     public readonly record struct LayoutPoint(double X, double Y);
 
+    internal static Func<string, string[]> ReadAllLinesForTest = File.ReadAllLines;
+
     private static readonly string Path = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "BehaviourGraphStudio", "settings.cfg");
@@ -116,13 +118,13 @@ public static class Settings
 
         try
         {
-            foreach (string line in File.ReadAllLines(Path))
+            foreach (string line in ReadAllLinesForTest(Path))
             {
                 int split = line.IndexOf('=');
                 if (split > 0) all[line[..split]] = line[(split + 1)..];
             }
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
         {
         }
         return all;

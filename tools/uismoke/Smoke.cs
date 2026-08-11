@@ -1632,6 +1632,7 @@ public static class Smoke
 
         DirtyGraphSurvivesARejectedOpen();
         GraphLayoutPersistsAcrossFreshWindow();
+        PreferencesReadFailureDoesNotBlockGraphOpen();
         DirtyAnimationSurvivesARejectedOpen();
         CloseCancelsWhileDirty();
         CloseDiscardsAfterExplicitChoice();
@@ -2512,6 +2513,36 @@ public static class Smoke
             second.Close(); first.Close();
         }
         finally { System.IO.File.Delete(path); }
+    }
+
+    private static void PreferencesReadFailureDoesNotBlockGraphOpen()
+    {
+        Console.WriteLine("\nan unavailable preferences read does not block graph opening");
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-layout-preferences-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        try
+        {
+            Settings.ReadAllLinesForTest = _ => throw new UnauthorizedAccessException("preferences denied");
+            MainWindow? window = null;
+            bool opened;
+            try
+            {
+                window = new MainWindow(); window.Show();
+                window.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                opened = window.LoadedXml.Length > 0 && window.Canvas.PositionOf("90") == new Point(0, 0);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                opened = false;
+            }
+            CheckTrue("a valid graph opens with automatic positions", opened);
+            window?.Close();
+        }
+        finally
+        {
+            Settings.ReadAllLinesForTest = File.ReadAllLines;
+            System.IO.File.Delete(path);
+        }
     }
 
     private static void DirtyAnimationSurvivesARejectedOpen()
