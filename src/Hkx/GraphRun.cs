@@ -82,6 +82,13 @@ public sealed class GraphRun
             $"#{FromStateId} -{Event}-> #{ToStateId} '{ToStateName}' held back by {Condition}";
     }
 
+    public sealed record ExpressionFailure(string ModifierId, int Index, string Source, string Refusal)
+    {
+        public override string ToString() => $"#{ModifierId} expression {Index + 1}: {Refusal} ({Source})";
+    }
+
+    private sealed record ActiveExpression(string ModifierId, int Index, string Source, Expression.Parsed Parsed);
+
     private readonly BehaviourGraphModel _model;
     private readonly StateRoutes _routes;
     private readonly List<string> _events;
@@ -100,6 +107,8 @@ public sealed class GraphRun
     private readonly Dictionary<string, Expression.Parsed> _parsed = new(StringComparer.Ordinal);
 
     private readonly List<Blocked> _blocked = new();
+    private readonly List<ActiveExpression> _activeExpressions = new();
+    private readonly List<ExpressionFailure> _expressionFailures = new();
 
 
 
@@ -226,6 +235,9 @@ public sealed class GraphRun
 
 
     public IReadOnlyList<Blocked> HeldBack => _blocked;
+    public IReadOnlyList<ExpressionFailure> ExpressionFailures => _expressionFailures;
+    public int ActiveExpressionCount => _activeExpressions.Count;
+    public IReadOnlyList<string> ActiveExpressionSources => _activeExpressions.Select(e => e.Source).ToList();
 
 
 
@@ -310,6 +322,8 @@ public sealed class GraphRun
 
         var node = _model.Get(generatorId);
         if (node == null) { onPath.Remove(generatorId); return; }
+
+        RecordExpressions(node);
 
         if (Opaque.Contains(node.Class))
         {
@@ -457,6 +471,35 @@ public sealed class GraphRun
         }
     }
 
+    private void RecordExpressions(HkObject node)
+    {
+        RecordExpressionModifier(_model.Get(node.Ref("modifier") ?? ""));
+        foreach (var slot in GraphLinks.OutSlots(_model, node))
+        foreach (string target in slot.Targets)
+            RecordExpressionModifier(_model.Get(target));
+    }
+
+    private void RecordExpressionModifier(HkObject? modifier)
+    {
+        if (modifier == null) return;
+        if (modifier.Class == "hkbModifierList")
+        {
+            foreach (string child in modifier.Refs("modifiers"))
+                RecordExpressionModifier(_model.Get(child));
+            return;
+        }
+        if (modifier.Class != "hkbEvaluateExpressionModifier") return;
+        if (_activeExpressions.Any(e => e.ModifierId == modifier.Id)) return;
+        var array = _model.Get(modifier.Ref("expressions") ?? "");
+        if (array == null || !array.StructLists.TryGetValue("expressionsData", out var rows)) return;
+
+        for (int index = 0; index < rows.Count; index++)
+        {
+            if (!rows[index].TryGetValue("expression", out string? source) || source.Length == 0) continue;
+            _activeExpressions.Add(new ActiveExpression(modifier.Id, index, source, Expression.Parse(source)));
+        }
+    }
+
     private Active? Describe(string machineId, string stateId)
     {
         var machine = _model.Get(machineId);
@@ -569,6 +612,9 @@ public sealed class GraphRun
         var fired = new List<Fired>();
         if (seconds <= 0) return fired;
 
+        if (_variableTypes.ContainsKey("fTimeStep")) _variables["fTimeStep"] = seconds;
+        foreach (var expression in _activeExpressions) Apply(expression);
+
         foreach (string machineId in _blending.Keys.ToList())
         {
             var blend = _blending[machineId] with { Elapsed = _blending[machineId].Elapsed + seconds };
@@ -611,6 +657,39 @@ public sealed class GraphRun
 
         foreach (string name in raised) fired.AddRange(Send(name));
         return fired;
+    }
+
+    private void Apply(ActiveExpression expression)
+    {
+        if (!expression.Parsed.Ok)
+        {
+            Fail(expression, expression.Parsed.Problem ?? "the expression did not parse");
+            return;
+        }
+        if (expression.Parsed.Root is not Expression.Node.Assign assignment)
+        {
+            Fail(expression, "the expression does not assign a runtime variable");
+            return;
+        }
+        if (!_variableTypes.ContainsKey(assignment.Variable))
+        {
+            Fail(expression, $"'{assignment.Variable}' is not a declared runtime variable");
+            return;
+        }
+
+        var value = Expression.EvaluateNumber(expression.Parsed, ValueOf);
+        if (value.Value is not double answer)
+        {
+            Fail(expression, value.Refusal);
+            return;
+        }
+        _variables[assignment.Variable] = answer;
+    }
+
+    private void Fail(ActiveExpression expression, string refusal)
+    {
+        if (_expressionFailures.Any(f => f.ModifierId == expression.ModifierId && f.Index == expression.Index)) return;
+        _expressionFailures.Add(new ExpressionFailure(expression.ModifierId, expression.Index, expression.Source, refusal));
     }
 
 
@@ -667,6 +746,8 @@ public sealed class GraphRun
         _resume = keep;
         _wasPlaying = new Dictionary<string, float>(_playing, StringComparer.Ordinal);
         _playing.Clear();
+        _activeExpressions.Clear();
+        _expressionFailures.Clear();
         if (RootId.Length > 0) Enter(RootId, 0, new HashSet<string>(StringComparer.Ordinal));
         _resume = null;
         _wasPlaying = null;

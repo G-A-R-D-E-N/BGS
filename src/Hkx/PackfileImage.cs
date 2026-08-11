@@ -223,6 +223,15 @@ public sealed class PackfileSection
 
     public const int StringAlignment = 2;
 
+    /// <summary>
+    /// The capacity word for an array whose storage lives inside the file. Bit 31 marks the
+    /// storage as not the array's to release, which has to be true of anything sitting in a
+    /// packfile: the game's own writer sets it on every array, empty or not. Bit 30, which
+    /// the corpus never shows, is preserved rather than guessed at.
+    /// </summary>
+    public static uint ArrayCapacityWord(uint capacity, int count) =>
+        0x80000000u | (capacity & 0x40000000u) | (uint)count;
+
 
 
 
