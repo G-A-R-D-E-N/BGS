@@ -1417,6 +1417,7 @@ public class GraphView : Control
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
+        _dragChanged = false;
         Focus();
         var screen = e.GetPosition(this);
         var world = ToWorld(screen);
