@@ -97,8 +97,8 @@ public static class FieldRender
                 return Narrow(objects.ReadNarrowAt(at, Bytes(member.VType)), member.VType);
 
             case "TYPE_ULONG":
-            case "TYPE_INT64":
             case "TYPE_UINT64": return objects.ReadULongAt(at)?.ToString();
+            case "TYPE_INT64": return objects.ReadLongAt(at)?.ToString();
 
             case "TYPE_VECTOR4":
             case "TYPE_QUATERNION": return Floats(objects.ReadFloatsAt(at, 4), real);
@@ -165,10 +165,12 @@ public static class FieldRender
 
             case "TYPE_BOOL":
             case "TYPE_CHAR":
-            case "TYPE_INT8":
             case "TYPE_UINT8":
                 return Listed(objects.ReadValueArrayAt(at, 1, (b, o) => b[o]));
+            case "TYPE_INT8":
+                return Listed(objects.ReadValueArrayAt(at, 1, (b, o) => (sbyte)b[o]));
             case "TYPE_INT16":
+                return Listed(objects.ReadValueArrayAt(at, 2, BitConverter.ToInt16));
             case "TYPE_UINT16":
                 return Listed(objects.ReadValueArrayAt(at, 2, BitConverter.ToUInt16));
             case "TYPE_REAL":
@@ -180,8 +182,9 @@ public static class FieldRender
                 return Listed(objects.ReadValueArrayAt(at, 4, BitConverter.ToInt32));
             case "TYPE_UINT32":
                 return Listed(objects.ReadValueArrayAt(at, 4, BitConverter.ToUInt32));
-            case "TYPE_UINT64":
             case "TYPE_INT64":
+                return Listed(objects.ReadValueArrayAt(at, 8, BitConverter.ToInt64));
+            case "TYPE_UINT64":
                 return Listed(objects.ReadValueArrayAt(at, 8, BitConverter.ToUInt64));
 
             default: return null;
@@ -265,10 +268,10 @@ public static class FieldRender
         return vtype switch
         {
             "TYPE_BOOL" => ((raw & 0xFF) != 0).ToString().ToLowerInvariant(),
-
-
-            "TYPE_INT8" or "TYPE_UINT8" or "TYPE_CHAR" => (raw & 0xFF).ToString(),
-            "TYPE_INT16" or "TYPE_UINT16" => (raw & 0xFFFF).ToString(),
+            "TYPE_INT8" => ((sbyte)(byte)(raw & 0xFF)).ToString(),
+            "TYPE_UINT8" or "TYPE_CHAR" => (raw & 0xFF).ToString(),
+            "TYPE_INT16" => ((short)(ushort)(raw & 0xFFFF)).ToString(),
+            "TYPE_UINT16" => (raw & 0xFFFF).ToString(),
             _ => raw.ToString(),
         };
     }

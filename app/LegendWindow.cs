@@ -66,9 +66,19 @@ public sealed class LegendWindow : Window
     private void RememberBounds()
     {
         if (WindowState != WindowState.Normal) return;
-        Settings.Set("legend_width", Width.ToString(CultureInfo.InvariantCulture));
-        Settings.Set("legend_height", Height.ToString(CultureInfo.InvariantCulture));
-        Settings.Set("legend_x", Position.X.ToString(CultureInfo.InvariantCulture));
-        Settings.Set("legend_y", Position.Y.ToString(CultureInfo.InvariantCulture));
+        foreach (var (key, value) in new[]
+        {
+            ("legend_width", Width.ToString(CultureInfo.InvariantCulture)),
+            ("legend_height", Height.ToString(CultureInfo.InvariantCulture)),
+            ("legend_x", Position.X.ToString(CultureInfo.InvariantCulture)),
+            ("legend_y", Position.Y.ToString(CultureInfo.InvariantCulture)),
+        })
+        {
+            if (!Settings.TrySet(key, value, out string failure))
+            {
+                System.Diagnostics.Trace.WriteLine($"legend settings not saved: {failure}");
+                return;
+            }
+        }
     }
 }

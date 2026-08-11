@@ -50,7 +50,7 @@ public static class NativeSave
     public sealed record Change(string ClassName, int Index, string Field, string Value,
                                 bool Text = false, bool Ref = false, bool Array = false,
                                 bool Added = false, int Element = -1, string Member = "",
-                                bool Grow = false)
+                                bool Grow = false, int Id = 0)
     {
 
 
@@ -85,7 +85,7 @@ public static class NativeSave
 
 
 
-    private static bool IsReference(string type) =>
+    internal static bool IsReference(string type) =>
         type.StartsWith("pointer of", StringComparison.Ordinal) || type == "pointer";
 
 
@@ -98,7 +98,7 @@ public static class NativeSave
 
 
 
-    private static bool IsPointerArray(string type) => type == "array of pointer";
+    internal static bool IsPointerArray(string type) => type == "array of pointer";
 
 
 
@@ -112,7 +112,7 @@ public static class NativeSave
 
 
 
-    private static int WideFloats(string type) => type switch
+    internal static int WideFloats(string type) => type switch
     {
         "vector4" or "quaternion" => 4,
         "qstransform" or "matrix3" or "rotation" => 12,
@@ -121,7 +121,7 @@ public static class NativeSave
     };
 
 
-    private static bool IsWideInteger(string type) =>
+    internal static bool IsWideInteger(string type) =>
         type is "uint64" or "int64" or "ulong";
 
 
@@ -141,7 +141,7 @@ public static class NativeSave
         return numbers.Count == wanted ? numbers.ToArray() : null;
     }
 
-    private static bool IsTextArray(string type) =>
+    internal static bool IsTextArray(string type) =>
         type == "array of stringptr" || type == "array of cstring";
 
 
@@ -151,7 +151,7 @@ public static class NativeSave
 
 
 
-    private static int ValueElement(string type) => type switch
+    internal static int ValueElement(string type) => type switch
     {
         "array of real" or "array of int32" or "array of uint32" => 4,
         "array of int16" or "array of uint16" => 2,
@@ -162,39 +162,8 @@ public static class NativeSave
 
 
 
-    private static byte[]? Numbers(string value, string type, int width)
-    {
-        var tokens = value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        var run = new byte[tokens.Length * width];
-
-        for (int i = 0; i < tokens.Length; i++)
-        {
-            if (type == "array of real")
-            {
-                if (!float.TryParse(tokens[i], NumberStyles.Float, CultureInfo.InvariantCulture,
-                                    out float f) || float.IsNaN(f) || float.IsInfinity(f))
-                    return null;
-                BitConverter.GetBytes(f).CopyTo(run, i * 4);
-                continue;
-            }
-
-            string token = tokens[i];
-            if (type == "array of bool")
-            {
-                if (token is "true" or "1") { run[i] = 1; continue; }
-                if (token is "false" or "0") { run[i] = 0; continue; }
-                return null;
-            }
-
-            if (!long.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out long n))
-                return null;
-
-            var bytes = BitConverter.GetBytes(n);
-            for (int b = 0; b < width; b++) run[i * width + b] = bytes[b];
-        }
-
-        return run;
-    }
+    private static byte[]? Numbers(string value, string type, int width) =>
+        NumberCodecs.ArrayBytes(value, type[("array of ").Length..], width);
 
 
 
@@ -224,39 +193,38 @@ public static class NativeSave
 
         var deleted = Deleted(originalXml, editedXml);
 
-        var before = ByClass(originalXml, deleted.Text);
+        var before = ByClass(originalXml);
         var after = ByClass(editedXml);
         var changes = new List<Change>();
 
 
 
 
-        if (before.Keys.Any(k => !after.ContainsKey(k)) || after.Keys.Any(k => !before.ContainsKey(k)))
-            return new Plan(changes, "the set of object types in the file changed");
-
         foreach (var (className, originals) in before)
         {
-            var edited = after[className];
+            if (!after.TryGetValue(className, out var edited))
+            {
+                if (originals.All(o => deleted.Text.Contains(o[IdKey]))) continue;
+                return new Plan(changes, "the set of object types in the file changed");
+            }
 
-            if (edited.Count < originals.Count)
+            var survivors = originals.Where(o => !deleted.Text.Contains(o[IdKey])).ToList();
+            if (survivors.Count == 0 && originals.Count > 0)
                 return new Plan(changes,
-                    $"{originals.Count - edited.Count} {className} object(s) went missing without " +
+                    $"the {className} objects were renumbered, so nothing can be matched up");
+            if (edited.Count < survivors.Count)
+                return new Plan(changes,
+                    $"{survivors.Count - edited.Count} {className} object(s) went missing without " +
                     "being deleted, so nothing can be matched up");
 
-            if (edited.Count > originals.Count)
-            {
+            for (int k = 0; k < survivors.Count; k++)
+                if (edited[k][IdKey] != survivors[k][IdKey])
+                    return new Plan(changes,
+                        $"the {className} objects were renumbered, so nothing can be matched up");
 
-
-
-
-                for (int k = 0; k < originals.Count; k++)
-                    if (originals[k][IdKey] != edited[k][IdKey])
-                        return new Plan(changes,
-                            $"the {className} objects were renumbered, so nothing can be matched up");
-
-                for (int k = originals.Count; k < edited.Count; k++)
-                    changes.Add(new Change(className, k, "", edited[k][IdKey], Added: true));
-            }
+            for (int k = survivors.Count; k < edited.Count; k++)
+                changes.Add(new Change(className, k, "", edited[k][IdKey], Added: true,
+                                       Id: IdOf(edited[k])));
 
             var layout = classes.Members(className).ToDictionary(m => m.Name, m => m.Type,
                                                                  StringComparer.Ordinal);
@@ -264,139 +232,13 @@ public static class NativeSave
 
 
 
-            string? Consider(int i, string field, string now)
+            for (int i = 0; i < survivors.Count; i++)
             {
-
-
-
-
-                if (field.EndsWith(CountKey, StringComparison.Ordinal))
-                    return $"a new {className} was given {now} element(s) in " +
-                           $"{field[..^CountKey.Length]}, which is not written in place yet";
-
-                int bracket = field.IndexOf('[');
-                if (bracket > 0)
-                {
-                    int close = field.IndexOf(']', bracket);
-                    if (close < 0 || close + 2 > field.Length)
-                        return $"{className}.{field} is not a name this understands";
-
-                    string arrayField = field[..bracket];
-                    if (!int.TryParse(field[(bracket + 1)..close], out int element))
-                        return $"{className}.{field} does not name an element";
-
-                    string member = field[(close + 2)..];
-
-
-
-
-
-
-                    if (!layout.TryGetValue(arrayField, out string? arrayType))
-                        return $"{className}.{arrayField} has no byte layout";
-
-                    if (arrayType == "struct")
-                    {
-                        if (element != 0)
-                            return $"{className}.{arrayField} is one struct, so it has no element {element}";
-                    }
-                    else if (arrayType != "array of struct")
-                    {
-                        return $"{className}.{arrayField} is not an array of structs";
-                    }
-
-                    string? why = StructElementWritable(classes, className, arrayField, member, now);
-                    if (why != null) return why;
-
-                    changes.Add(new Change(className, i, arrayField, now, Element: element,
-                                           Member: member));
-                    return null;
-                }
-
-                if (!layout.TryGetValue(field, out string? type))
-                    return $"{className}.{field} changed, and we have no byte layout for it";
-
-
-
-
-                if (IsTextArray(type))
-                {
-                    changes.Add(new Change(className, i, field, now, Text: true, Array: true));
-                    return null;
-                }
-
-
-
-                if (ValueElement(type) is int width and > 0)
-                {
-                    if (Numbers(now, type, width) == null)
-                        return $"{className}.{field} was set to something that is not a list of " +
-                               $"{type[("array of ").Length..]}";
-
-                    changes.Add(new Change(className, i, field, now, Array: true));
-                    return null;
-                }
-
-                if (IsPointerArray(type))
-                {
-                    var elements = now.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-                    if (!elements.All(IsReferenceValue))
-                        return $"{className}.{field} holds something that is neither an object id nor null";
-
-                    changes.Add(new Change(className, i, field, string.Join(" ", elements), Array: true));
-                    return null;
-                }
-
-                if (IsReference(type))
-                {
-                    if (!IsReferenceValue(now))
-                        return $"{className}.{field} was set to '{now}', which is neither an object " +
-                               "id nor null";
-
-                    changes.Add(new Change(className, i, field, now, Ref: true));
-                    return null;
-                }
-
-                if (WideFloats(type) is int floats and > 0)
-                {
-                    if (Bracketed(now, floats) == null)
-                        return $"{className}.{field} was set to '{now}', which is not {floats} " +
-                               "number(s) in brackets";
-
-                    changes.Add(new Change(className, i, field, now));
-                    return null;
-                }
-
-                if (IsWideInteger(type))
-                {
-                    if (!ulong.TryParse(now.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
-                        return $"{className}.{field} was set to '{now}', which is not a {type}";
-
-                    changes.Add(new Change(className, i, field, now));
-                    return null;
-                }
-
-                if (!Writable.Contains(type) && !WritableText.Contains(type))
-                    return $"{className}.{field} changed, and a {type} cannot be written in place " +
-                           "without moving what follows it";
-
-                if (!WritableText.Contains(type) && !Parses(now, type))
-                    return $"{className}.{field} was set to '{now}', which is not a {type}";
-
-                changes.Add(new Change(className, i, field, now, WritableText.Contains(type)));
-                return null;
-            }
-
-            for (int i = 0; i < originals.Count; i++)
-            {
-
-
-
-
-
+                var original = survivors[i];
+                int id = IdOf(original);
 
                 var resized = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var (field, was) in originals[i])
+                foreach (var (field, was) in original)
                 {
                     if (!field.EndsWith(CountKey, StringComparison.Ordinal)) continue;
                     if (edited[i].TryGetValue(field, out string? now) &&
@@ -405,22 +247,20 @@ public static class NativeSave
                     resized.Add(field[..^CountKey.Length]);
                 }
 
-
-
                 foreach (var field in edited[i].Keys)
                 {
                     if (!field.EndsWith(CountKey, StringComparison.Ordinal)) continue;
-                    if (!originals[i].ContainsKey(field)) resized.Add(field[..^CountKey.Length]);
+                    if (!original.ContainsKey(field)) resized.Add(field[..^CountKey.Length]);
                 }
 
                 foreach (string arrayField in resized.OrderBy(f => f, StringComparer.Ordinal))
                 {
-                    string? refusal = Resized(classes, changes, className, layout, i,
-                                              originals[i], edited[i], arrayField);
+                    string? refusal = Resized(classes, changes, className, layout, id, i,
+                                              original, edited[i], arrayField);
                     if (refusal != null) return new Plan(changes, refusal);
                 }
 
-                foreach (var (field, was) in originals[i])
+                foreach (var (field, was) in original)
                 {
                     if (field == IdKey || Belongs(field, resized)) continue;
 
@@ -429,27 +269,173 @@ public static class NativeSave
 
                     if (string.Equals(was, now, StringComparison.Ordinal)) continue;
 
-                    string? refusal = Consider(i, field, now);
+                    string? refusal = Consider(classes, layout, changes, className, i, id, field, now);
                     if (refusal != null) return new Plan(changes, refusal);
                 }
 
-                if (Counted(edited[i], resized) != Counted(originals[i], resized))
+                if (Counted(edited[i], resized) != Counted(original, resized))
                     return new Plan(changes, $"a {className} gained or lost a field");
             }
 
 
 
-            for (int i = originals.Count; i < edited.Count; i++)
-                foreach (var (field, value) in edited[i])
+            for (int k = survivors.Count; k < edited.Count; k++)
+                foreach (var (field, value) in edited[k])
                 {
                     if (field == IdKey) continue;
 
-                    string? refusal = Consider(i, field, value);
+                    string? refusal = Consider(classes, layout, changes, className, k,
+                                                IdOf(edited[k]), field, value);
                     if (refusal != null) return new Plan(changes, refusal);
                 }
         }
 
+        foreach (var className in after.Keys.Where(k => !before.ContainsKey(k)).ToList())
+        {
+            if ((classes.Members(className).Count == 0 && classes[className] == null) ||
+                HavokClassTypes.Shipped[className]?.Signature == null)
+                return new Plan(changes, "the set of object types in the file changed");
+
+            var layout = classes.Members(className).ToDictionary(m => m.Name, m => m.Type,
+                                                                 StringComparer.Ordinal);
+            var edited = after[className];
+            for (int k = 0; k < edited.Count; k++)
+            {
+                changes.Add(new Change(className, k, "", edited[k][IdKey], Added: true,
+                                       Id: IdOf(edited[k])));
+                foreach (var (field, value) in edited[k])
+                {
+                    if (field == IdKey) continue;
+                    string? refusal = Consider(classes, layout, changes, className, k,
+                                               IdOf(edited[k]), field, value);
+                    if (refusal != null) return new Plan(changes, refusal);
+                }
+            }
+        }
+
         return new Plan(changes, null, deleted.Ids);
+    }
+
+    private static string? Consider(HavokClasses classes, Dictionary<string, string> layout,
+                                    List<Change> changes, string className, int index, int id,
+                                    string field, string now)
+    {
+        if (field.EndsWith(CountKey, StringComparison.Ordinal))
+            return $"a new {className} was given {now} element(s) in " +
+                   $"{field[..^CountKey.Length]}, which is not written in place yet";
+
+        int bracket = field.IndexOf('[');
+        if (bracket > 0)
+        {
+            int close = field.IndexOf(']', bracket);
+            if (close < 0 || close + 2 > field.Length)
+                return $"{className}.{field} is not a name this understands";
+
+            string arrayField = field[..bracket];
+            if (!int.TryParse(field[(bracket + 1)..close], out int element))
+                return $"{className}.{field} does not name an element";
+
+            string member = field[(close + 2)..];
+
+            if (!layout.TryGetValue(arrayField, out string? arrayType))
+                return $"{className}.{arrayField} has no byte layout";
+
+            if (arrayType == "struct")
+            {
+                if (element != 0)
+                    return $"{className}.{arrayField} is one struct, so it has no element {element}";
+            }
+            else if (arrayType != "array of struct")
+            {
+                return $"{className}.{arrayField} is not an array of structs";
+            }
+
+            string? why = StructElementWritable(classes, className, arrayField, member, now);
+            if (why != null) return why;
+
+            changes.Add(new Change(className, index, arrayField, now, Element: element,
+                                   Member: member, Id: id));
+            return null;
+        }
+
+        if (!layout.TryGetValue(field, out string? type))
+            return $"{className}.{field} changed, and we have no byte layout for it";
+
+        if (IsTextArray(type))
+        {
+            changes.Add(new Change(className, index, field, now, Text: true, Array: true, Id: id));
+            return null;
+        }
+
+        if (ValueElement(type) is int width and > 0)
+        {
+            if (Numbers(now, type, width) == null)
+                return $"{className}.{field} was set to something that is not a list of " +
+                       $"{type[("array of ").Length..]}";
+
+            changes.Add(new Change(className, index, field, now, Array: true, Id: id));
+            return null;
+        }
+
+        if (IsPointerArray(type))
+        {
+            var elements = now.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (!elements.All(IsReferenceValue))
+                return $"{className}.{field} holds something that is neither an object id nor null";
+
+            changes.Add(new Change(className, index, field, string.Join(" ", elements), Array: true, Id: id));
+            return null;
+        }
+
+        if (IsReference(type))
+        {
+            if (!IsReferenceValue(now))
+                return $"{className}.{field} was set to '{now}', which is neither an object " +
+                       "id nor null";
+
+            changes.Add(new Change(className, index, field, now, Ref: true, Id: id));
+            return null;
+        }
+
+        if (WideFloats(type) is int floats and > 0)
+        {
+            if (Bracketed(now, floats) == null)
+                return $"{className}.{field} was set to '{now}', which is not {floats} " +
+                       "number(s) in brackets";
+
+            changes.Add(new Change(className, index, field, now, Id: id));
+            return null;
+        }
+
+        if (IsWideInteger(type))
+        {
+            if (!NumberCodecs.Parses(now.Trim(), type))
+                return $"{className}.{field} was set to '{now}', which is not a {type}";
+
+            changes.Add(new Change(className, index, field, now, Id: id));
+            return null;
+        }
+
+        string storage = NumberCodecs.Underlying(type);
+        if (storage != type && !Parses(now, storage))
+        {
+            var member = HavokClassTypes.Shipped.Members(className)
+                .FirstOrDefault(m => m.Name == field);
+            var map = member?.EType == null ? null
+                : HavokClassTypes.Shipped.Enum(className, member.EType);
+            if (map != null && map.TryGetValue(now.Trim(), out long numeric))
+                now = numeric.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (!Writable.Contains(storage) && !WritableText.Contains(type))
+            return $"{className}.{field} changed, and a {type} cannot be written in place " +
+                   "without moving what follows it";
+
+        if (!WritableText.Contains(type) && !Parses(now, storage))
+            return $"{className}.{field} was set to '{now}', which is not a {type}";
+
+        changes.Add(new Change(className, index, field, now, WritableText.Contains(type), Id: id));
+        return null;
     }
 
 
@@ -469,6 +455,12 @@ public static class NativeSave
 
         return (ids, text);
     }
+
+    private static int IdOf(Dictionary<string, string> fields) =>
+        fields.TryGetValue(IdKey, out string? id) && id.Length > 1 && id[0] == '#' &&
+        int.TryParse(id[1..], NumberStyles.Integer, CultureInfo.InvariantCulture, out int n)
+            ? n
+            : -1;
 
     private static IEnumerable<string> Ids(string xml) =>
         XDocument.Parse(xml).Descendants("hkobject")
@@ -504,7 +496,7 @@ public static class NativeSave
 
 
     private static string? Resized(HavokClasses classes, List<Change> changes, string className,
-                                   Dictionary<string, string> layout, int index,
+                                   Dictionary<string, string> layout, int id, int index,
                                    Dictionary<string, string> before, Dictionary<string, string> after,
                                    string arrayField)
     {
@@ -516,7 +508,8 @@ public static class NativeSave
         if (arrayType != null && IsTextArray(arrayType))
         {
             changes.Add(new Change(className, index, arrayField,
-                                   after.GetValueOrDefault(arrayField, ""), Text: true, Array: true));
+                                   after.GetValueOrDefault(arrayField, ""), Text: true, Array: true,
+                                   Id: id));
             return null;
         }
 
@@ -566,11 +559,12 @@ public static class NativeSave
                 return why;
             }
 
-            fill.Add(new Change(className, index, arrayField, value, Element: element, Member: member));
+            fill.Add(new Change(className, index, arrayField, value, Element: element, Member: member,
+                                 Id: id));
         }
 
         changes.Add(new Change(className, index, arrayField, now.ToString(CultureInfo.InvariantCulture),
-                               Element: had, Grow: true));
+                               Element: had, Grow: true, Id: id));
         changes.AddRange(fill);
         return null;
     }
@@ -593,6 +587,21 @@ public static class NativeSave
     }
 
 
+
+    private static PackfileObjects.Instance Resolve(PackfileObjects objects, Change change)
+    {
+        if (change.Id <= 0)
+            throw new InvalidOperationException(
+                $"{change} was planned without a stable object id, so nothing was written.");
+
+        int at = change.Id - NativeGraphModel.FirstId;
+        if (at < 0 || at >= objects.Instances.Count ||
+            objects.Instances[at].ClassName != change.ClassName)
+            throw new InvalidOperationException(
+                $"{change} does not correspond to anything in the file, so nothing was written.");
+
+        return objects.Instances[at];
+    }
 
     public static byte[] Apply(string hkxPath, Plan plan, HavokClasses? classes = null)
         => Apply(File.ReadAllBytes(hkxPath), plan, classes);
@@ -657,31 +666,10 @@ public static class NativeSave
 
         if (adding > 0) objects = new PackfileObjects(image, classes);
 
-        var byClass = objects.Instances.GroupBy(i => i.ClassName)
-                                       .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
-
-
-
-
-
-
-
-        foreach (var group in plan.Changes.Where(c => !c.Added).GroupBy(c => c.ClassName))
-        {
-            int inFile = byClass.TryGetValue(group.Key, out var all) ? all.Count : 0;
-            if (group.Max(c => c.Index) >= inFile)
-                throw new InvalidOperationException(
-                    $"The file holds {inFile} {group.Key} objects, fewer than the edit expects, so " +
-                    "nothing was written rather than guessing which one was meant.");
-        }
-
-
-
-
         bool grew = false;
         foreach (var change in plan.Changes.Where(c => c.Grow))
         {
-            var instance = byClass[change.ClassName][change.Index];
+            var instance = Resolve(objects, change);
             Regrow(image, objects, instance, change);
             grew = true;
         }
@@ -689,20 +677,15 @@ public static class NativeSave
         if (grew)
         {
             objects = new PackfileObjects(image, classes);
-            byClass = objects.Instances.GroupBy(i => i.ClassName)
-                             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
         }
 
-        foreach (var change in plan.Changes)
+        var targets = new List<(Change Change, PackfileObjects.Instance Instance)>();
+        foreach (var change in plan.Changes.Where(c => !c.Added))
+            targets.Add((change, Resolve(objects, change)));
+
+        foreach (var (change, instance) in targets)
         {
-            if (change.Added || change.Grow) continue;
-
-            if (!byClass.TryGetValue(change.ClassName, out var instances) ||
-                change.Index >= instances.Count)
-                throw new InvalidOperationException(
-                    $"{change} does not correspond to anything in the file, so nothing was written.");
-
-            var instance = instances[change.Index];
+            if (change.Grow) continue;
 
             if (change.InElement)
             {
@@ -722,7 +705,7 @@ public static class NativeSave
                          : WideFloats(member.Type) > 0
                              ? WriteWide(objects, instance, change, WideFloats(member.Type), image)
                          : IsWideInteger(member.Type)
-                             ? WriteWideInteger(objects, instance, change, image)
+                             ? WriteWideInteger(objects, instance, change, member.Type, image)
                          : member.Type switch
             {
                 "real" => objects.WriteFloat(instance, change.Field, AsFloat(change.Value)),
@@ -858,7 +841,7 @@ public static class NativeSave
 
         BitConverter.GetBytes(elements.Length).CopyTo(data.Data, at + 8);
         uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(capacity, elements.Length)).CopyTo(data.Data, at + 12);
+        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)elements.Length).CopyTo(data.Data, at + 12);
 
         return true;
     }
@@ -886,18 +869,16 @@ public static class NativeSave
 
 
     private static bool WriteWideInteger(PackfileObjects objects, PackfileObjects.Instance instance,
-                                         Change change, PackfileImage image)
+                                         Change change, string type, PackfileImage image)
     {
         var data = image.Section("__data__");
         if (data == null) return false;
 
         if (objects.FieldAt(instance, change.Field) is not int at) return false;
-        if (!ulong.TryParse(change.Value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture,
-                            out ulong value))
-            return false;
         if (at < 0 || at + 8 > data.Data.Length) return false;
 
-        BitConverter.GetBytes(value).CopyTo(data.Data, at);
+        try { NumberCodecs.WriteScalar(data.Data, at, type, change.Value); }
+        catch (InvalidOperationException) { return false; }
         return true;
     }
 
@@ -925,7 +906,7 @@ public static class NativeSave
             data.SetLocal(at, -1);
             BitConverter.GetBytes(0).CopyTo(data.Data, at + 8);
             uint none = BitConverter.ToUInt32(data.Data, at + 12);
-            BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(none, 0)).CopyTo(data.Data, at + 12);
+            BitConverter.GetBytes(none & 0xC0000000u).CopyTo(data.Data, at + 12);
             return true;
         }
 
@@ -934,7 +915,7 @@ public static class NativeSave
 
         BitConverter.GetBytes(count).CopyTo(data.Data, at + 8);
         uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(capacity, count)).CopyTo(data.Data, at + 12);
+        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)count).CopyTo(data.Data, at + 12);
         return true;
     }
 
@@ -985,7 +966,7 @@ public static class NativeSave
             data.SetLocal(at, -1);
             BitConverter.GetBytes(0).CopyTo(data.Data, at + 8);
             uint was = BitConverter.ToUInt32(data.Data, at + 12);
-            BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(was, 0)).CopyTo(data.Data, at + 12);
+            BitConverter.GetBytes(was & 0xC0000000u).CopyTo(data.Data, at + 12);
             return true;
         }
 
@@ -1008,7 +989,7 @@ public static class NativeSave
 
         BitConverter.GetBytes(names.Count).CopyTo(data.Data, at + 8);
         uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(capacity, names.Count)).CopyTo(data.Data, at + 12);
+        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)names.Count).CopyTo(data.Data, at + 12);
         return true;
     }
 
@@ -1070,7 +1051,7 @@ public static class NativeSave
 
         BitConverter.GetBytes(count).CopyTo(data.Data, at + 8);
         uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(capacity, count)).CopyTo(data.Data, at + 12);
+        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)count).CopyTo(data.Data, at + 12);
 
 
 
@@ -1150,15 +1131,16 @@ public static class NativeSave
 
         if (IsWideInteger(Spelled(found.Value.VType)))
         {
-            if (!ulong.TryParse(change.Value.Trim(), NumberStyles.Integer,
-                                CultureInfo.InvariantCulture, out ulong big)) return false;
             if (where < 0 || where + 8 > data.Data.Length) return false;
 
-            BitConverter.GetBytes(big).CopyTo(data.Data, where);
+            try { NumberCodecs.WriteScalar(data.Data, where, Spelled(found.Value.VType), change.Value); }
+            catch (InvalidOperationException) { return false; }
             return true;
         }
 
         string type = Narrow(found.Value.VType);
+        if (type == "enum")
+            type = EnumStorage(found.Value.VSub);
         if (type.Length == 0) return false;
 
         int at = where;
@@ -1187,16 +1169,17 @@ public static class NativeSave
         int? at = objects.FieldAt(instance, field);
         if (at == null) return false;
 
-        long number = AsLong(value, type);
-        int width = type switch
+        string codecType = NumberCodecs.Underlying(type);
+        int width = codecType switch
         {
             "int8" or "uint8" or "bool" or "enum" => 1,
             "int16" or "uint16" or "half" => 2,
             _ => 4,
         };
-        if (at + width > data.Data.Length) return false;
+        if (at.Value + width > data.Data.Length) return false;
 
-        for (int i = 0; i < width; i++) data.Data[at.Value + i] = (byte)(number >> (8 * i));
+        try { NumberCodecs.WriteScalar(data.Data, at.Value, type, value); }
+        catch (InvalidOperationException) { return false; }
         return true;
     }
 
@@ -1205,34 +1188,7 @@ public static class NativeSave
 
 
 
-    private static bool Parses(string value, string type)
-    {
-        string text = value.Trim();
-        if (type == "bool")
-            return text is "true" or "false" or "1" or "0";
-
-        if (type == "real")
-            return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float f)
-                   && !float.IsNaN(f) && !float.IsInfinity(f);
-
-        if (!long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long n) &&
-            !(text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
-              long.TryParse(text[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out n)))
-            return false;
-
-
-
-        return type switch
-        {
-            "int8" => n is >= -128 and <= 127,
-            "uint8" or "enum" => n is >= 0 and <= 255,
-            "int16" => n is >= short.MinValue and <= short.MaxValue,
-            "uint16" => n is >= 0 and <= ushort.MaxValue,
-            "int32" => n is >= int.MinValue and <= int.MaxValue,
-            "uint32" => n is >= 0 and <= uint.MaxValue,
-            _ => true,
-        };
-    }
+    private static bool Parses(string value, string type) => NumberCodecs.Parses(value, type);
 
     private static float AsFloat(string value) =>
         float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float f)
@@ -1263,8 +1219,8 @@ public static class NativeSave
 
 
 
-    private static (int Offset, string VType, string Owner)? StructMember(string elementClass,
-                                                                          string path)
+    private static (int Offset, string VType, string VSub, string Owner)? StructMember(string elementClass,
+                                                                                        string path)
     {
         var types = HavokClassTypes.Shipped;
         int offset = 0;
@@ -1286,7 +1242,7 @@ public static class NativeSave
                 continue;
             }
 
-            return (offset, member.VType, owner);
+            return (offset, member.VType, member.VSub, owner);
         }
 
         return null;
@@ -1328,11 +1284,13 @@ public static class NativeSave
                 : $"{elementClass}.{member} was set to '{value}', which is not {wide} number(s) in brackets";
 
         if (IsWideInteger(Spelled(found.Value.VType)))
-            return ulong.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out _)
+            return NumberCodecs.Parses(value.Trim(), Spelled(found.Value.VType))
                 ? null
                 : $"{elementClass}.{member} was set to '{value}', which is not a whole number";
 
         string type = Narrow(found.Value.VType);
+        if (type == "enum")
+            type = EnumStorage(found.Value.VSub);
         if (type.Length == 0)
             return $"{elementClass}.{member} is a {found.Value.VType}, which is not written in " +
                    "place yet";
@@ -1361,6 +1319,17 @@ public static class NativeSave
     };
 
 
+
+    private static string EnumStorage(string vsub) => vsub switch
+    {
+        "TYPE_INT8" => "int8",
+        "TYPE_UINT8" => "uint8",
+        "TYPE_INT16" => "int16",
+        "TYPE_UINT16" => "uint16",
+        "TYPE_INT32" => "int32",
+        "TYPE_UINT32" => "uint32",
+        _ => "enum",
+    };
 
     private static string Narrow(string vtype) => vtype switch
     {

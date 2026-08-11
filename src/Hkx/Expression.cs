@@ -255,6 +255,8 @@ public static class Expression
                 if (low.Value is not double minimum) return low;
                 var high = Read(call.Arguments[2]);
                 if (high.Value is not double maximum) return high;
+                if (minimum > maximum)
+                    return Fail($"clamp needs its minimum {minimum} to be no more than its maximum {maximum}");
                 return Number(Math.Clamp(clamped, minimum, maximum));
             }
             case Node.Function call when call.FunctionName == "cond":

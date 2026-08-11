@@ -93,41 +93,19 @@ public class HkxBinaryReader
 
     #region Public API
 
-    private const int Fo4FileVersion = 11;
-    private const string Fo4ContentsVersion = "hk_2014.1.0-r1";
-
     public static bool IsFo4Hkx(string filepath)
     {
         if (!File.Exists(filepath)) return false;
         try
         {
-            byte[] hdr = new byte[0x40];
-            using (var fs = File.OpenRead(filepath))
-            {
-                int got = 0;
-                while (got < hdr.Length)
-                {
-                    int n = fs.Read(hdr, got, hdr.Length - got);
-                    if (n <= 0) break;
-                    got += n;
-                }
-                if (got < hdr.Length) return false;
-            }
+            using var fs = File.OpenRead(filepath);
+            if (fs.Length < 64) return false;
+            byte[] hdr = new byte[4];
+            fs.Read(hdr, 0, 4);
             return hdr[0] == HkxMagic[0] && hdr[1] == HkxMagic[1] &&
-                   hdr[2] == HkxMagic[2] && hdr[3] == HkxMagic[3] &&
-                   hdr[4] == 0x10 && hdr[5] == 0xC0 && hdr[6] == 0xC0 && hdr[7] == 0x10 &&
-                   hdr[0x0C] == Fo4FileVersion && hdr[0x0D] == 0 && hdr[0x0E] == 0 && hdr[0x0F] == 0 &&
-                   HasContentsVersion(hdr, Fo4ContentsVersion);
+                   hdr[2] == HkxMagic[2] && hdr[3] == HkxMagic[3];
         }
         catch { return false; }
-    }
-
-    private static bool HasContentsVersion(byte[] hdr, string expected)
-    {
-        var want = Encoding.ASCII.GetBytes(expected);
-        for (int i = 0; i < want.Length; i++)
-            if (hdr[0x28 + i] != want[i]) return false;
-        return true;
     }
 
 
@@ -178,7 +156,7 @@ public class HkxBinaryReader
         public int End;
     }
 
-    private HkxAnimationData ParseHkx(byte[] data)
+    internal HkxAnimationData ParseHkx(byte[] data)
     {
         if (data.Length < 64)
             throw new InvalidDataException("HKX file too small.");

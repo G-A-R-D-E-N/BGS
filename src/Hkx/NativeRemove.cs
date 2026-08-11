@@ -264,7 +264,7 @@ public static class NativeRemove
 
         BitConverter.GetBytes(keep.Count).CopyTo(data.Data, fieldAt + 8);
         uint capacity = BitConverter.ToUInt32(data.Data, fieldAt + 12);
-        BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(capacity, keep.Count)).CopyTo(data.Data, fieldAt + 12);
+        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)keep.Count).CopyTo(data.Data, fieldAt + 12);
     }
 
 

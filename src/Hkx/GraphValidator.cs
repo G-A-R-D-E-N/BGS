@@ -18,11 +18,8 @@ public static class GraphValidator
         public Level Level;
         public string Where = "";
         public string What = "";
-
-
-
-
         public string ObjectId = "";
+        public bool BlocksSave;
 
         public override string ToString() => $"{(Level == Level.Error ? "error" : "warning")}  {Where}  {What}";
     }
@@ -70,8 +67,10 @@ public static class GraphValidator
         return found;
     }
 
-    private static void Add(List<Finding> found, Level level, string where, string what) =>
-        found.Add(new Finding { Level = level, Where = where, What = what, ObjectId = LeadingId(where) });
+    private static void Add(List<Finding> found, Level level, string where, string what,
+                            bool blocksSave = false) =>
+        found.Add(new Finding { Level = level, Where = where, What = what, ObjectId = LeadingId(where),
+                                BlocksSave = blocksSave });
 
     private static string LeadingId(string where)
     {
@@ -97,10 +96,11 @@ public static class GraphValidator
         var counts = SymbolEditor.Audit(model);
         if (!counts.VariablesConsistent)
             Add(found, Level.Error, "hkbBehaviorGraphData",
-                $"the variable arrays disagree: {counts}");
+                $"the variable arrays disagree: {counts}", blocksSave: true);
         if (!counts.EventsConsistent)
             Add(found, Level.Error, "hkbBehaviorGraphData",
-                $"eventNames has {counts.EventNames} entries but eventInfos has {counts.EventInfos}");
+                $"eventNames has {counts.EventNames} entries but eventInfos has {counts.EventInfos}",
+                blocksSave: true);
     }
 
 
@@ -129,7 +129,8 @@ public static class GraphValidator
                 Add(found, Level.Error, where,
                     site.How == HkReferences.Held.ListElement
                         ? $"contains #{site.Target}, which is not in this file"
-                        : $"points at #{site.Target}, which is not in this file");
+                        : $"points at #{site.Target}, which is not in this file",
+                    blocksSave: true);
             }
     }
 
@@ -249,6 +250,20 @@ public static class GraphValidator
     }
 
 
+    public static string? SaveRefusal(string xml, string sourceXml, bool includeRepackLosses = false)
+    {
+        if (RefuseToSave(xml, includeRepackLosses) is { } refused) return refused;
+
+        var sourceErrors = Check(sourceXml).Where(f => f.BlocksSave)
+                                           .Select(FindingKey).ToHashSet(StringComparer.Ordinal);
+        var blocking = Check(xml).FirstOrDefault(f => f.BlocksSave &&
+                                                      !sourceErrors.Contains(FindingKey(f)));
+        return blocking == null ? null
+            : $"Not saved, and the original is untouched. {blocking.Where}: {blocking.What}";
+    }
+
+    private static string FindingKey(Finding finding) => finding.Where + "\n" + finding.What;
+
     public static HashSet<string> StatesWithNoGenerator(BehaviourGraphModel model) =>
         EmptyStates(model).Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
 
@@ -261,7 +276,8 @@ public static class GraphValidator
 
             foreach (var group in states.GroupBy(s => s.StateId).Where(g => g.Count() > 1))
                 Add(found, Level.Error, $"#{machine.Id} {name}",
-                    $"stateId {group.Key} is used by {group.Count()} states, so transitions to it are ambiguous");
+                    $"stateId {group.Key} is used by {group.Count()} states, so transitions to it are ambiguous",
+                    blocksSave: true);
 
             foreach (var state in states.Where(HasNoGenerator))
                 Add(found, Level.Error, $"#{state.Id} state '{state.Name}'",
@@ -271,11 +287,13 @@ public static class GraphValidator
             var ids = states.Select(s => s.StateId).ToHashSet();
             foreach (var t in StateEditor.Transitions(model, machine.Id).Where(t => !ids.Contains(t.ToStateId)))
                 Add(found, Level.Error, $"#{machine.Id} {name}",
-                    $"a {(t.Wildcard ? "wildcard " : "")}transition targets stateId {t.ToStateId}, which no state in this machine has");
+                    $"a {(t.Wildcard ? "wildcard " : "")}transition targets stateId {t.ToStateId}, which no state in this machine has",
+                    blocksSave: true);
 
             int start = machine.Int("startStateId");
             if (states.Count > 0 && start >= 0 && !ids.Contains(start))
-                Add(found, Level.Error, $"#{machine.Id} {name}", $"startStateId is {start}, which no state in this machine has");
+                Add(found, Level.Error, $"#{machine.Id} {name}",
+                    $"startStateId is {start}, which no state in this machine has", blocksSave: true);
         }
     }
 
@@ -427,9 +445,14 @@ public static class GraphValidator
             foreach (string childId in blender.Refs("children"))
             {
                 var child = model.Get(childId);
-                if (child != null && child.Class != "hkbBlenderGeneratorChild")
+                if (child == null) continue;
+                if (child.Class != "hkbBlenderGeneratorChild")
                     Add(found, Level.Error, $"#{blender.Id} {blender.Str("name")}",
-                        $"child #{childId} is a {child.Class}; a blender's children must be hkbBlenderGeneratorChild wrappers");
+                        $"child #{childId} is a {child.Class}; a blender's children must be hkbBlenderGeneratorChild wrappers",
+                        blocksSave: true);
+                else if (child.Ref("generator") == null)
+                    Add(found, Level.Error, $"#{blender.Id} {blender.Str("name")}",
+                        $"child #{childId} has no generator, so it plays nothing", blocksSave: true);
             }
     }
 
@@ -440,7 +463,8 @@ public static class GraphValidator
         foreach (var clip in model.Objects.Where(o => o.Class == "hkbClipGenerator"))
         {
             if (string.IsNullOrWhiteSpace(clip.Str("animationName")))
-                Add(found, Level.Error, $"#{clip.Id} clip '{clip.Str("name")}'", "has no animationName");
+                Add(found, Level.Error, $"#{clip.Id} clip '{clip.Str("name")}'", "has no animationName",
+                    blocksSave: true);
 
 
 

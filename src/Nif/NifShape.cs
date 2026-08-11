@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 
 namespace OpenCommonwealth.Services.Nif;
@@ -113,6 +114,9 @@ public static class NifGeometry
 
 
         if (dataSize == 0 || vertices == 0 || stride == 0) return null;
+        if (triangles < 0 || dataSize < 0 || at + dataSize > d.Length)
+            throw new InvalidDataException(
+                $"{nif.Strings[nameIndex]}: vertex data of {dataSize} bytes runs past the end of the file");
         if (dataSize != vertices * stride + triangles * 6)
             throw new InvalidDataException(
                 $"{nif.Strings[nameIndex]}: dataSize is {dataSize} but {vertices} vertices at a stride of " +
@@ -146,6 +150,10 @@ public static class NifGeometry
         at += vertices * stride;
         for (int t = 0; t < triangles * 3; t++)
             shape.Indices.Add(BitConverter.ToUInt16(d, at + t * 2));
+
+        if (shape.Indices.Any(i => i < 0 || i >= shape.Vertices.Count))
+            throw new InvalidDataException(
+                $"{nif.Strings[nameIndex]}: triangle indices reference vertices that do not exist");
 
         if (skin >= 0) ReadSkin(nif, skin, shape);
         return shape;

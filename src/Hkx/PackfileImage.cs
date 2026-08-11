@@ -74,6 +74,8 @@ public sealed class PackfileImage
         };
 
         int sectionCount = I32(bytes, 0x14);
+        if (sectionCount < 0)
+            throw new InvalidDataException("Negative section count.");
         int predicateBytes = I16(bytes, 0x3E);
         if (predicateBytes < 0 || HeaderSize + predicateBytes > bytes.Length)
             throw new InvalidDataException($"Predicate area of {predicateBytes} bytes does not fit.");
@@ -222,15 +224,6 @@ public sealed class PackfileSection
 
 
     public const int StringAlignment = 2;
-
-    /// <summary>
-    /// The capacity word for an array whose storage lives inside the file. Bit 31 marks the
-    /// storage as not the array's to release, which has to be true of anything sitting in a
-    /// packfile: the game's own writer sets it on every array, empty or not. Bit 30, which
-    /// the corpus never shows, is preserved rather than guessed at.
-    /// </summary>
-    public static uint ArrayCapacityWord(uint capacity, int count) =>
-        0x80000000u | (capacity & 0x40000000u) | (uint)count;
 
 
 
@@ -429,6 +422,8 @@ public sealed class PackfileSection
         };
 
         int start = PackfileImage.I32(bytes, header + 0x14);
+        if (start < 0)
+            throw new InvalidDataException("Section starts before the file.");
         int[] mark =
         {
             PackfileImage.I32(bytes, header + 0x18),
@@ -439,8 +434,12 @@ public sealed class PackfileSection
             PackfileImage.I32(bytes, header + 0x2C),
         };
 
+        for (int i = 1; i < mark.Length; i++)
+            if (mark[i] < mark[i - 1])
+                throw new InvalidDataException("Section table is not monotonic.");
+
         foreach (int m in mark)
-            if (m < 0 || start + m > bytes.Length)
+            if (m < 0 || m > bytes.Length - start)
                 throw new InvalidDataException($"Section '{section.Tag}' points past the end of the file.");
 
         section.Data = bytes[start..(start + mark[0])];

@@ -36,7 +36,7 @@ public class GraphView : Control
     private const double PortRadius = 5;
 
 
-    private const int MaxNodes = 4000;
+    public const int MaxNodes = 4000;
 
     private sealed class Node
     {
@@ -80,6 +80,7 @@ public class GraphView : Control
 
 
     private int _placedCount;
+    private bool _truncated;
 
 
 
@@ -399,7 +400,8 @@ public class GraphView : Control
 
 
 
-        var placed = GraphAuthor.Layout(model, MaxNodes);
+        var placed = GraphAuthor.Layout(model, MaxNodes, out bool truncated);
+        _truncated = truncated;
         _own = GraphOwnership.Of(placed);
         _structuredPlan = StructuredFlowLayout.Of(placed);
         _structuredContainers.Clear();
@@ -797,6 +799,7 @@ public class GraphView : Control
     private bool HasFamily(Node node) => _own.Children(node.Id).Count > 0;
 
     public int DrawnCount => _nodes.Count;
+    public bool DrawingTruncated => _truncated;
     public IReadOnlyCollection<string> DrawnIds => _nodes.Keys;
 
 
