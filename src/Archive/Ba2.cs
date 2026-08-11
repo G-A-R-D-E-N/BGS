@@ -7,23 +7,23 @@ using System.Text;
 
 namespace OpenCommonwealth.Services.Archive;
 
-// Just enough of the BA2 general archive format to read behaviour files out of
-// Fallout4 - Animations.ba2. Reading the archive directly rather than shelling out to Archive2
-// keeps this runnable on Linux with nothing installed.
-//
-// Layout: a 24 byte header, then one 36 byte entry per file, then a name table at the offset the
-// header gives. An entry with a non zero packed size is zlib compressed. Version 1 and version 8
-// archives both read the same way here; the next generation update only changed fields this does
-// not touch.
-//
-// Opening the index does not read any file's bytes, which is what makes browsing one of these
-// worthwhile: Fallout4 - Animations.ba2 holds 29,716 entries and the whole point is to reach one of
-// them without unpacking the other 29,715.
+
+
+
+
+
+
+
+
+
+
+
+
 public sealed class Ba2 : IDisposable
 {
     public sealed record Entry(int Index, string Name, long Offset, uint Packed, uint Unpacked)
     {
-        /// The archive's own path, in the form the game uses.
+
         public string Folder => Name.Contains('/') ? Name[..Name.LastIndexOf('/')] : "";
         public string FileName => Name.Contains('/') ? Name[(Name.LastIndexOf('/') + 1)..] : Name;
 
@@ -46,13 +46,14 @@ public sealed class Ba2 : IDisposable
         Entries = entries;
     }
 
-    /// Reads the header, the entry table and the name table, and nothing else. The stream stays open
-    /// so a file can be pulled out later without walking all of that again.
+
+
     public static Ba2 Open(string archivePath)
     {
         var stream = File.OpenRead(archivePath);
         var reader = new BinaryReader(stream);
-
+        try
+        {
         string magic = new(reader.ReadChars(4));
         uint version = reader.ReadUInt32();
         string kind = new(reader.ReadChars(4));
@@ -61,17 +62,16 @@ public sealed class Ba2 : IDisposable
 
         string name = System.IO.Path.GetFileName(archivePath);
         if (magic != "BTDX")
-        {
-            stream.Dispose();
             throw new InvalidDataException($"{name} is not a BA2");
-        }
         if (kind != "GNRL")
-        {
-            stream.Dispose();
             throw new InvalidDataException(
                 $"{name} is a {kind} archive, not GNRL. Textures are stored differently and nothing " +
                 "here reads them.");
-        }
+        if (count > 1_000_000)
+            throw new InvalidDataException($"{name} declares an implausible number of files");
+        long nameTable = (long)nameTableOffset;
+        if (nameTable < 0 || nameTable > stream.Length)
+            throw new InvalidDataException($"{name} has a name table outside the file");
 
         var offsets = new ulong[count];
         var packed = new uint[count];
@@ -85,29 +85,57 @@ public sealed class Ba2 : IDisposable
             reader.ReadUInt32();
         }
 
-        stream.Position = (long)nameTableOffset;
+        stream.Position = nameTable;
         var entries = new List<Entry>((int)count);
         for (int i = 0; i < count; i++)
         {
             ushort length = reader.ReadUInt16();
+            if ((long)length > stream.Length - stream.Position)
+                throw new InvalidDataException($"{name} has a name table that runs past the end of the file");
             string entryName = Encoding.UTF8.GetString(reader.ReadBytes(length)).Replace('\\', '/');
             entries.Add(new Entry(i, entryName, (long)offsets[i], packed[i], unpacked[i]));
         }
 
+        foreach (var entry in entries)
+        {
+            long needed = entry.Packed != 0 ? entry.Packed : entry.Unpacked;
+            if (entry.Offset < 0 || needed < 0 || needed > stream.Length - entry.Offset)
+                throw new InvalidDataException($"{entry.Name} points outside the archive");
+        }
+
         return new Ba2(archivePath, version, stream, reader, entries);
+        }
+        catch
+        {
+            reader.Dispose();
+            throw;
+        }
     }
 
-    /// One file's bytes, inflated if the archive stored it compressed.
+
     public byte[] Read(Entry entry)
     {
+        long wanted = entry.Packed != 0 ? entry.Packed : entry.Unpacked;
+        if (wanted < 0 || wanted > _stream.Length - entry.Offset)
+            throw new InvalidDataException($"{entry.Name} points outside the archive");
+        if (wanted > 1 << 30)
+            throw new InvalidDataException($"{entry.Name} declares an implausible packed size");
+
         _stream.Position = entry.Offset;
-        byte[] raw = _reader.ReadBytes((int)(entry.Packed != 0 ? entry.Packed : entry.Unpacked));
-        return entry.Packed != 0 ? Inflate(raw) : raw;
+        var raw = new byte[wanted];
+        int got = 0;
+        while (got < wanted)
+        {
+            int n = _reader.Read(raw, got, (int)(wanted - got));
+            if (n == 0) throw new InvalidDataException($"{entry.Name} is truncated");
+            got += n;
+        }
+        return entry.Packed != 0 ? Inflate(raw, entry.Unpacked) : raw;
     }
 
-    /// Entries whose path contains every one of the given words, in any order and without case. Words
-    /// rather than one substring, because the useful query is "dogmeat behavior" and the archive
-    /// stores that as `meshes/actors/dogmeat/behaviors/...`, where no single substring matches both.
+
+
+
     public IEnumerable<Entry> Matching(string query, string extension = "")
     {
         var words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -128,10 +156,10 @@ public sealed class Ba2 : IDisposable
         _stream.Dispose();
     }
 
-    /// keepFolders writes the archive's own folder structure instead of flattening the path into the
-    /// file name. Flat is right for a corpus, where 531 files called Behavior.hkx would overwrite each
-    /// other; the tree is right when something has to resolve a project chain afterwards, because
-    /// every reference inside those files is relative to the project folder.
+
+
+
+
     public static int ExtractMatching(string archivePath, string substring, string outputDir,
                                       string extension, Action<string> log, bool keepFolders = false)
     {
@@ -144,13 +172,32 @@ public sealed class Ba2 : IDisposable
 
         foreach (var entry in archive.Matching(substring, extension))
         {
-            // The archive path becomes the file name, so two behaviours called Behavior.hkx in
-            // different folders do not overwrite each other.
-            string target = keepFolders
-                ? System.IO.Path.Combine(outputDir, entry.Name.Replace('/', System.IO.Path.DirectorySeparatorChar))
-                : System.IO.Path.Combine(outputDir, entry.Name.Replace('/', '_'));
 
-            if (keepFolders) Directory.CreateDirectory(System.IO.Path.GetDirectoryName(target)!);
+
+            string target;
+            if (keepFolders)
+            {
+                string flat = entry.Name.Replace('/', System.IO.Path.DirectorySeparatorChar);
+                if (System.IO.Path.IsPathRooted(flat))
+                    throw new InvalidDataException($"{entry.Name} is an absolute path");
+
+                string root = System.IO.Path.GetFullPath(outputDir);
+                string full = System.IO.Path.GetFullPath(System.IO.Path.Combine(root, flat));
+                bool inside = full.Equals(root, StringComparison.OrdinalIgnoreCase) ||
+                              full.StartsWith(root + System.IO.Path.DirectorySeparatorChar,
+                                              StringComparison.OrdinalIgnoreCase);
+                if (!inside)
+                    throw new InvalidDataException($"{entry.Name} is not inside the extraction folder");
+                RefuseLinkedComponents(root, full, entry.Name);
+                target = full;
+
+                string? folder = System.IO.Path.GetDirectoryName(target);
+                if (folder != null) Directory.CreateDirectory(folder);
+            }
+            else
+            {
+                target = System.IO.Path.Combine(outputDir, entry.Name.Replace('/', '_'));
+            }
             File.WriteAllBytes(target, archive.Read(entry));
             written++;
         }
@@ -158,12 +205,52 @@ public sealed class Ba2 : IDisposable
         return written;
     }
 
-    private static byte[] Inflate(byte[] compressed)
+    private static byte[] Inflate(byte[] compressed, uint expectedUnpacked)
     {
+        if (expectedUnpacked > 512 * 1024 * 1024)
+            throw new InvalidDataException($"an entry declares an implausible unpacked size");
+
         using var input = new MemoryStream(compressed);
         using var zlib = new ZLibStream(input, CompressionMode.Decompress);
-        using var output = new MemoryStream();
-        zlib.CopyTo(output);
-        return output.ToArray();
+        var output = new byte[expectedUnpacked];
+        int got = 0;
+        while (got < expectedUnpacked)
+        {
+            int n = zlib.Read(output, got, (int)(expectedUnpacked - got));
+            if (n == 0) break;
+            got += n;
+        }
+
+        if (zlib.ReadByte() >= 0)
+            throw new InvalidDataException(
+                $"a stored file expands beyond its declared {expectedUnpacked} bytes");
+        if (got != expectedUnpacked)
+            throw new InvalidDataException(
+                $"a stored file ends before its declared {expectedUnpacked} bytes");
+        return output;
+    }
+
+    private static void RefuseLinkedComponents(string root, string target, string entryName)
+    {
+        string relative = System.IO.Path.GetRelativePath(root, target);
+        string current = root;
+        string[] parts = relative.Split(System.IO.Path.DirectorySeparatorChar,
+                                        StringSplitOptions.RemoveEmptyEntries);
+        for (int i = 0; i < parts.Length; i++)
+        {
+            current = System.IO.Path.Combine(current, parts[i]);
+            FileSystemInfo info = i == parts.Length - 1
+                ? new FileInfo(current)
+                : new DirectoryInfo(current);
+            try
+            {
+                if (info.LinkTarget != null ||
+                    (info.Exists && (info.Attributes & FileAttributes.ReparsePoint) != 0))
+                    throw new InvalidDataException(
+                        $"{entryName} crosses a linked path inside the extraction folder");
+            }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+        }
     }
 }

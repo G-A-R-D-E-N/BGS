@@ -5,9 +5,9 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// An object's Havok setup is five files, not one: project names the character, character names the
-// skeleton, the behaviour and the animation list. Every reference is relative to the project folder,
-// which is why a folder can be cloned under a new name without editing anything inside it.
+
+
+
 public sealed class ProjectChain
 {
     public sealed class Link
@@ -25,19 +25,22 @@ public sealed class ProjectChain
     public readonly List<string> Bones = new();
     public readonly List<string> Problems = new();
 
-    // The rig itself, not only its bone names. Posing an animation needs the parent indices and the
-    // reference pose, and the chain is the only thing that knows which rig this behaviour belongs to:
-    // the behaviour file does not name one, the character does.
+
+
+
     public HkxSkeleton? Skeleton;
     public string SkeletonPath = "";
 
-    public static ProjectChain Resolve(string anyHkxPath, string? java = null, string? jar = null)
+    public static ProjectChain Resolve(
+        string anyHkxPath, Func<string, BehaviourGraphModel?>? modelReader = null)
     {
         var chain = new ProjectChain();
+        BehaviourGraphModel? ReadModel(string path) =>
+            modelReader == null ? Read(path, chain) : Read(path, chain, modelReader);
         string dir = Path.GetDirectoryName(Path.GetFullPath(anyHkxPath)) ?? "";
 
-        // Behaviours sit in <project>/Behaviors, characters in <project>/Characters, so the project
-        // root is one level up from either.
+
+
         string leaf = Path.GetFileName(dir);
         chain.Root = leaf.Equals("Behaviors", StringComparison.OrdinalIgnoreCase)
                   || leaf.Equals("Characters", StringComparison.OrdinalIgnoreCase)
@@ -46,17 +49,30 @@ public sealed class ProjectChain
             ? Path.GetDirectoryName(dir) ?? dir
             : dir;
 
-        string? projectFile = Directory.EnumerateFiles(chain.Root, "*.hkx", SearchOption.TopDirectoryOnly)
-                                       .FirstOrDefault();
-        if (projectFile == null)
+        var projectCandidates = Directory
+            .EnumerateFiles(chain.Root, "*.hkx", SearchOption.TopDirectoryOnly)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .Select(path => (Path: path, Model: ReadModel(path)))
+            .Where(candidate => candidate.Model?.Objects.Any(
+                o => o.Class == "hkbProjectStringData") == true)
+            .ToList();
+        if (projectCandidates.Count == 0)
         {
-            chain.Problems.Add($"no project .hkx directly under {chain.Root}");
+            chain.Problems.Add(
+                $"no project .hkx containing hkbProjectStringData directly under {chain.Root}");
+            return chain;
+        }
+        if (projectCandidates.Count > 1)
+        {
+            chain.Problems.Add(
+                "ambiguous project files containing hkbProjectStringData: " +
+                string.Join(", ", projectCandidates.Select(c => Path.GetFileName(c.Path))));
             return chain;
         }
 
+        string projectFile = projectCandidates[0].Path;
+        var project = projectCandidates[0].Model;
         chain.Add("project", Path.GetFileName(projectFile), projectFile);
-
-        var project = Read(projectFile, java, jar, chain);
         string characterRel = project?.Objects
             .FirstOrDefault(o => o.Class == "hkbProjectStringData")?.Strings("characterFilenames")
             .FirstOrDefault() ?? "";
@@ -71,7 +87,7 @@ public sealed class ProjectChain
         chain.Add("character", characterRel, characterPath);
         if (!File.Exists(characterPath)) return chain;
 
-        var character = Read(characterPath, java, jar, chain);
+        var character = ReadModel(characterPath);
         var strings = character?.Objects.FirstOrDefault(o => o.Class == "hkbCharacterStringData");
         if (strings == null)
         {
@@ -79,8 +95,8 @@ public sealed class ProjectChain
             return chain;
         }
 
-        // behaviorFilename, rigName and animationNames are relative to the PROJECT root, not to the
-        // folder the character file happens to sit in.
+
+
         string behaviourRel = strings.Str("behaviorFilename");
         if (behaviourRel.Length > 0)
             chain.Add("behaviour", behaviourRel, ResolvePath(chain.Root, behaviourRel));
@@ -118,10 +134,10 @@ public sealed class ProjectChain
             chain.Animations.Add(anim);
             if (File.Exists(ResolvePath(chain.Root, anim))) continue;
 
-            // A character reusing another character's animations is normal, Dogmeat borrows the
-            // vicious dog's attacks, and it climbs out of its own folder to do it. Extract one
-            // character on its own and every borrowed animation reads as missing when nothing is
-            // actually wrong with the file, so the two cases are worth telling apart.
+
+
+
+
             string? lender = BorrowedFrom(anim);
             chain.Problems.Add(lender != null
                 ? $"missing animation, borrowed from {lender}: {anim}. Extract {lender} alongside " +
@@ -132,9 +148,9 @@ public sealed class ProjectChain
         return chain;
     }
 
-    /// The character a borrowed animation belongs to, or null when the path stays inside this
-    /// character's own folder. A path like ..\ViciousDog\Animations\Attack1.hkt names the lender in
-    /// the segment after the last step upwards, so that is the one worth putting in the message.
+
+
+
     public static string? BorrowedFrom(string animation)
     {
         var parts = animation.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -142,9 +158,9 @@ public sealed class ProjectChain
         return lastUp >= 0 && lastUp + 1 < parts.Length ? parts[lastUp + 1] : null;
     }
 
-    // Skyrim era characters list their animations in animationNames. Fallout 4 moved them into
-    // animationBundleNameData, whose assetNames the model parser flattens onto the outer param, so
-    // reading only the old field leaves this empty for every vanilla FO4 character.
+
+
+
     public static List<string> DeclaredAnimations(HkObject characterStringData)
     {
         var all = new List<string>(characterStringData.Strings("animationNames"));
@@ -153,12 +169,12 @@ public sealed class ProjectChain
         return all;
     }
 
-    // A clip names its animation the same way the character declares it, but the two can differ in
-    // separator and in the .hkt/.hkx split, so compare on this rather than on the raw string.
+
+
     public static string AnimationKey(string declared)
         => Path.ChangeExtension(declared.Replace('/', '\\'), null).ToLowerInvariant();
 
-    // Fallout 4 declares these as .hkt but ships .hkx on disk, so a plain join misses every file.
+
     public static string ResolvePath(string baseDir, string relative)
     {
         string cleaned = relative.Replace('\\', Path.DirectorySeparatorChar)
@@ -184,19 +200,26 @@ public sealed class ProjectChain
         return link;
     }
 
-    private static BehaviourGraphModel? Read(string hkxPath, string? java, string? jar, ProjectChain chain)
-    {
-        try
+    private static BehaviourGraphModel? Read(string hkxPath, ProjectChain chain) =>
+        Read(hkxPath, chain, path =>
         {
-            string xml = HkxTextEdit.TextOf(hkxPath, java, jar);
+            string xml = HkxTextEdit.TextOf(path);
             if (xml.Length == 0)
             {
                 chain.Problems.Add($"could not read {Path.GetFileName(hkxPath)}: it holds a class this " +
-                                   "build cannot describe, and there is no hkxpack to fall back on");
+                                   "build cannot describe");
                 return null;
             }
 
             return BehaviourGraphModel.Parse(xml);
+        });
+
+    private static BehaviourGraphModel? Read(
+        string hkxPath, ProjectChain chain, Func<string, BehaviourGraphModel?> reader)
+    {
+        try
+        {
+            return reader(hkxPath);
         }
         catch (Exception ex)
         {

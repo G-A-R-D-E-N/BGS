@@ -5,14 +5,14 @@ using System.Text.RegularExpressions;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Two behaviour files, read as one change set. RepackCheck already compares a document with a
-// version of itself position for position, which works because a repack cannot reorder anything.
-// Two different edits of the same vanilla file can, so this walks the two object sequences with a
-// lookahead instead and reports what one has that the other does not.
-//
-// Ids are meaningless across files, since hkxpack renumbers on every pack, so matching is on class
-// and normalised contents. RepackCheck.Take already flattens every id to "#" for exactly that
-// reason, and its output is what this consumes.
+
+
+
+
+
+
+
+
 public static class BehaviourDiff
 {
     public enum Kind
@@ -45,10 +45,10 @@ public static class BehaviourDiff
             : $"{Added} added, {Removed} removed, {Changed} value{(Changed == 1 ? "" : "s")} changed";
     }
 
-    // How far ahead of a mismatch to look for the two sides lining up again. A behaviour is a few
-    // thousand objects and a mod's edit is a handful of them, so a short window resynchronises on
-    // the first shared object after the change. A full alignment would be quadratic on files this
-    // size for no useful gain.
+
+
+
+
     private const int Window = 400;
 
     public static Result Compare(RepackCheck.Census left, RepackCheck.Census right)
@@ -65,8 +65,8 @@ public static class BehaviourDiff
             var (skipA, skipB) = NextSync(a, b, i, j);
             if (skipA < 0)
             {
-                // No resync inside the window, so the tails are treated as wholly different rather
-                // than pretending to a match that was not found.
+
+
                 break;
             }
 
@@ -82,8 +82,8 @@ public static class BehaviourDiff
     private static bool Same(RepackCheck.Entry x, RepackCheck.Entry y) =>
         x.Class == y.Class && x.Body == y.Body;
 
-    // The nearest point at which the two sequences agree again, preferring the smallest total skip so
-    // a one object edit reads as one object rather than as a block.
+
+
     private static (int SkipA, int SkipB) NextSync(
         IReadOnlyList<RepackCheck.Entry> a, IReadOnlyList<RepackCheck.Entry> b, int i, int j)
     {
@@ -101,9 +101,9 @@ public static class BehaviourDiff
         return (-1, -1);
     }
 
-    // A removed object and an added one of the same class, in the same place, is one object whose
-    // values moved. Reporting that as a delete and an insert hides the only thing anybody wanted to
-    // know, which is which field is different.
+
+
+
     private static void Emit(Result result, List<RepackCheck.Entry> gone, List<RepackCheck.Entry> came)
     {
         var pairedRight = new bool[came.Count];
@@ -150,16 +150,16 @@ public static class BehaviourDiff
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (Match m in NamedParam.Matches(body))
         {
-            // A repeated name is an array element's own field, not the object's. First wins, which is
-            // the object's own, and the array as a whole still shows up through the body compare.
+
+
             string name = m.Groups["name"].Value;
             if (!fields.ContainsKey(name)) fields[name] = m.Groups["value"].Value.Trim();
         }
         return fields;
     }
 
-    /// The object's own name if it has one, so a report says which state was removed rather than only
-    /// that an hkbStateInfo was.
+
+
     private static string Name(string body)
     {
         var m = Regex.Match(body, @"<hkparam name=""name"">([^<]*)</hkparam>");

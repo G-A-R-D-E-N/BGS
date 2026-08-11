@@ -5,15 +5,15 @@ using System.Text.RegularExpressions;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// hkxpack renumbers every object when it packs, so a repack cannot be compared by id. Counting
-// objects and class names catches a file that comes back short, which still loads and then behaves
-// wrongly. It does not catch a value coming back different, which loads and behaves wrongly in a way
-// nothing reports at all, so the contents are compared as well.
-//
-// Both are safe to compare because hkxpack preserves object order and every value verbatim.
-// Measured over 8 shipped behaviour files, 21220 objects between them, including the two largest in
-// the game: with ids normalised, a dump and a dump of its own repack are identical line for line,
-// and the class sequence matches position for position.
+
+
+
+
+
+
+
+
+
 public static class RepackCheck
 {
     private static readonly Regex ObjectHead =
@@ -70,9 +70,9 @@ public static class RepackCheck
             int start = marks[i].Index + marks[i].Length;
             int end = i + 1 < marks.Count ? marks[i + 1].Index : xml.Length;
 
-            // Every id is flattened, the object's own and the ones it points at. Renumbering is the
-            // one difference a repack is allowed to make, so it must not read as a change, and
-            // ordering is what preserves which reference is which.
+
+
+
             census.InOrder.Add(new Entry(marks[i].Groups["id"].Value, cls, Normalise(xml[start..end])));
         }
         return census;
@@ -96,9 +96,9 @@ public static class RepackCheck
             else if (now > was) drift.Gained.Add($"{now - was} {cls}");
         }
 
-        // Position for position only while the two agree on how many objects there are. Once the
-        // counts differ, everything after the first missing object shifts and every later comparison
-        // is noise on top of the real fault, which is already reported above.
+
+
+
         if (before.Objects != after.Objects) return drift;
 
         for (int i = 0; i < before.InOrder.Count; i++)
@@ -115,8 +115,8 @@ public static class RepackCheck
         return drift;
     }
 
-    /// The name of the first field whose line differs, so a report says what moved rather than only
-    /// that something did.
+
+
     private static string FirstDifference(string was, string now)
     {
         var a = was.Split('\n');

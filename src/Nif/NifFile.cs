@@ -5,25 +5,22 @@ using System.Text;
 
 namespace OpenCommonwealth.Services.Nif;
 
-// The Gamebryo packfile Fallout 4 keeps meshes in. Enough of it to draw a skinned shape and no more:
-// geometry, skin weights, and the bone names a shape is weighted to.
-//
-// Every offset below was read off the game's own files rather than recalled, and the arithmetic
-// closes on itself, which is what makes that checkable. On Dogmeat.nif the block table's own sizes
-// sum to eight bytes short of the file, and those eight are the footer's root count and root
-// reference; each shape's declared dataSize equals numVertices * stride + numTriangles * 6 exactly;
-// and BSSkin::BoneData's block size is exactly four bytes of count plus 68 per bone, 68 being a
-// bounding sphere and a transform. None of that lines up by accident.
 public sealed class NifFile
 {
+    private const int MaxHeaderLength = 1024;
+    private const int MaxBlockCount = 100_000;
+    private const int MaxBlockTypeCount = 4096;
+    private const int MaxStringCount = 100_000;
+    private const int MaxGroupCount = 100_000;
+    private const int MaxStringLength = 1024 * 1024;
+    private const int MaxBlockSize = 512 * 1024 * 1024;
+
     public uint Version;
     public uint UserVersion;
     public uint BsVersion;
     public readonly List<string> BlockTypes = new();
     public readonly List<string> Strings = new();
 
-    /// The type of each block, and where its bytes start. Sizes come from the header rather than
-    /// being worked out while reading, so a block this does not understand costs nothing to skip.
     public readonly List<string> BlockType = new();
     public readonly List<int> BlockStart = new();
     public readonly List<int> BlockSize = new();
@@ -36,73 +33,100 @@ public sealed class NifFile
 
     public static NifFile Parse(byte[] data, string name)
     {
+        try
+        {
+            return ParseCore(data, name);
+        }
+        catch (InvalidDataException ex)
+            when (!ex.Message.StartsWith(name + ":", StringComparison.Ordinal))
+        {
+            throw new InvalidDataException($"{name}: {ex.Message}", ex);
+        }
+        catch (Exception ex) when (ex is ArgumentException or IndexOutOfRangeException or OverflowException)
+        {
+            throw new InvalidDataException($"{name}: malformed NIF data", ex);
+        }
+    }
+
+    private static NifFile ParseCore(byte[] data, string name)
+    {
         var nif = new NifFile { Data = data };
 
         int end = Array.IndexOf(data, (byte)'\n');
-        if (end < 0) throw new InvalidDataException($"{name} has no NIF header line");
+        if (end < 0) throw Invalid(name, "has no NIF header line");
+        if (end > MaxHeaderLength) throw Invalid(name, "has an implausibly long NIF header line");
+
         string banner = Encoding.ASCII.GetString(data, 0, end);
         if (!banner.StartsWith("Gamebryo File Format", StringComparison.Ordinal))
-            throw new InvalidDataException($"{name} is not a Gamebryo file: '{banner}'");
+            throw Invalid(name, $"is not a Gamebryo file: '{banner}'");
 
-        int at = end + 1;
-        nif.Version = U32(data, ref at);
-        byte endian = data[at++];
-        if (endian != 1) throw new InvalidDataException($"{name} is big endian, which is not read here");
-        nif.UserVersion = U32(data, ref at);
-        int blocks = (int)U32(data, ref at);
-        nif.BsVersion = U32(data, ref at);
+        var reader = new CheckedReader(data, end + 1);
+        nif.Version = reader.U32("version");
+        byte endian = reader.Byte("endianness");
+        if (endian != 1) throw Invalid(name, "is big endian, which is not read here");
+        nif.UserVersion = reader.U32("user version");
+        int blocks = reader.CountU32("block count", MaxBlockCount);
+        nif.BsVersion = reader.U32("BS version");
 
         if (nif.BsVersion < 130)
-            throw new InvalidDataException(
-                $"{name} is BSVersion {nif.BsVersion}; only Fallout 4's 130 and above are read here");
+            throw Invalid(
+                name,
+                $"is BSVersion {nif.BsVersion}; only Fallout 4's 130 and above are read here");
 
-        // Author, process script and export script, then one more for 130 and up. Each is a byte of
-        // length and that length counts the trailing NUL.
         for (int i = 0; i < 4; i++)
         {
-            int len = data[at++];
-            at += len;
+            int length = reader.Byte($"metadata string {i + 1} length");
+            reader.Skip(length, $"metadata string {i + 1}");
         }
 
-        int types = U16(data, ref at);
-        for (int i = 0; i < types; i++) nif.BlockTypes.Add(SizedString(data, ref at));
+        int types = reader.U16("block type count");
+        if (types > MaxBlockTypeCount)
+            throw Invalid(name, $"declares an implausible block type count of {types}");
+        for (int i = 0; i < types; i++)
+            nif.BlockTypes.Add(reader.SizedString($"block type {i}", MaxStringLength));
 
-        var index = new int[blocks];
-        for (int i = 0; i < blocks; i++) index[i] = U16(data, ref at);
+        var indexes = new int[blocks];
+        for (int i = 0; i < blocks; i++)
+        {
+            indexes[i] = reader.U16($"block type index {i}");
+            if (indexes[i] >= types)
+                throw Invalid(name, $"block {i} has an out-of-range type index {indexes[i]}");
+        }
 
         var sizes = new int[blocks];
-        for (int i = 0; i < blocks; i++) sizes[i] = (int)U32(data, ref at);
+        for (int i = 0; i < blocks; i++)
+            sizes[i] = reader.SizeU32($"block size {i}", MaxBlockSize);
 
-        int strings = (int)U32(data, ref at);
-        U32(data, ref at);
-        for (int i = 0; i < strings; i++) nif.Strings.Add(SizedString(data, ref at));
+        int strings = reader.CountU32("string count", MaxStringCount);
+        int declaredMaxStringLength = reader.SizeU32("maximum string length", MaxStringLength);
+        for (int i = 0; i < strings; i++)
+        {
+            string value = reader.SizedString($"string {i}", MaxStringLength);
+            if (declaredMaxStringLength != 0 && value.Length > declaredMaxStringLength)
+                throw Invalid(name, $"string {i} exceeds the declared maximum string length");
+            nif.Strings.Add(value);
+        }
 
-        int groups = (int)U32(data, ref at);
-        at += 4 * groups;
+        int groups = reader.CountU32("group count", MaxGroupCount);
+        reader.Skip(checked(groups * 4), "group table");
 
         for (int i = 0; i < blocks; i++)
         {
-            nif.BlockType.Add(index[i] < nif.BlockTypes.Count ? nif.BlockTypes[index[i]] : "");
-            nif.BlockStart.Add(at);
+            nif.BlockType.Add(nif.BlockTypes[indexes[i]]);
+            nif.BlockStart.Add(reader.Position);
             nif.BlockSize.Add(sizes[i]);
-            at += sizes[i];
+            reader.Skip(sizes[i], $"block {i}");
         }
 
-        // The footer is a root count and one reference per root. Anything else means the block sizes
-        // and the file disagree, which would put every block start after the first bad one wrong.
-        int trailing = data.Length - at;
-        if (trailing < 4)
-            throw new InvalidDataException(
-                $"{name}: the block table runs {(-trailing)} bytes past the end of the file");
+        if (reader.Remaining < 4)
+            throw Invalid(name, $"the block table runs {4 - reader.Remaining} bytes past the file footer");
 
         return nif;
     }
 
-    /// The name of a block that carries one, or empty. Every NiObjectNET starts with its name as an
-    /// index into the string table, which is how a bone reference becomes a bone name.
     public string NameOf(int block)
     {
-        if (block < 0 || block >= BlockCount) return "";
+        if (block < 0 || block >= BlockCount || BlockSize[block] < 4) return "";
         int at = BlockStart[block];
         int index = (int)U32(Data, ref at);
         return index >= 0 && index < Strings.Count ? Strings[index] : "";
@@ -115,18 +139,134 @@ public sealed class NifFile
                 yield return i;
     }
 
-    internal static uint U32(byte[] d, ref int at) { uint v = BitConverter.ToUInt32(d, at); at += 4; return v; }
-    internal static int I32(byte[] d, ref int at) { int v = BitConverter.ToInt32(d, at); at += 4; return v; }
-    internal static int U16(byte[] d, ref int at) { int v = BitConverter.ToUInt16(d, at); at += 2; return v; }
-    internal static ulong U64(byte[] d, ref int at) { ulong v = BitConverter.ToUInt64(d, at); at += 8; return v; }
-    internal static float F32(byte[] d, ref int at) { float v = BitConverter.ToSingle(d, at); at += 4; return v; }
-    internal static float Half(byte[] d, int at) => (float)BitConverter.ToHalf(d, at);
-
-    private static string SizedString(byte[] d, ref int at)
+    internal static uint U32(byte[] data, ref int at)
     {
-        int len = (int)U32(d, ref at);
-        string s = Encoding.ASCII.GetString(d, at, len);
-        at += len;
-        return s;
+        EnsureAvailable(data, at, 4);
+        uint value = BitConverter.ToUInt32(data, at);
+        at += 4;
+        return value;
+    }
+
+    internal static int I32(byte[] data, ref int at)
+    {
+        EnsureAvailable(data, at, 4);
+        int value = BitConverter.ToInt32(data, at);
+        at += 4;
+        return value;
+    }
+
+    internal static int U16(byte[] data, ref int at)
+    {
+        EnsureAvailable(data, at, 2);
+        int value = BitConverter.ToUInt16(data, at);
+        at += 2;
+        return value;
+    }
+
+    internal static ulong U64(byte[] data, ref int at)
+    {
+        EnsureAvailable(data, at, 8);
+        ulong value = BitConverter.ToUInt64(data, at);
+        at += 8;
+        return value;
+    }
+
+    internal static float F32(byte[] data, ref int at)
+    {
+        EnsureAvailable(data, at, 4);
+        float value = BitConverter.ToSingle(data, at);
+        at += 4;
+        return value;
+    }
+
+    internal static float Half(byte[] data, int at)
+    {
+        EnsureAvailable(data, at, 2);
+        return (float)BitConverter.ToHalf(data, at);
+    }
+
+    private static void EnsureAvailable(byte[] data, int at, int length)
+    {
+        if (at < 0 || length < 0 || at > data.Length - length)
+            throw new InvalidDataException($"NIF data is truncated at offset {at}");
+    }
+
+    private static InvalidDataException Invalid(string name, string message) =>
+        new($"{name}: {message}");
+
+    private sealed class CheckedReader
+    {
+        private readonly byte[] _data;
+
+        public CheckedReader(byte[] data, int position)
+        {
+            _data = data;
+            Position = position;
+        }
+
+        public int Position { get; private set; }
+        public int Remaining => _data.Length - Position;
+
+        public byte Byte(string field)
+        {
+            Require(1, field);
+            return _data[Position++];
+        }
+
+        public int U16(string field)
+        {
+            Require(2, field);
+            int value = BitConverter.ToUInt16(_data, Position);
+            Position += 2;
+            return value;
+        }
+
+        public uint U32(string field)
+        {
+            Require(4, field);
+            uint value = BitConverter.ToUInt32(_data, Position);
+            Position += 4;
+            return value;
+        }
+
+        public int CountU32(string field, int maximum)
+        {
+            uint value = U32(field);
+            if (value > maximum)
+                throw new InvalidDataException(
+                    $"{field} {value} exceeds the supported maximum of {maximum}");
+            return (int)value;
+        }
+
+        public int SizeU32(string field, int maximum)
+        {
+            uint value = U32(field);
+            if (value > maximum)
+                throw new InvalidDataException(
+                    $"{field} {value} exceeds the supported maximum of {maximum}");
+            return (int)value;
+        }
+
+        public string SizedString(string field, int maximumLength)
+        {
+            int length = SizeU32($"{field} length", maximumLength);
+            Require(length, field);
+            string value = Encoding.ASCII.GetString(_data, Position, length);
+            Position += length;
+            return value;
+        }
+
+        public void Skip(int length, string field)
+        {
+            Require(length, field);
+            Position += length;
+        }
+
+        private void Require(int length, string field)
+        {
+            if (length < 0 || Position < 0 || Position > _data.Length - length)
+                throw new InvalidDataException(
+                    $"{field} runs past the end of the file at offset {Position}");
+        }
     }
 }

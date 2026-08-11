@@ -11,12 +11,9 @@
     <Compile Include="Program.cs" />
     <Compile Include="Tests.cs" />
     <Compile Include="Png.cs" />
-    <Compile Include="../../src/Archive/*.cs" />
-    <Compile Include="../../src/Hkx/*.cs" />
-    <Compile Include="../../src/Nif/*.cs" />
+    <Compile Include="GameDefaults.cs" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="../../src/Hkx/HavokClassLayouts.json" />
-    <EmbeddedResource Include="../../src/Hkx/HavokClassTypes.json" Condition="Exists('../../src/Hkx/HavokClassTypes.json')" />
+    <ProjectReference Include="../../src/BehaviourGraph.Core.csproj" />
   </ItemGroup>
 </Project>

@@ -5,36 +5,36 @@ using System.Numerics;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Writing an animation's frames back into a file, by writing them out as they are.
-//
-// The reason this exists at all: nothing here can re-encode a compressed animation. Spline and
-// lossless are both compressors, and an editor that can read a clip and not write one is an editor
-// that cannot change a clip. Havok's answer to that is a format with no compression in it at all,
-// hkaInterleavedUncompressedAnimation, which is every frame of every track written out one after
-// another. Fallout 4 registers the class at startup, so the engine has the code to read one; it just
-// never ships a file that is one.
-//
-// The trade is honest and worth stating: the file gets much larger, because a second of a sixty bone
-// character is sixty times thirty transforms at forty eight bytes each. That is the cost of not
-// having an encoder, and it is what a re-encode would later have to beat rather than match.
-//
-// What this deliberately does not do is touch the animation that was there. Its bytes stay exactly
-// where they are and every pointer that named it is aimed at the new one instead, so the old clip is
-// left in the file unreferenced. That is the same shape as every other write here: nothing already
-// in the file moves.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public static class NativeAnimation
 {
     public const string InterleavedClass = "hkaInterleavedUncompressedAnimation";
 
-    /// The classes this can convert from, which is the pair the game ships and this can decode.
+
     public static readonly string[] Compressed =
     {
         "hkaSplineCompressedAnimation",
         "hkaLosslessCompressedAnimation",
     };
 
-    /// Where hkaAnimation keeps what every animation has, whatever it is compressed as. The
-    /// interleaved class inherits all of it and adds its two arrays after.
+
+
     private const int Type = 0x10;
     private const int Duration = 0x14;
     private const int TransformTracks = 0x18;
@@ -44,7 +44,7 @@ public static class NativeAnimation
     private const int Transforms = 0x38;
     private const int Floats = 0x48;
 
-    /// hkaAnimation::AnimationType, from the enum the game itself registers.
+
     private const int InterleavedType = 1;
 
     public sealed record Result(byte[] Bytes, int Frames, int Tracks, string From, long Grew)
@@ -53,11 +53,11 @@ public static class NativeAnimation
             $"{From} written out as {Frames} frame(s) of {Tracks} track(s), {Grew} bytes larger";
     }
 
-    /// Rewrites a file's animation as an uncompressed one and returns the new bytes.
-    ///
-    /// Refuses rather than approximating. An animation with float tracks is turned away because
-    /// nothing here decodes them, and writing a transform array without the matching float array
-    /// would leave the engine reading past the end of one it was told is as long as the other.
+
+
+
+
+
     public static Result Interleave(string hkxPath, HkxAnimationData decoded)
     {
         var image = PackfileImage.Read(hkxPath);
@@ -96,9 +96,9 @@ public static class NativeAnimation
                     $"A track decoded to a different number of frames than the {frames} this " +
                     "animation declares, so it was not written out.");
 
-        // The old animation's own values, read before anything is appended. Duration is the one that
-        // matters most: the engine divides it by the frame count to find where a frame sits in time,
-        // so a wrong one retimes the whole clip without changing a single transform.
+
+
+
         float duration = BitConverter.ToSingle(data.Data, at + Duration);
         var annotations = objects.ArrayAt(at + AnnotationTracks);
         int self = image.Sections.IndexOf(data);
@@ -107,8 +107,8 @@ public static class NativeAnimation
 
         var added = NativeAppend.Object(image, InterleavedClass);
 
-        // Read again: the append rewrote the tables and added an object, and everything below is
-        // written through this view.
+
+
         objects = new PackfileObjects(image);
         int made = added.Offset;
 
@@ -117,15 +117,15 @@ public static class NativeAnimation
         BitConverter.GetBytes(tracks).CopyTo(data.Data, made + TransformTracks);
         BitConverter.GetBytes(0).CopyTo(data.Data, made + FloatTracks);
 
-        // The annotations get a run of their own rather than sharing the one they came from.
-        //
-        // Sharing was tried first and it is what the format allows: every array in every vanilla file
-        // carries the flag that says the memory is not Havok's to free, so two arrays naming one run
-        // is two readers and no owner. It fails anyway, and not at runtime. The pointer tables are in
-        // the order the writer walked the objects, and a shared run's inner pointers can only sit in
-        // one place in that order. hkxpack reads the second object's names as empty and then loses
-        // its place entirely, dropping the transform array that follows. Copying gives the new object
-        // sources of its own, which the reorder can then put where its own walk implies.
+
+
+
+
+
+
+
+
+
         if (annotations is { Count: > 0 })
         {
             int copied = CopyStructRun(image, data, annotations.At, annotations.Count, "hkaAnnotationTrack");
@@ -135,7 +135,7 @@ public static class NativeAnimation
 
         if (hasMotion) data.SetGlobal(made + ExtractedMotion, motion.Section, motion.Destination);
 
-        // The frames themselves, frame major, which is Havok's own indexing rather than a guess.
+
         data.AlignData(NativeAppend.Alignment);
         var run = new byte[frames * tracks * HkxBinaryReader.QsTransformSize];
 
@@ -155,15 +155,15 @@ public static class NativeAnimation
         BitConverter.GetBytes(frames * tracks).CopyTo(data.Data, made + Transforms + 8);
         BitConverter.GetBytes(0x80000000u | (uint)(frames * tracks)).CopyTo(data.Data, made + Transforms + 12);
 
-        // No float tracks, so the array beside it stays empty, which is a count of zero and no
-        // pointer at all rather than a pointer at nothing.
+
+
         BitConverter.GetBytes(0).CopyTo(data.Data, made + Floats + 8);
         BitConverter.GetBytes(0x80000000u).CopyTo(data.Data, made + Floats + 12);
 
-        // Everything that named the old animation now names the new one. Done by retargeting every
-        // pointer rather than by finding the binding, because a file names its animation from more
-        // than one place: the binding holds it and the container lists it, and leaving either behind
-        // would load the clip that was replaced.
+
+
+
+
         var globals = data.Globals().ToList();
         int repointed = 0;
         for (int i = 0; i < globals.Count; i++)
@@ -187,7 +187,50 @@ public static class NativeAnimation
 
     public const string SplineClass = "hkaSplineCompressedAnimation";
 
-    /// Where hkaSplineCompressedAnimation keeps what the interleaved class does not have.
+    public const string ReferenceFrameClass = "hkaDefaultAnimatedReferenceFrame";
+
+
+
+    private const int MotionDuration = 0x40;
+    private const int MotionSamples = 0x48;
+    private const int MotionSize = 96;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    public sealed record Timeline(float Duration, float FromTime, float ToTime, float Scale,
+                                  RootMotion.Motion? Motion)
+    {
+        public static Timeline Of(AnimationEdit.Trimmed trimmed) =>
+            new(trimmed.Animation.Duration, trimmed.FromTime, trimmed.ToTime, 1f, trimmed.Motion);
+
+        public static Timeline Of(AnimationEdit.Retimed retimed, float was) =>
+            new(retimed.Animation.Duration, 0f, was, retimed.Scale, retimed.Motion);
+
+        public override string ToString() =>
+            $"{FromTime:F3}s to {ToTime:F3}s at {Scale:F3} times, as a {Duration:F3}s clip, " +
+            (Motion is { Any: true } ? $"{Motion.Samples.Count} motion sample(s)" : "no new motion");
+    }
+
+
     private const int NumFrames = 0x38;
     private const int NumBlocks = 0x3C;
     private const int MaxFramesPerBlock = 0x40;
@@ -202,17 +245,22 @@ public static class NativeAnimation
     private const int SplineData = 0x98;
     private const int Endian = 0xA8;
 
-    /// Rewrites a file's animation as a spline compressed one and returns the new bytes.
-    ///
-    /// This is what `Interleave` was standing in for. Writing every frame out uncompressed is correct
-    /// and about six times the size, and it was the only option while nothing could produce a spline
-    /// blob. Now that something can, an edited clip can be saved as the kind of animation it was.
-    ///
-    /// Everything the file already carries is kept: its duration, its annotations, its extracted
-    /// motion, and every pointer that named the old animation is aimed at the new one. The old bytes
-    /// stay where they are and go unreferenced, which is the same shape as every other write here.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     public static Result Recompress(string hkxPath, HkxAnimationData decoded,
-        SplineEncoder.Options? options = null, bool dropReplaced = true)
+        SplineEncoder.Options? options = null, bool dropReplaced = true, Timeline? cut = null)
     {
         var image = PackfileImage.Read(hkxPath);
         long was = new System.IO.FileInfo(hkxPath).Length;
@@ -243,19 +291,31 @@ public static class NativeAnimation
                 $"The animation says it has {tracks} track(s) and decoded to {decoded.Tracks.Count}, " +
                 "so it was not written out.");
 
-        // Encoded before anything is appended, so a clip the encoder turns away leaves the file
-        // untouched rather than half rewritten.
+
+
         var blob = SplineEncoder.Encode(decoded, options);
 
-        float duration = BitConverter.ToSingle(data.Data, at + Duration);
+        float duration = cut?.Duration ?? BitConverter.ToSingle(data.Data, at + Duration);
         var annotations = objects.ArrayAt(at + AnnotationTracks);
         int self = image.Sections.IndexOf(data);
         var motion = data.Globals().FirstOrDefault(g => g.Source == at + ExtractedMotion);
         bool hasMotion = data.Globals().Any(g => g.Source == at + ExtractedMotion);
 
-        // Deletion is addressed by the id a file's objects are numbered with, not by the position in
-        // the instance list, and the two differ by where the numbering starts.
+
+
         int replacedId = objects.IndexOf(source) + NativeGraphModel.FirstId;
+
+
+
+
+
+        bool replacingMotion = cut?.Motion is not null && hasMotion &&
+                               motion.Section == self &&
+                               objects.Instances.Any(i => i.Offset == motion.Destination);
+        int replacedMotionId = replacingMotion
+            ? objects.IndexOf(objects.Instances.First(i => i.Offset == motion.Destination)) +
+              NativeGraphModel.FirstId
+            : -1;
 
         var added = NativeAppend.Object(image, SplineClass);
         objects = new PackfileObjects(image);
@@ -280,15 +340,26 @@ public static class NativeAnimation
             int copied = CopyStructRun(image, data, annotations.At, annotations.Count, "hkaAnnotationTrack");
             data.SetLocal(made + AnnotationTracks, copied);
             Array.Copy(data.Data, at + AnnotationTracks + 8, data.Data, made + AnnotationTracks + 8, 8);
+
+
+
+
+            if (cut != null && copied >= 0)
+                RebaseAnnotations(data, copied, annotations.Count, cut);
         }
 
-        if (hasMotion) data.SetGlobal(made + ExtractedMotion, motion.Section, motion.Destination);
+        if (replacingMotion)
+        {
+            int frame = WriteReferenceFrame(image, data, motion.Destination, cut!.Motion!);
+            data.SetGlobal(made + ExtractedMotion, self, frame);
+        }
+        else if (hasMotion) data.SetGlobal(made + ExtractedMotion, motion.Section, motion.Destination);
 
         WriteUintArray(data, made + BlockOffsets, blob.BlockOffsets);
         WriteUintArray(data, made + FloatBlockOffsets, blob.FloatBlockOffsets);
 
-        // Both of these are empty in every shipped animation sampled, so they are written as empty
-        // rather than left as whatever the appended object came with.
+
+
         WriteUintArray(data, made + TransformOffsets, Array.Empty<int>());
         WriteUintArray(data, made + FloatOffsets, Array.Empty<int>());
 
@@ -314,21 +385,22 @@ public static class NativeAnimation
 
         data.SetGlobals(globals);
 
-        // The animation that was replaced is now unreferenced, so it comes out.
-        //
-        // Every other write here leaves what it displaced in the file, because nothing could take an
-        // object out without moving everything after it. That is no longer true, and leaving it would
-        // cost more than it saves: the whole point of writing a spline blob rather than an
-        // uncompressed one is size, and a file carrying both animations is larger than one carrying
-        // the uncompressed version alone.
-        //
-        // Deleting renumbers every id above the hole, which is the hazard #19 is about. It is done
-        // here anyway and offered as a switch, because an animation file is reached by pointer from
-        // the behaviour that plays it rather than by id, and because the alternative is a saved clip
-        // that is bigger than the one it replaced. Anyone who would rather not take it can pass false.
+
+
+
+
+
+
+
+
+
+
+
+
         if (dropReplaced)
         {
-            try { NativeRemove.Delete(image, new[] { replacedId }); }
+            var going = replacingMotion ? new[] { replacedId, replacedMotionId } : new[] { replacedId };
+            try { NativeRemove.Delete(image, going); }
             catch (InvalidOperationException e)
             {
                 throw new InvalidOperationException(
@@ -342,7 +414,142 @@ public static class NativeAnimation
         return new Result(bytes, frames, tracks, source.ClassName, bytes.Length - was);
     }
 
-    /// Writes an hkArray of uint32 as its own run, or as an empty array with no pointer at all.
+
+
+
+
+
+
+
+
+
+
+
+
+    private static void RebaseAnnotations(PackfileSection data, int run, int count, Timeline cut)
+    {
+        int trackStride = HavokClassTypes.Shipped["hkaAnnotationTrack"]?.Size ?? 24;
+        int noteStride = HavokClassTypes.Shipped["hkaAnnotationTrackAnnotation"]?.Size ?? 16;
+
+
+
+
+        var locals = data.Locals().ToList();
+        var where = new Dictionary<int, int>();
+        for (int i = 0; i < locals.Count; i++) where[locals[i].Source] = i;
+
+        int? Destination(int source) => where.TryGetValue(source, out int i) ? locals[i].Destination : null;
+
+        void Point(int source, int destination)
+        {
+            if (where.TryGetValue(source, out int i)) locals[i] = (source, destination);
+            else { where[source] = locals.Count; locals.Add((source, destination)); }
+        }
+
+        void Clear(int source)
+        {
+            if (!where.TryGetValue(source, out int i)) return;
+
+
+            locals[i] = (-1, -1);
+            where.Remove(source);
+        }
+
+        for (int t = 0; t < count; t++)
+        {
+            int field = run + t * trackStride + 8;
+            int held = BitConverter.ToInt32(data.Data, field + 8);
+            if (held <= 0 || Destination(field) is not int notes) continue;
+
+            var kept = new List<(float Time, int? Text)>();
+            for (int n = 0; n < held; n++)
+            {
+                float when = BitConverter.ToSingle(data.Data, notes + n * noteStride);
+                if (when < cut.FromTime - Slack || when > cut.ToTime + Slack) continue;
+                kept.Add((Math.Clamp((when - cut.FromTime) * cut.Scale, 0, cut.Duration),
+                          Destination(notes + n * noteStride + 8)));
+            }
+
+            for (int n = 0; n < held; n++)
+            {
+                int slot = notes + n * noteStride;
+                if (n < kept.Count)
+                {
+                    BitConverter.GetBytes(kept[n].Time).CopyTo(data.Data, slot);
+                    if (kept[n].Text is int text) Point(slot + 8, text); else Clear(slot + 8);
+                    continue;
+                }
+
+                Array.Clear(data.Data, slot, noteStride);
+                Clear(slot + 8);
+            }
+
+            BitConverter.GetBytes(kept.Count).CopyTo(data.Data, field + 8);
+            BitConverter.GetBytes(0x80000000u | (uint)kept.Count).CopyTo(data.Data, field + 12);
+            if (kept.Count == 0) Clear(field);
+        }
+
+        data.SetLocals(locals.Where(l => l.Source >= 0));
+    }
+
+
+
+
+    private const float Slack = 1f / 60f;
+
+
+
+
+
+
+
+
+
+
+
+
+    private static int WriteReferenceFrame(PackfileImage image, PackfileSection data, int from,
+                                           RootMotion.Motion motion)
+    {
+        var added = NativeAppend.Object(image, ReferenceFrameClass);
+        int made = added.Offset;
+
+        Array.Copy(data.Data, from + 16, data.Data, made + 16, MotionSize - 16);
+
+
+
+
+        BitConverter.GetBytes(0).CopyTo(data.Data, made + MotionSamples + 8);
+        BitConverter.GetBytes(0x80000000u).CopyTo(data.Data, made + MotionSamples + 12);
+
+        BitConverter.GetBytes(motion.Duration).CopyTo(data.Data, made + MotionDuration);
+
+        if (motion.Samples.Count > 0)
+        {
+            data.AlignData(NativeAppend.Alignment);
+            var run = new byte[motion.Samples.Count * 16];
+
+            for (int i = 0; i < motion.Samples.Count; i++)
+            {
+                var sample = motion.Samples[i];
+                Write(run, i * 16, sample.Position);
+
+
+
+                BitConverter.GetBytes(sample.TurnRadians).CopyTo(run, i * 16 + 12);
+            }
+
+            int landed = data.AppendData(run);
+            data.SetLocal(made + MotionSamples, landed);
+            BitConverter.GetBytes(motion.Samples.Count).CopyTo(data.Data, made + MotionSamples + 8);
+            BitConverter.GetBytes(0x80000000u | (uint)motion.Samples.Count)
+                        .CopyTo(data.Data, made + MotionSamples + 12);
+        }
+
+        return made;
+    }
+
+
     private static void WriteUintArray(PackfileSection data, int field, int[] values)
     {
         if (values.Length == 0)
@@ -362,27 +569,38 @@ public static class NativeAnimation
         BitConverter.GetBytes(0x80000000u | (uint)values.Length).CopyTo(data.Data, field + 12);
     }
 
-    /// Copies a run of structs to the end of the section, with everything hanging off it.
-    ///
-    /// The bytes alone are not the run. A struct can hold a name, and a name is a pointer with a
-    /// fixup naming it; it can hold an array, and that is another run somewhere else with a fixup of
-    /// its own. Copying the bytes and stopping would give a second run whose pointers are zero, which
-    /// reads as a set of annotations with no text in them.
-    ///
-    /// The text at the far end is shared rather than copied, because a destination has no position in
-    /// the pointer tables and therefore nothing to get out of order. It is only the sources that have
-    /// to belong to one object.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static int CopyStructRun(PackfileImage image, PackfileSection data, int from, int count,
-                                     string elementClass, int depth = 0)
+                                     string elementClass, int depth = 0,
+                                     Dictionary<int, int>? copiedText = null)
     {
         var types = HavokClassTypes.Shipped;
 
-        // Nothing in the corpus nests anywhere near this deep; the guard is against a class that
-        // somehow holds itself rather than against real data.
+
+
         if (depth > 6 || count <= 0 || !types.Knows(elementClass)) return -1;
 
         int stride = types[elementClass]?.Size ?? 0;
         if (stride <= 0) return -1;
+
+
+
+        copiedText ??= new Dictionary<int, int>();
 
         data.AlignData(NativeAppend.Alignment);
         int to = data.AppendData(new byte[count * stride]);
@@ -404,7 +622,8 @@ public static class NativeAnimation
 
                 if (member.VType is "TYPE_STRINGPTR" or "TYPE_CSTRING")
                 {
-                    if (locals.TryGetValue(old, out int text)) data.SetLocal(made, text);
+                    if (locals.TryGetValue(old, out int text))
+                        data.SetLocal(made, CopyText(data, text, copiedText));
                     continue;
                 }
 
@@ -421,13 +640,14 @@ public static class NativeAnimation
 
                 if (member.VSub == "TYPE_STRUCT" && member.CType != null)
                 {
-                    int copied = CopyStructRun(image, data, inner, held, member.CType, depth + 1);
+                    int copied = CopyStructRun(image, data, inner, held, member.CType, depth + 1,
+                                               copiedText);
                     if (copied >= 0) data.SetLocal(made, copied);
                     continue;
                 }
 
-                // A run of plain values, or of pointers at text. Either way the bytes come across and
-                // then anything pointing out of them is repeated, element by element.
+
+
                 int width = member.VSub is "TYPE_STRINGPTR" or "TYPE_CSTRING" or "TYPE_POINTER" ? 8 : 0;
                 if (width == 0) { data.SetLocal(made, inner); continue; }
 
@@ -438,11 +658,31 @@ public static class NativeAnimation
 
                 for (int e = 0; e < held; e++)
                     if (locals.TryGetValue(inner + e * width, out int text))
-                        data.SetLocal(landed + e * width, text);
+                        data.SetLocal(landed + e * width, CopyText(data, text, copiedText));
             }
         }
 
         return to;
+    }
+
+
+
+
+
+
+    private static int CopyText(PackfileSection data, int at, Dictionary<int, int> already)
+    {
+        if (already.TryGetValue(at, out int made)) return made;
+
+        int end = at;
+        while (end < data.Data.Length && data.Data[end] != 0) end++;
+
+        var text = new byte[end - at + 1];
+        Array.Copy(data.Data, at, text, 0, text.Length - 1);
+
+        made = data.AppendData(text);
+        already[at] = made;
+        return made;
     }
 
     private static void Write(byte[] into, int at, Vector3 value)
@@ -450,9 +690,9 @@ public static class NativeAnimation
         BitConverter.GetBytes(value.X).CopyTo(into, at);
         BitConverter.GetBytes(value.Y).CopyTo(into, at + 4);
         BitConverter.GetBytes(value.Z).CopyTo(into, at + 8);
-        // The fourth lane is left at zero. It carries nothing: across all 119 vanilla skeletons and
-        // 3,769 reference pose transforms it takes 2,838 different values on the translation, which
-        // is leftover memory rather than a number anybody wrote.
+
+
+
     }
 
     private static void Write(byte[] into, int at, Quaternion value)
@@ -463,9 +703,9 @@ public static class NativeAnimation
         BitConverter.GetBytes(value.W).CopyTo(into, at + 12);
     }
 
-    /// Havok asserts that a stored rotation is within half a unit of normalised and then normalises
-    /// it anyway, so a decoder's rounding is expected and a wildly wrong one is not. Doing it here
-    /// means the file holds what the engine would have made of it.
+
+
+
     private static Quaternion Normalized(Quaternion q)
     {
         float length = MathF.Sqrt(q.X * q.X + q.Y * q.Y + q.Z * q.Z + q.W * q.W);

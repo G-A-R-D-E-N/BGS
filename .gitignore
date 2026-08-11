@@ -7,11 +7,12 @@ obj/
 /out/
 /BehaviourGraphStudio-*/
 /*.zip
+/downloads/*.zip
 
 # Local tooling config
-.claude/
 
 # Test results
 [Tt]est[Rr]esults/
 .avalonia-build-tasks/
 /BehaviourGraphStudio/
+/.worktrees/

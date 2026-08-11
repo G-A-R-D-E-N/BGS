@@ -4,25 +4,25 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// A line saying what one element of an array of structs is, so the panel can collapse the element
-// behind it.
-//
-// The panel used to show an array of structs as one flat run of boxes, because that is how the file
-// writes it: five transitions of sixteen fields each is eighty boxes, with `enterEventId` and
-// `exitEventId` appearing ten times between them. Reading a state machine off that is not practical,
-// and people were reading the unpacked XML instead, where hkxpack writes a comment naming the event
-// and the target above each element.
-//
-// This is that comment, built from the file rather than copied from hkxpack's. A transition is the
-// case worth doing: it is the one whose meaning is entirely in two numbers that resolve to names
-// held somewhere else in the file.
-//
-// Anything else gets nothing, and the panel shows the element's index alone. That is deliberate. An
-// element with no summary reads as an element with no summary; an invented one reads as a fact.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public static class ElementSummary
 {
-    /// A line per element of an array of structs the object holds, keyed the way `ClassFields`
-    /// groups them: `transitions[0]`, `transitions[1]`. Missing keys are the ordinary case.
+
+
     public static Dictionary<string, string> For(BehaviourGraphModel model, string objectId)
     {
         var lines = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -51,18 +51,18 @@ public static class ElementSummary
         return lines;
     }
 
-    /// `164  dynIdleLoop  ->  100 EAP_dynIdleLoop_A`, which is the two numbers that matter and the
-    /// names they resolve to. A number whose name is not in the file is shown as the number alone
-    /// rather than as a blank, because an event id with no declared name is a real thing to find and
-    /// hiding it would be the wrong kind of tidy.
+
+
+
+
     private static string Line(StateEditor.TransitionRow row,
                                IReadOnlyList<string> events, IReadOnlyDictionary<int, string> states,
                                string flags)
     {
-        // A wildcard says which kind it is, because the two are different rules. Local fires from
-        // any state of the machine that declares it; global fires from anywhere at all, including
-        // while a machine nested deeper is the one running. Across the vanilla data 2,034 are local
-        // and 594 global, so neither is the rare case that could be left unsaid.
+
+
+
+
         string from = row.Wildcard
             ? Kind(flags) switch
             {
@@ -79,8 +79,8 @@ public static class ElementSummary
             ? $"{row.ToStateId} {name}"
             : $"state {row.ToStateId}";
 
-        // A nested target is a state inside the state being entered, and this tool does not follow
-        // one. Saying so beats printing the outer target as if it were the whole answer.
+
+
         if (row.ToNestedStateId != 0) to += $", then nested {row.ToNestedStateId}";
 
         return (from.Length > 0 ? from + "  " : "") + on + "  ->  " + to;
@@ -88,12 +88,12 @@ public static class ElementSummary
 
     public enum Wildcard { None, Local, Global }
 
-    /// Which kind of wildcard a flags value declares.
-    ///
-    /// The value has to be decoded a bit at a time rather than read as text. hkxpack prints a name
-    /// when the value is exactly one declared flag and the bare number when it is a combination, and
-    /// a wildcard almost always carries more than one bit, so matching on the string finds nothing
-    /// on the cases that matter.
+
+
+
+
+
+
     public static Wildcard Kind(string flags)
     {
         var declared = HavokClassTypes.Shipped.Enum("hkbStateMachineTransitionInfo", "TransitionFlags");
@@ -116,9 +116,9 @@ public static class ElementSummary
         return Wildcard.None;
     }
 
-    /// The state machine an array of transitions belongs to, by finding the one that points at it.
-    /// A transition array carries no way back to its machine, and the numbers in it mean nothing
-    /// without one: a `toStateId` is an index into that machine's states and no other's.
+
+
+
     public static string MachineOwning(BehaviourGraphModel model, string arrayId)
     {
         foreach (var obj in model.Objects)

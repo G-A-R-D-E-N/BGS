@@ -4,36 +4,36 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Where a Havok packfile's data section puts things, and how to put them there again from nothing.
-//
-// `PackfileImage.Rebuild` already writes a file back byte for byte, but it keeps the data section
-// exactly as it read it and recomputes only the offsets around it. That is enough to prove the
-// container arithmetic and not enough to remove an object, because removing one moves every object
-// after it and nothing knew where they would land.
-//
-// This knows. The order is the walk that already reproduces both fixup tables: objects in the order
-// the virtual table lists them, and inside an object its members in offset order, stepping into an
-// array or an inline struct at the point the member holding it is reached. Everything an object
-// points at is written straight after that object and before the next one.
-//
-// The positions follow four rules, every one of them measured over the 531 vanilla behaviours
-// rather than reasoned about, and three earlier readings of them were wrong:
-//
-//   An object occupies the size the game registers for its class, not the end of its last member.
-//   BSRootTwistModifier is 144 registered and 112 to the end of its members.
-//   Objects and array runs start on a sixteen byte boundary.
-//   A string that is an element of an array of strings packs against the one before it on a two
-//   byte boundary.
-//   A string that is a field of its own starts on a sixteen byte boundary, unless it directly
-//   follows an array run, in which case it starts at that run's last byte.
-//
-// Scores for the wrong readings, on Dogmeat's 2,493 items: strings aligned to two everywhere, 2,019.
-// Sixteen everywhere, 2,064. Every record treated as its own block, 2,296. The rules above place all
-// 138,420 objects and runs in all 531 files exactly where the file already has them.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public static class PackfileLayout
 {
-    /// One thing the writer puts down. `Kind` decides what it is aligned to, and is why an array's
-    /// string elements are held apart from a string that is a field in its own right.
+
+
     public sealed record Item(string Kind, int At, int Length)
     {
         public bool IsString => Kind is "string" or "element string";
@@ -41,12 +41,12 @@ public static class PackfileLayout
         public override string ToString() => $"{Kind} at 0x{At:x} for {Length}";
     }
 
-    /// Every object and every run it points at, in the order they were written, at the offsets the
-    /// file already has them at.
-    ///
-    /// Returns null when the walk cannot account for the file: a class the table does not describe,
-    /// or a section that is not there. A partial answer would be worse than none, because the
-    /// caller's next move is to lay the file out again and anything missed would be dropped.
+
+
+
+
+
+
     public static List<Item>? Of(PackfileImage image, HavokClassTypes? types = null)
     {
         types ??= HavokClassTypes.Shipped;
@@ -68,8 +68,8 @@ public static class PackfileLayout
 
         void Walk(int offset, string className, int depth)
         {
-            // A class that somehow held itself would otherwise walk forever. Nothing in the corpus
-            // nests more than three deep.
+
+
             if (depth > 8) return;
 
             foreach (var member in types.Members(className).OrderBy(m => m.Offset))
@@ -138,8 +138,8 @@ public static class PackfileLayout
         return items;
     }
 
-    /// Where each of those items would go if the section were written from nothing, in the same
-    /// order. Given a file's own items, this returns that file's own offsets, which is the check.
+
+
     public static List<int> Where(IReadOnlyList<Item> items)
     {
         var at = new List<int>(items.Count);
@@ -157,18 +157,18 @@ public static class PackfileLayout
         return at;
     }
 
-    /// Lays the data section out again from nothing and moves every pointer to match.
-    ///
-    /// This is the thing editing in place cannot do. In place writing only works while nothing
-    /// changes size, so removing an object, or growing one past the space in front of the next, is
-    /// refused today. Written this way, an object's position is worked out rather than kept, and
-    /// what moves is arithmetic rather than damage.
-    ///
-    /// Returns false and touches nothing when the walk cannot account for the file. The caller is
-    /// then no worse off than before, which is the point of not writing half of it.
-    ///
-    /// The check on this is `symrm relayout`: lay a vanilla file out again and it has to come back
-    /// as the file it already was, because the offsets are all derived and none are carried over.
+
+
+
+
+
+
+
+
+
+
+
+
     public static bool Rewrite(PackfileImage image, HavokClassTypes? types = null)
     {
         var data = image.Section("__data__");
@@ -182,17 +182,17 @@ public static class PackfileLayout
         return RewriteAs(image, items);
     }
 
-    /// The same, over a list of items the caller has already worked out.
-    ///
-    /// This is how an object is deleted. The walk has to happen before the object leaves the file,
-    /// because afterwards there is nothing left to say which runs were its, so the caller takes the
-    /// items, drops the ones belonging to what is going, and hands back the rest. Anything not in
-    /// the list is not written, which is the whole point and also the danger: a caller that drops an
-    /// item still pointed at leaves a fixup aiming at nothing.
-    ///
-    /// Every entry in all three tables must have a source inside a kept item. A caller that has
-    /// dropped items has to drop their fixups first, and this returns false rather than writing a
-    /// file with a pointer into a hole.
+
+
+
+
+
+
+
+
+
+
+
     public static bool RewriteAs(PackfileImage image, IReadOnlyList<Item> items)
     {
         var data = image.Section("__data__");
@@ -200,9 +200,9 @@ public static class PackfileLayout
 
         var at = Where(items);
 
-        // Where each old offset ends up. Kept as the items sorted by where they were, so an offset
-        // part way into one, which is what every pointer source is, can be found by the item it
-        // falls inside and carried across at the same distance from its start.
+
+
+
         var byOldOffset = items.Select((item, k) => (item, To: at[k]))
                                .OrderBy(x => x.item.At).ToList();
 
@@ -230,9 +230,9 @@ public static class PackfileLayout
             Array.Copy(data.Data, items[k].At, written, at[k], items[k].Length);
         }
 
-        // Every table is rewritten rather than patched, and the order is left exactly as it was.
-        // Position in these tables is not free: moving entries about makes hkxpack misread the file
-        // even though our own reader, which looks them up by source, is unaffected.
+
+
+
         var locals = new List<(int Source, int Destination)>();
         foreach (var (source, destination) in data.Locals())
         {
@@ -245,8 +245,8 @@ public static class PackfileLayout
         {
             if (Moved(source) is not int from) return false;
 
-            // A global's destination is an offset in whichever section it names. When that is this
-            // one, which is every object to object pointer in these files, it has moved too.
+
+
             int to = section == image.Sections.IndexOf(data)
                      ? Moved(destination) ?? -1
                      : destination;
@@ -269,15 +269,15 @@ public static class PackfileLayout
         return true;
     }
 
-    /// The items split into one run per object: the object itself and everything it points at.
-    ///
-    /// The walk writes an object and then what it points at before moving on, so a new run starts at
-    /// every object and ends at the next one. The order matches the object list, so the nth run
-    /// belongs to the nth object in the file.
-    ///
-    /// This is what deleting needs. An object's bytes are not the object alone: a state machine that
-    /// goes takes its transition array and its name with it, and those are not next to each other in
-    /// any list the file keeps.
+
+
+
+
+
+
+
+
+
     public static List<List<Item>> ByObject(IReadOnlyList<Item> items)
     {
         var runs = new List<List<Item>>();
@@ -291,18 +291,18 @@ public static class PackfileLayout
         return runs;
     }
 
-    /// Whether every pointer in the section names a byte the items cover.
-    ///
-    /// The looser question, and the right one once a file has been edited. `Accounted` asks whether
-    /// the items are the whole section, which stops being true the moment anything is appended: a
-    /// longer string, a resized array or an orphaned node all leave the run they replaced sitting
-    /// there with nothing pointing at it. Laying the file out again drops those, which is a tidy up
-    /// rather than a loss, and refusing to do it because of them would mean an edited file could
-    /// never be compacted.
-    ///
-    /// What must not happen is dropping something still pointed at, and that is what this asks. Both
-    /// ends of every local, the source of every global and its destination when it stays in this
-    /// section, and the source of every virtual, all have to land inside an item.
+
+
+
+
+
+
+
+
+
+
+
+
     public static bool Reaches(IReadOnlyList<Item> items, PackfileSection data, int section)
     {
         var spans = items.Select(i => (i.At, End: i.At + i.Length)).OrderBy(x => x.At).ToList();
@@ -332,13 +332,13 @@ public static class PackfileLayout
         return true;
     }
 
-    /// Whether the items add up to the whole section, give or take the padding between them.
-    ///
-    /// This is the guard that stops a half read file being quietly shortened. A stretch the walk
-    /// never reaches looks exactly like padding if all you check is whether the items you did find
-    /// are where you predicted, and five skeletons passed that check while losing 288 bytes of
-    /// reference pose each: the stride table had TYPE_QSTRANSFORM at sixteen rather than forty
-    /// eight, so two thirds of every pose array was outside every item.
+
+
+
+
+
+
+
     public static bool Accounted(IReadOnlyList<Item> items, int length)
     {
         int covered = 0;
@@ -351,20 +351,20 @@ public static class PackfileLayout
         return length - covered < NativeAppend.Alignment;
     }
 
-    /// What an item's start is rounded up to, given what was written before it.
+
     private static int Boundary(string kind, string previous) => kind switch
     {
         "element string" => 2,
 
-        // A string field written straight after an array run starts at that run's last byte. This is
-        // the one rule that depends on what came before, and leaving it out misplaces 429 of
-        // Dogmeat's 1,208 strings.
+
+
+
         "string" when previous.EndsWith("array", StringComparison.Ordinal) => 1,
 
         _ => NativeAppend.Alignment,
     };
 
-    /// A null terminated string's length in the section, terminator included.
+
     private static int Zeroed(byte[] data, int at)
     {
         int end = Array.IndexOf(data, (byte)0, at);

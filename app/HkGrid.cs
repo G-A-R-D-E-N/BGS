@@ -7,10 +7,10 @@ using Avalonia.Media;
 
 namespace BehaviourStudio.App;
 
-// A column grid built on TreeView, used for the object tree, the symbol table and the project
-// chain. Rows are built as containers directly rather than through templates and bindings, because
-// every row here is written once and then read, and a binding layer would only add somewhere for
-// the two to disagree.
+
+
+
+
 public sealed class HkGrid : Border
 {
     private readonly TreeView _tree = new() { Background = Brushes.Transparent };
@@ -60,9 +60,13 @@ public sealed class HkGrid : Border
 
     public object? SelectedTag => (_tree.SelectedItem as TreeViewItem)?.Tag;
 
-    /// Every row in the grid, nested ones included. A window over a long list can then be checked
-    /// for holding what it claims to rather than taken on trust.
+
+
     public int RowCount { get; private set; }
+
+
+
+    public bool HasSelection => _tree.SelectedItem != null;
 
     public void Clear()
     {
@@ -80,13 +84,22 @@ public sealed class HkGrid : Border
         return row;
     }
 
-    /// Selects the first row carrying this tag, expanding whatever it sits under. Lets a check drive
-    /// selection the way a click does rather than calling the handler behind it.
+
+
     public bool SelectByTag(object tag)
     {
         foreach (var item in _tree.Items)
             if (Select(item as TreeViewItem, tag)) return true;
         return false;
+    }
+
+
+
+    public bool SelectFirst()
+    {
+        if (_tree.Items.Count == 0) return false;
+        _tree.SelectedItem = _tree.Items[0] as TreeViewItem;
+        return true;
     }
 
     private bool Select(TreeViewItem? item, object tag)
@@ -156,8 +169,8 @@ public sealed class HkRow
             _cells[i] = text;
         }
 
-        // TreeView already indents by depth. The first column's own left padding is left at zero so
-        // the indent it applies is the only one, otherwise deep trees drift off the right edge.
+
+
         Item = new TreeViewItem { Header = layout, IsExpanded = depth < 2, Padding = new Thickness(0, 1) };
     }
 

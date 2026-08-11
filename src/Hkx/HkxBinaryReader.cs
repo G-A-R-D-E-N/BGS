@@ -7,31 +7,31 @@ using System.Text;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-/// <summary>
-/// Native C# reader for Fallout 4 Havok 2014 binary packfiles (.hkx).
-/// Matches layout documented in anim_fo4.py and verified against real FO4 files.
-///
-/// hk_2014.1.0-r1 packfile layout (64-bit pointers):
-///   0x00-0x3F  File header (64 bytes)
-///   0x40-0x4F  Padding (16 bytes)
-///   0x50+      3 section headers (0x40 bytes each): __classnames__, __types__, __data__
-///
-/// hkaSplineCompressedAnimation struct offsets (from object start):
-///   +0x10  type (4)
-///   +0x14  duration (float)
-///   +0x18  numberOfTransformTracks (int32)
-///   +0x1C  numberOfFloatTracks (int32)
-///   +0x20  extractedMotion (ptr8)
-///   +0x28  annotationTracks (hkArray - 16 bytes)
-///   +0x38  numFrames (int32)
-///   +0x3C  numBlocks (int32)
-///   +0x40  maxFramesPerBlock (int32)
-///   +0x44  maskAndQuantizationSize (int32)
-///   +0x48  blockDuration (float)
-///   +0x50  frameDuration (float)
-///   +0x58  blockOffsets (hkArray&lt;u32&gt;)
-///   +0x98  data (hkArray&lt;u8&gt;)
-/// </summary>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public class HkxBinaryReader
 {
     private static readonly byte[] HkxMagic = new byte[] { 0x57, 0xE0, 0xE0, 0x57 };
@@ -108,9 +108,9 @@ public class HkxBinaryReader
         catch { return false; }
     }
 
-    // Refuses rather than returning an empty animation. ReadSkeleton deliberately does not go
-    // through this, because a file can hold a skeleton this reader understands next to an animation
-    // class it does not.
+
+
+
     public HkxAnimationData ReadAnimation(string filepath)
     {
         byte[] data = File.ReadAllBytes(filepath);
@@ -125,9 +125,9 @@ public class HkxBinaryReader
         return parsed;
     }
 
-    // For a caller that wants to show the problem rather than be stopped by it. Returns false when
-    // the file holds an animation class this reader cannot decode, with AnimationClass set to say
-    // which, so the message can name it without picking an exception apart.
+
+
+
     public bool TryReadAnimation(string filepath, out HkxAnimationData data)
     {
         data = ParseHkx(File.ReadAllBytes(filepath));
@@ -149,14 +149,14 @@ public class HkxBinaryReader
     private struct SectionInfo
     {
         public int DataStart;
-        public int LocalFixupAbs;   // abs file offset
+        public int LocalFixupAbs;
         public int GlobalFixupAbs;
         public int VirtualFixupAbs;
         public int ExportsAbs;
         public int End;
     }
 
-    private HkxAnimationData ParseHkx(byte[] data)
+    internal HkxAnimationData ParseHkx(byte[] data)
     {
         if (data.Length < 64)
             throw new InvalidDataException("HKX file too small.");
@@ -168,7 +168,7 @@ public class HkxBinaryReader
         if (version != 11)
             throw new InvalidDataException($"Unsupported HKX packfile version {version} (expected 11 for FO4).");
 
-        // Section headers start at 0x50 (after 64-byte file header + 16-byte padding)
+
         const int SecHdrBase = 0x50;
         const int SecHdrStride = 0x40;
 
@@ -203,15 +203,15 @@ public class HkxBinaryReader
         int cnStart = cnSec.DataStart;
         int dataAbs = dataSec.DataStart;
 
-        // ── Build local fixup map (src_rel -> dst_rel within __data__) ──
+
         var fixups = ParseLocalFixups(data, dataSec);
 
-        // ── Build virtual fixup map (obj_rel -> class_name) ──
+
         var objectClasses = ParseVirtualFixups(data, dataSec, cnStart);
 
         var result = new HkxAnimationData();
 
-        // ── Parse hkaSkeleton if present (select the skeleton with the most bones to avoid loading the ragdoll skeleton) ──
+
         var skelOffsets = new List<int>();
         int posSkel = dataSec.VirtualFixupAbs;
         int endSkel = dataSec.ExportsAbs;
@@ -247,15 +247,15 @@ public class HkxBinaryReader
             result.BoneNames = new List<string>(bestSkel.BoneNames);
         }
 
-        // Havok ships several animation classes and Bethesda uses two of them. Record which one is
-        // here before decoding, so a class this reader cannot decode is distinguishable from an
-        // animation that really is empty. 857 of the 13990 vanilla animations are
-        // hkaLosslessCompressedAnimation and used to come back as silently empty.
-        //
-        // Which one is the file's animation is asked of the binding rather than of the class list. A
-        // file can hold more than one: writing a clip out uncompressed leaves the compressed one it
-        // came from sitting in the file unreferenced, and picking by class name would decode the one
-        // that was replaced and report the file unchanged.
+
+
+
+
+
+
+
+
+
         var byOffset = ParseObjectOffsets(data, dataSec, cnStart);
         int animRel = -1;
 
@@ -276,7 +276,7 @@ public class HkxBinaryReader
                   c => c.StartsWith("hka", StringComparison.Ordinal) &&
                        c.EndsWith("Animation", StringComparison.Ordinal)) ?? "";
 
-        // ── Parse the animation, whichever class the binding led to ──
+
         switch (result.AnimationClass)
         {
             case "hkaSplineCompressedAnimation":
@@ -293,7 +293,7 @@ public class HkxBinaryReader
                 break;
         }
 
-        // ── Parse hkaAnimationBinding if present ──
+
         if (objectClasses.TryGetValue("hkaAnimationBinding", out int bindRel))
         {
             ParseAnimationBinding(data, dataAbs, bindRel, fixups, result);
@@ -302,7 +302,7 @@ public class HkxBinaryReader
         return result;
     }
 
-    /// <summary>Parse local fixup table: maps src_rel -> dst_rel within __data__.</summary>
+
     private static Dictionary<int, int> ParseLocalFixups(byte[] data, SectionInfo sec)
     {
         var map = new Dictionary<int, int>();
@@ -319,10 +319,10 @@ public class HkxBinaryReader
         return map;
     }
 
-    /// <summary>
-    /// Which object sits at each offset. The same table as the one below, read the other way round,
-    /// so a pointer that has been resolved to an offset can be turned into a class name.
-    /// </summary>
+
+
+
+
     private static Dictionary<int, string> ParseObjectOffsets(byte[] data, SectionInfo sec, int cnStart)
     {
         var map = new Dictionary<int, string>();
@@ -339,11 +339,11 @@ public class HkxBinaryReader
         return map;
     }
 
-    /// <summary>
-    /// Parse the global fixup table: maps src_rel -> dst_rel, for pointers that stay in this
-    /// section. A pointer from one object to another is a global fixup, not a local one, so the
-    /// local table alone finds every string and array and no object reference at all.
-    /// </summary>
+
+
+
+
+
     private static Dictionary<int, int> ParseGlobalFixups(byte[] data, SectionInfo sec)
     {
         var map = new Dictionary<int, int>();
@@ -360,10 +360,10 @@ public class HkxBinaryReader
         return map;
     }
 
-    /// <summary>Parse virtual fixup table: maps obj_rel -> class_name.</summary>
+
     private static Dictionary<string, int> ParseVirtualFixups(byte[] data, SectionInfo sec, int cnStart)
     {
-        // Returns LAST class name to object offset (first wins for duplicates)
+
         var map = new Dictionary<string, int>(StringComparer.Ordinal);
         int pos = sec.VirtualFixupAbs;
         int end = sec.ExportsAbs;
@@ -386,23 +386,23 @@ public class HkxBinaryReader
 
     private static HkxSkeleton? ParseSkeleton(byte[] data, int dataAbs, int skelRel, Dictionary<int, int> fixups)
     {
-        // hkaSkeleton layout (64-bit P=8, hk_2014):
-        //   +0x00  vtable (8)
-        //   +0x08  memSizeAndFlags (8)
-        //   +0x10  name (ptr8 -> string)
-        //   +0x18  parentIndices (hkArray<int16>)  -> ptr(8) + count(4) + cap(4) = 16
-        //   +0x28  bones (hkArray<hkaBone*>)
-        //   +0x38  referencePose (hkArray<hkQsTransform>)
+
+
+
+
+
+
+
         int a = dataAbs + skelRel;
         if (a + 0x50 > data.Length) return null;
 
         var skel = new HkxSkeleton();
 
-        // Name
+
         if (fixups.TryGetValue(skelRel + 0x10, out int nameRel))
             skel.Name = ReadNullTermString(data, dataAbs + nameRel, 256);
 
-        // Parent indices (hkArray<int16>)
+
         int parCount = SafeReadI32(data, a + 0x20);
         if (fixups.TryGetValue(skelRel + 0x18, out int parDataRel))
         {
@@ -411,8 +411,8 @@ public class HkxBinaryReader
                 skel.ParentIndices.Add(BitConverter.ToInt16(data, parAbs + i * 2));
         }
 
-        // Bones array (hkArray<hkaBone>)
-        // hkaBone: ptr(8) to name string + lockTranslation(4) + pad(4) = 0x10 bytes
+
+
         int boneCount = SafeReadI32(data, a + 0x30);
         if (fixups.TryGetValue(skelRel + 0x28, out int bonesDataRel))
         {
@@ -427,7 +427,7 @@ public class HkxBinaryReader
             }
         }
 
-        // Reference pose (hkArray<hkQsTransform>) — 48 bytes per entry
+
         int poseCount = SafeReadI32(data, a + 0x40);
         if (fixups.TryGetValue(skelRel + 0x38, out int poseDataRel))
         {
@@ -472,7 +472,7 @@ public class HkxBinaryReader
         if (anim.NumFrames == 0 && anim.FrameDuration > 0 && anim.Duration > 0)
             anim.NumFrames = (int)Math.Round(anim.Duration / anim.FrameDuration) + 1;
 
-        // blockOffsets: hkArray<u32> at anim+0x58
+
         int blockOffsetsCount = SafeReadI32(data, a + 0x60);
         List<int> blockOffsets = new();
         if (fixups.TryGetValue(animRel + 0x58, out int boRel))
@@ -482,16 +482,16 @@ public class HkxBinaryReader
                 blockOffsets.Add(SafeReadI32(data, boAbs + i * 4));
         }
 
-        // data blob: hkArray<u8> at anim+0x98
+
         int blobCount = SafeReadI32(data, a + 0xA0);
         int blobAbs = -1;
         if (fixups.TryGetValue(animRel + 0x98, out int blobRel))
             blobAbs = dataAbs + blobRel;
 
-        // Parse annotation track names (bone names) at anim+0x28
+
         ParseAnnotationTracks(data, dataAbs, animRel + 0x28, fixups, anim);
 
-        // Decompress spline data
+
         if (blobAbs > 0 && blockOffsets.Count > 0 && anim.NumTracks > 0 && anim.NumFrames > 0)
         {
             DecompressSpline(data, blobAbs, blobCount, anim.NumTracks, anim.NumFrames,
@@ -499,19 +499,19 @@ public class HkxBinaryReader
         }
     }
 
-    // hkaInterleavedUncompressedAnimation, which is every frame of every track written out as it is,
-    // with nothing to decompress.
-    //
-    // No vanilla animation is one, so this is here to read what we write rather than to read the
-    // game's own files. It is still the reading that proves the writing: a file written this way and
-    // decoded back has to give the frames it went in with.
-    //
-    //   +0x10 type   +0x14 duration   +0x18 transform tracks   +0x1C float tracks
-    //   +0x28 annotationTracks   +0x38 transforms (hkArray<hkQsTransform>, 48 bytes each)
-    //
-    // The transforms are frame major, transforms[frame * tracks + track], which is Havok's own
-    // indexing in hkaInterleavedUncompressedAnimation rather than a guess: it stores the array that
-    // way in its constructor and reads it back that way in sampleTracks.
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static void ParseInterleavedAnimation(byte[] data, int dataAbs, int animRel,
         Dictionary<int, int> fixups, HkxAnimationData anim)
     {
@@ -538,8 +538,8 @@ public class HkxBinaryReader
 
         for (int t = 0; t < anim.NumTracks; t++)
         {
-            // Every channel is written out, so every channel is animated. There is no mask to say
-            // otherwise, which is the whole point of the format.
+
+
             var track = new HkxTrackData { RotationAnimated = true };
             for (int c = 0; c < 3; c++)
             {
@@ -561,8 +561,8 @@ public class HkxBinaryReader
         }
     }
 
-    /// A translation, a rotation and a scale, each four floats wide, of which only three carry the
-    /// value. Confirmed against every reference pose in every vanilla skeleton.
+
+
     public const int QsTransformSize = 48;
 
     private static void ParseAnnotationTracks(byte[] data, int dataAbs, int arrRel,
@@ -572,7 +572,7 @@ public class HkxBinaryReader
         if (count <= 0) return;
         if (!fixups.TryGetValue(arrRel, out int contentRel)) return;
 
-        const int AnnotTrackStride = 0x18; // ptr(8) + hkArray(16)
+        const int AnnotTrackStride = 0x18;
         for (int i = 0; i < count; i++)
         {
             int trackRel = contentRel + i * AnnotTrackStride;
@@ -581,7 +581,7 @@ public class HkxBinaryReader
                 name = ReadNullTermString(data, dataAbs + nameRel, 256);
             anim.BoneNames.Add(name);
 
-            // Annotation events at trackRel+0x08
+
             int evtCount = SafeReadI32(data, dataAbs + trackRel + 0x10);
             if (evtCount > 0 && fixups.TryGetValue(trackRel + 0x08, out int evtRel))
             {
@@ -599,21 +599,21 @@ public class HkxBinaryReader
         }
     }
 
-    // hkaLosslessCompressedAnimation. Every track stores each component as either one value that
-    // holds for the whole animation or one value per frame, and a packed word says which and where.
-    //
-    // Member offsets are the class's own, from hkxpack's classxml descriptor for the class; the
-    // hkaAnimation members below 56 were read out of a real file and matched against it. The packing
-    // and the indexing are not inferred from the data: they are what
-    // hkaLosslessCompressedAnimation::getType, ::getOffset and ::getFrameTransform do in the
-    // 1.10.163 binary. See issue 14.
+
+
+
+
+
+
+
+
     private const int LosslessDuration = 20, LosslessTransformTracks = 24, LosslessNumFrames = 216;
 
-    /// Every animation class inherits hkaAnimation, so the annotation tracks sit at the same place in
-    /// all of them. The lossless decoder used to skip them, which is why a lossless clip came back
-    /// with no track names and no annotations at all while a spline one beside it came back with
-    /// both. It showed up only when the same clip was written out uncompressed and read again: the
-    /// two readings of one animation disagreed about its names, and only one of them was right.
+
+
+
+
+
     private const int AnimationAnnotationTracks = 0x28;
     private const int LosslessDynamicTranslations = 56, LosslessStaticTranslations = 72, LosslessTranslationWords = 88;
     private const int LosslessDynamicRotations = 104, LosslessStaticRotations = 120, LosslessRotationWords = 136;
@@ -652,9 +652,9 @@ public class HkxBinaryReader
 
         int frames = anim.NumFrames;
 
-        // The dynamic arrays are frame major: every channel's value for frame 0, then frame 1, and
-        // so on. The stride is how many channels there are, which the engine works out the same way,
-        // by dividing the array length by the frame count.
+
+
+
         int strideT = dynamicT.Count / frames;
         int strideR = dynamicR.Count / frames;
         int strideS = dynamicS.Count / frames;
@@ -691,26 +691,26 @@ public class HkxBinaryReader
         }
     }
 
-    // A word carries one 16 bit field per vector component: (offset << 2) | type, offset 14 bits.
-    // A uint16 word is the same shape with a single field, which is why rotation reads component 0.
-    //
-    // This is the engine's own layout, read out of hkaLosslessCompressedAnimation::getType and
-    // ::getOffset in the 1.10.163 unpacked binary rather than guessed:
-    //
-    //   getType<u64>   word = words[track];  return (word >> (component * 16)) & 3
-    //   getOffset<u64> word = words[track];  return ((word >> (component * 16)) >> 2) & 0x3FFF
-    //
-    // Public so a check can exercise the packing directly. Nothing in the game ships a lossless
-    // animation with a scale, so this is the only way that branch gets tested at all.
+
+
+
+
+
+
+
+
+
+
+
     public static int LosslessField(ulong word, int component) => (int)((word >> (component * 16)) & 0xFFFF);
 
     public static int LosslessOffset(ulong word, int component) => (LosslessField(word, component) >> 2) & 0x3FFF;
 
     public static int LosslessType(ulong word, int component) => LosslessField(word, component) & 3;
 
-    /// One component of one frame, by the same rules ::getFrameTransform uses. The fallback is what
-    /// the engine leaves in place when a word says "clear": it prefills the transform before touching
-    /// any of it, with translation 0, rotation identity, and scale 1,1,1,1.
+
+
+
     public static float LosslessValue(ulong word, int component, int frame, int stride,
                                       List<float> dynamic, List<float> constant, float fallback)
     {
@@ -746,7 +746,7 @@ public class HkxBinaryReader
         }
     }
 
-    // hkArray is a pointer resolved through the local fixups, then a count eight bytes in.
+
     private static int ArrayAt(byte[] data, int dataAbs, int memberRel,
                                Dictionary<int, int> fixups, out int count)
     {
@@ -796,8 +796,8 @@ public class HkxBinaryReader
     private static void ParseAnimationBinding(byte[] data, int dataAbs, int bindRel,
         Dictionary<int, int> fixups, HkxAnimationData anim)
     {
-        // +0x10  originalSkeletonName (ptr)
-        // +0x20  transformTrackToBoneIndices (hkArray<int16>)
+
+
         if (fixups.TryGetValue(bindRel + 0x10, out int nameRel))
             anim.OriginalSkeletonName = ReadNullTermString(data, dataAbs + nameRel, 256);
 
@@ -828,7 +828,7 @@ public class HkxBinaryReader
             int framesInBlock = (blockIdx == numBlocks - 1) ? (numFrames - firstFrame) : maxFramesPerBlock;
             if (framesInBlock <= 0) continue;
 
-            // Guard: need 4*numTracks bytes for masks
+
             if (!CanRead(data, blockStart, 4 * numTracks)) continue;
 
             var masks = new TrackMask[numTracks];
@@ -845,10 +845,10 @@ public class HkxBinaryReader
                 var mask  = masks[ti];
                 var track = anim.Tracks[ti];
 
-                // Read off the mask rather than off the decoded values, and OR across blocks: a
-                // channel driven in one block and clear in another is still a channel the animation
-                // drives. Taken here rather than inside the branches below because those can bail out
-                // through a goto on a short read.
+
+
+
+
                 for (int axis = 0; axis < 3; axis++)
                 {
                     if (mask.GetPosType(axis) != "identity") track.TranslationAnimated[axis] = true;
@@ -856,7 +856,7 @@ public class HkxBinaryReader
                 }
                 if (mask.GetRotType() != "identity") track.RotationAnimated = true;
 
-                // ── POSITION ──
+
                 var posFrames = new List<Vector3>(framesInBlock);
                 if (mask.HasAnyPosSpline())
                 {
@@ -950,7 +950,7 @@ public class HkxBinaryReader
                 off = Align(off, 4);
                 track.Translations.AddRange(posFrames);
 
-                // ── ROTATION ──
+
                 var rotFrames = new List<Quaternion>(framesInBlock);
                 string rotType = mask.GetRotType();
                 int qfmt   = mask.RotQuant;
@@ -1001,7 +1001,7 @@ public class HkxBinaryReader
                 off = Align(off, 4);
                 track.Rotations.AddRange(rotFrames);
 
-                // ── SCALE ──
+
                 var scaleFrames = new List<Vector3>(framesInBlock);
                 if (mask.HasAnyScaleSpline())
                 {
@@ -1192,9 +1192,9 @@ public class HkxBinaryReader
 
     #region B-Spline Evaluation
 
-    // These were three private copies of the curve until an encoder needed the same curve to fit
-    // against. A fit measured with a second implementation is a fit against a curve no reader draws,
-    // so the one implementation lives in SplineFormat and both directions call it.
+
+
+
     private static int FindKnotSpan(int degree, float t, int numCp, float[] knots) =>
         SplineFormat.FindKnotSpan(degree, t, numCp, knots);
 

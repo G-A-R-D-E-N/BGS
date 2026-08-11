@@ -10,9 +10,22 @@ using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.App;
 
-// The node canvas, drawn directly rather than built from a toolkit's graph widget. Everything it
-// knows about the file comes from the same GraphAuthor and GraphLinks the headless tools use, so
-// what it draws and what an edit does cannot drift apart.
+public enum GraphLayoutMode
+{
+    Freeform,
+    StructuredFlow,
+}
+
+public enum StructuredFlowDetail
+{
+    Far,
+    Medium,
+    Close,
+}
+
+
+
+
 public class GraphView : Control
 {
     private const double NodeWidth = 250;
@@ -21,14 +34,17 @@ public class GraphView : Control
     private const double ColumnGap = 320;
     private const double RowGap = 26;
     private const double PortRadius = 5;
-    // A weapon behaviour lays out just under 4000 nodes. Drawing 400 of them meant the search could
-    // not find a node that is in the file, because it was never on the canvas to find.
-    private const int MaxNodes = 4000;
+
+
+    public const int MaxNodes = 4000;
 
     private sealed class Node
     {
         public string Id = "";
         public string Class = "";
+
+
+        public string OwnerId = "";
         public string Name = "";
         public string Animation = "";
         public Rect Bounds;
@@ -36,8 +52,9 @@ public class GraphView : Control
         public Color Accent;
         public bool Empty;
         public bool Start;
-        /// Events that enter this state from any state of its machine, which are shown on the node
-        /// rather than drawn as lines. See `WildcardRows`.
+        public bool Active;
+
+
         public List<string> Wildcards = new();
         public GraphValidator.Level? Problem;
         public Point InPort => new(Bounds.X - PortRadius, Bounds.Y + HeaderHeight / 2);
@@ -48,43 +65,121 @@ public class GraphView : Control
     private readonly Dictionary<string, Node> _nodes = new();
     private readonly List<string> _order = new();
     private readonly Dictionary<string, Point> _placed = new();
+    private readonly Dictionary<string, Rect> _structuredContainers = new(StringComparer.Ordinal);
+    private StructuredFlowLayout.Plan? _structuredPlan;
+    private GraphLayoutMode _layoutMode;
+
+
+
+
+
+
+
+    private readonly HashSet<string> _collapsed = new(StringComparer.Ordinal);
+
+
+
+    private int _placedCount;
+    private bool _truncated;
+
+
+
+
+
+
+
+
+
+
+    private readonly Dictionary<string, List<string>> _sharedBy = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _nameOf = new(StringComparer.Ordinal);
+
+    public IReadOnlyList<string> SharedBy(string id) =>
+        _sharedBy.TryGetValue(id, out var by) ? by : Array.Empty<string>();
+
+    public string OwnerOf(string id) => _own.Owner.TryGetValue(id, out string? owner) ? owner : "";
+
+
+    public string NameOf(string id) => _nameOf.GetValueOrDefault(id, "#" + id);
+
     private BehaviourGraphModel? _model;
 
-    /// Which event moves which state to which state. Held apart from the nodes because it is not
-    /// drawn from them: a route joins two states that hold no reference to each other, and the
-    /// ownership wires the rest of the canvas draws cannot show one.
-    private StateRoutes _routes = new();
 
-    /// Off by default. A shipped behaviour draws a few thousand ownership wires already, and routes
-    /// laid over all of them at once is a worse picture rather than a fuller one.
+
+
+    private GraphOwnership.Tree _own = GraphOwnership.Of(Array.Empty<(string, string)>());
+
+
+
+
+    private StateRoutes _routes = new();
+    private GraphTrace.GraphTraceMap? _trace;
+
+
+
     public bool ShowRoutes { get; set; } = true;
 
-    /// A route's label is only worth the space when it can be read. Below this the routes still draw
-    /// and only the words are dropped, so the shape survives zooming out and the clutter does not.
+
+
     private const double LabelZoom = 0.55;
 
-    /// How many wildcard events a state lists on itself before the rest become a count. A state
-    /// enterable on twenty different events is real, and a node twenty rows taller than its
-    /// neighbours stops being a node and becomes a wall.
+
+
+
     private const int WildcardRows = 4;
 
     private double _zoom = 0.9;
     private Point _pan = new(40, 40);
     private Point _lastPointer;
+    private bool _dragChanged;
     private bool _panning;
     private Node? _dragNode;
+    private Point? _marqueeFrom;
+    private Rect _marquee;
     private (Node Node, int Slot)? _wiring;
     private Point _wireTo;
 
-    public string SelectedId { get; private set; } = "";
+    private readonly List<string> _selected = new();
+    private string _focusTreeRootId = "";
+    private readonly HashSet<string> _traceIds = new(StringComparer.Ordinal);
+
+
+    public IReadOnlyList<string> SelectedIds => _selected;
+
+    public GraphLayoutMode LayoutMode => _layoutMode;
+    public StructuredFlowDetail DetailLevel => CurrentDetail();
+    public IReadOnlyCollection<string> StructuredMachineIds => _structuredPlan == null
+        ? Array.Empty<string>()
+        : _structuredPlan.Machines.Where(m => _nodes.ContainsKey(m.Id)).Select(m => m.Id).ToList();
+    public IReadOnlyCollection<string> VisibleStructuredMachineIds => StructuredMachineIds
+        .Where(IsDrawnAtCurrentDetail).ToList();
+
+    public Rect? StructuredContainerBounds(string machineId) =>
+        _structuredContainers.TryGetValue(machineId, out var bounds) ? bounds : null;
+
+
+
+
+
+
+
+    public string SelectedId => _selected.Count > 0 ? _selected[0] : "";
+
+
+    private void Select(string id)
+    {
+        _selected.Clear();
+        if (id.Length > 0) _selected.Add(id);
+    }
 
     public Action<string>? Selected;
     public Action<string>? Activated;
     public Action<string, string, string>? LinkRequested;
     public Action<string, string, string>? UnlinkRequested;
     public Action<string>? DeleteRequested;
-    /// The node and slot the drag came from, empty for a right click, and the point on the canvas
-    /// the new node should land on.
+    public event Action? LayoutChanged;
+
+
     public Action<string, string, Point>? AddRequested;
 
     public GraphView()
@@ -93,8 +188,8 @@ public class GraphView : Control
         ClipToBounds = true;
     }
 
-    /// What the last check found, kept across rebuilds so an edit does not silently clear the marks
-    /// while the list beside the canvas still shows them.
+
+
     private Dictionary<string, GraphValidator.Level> _problems = new();
 
     public void Mark(Dictionary<string, GraphValidator.Level> problems)
@@ -105,9 +200,34 @@ public class GraphView : Control
         InvalidateVisual();
     }
 
-    /// One state at a time. A shipped graph draws a few hundred wires over each other and reading a
-    /// single state's routes off that is the thing the canvas is worst at, so everything not touching
-    /// the chosen node is dimmed rather than hidden: the shape of the rest stays visible as context.
+
+
+
+
+
+
+    private readonly HashSet<string> _active = new(StringComparer.Ordinal);
+
+    public IReadOnlyCollection<string> ActiveIds => _active;
+
+    public void ShowActive(IEnumerable<string> stateIds)
+    {
+        _active.Clear();
+        foreach (string id in stateIds) _active.Add(id);
+        foreach (var node in _nodes.Values) node.Active = _active.Contains(node.Id);
+        InvalidateVisual();
+    }
+
+    public void ClearActive()
+    {
+        _active.Clear();
+        foreach (var node in _nodes.Values) node.Active = false;
+        InvalidateVisual();
+    }
+
+
+
+
     private string _highlight = "";
     private readonly HashSet<string> _related = new();
 
@@ -141,15 +261,15 @@ public class GraphView : Control
                     else if (target == _highlight) _related.Add(node.Id);
                 }
 
-        // A state's routes are the reason to pick it out in the first place. Ownership alone answers
-        // what a state contains; it says nothing about what enters it or what it leads to, which is
-        // the question somebody clicking a state is asking.
+
+
+
         foreach (string id in _routes.Touching(_highlight)) _related.Add(id);
     }
 
-    /// The filter box, applied to the canvas rather than only to the tree. Non-matching nodes dim
-    /// instead of disappearing, because a node's place in the graph is most of what it tells you and
-    /// a filtered canvas with holes in it says nothing about where the match sits.
+
+
+
     private string _needle = "";
     private readonly HashSet<string> _matched = new();
 
@@ -175,76 +295,102 @@ public class GraphView : Control
                 _matched.Add(node.Id);
     }
 
-    /// Read only, for the window checks.
+
     public bool IsDimmed(string id) => Dimmed(id);
 
     private bool Dimmed(string id) =>
-        (_highlight.Length > 0 && !_related.Contains(id))
+        IsTraceDimmed(id)
+        || (_highlight.Length > 0 && !_related.Contains(id))
         || (_needle.Length > 0 && !_matched.Contains(id));
 
-    // A wire touching a match stays lit, because where a match connects is the question being asked.
+    public bool IsTraceDimmed(string id) =>
+        _traceIds.Count > 0 && !_traceIds.Contains(id);
+
+
     private bool Lit(string fromId, string toId)
     {
+        if (_traceIds.Count > 0 && (!_traceIds.Contains(fromId) || !_traceIds.Contains(toId))) return false;
         if (_highlight.Length > 0 && fromId != _highlight && toId != _highlight) return false;
         if (_needle.Length > 0 && !_matched.Contains(fromId) && !_matched.Contains(toId)) return false;
         return true;
     }
 
-    /// Select a node and bring it under the viewport centre, which is the whole point of clicking a
-    /// row in the problem list: the node is usually off screen when it is the one that is wrong.
+
+
     public bool FocusOn(string id)
     {
         if (!_nodes.TryGetValue(id, out var node)) return false;
 
-        SelectedId = id;
+        Select(id);
         var centre = node.Bounds.Center;
         _pan = new Point(Bounds.Width / 2 - centre.X * _zoom, Bounds.Height / 2 - centre.Y * _zoom);
         InvalidateVisual();
         return true;
     }
 
-    /// Everything the canvas remembers is keyed by object id, and the next file numbers its objects
-    /// from one as well, so carrying any of it across a load applies it to whichever object happens
-    /// to hold that number now.
+
+
+
     public void Reset()
     {
-        // The canvas is only refilled when a file has a text form to draw from. Without this, opening
-        // something that cannot be unpacked left the previous file's graph on screen.
+
+
         _model = null;
         _routes = new StateRoutes();
+        _trace = null;
         _nodes.Clear();
         _order.Clear();
         _placed.Clear();
+        _structuredContainers.Clear();
+        _structuredPlan = null;
+        _collapsed.Clear();
+        _placedCount = 0;
+        _sharedBy.Clear();
+        _nameOf.Clear();
         _problems.Clear();
         _highlight = "";
         _related.Clear();
         _needle = "";
         _matched.Clear();
-        SelectedId = "";
+        _active.Clear();
+        _selected.Clear();
+        _focusTreeRootId = "";
+        _traceIds.Clear();
         _zoom = 0.9;
         _pan = new Point(40, 40);
     }
+
+    public void SetLayoutMode(GraphLayoutMode mode)
+    {
+        if (_layoutMode == mode) return;
+        _layoutMode = mode;
+        if (_model != null) Show(_model);
+        FrameAll();
+    }
+
+    public void SetZoomForTest(double zoom) => SetZoom(zoom);
 
     public void Show(BehaviourGraphModel model)
     {
         _model = model;
         _routes = StateRoutes.Of(model);
+        _trace = GraphTrace.Of(model, _routes);
         _nodes.Clear();
         _order.Clear();
 
-        // A state left holding nothing is drawn like any other until it is marked. Deleting its
-        // generator clears the link rather than refusing, so this is a shape an edit can produce and
-        // the game never ships.
+
+
+
         var empty = GraphValidator.StatesWithNoGenerator(model);
 
-        // A running offset per column rather than a row number times this node's own height. Nodes
-        // are as tall as their slot count, so multiplying by one node's height overlapped every node
-        // shorter than it with the one below.
-        // The events that reach a state from any state of its machine, gathered per target. A
-        // wildcard is not drawn as a line: there is one per state it could fire from, which is a
-        // picture nobody can read, and the useful fact is not the path but that this state is
-        // enterable from anywhere and on what. That is a property of the state, so it is written on
-        // the state.
+
+
+
+
+
+
+
+
         var wildcardsInto = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         foreach (var route in _routes.Routes.Where(r => r.Wildcard))
         {
@@ -253,91 +399,471 @@ public class GraphView : Control
             if (!events.Contains(route.Event)) events.Add(route.Event);
         }
 
-        var nextY = new Dictionary<int, double>();
-        foreach (var (obj, column) in GraphAuthor.Layout(model, MaxNodes))
+
+
+
+        var placed = GraphAuthor.Layout(model, MaxNodes, out bool truncated);
+        _truncated = truncated;
+        _own = GraphOwnership.Of(placed);
+        _structuredPlan = StructuredFlowLayout.Of(placed);
+        _structuredContainers.Clear();
+
+        _placedCount = placed.Count;
+
+        HashSet<string>? focusedIds = null;
+        if (_focusTreeRootId.Length > 0)
         {
+            var focused = model.Get(_focusTreeRootId);
+            if (focused == null || focused.Class != "hkbStateMachine" || !_own.Owner.ContainsKey(_focusTreeRootId))
+            {
+                _focusTreeRootId = "";
+                _traceIds.Clear();
+            }
+            else
+            {
+                focusedIds = _own.Under(_focusTreeRootId).Append(_focusTreeRootId)
+                    .ToHashSet(StringComparer.Ordinal);
+            }
+        }
+
+        _sharedBy.Clear();
+        _nameOf.Clear();
+
+        foreach (var (obj, _, _) in placed)
+        {
+            string name = obj.Str("name");
+            _nameOf[obj.Id] = name.Length > 0 ? name : "#" + obj.Id;
+        }
+
+
+
+
+
+
+        foreach (var (obj, _, _) in placed)
+            foreach (string target in GraphAuthor.PointsAt(model, obj))
+            {
+                if (target == obj.Id) continue;
+                if (!_own.Owner.TryGetValue(target, out string? owner) || owner == obj.Id) continue;
+
+                if (!_sharedBy.TryGetValue(target, out var by))
+                    _sharedBy[target] = by = new List<string>();
+                if (!by.Contains(obj.Id)) by.Add(obj.Id);
+            }
+
+
+
+        var showing = placed
+            .Where(p => !_own.Hidden(_collapsed, p.Node.Id)
+                        && (focusedIds == null || focusedIds.Contains(p.Node.Id)))
+            .ToList();
+
+        var measured = new List<GraphLayout.Item>();
+        var slotsOf = new Dictionary<string, List<GraphLinks.Slot>>(StringComparer.Ordinal);
+        var wildcardsOf = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var heightOf = new Dictionary<string, double>(StringComparer.Ordinal);
+
+        foreach (var (obj, column, ownerId) in showing)
+        {
+
+
+
             var slots = GraphLinks.OutSlots(model, obj);
             var wildcards = wildcardsInto.GetValueOrDefault(obj.Id) ?? new List<string>();
             double height = HeaderHeight + Math.Max(1, slots.Count) * RowHeight
                             + Math.Min(wildcards.Count, WildcardRows) * RowHeight + 8;
 
-            // A node the user has dragged stays where they put it across rebuilds.
-            nextY.TryGetValue(column, out double y);
-            Point at;
-            if (_placed.TryGetValue(obj.Id, out var kept))
-            {
-                at = kept;
-            }
-            else
-            {
-                at = new Point(column * ColumnGap, y);
-                nextY[column] = y + height + RowGap;
-            }
+            slotsOf[obj.Id] = slots;
+            wildcardsOf[obj.Id] = wildcards;
+            heightOf[obj.Id] = height;
+            measured.Add(new GraphLayout.Item(obj.Id, column, ownerId, height));
+        }
+
+
+
+        var pinned = new Dictionary<string, double>(StringComparer.Ordinal);
+        foreach (var (id, at) in _placed)
+            if (heightOf.ContainsKey(id)) pinned[id] = at.Y;
+
+        var freeformY = GraphLayout.Place(measured, pinned, RowGap);
+        var structuredAt = _layoutMode == GraphLayoutMode.StructuredFlow
+            ? StructuredPositions(showing, heightOf)
+            : new Dictionary<string, Point>(StringComparer.Ordinal);
+
+        foreach (var (obj, column, ownerId) in showing)
+        {
+            Point at = _layoutMode == GraphLayoutMode.StructuredFlow
+                ? structuredAt[obj.Id]
+                : _placed.TryGetValue(obj.Id, out var kept)
+                    ? kept
+                    : new Point(column * ColumnGap, freeformY[obj.Id]);
 
             _order.Add(obj.Id);
             _nodes[obj.Id] = new Node
             {
                 Id = obj.Id,
                 Class = obj.Class,
+                OwnerId = ownerId,
                 Name = obj.Str("name"),
                 Animation = obj.Str("animationName"),
-                Slots = slots,
+                Slots = slotsOf[obj.Id],
                 Accent = Ux.ForClass(obj.Class),
                 Empty = empty.Contains(obj.Id),
                 Start = _routes.StartStates.Contains(obj.Id),
-                Wildcards = wildcards,
+                Active = _active.Contains(obj.Id),
+                Wildcards = wildcardsOf[obj.Id],
                 Problem = _problems.TryGetValue(obj.Id, out var level) ? level : null,
-                Bounds = new Rect(at.X, at.Y, NodeWidth, height),
+                Bounds = new Rect(at.X, at.Y, NodeWidth, heightOf[obj.Id]),
             };
         }
 
-        if (SelectedId.Length > 0 && !_nodes.ContainsKey(SelectedId)) SelectedId = "";
+        if (_layoutMode == GraphLayoutMode.StructuredFlow) BuildStructuredContainers();
+
+
+
+        _selected.RemoveAll(id => !_nodes.ContainsKey(id));
         if (_highlight.Length > 0 && !_nodes.ContainsKey(_highlight)) _highlight = "";
+        if (_traceIds.Count > 0)
+        {
+            _traceIds.RemoveWhere(id => !_nodes.ContainsKey(id));
+            if (_traceIds.Count == 0) _traceIds.Clear();
+        }
         RebuildRelated();
         RebuildMatched();
         InvalidateVisual();
     }
 
+    private Dictionary<string, Point> StructuredPositions(
+        IReadOnlyList<(HkObject Node, int Column, string OwnerId)> showing,
+        IReadOnlyDictionary<string, double> heightOf)
+    {
+        var showingIds = showing.Select(p => p.Node.Id).ToHashSet(StringComparer.Ordinal);
+        var at = new Dictionary<string, Point>(StringComparer.Ordinal);
+        if (_structuredPlan == null) return at;
+
+
+
+
+        var structural = showing.Where(p => IsDrawnAtCurrentDetail(p.Node.Id)
+                                            && _structuredPlan.Item(p.Node.Id).Kind
+            is StructuredFlowLayout.NodeKind.Root
+            or StructuredFlowLayout.NodeKind.Machine
+            or StructuredFlowLayout.NodeKind.State).ToList();
+
+        const int Columns = 5;
+        const double ColumnWidth = NodeWidth + 54;
+        double nextY = 0;
+        foreach (var rank in structural.GroupBy(p => _structuredPlan.Item(p.Node.Id).Depth)
+                                       .OrderBy(group => group.Key))
+        {
+            var row = rank.OrderBy(p => _structuredPlan.Item(p.Node.Id).SiblingOrder)
+                          .ThenBy(p => p.Node.Id, StringComparer.Ordinal).ToList();
+            double height = row.Max(p => heightOf[p.Node.Id]);
+            for (int index = 0; index < row.Count; index++)
+                at[row[index].Node.Id] = new Point(index % Columns * ColumnWidth,
+                                                    nextY + index / Columns * (height + 36));
+            nextY += ((row.Count + Columns - 1) / Columns) * (height + 36) + 86;
+        }
+
+
+
+
+        foreach (var (node, _, _) in showing.Where(p => !at.ContainsKey(p.Node.Id)
+                                                        && _structuredPlan.Item(p.Node.Id).Kind
+                                                           is not StructuredFlowLayout.NodeKind.Helper))
+        {
+            string anchor = _structuredPlan.Item(node.Id).StructuralAncestorIds
+                .LastOrDefault(id => at.ContainsKey(id)) ?? at.Keys.FirstOrDefault() ?? "";
+            at[node.Id] = anchor.Length > 0 ? at[anchor] : default;
+        }
+
+
+
+        var helperNumber = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (node, _, _) in showing.Where(p => !at.ContainsKey(p.Node.Id)))
+        {
+            var item = _structuredPlan.Item(node.Id);
+            string anchor = item.StructuralAncestorIds.LastOrDefault(id => at.ContainsKey(id)) ?? "";
+            if (anchor.Length == 0) anchor = at.Keys.FirstOrDefault() ?? "";
+            if (anchor.Length == 0) { at[node.Id] = default; continue; }
+
+            int index = helperNumber.GetValueOrDefault(anchor);
+            helperNumber[anchor] = index + 1;
+            var parent = at[anchor];
+            at[node.Id] = new Point(parent.X + NodeWidth + 48 + index / 4 * 94,
+                                    parent.Y + index % 4 * 82);
+        }
+        return at;
+    }
+
+    private void BuildStructuredContainers()
+    {
+        _structuredContainers.Clear();
+        if (_structuredPlan == null) return;
+
+        foreach (var machine in _structuredPlan.Machines.OrderByDescending(m => m.Depth))
+        {
+            var members = _nodes.Values.Where(node => InStructuredMachine(node.Id, machine.Id)
+                                                       && IsDrawnAtCurrentDetail(node.Id))
+                                      .Select(node => node.Bounds).ToList();
+            if (members.Count == 0) continue;
+
+            double left = members.Min(b => b.Left), top = members.Min(b => b.Top);
+            double right = members.Max(b => b.Right), bottom = members.Max(b => b.Bottom);
+            _structuredContainers[machine.Id] = new Rect(left - 24, top - 34,
+                                                          right - left + 48, bottom - top + 58);
+        }
+    }
+
+    private bool InStructuredMachine(string id, string machineId)
+    {
+        if (_structuredPlan == null || !_structuredPlan.Items.TryGetValue(id, out var item)) return false;
+        return item.MachineId == machineId;
+    }
+
+    private StructuredFlowDetail CurrentDetail() => _layoutMode == GraphLayoutMode.Freeform
+        ? StructuredFlowDetail.Close
+        : _zoom < 0.80 ? StructuredFlowDetail.Far
+        : _zoom < 1.05 ? StructuredFlowDetail.Medium
+        : StructuredFlowDetail.Close;
+
+    public bool IsDrawnAtCurrentDetail(string id)
+    {
+        if (_layoutMode == GraphLayoutMode.Freeform) return _nodes.ContainsKey(id);
+        if (_structuredPlan == null || !_structuredPlan.Items.TryGetValue(id, out var item)) return false;
+        if (item.Kind == StructuredFlowLayout.NodeKind.Root) return true;
+        if (item.Kind == StructuredFlowLayout.NodeKind.Machine)
+        {
+            if (CurrentDetail() != StructuredFlowDetail.Far) return true;
+            return item.ParentMachineId.Length == 0 || _structuredPlan.Machines
+                .Any(root => root.ParentMachineId.Length == 0 && root.Id == item.ParentMachineId);
+        }
+        if (CurrentDetail() == StructuredFlowDetail.Close) return true;
+        if (item.Kind == StructuredFlowLayout.NodeKind.State) return CurrentDetail() != StructuredFlowDetail.Far;
+        return CurrentDetail() == StructuredFlowDetail.Medium &&
+               (_traceIds.Contains(id) || item.StructuralAncestorIds.Any(_selected.Contains));
+    }
+
+    public bool SetFocusTree(string machineId)
+    {
+        if (_model == null) return false;
+        var machine = _model.Get(machineId);
+        if (machine == null || machine.Class != "hkbStateMachine" || !_own.Owner.ContainsKey(machineId))
+            return false;
+
+        _focusTreeRootId = machineId;
+        ClearTrace();
+        Show(_model);
+        FrameAll();
+        return true;
+    }
+
+    public void ClearFocusTree()
+    {
+        if (_focusTreeRootId.Length == 0) return;
+        _focusTreeRootId = "";
+        ClearTrace();
+        if (_model != null) Show(_model);
+        FrameAll();
+    }
+
+    public bool FocusTreeActive => _focusTreeRootId.Length > 0;
+    public string FocusTreeRootId => _focusTreeRootId;
+
+    public bool Trace(GraphTrace.Direction direction)
+    {
+        if (_trace == null || SelectedId.Length == 0 || !_nodes.ContainsKey(SelectedId)) return false;
+
+        var visible = _nodes.Keys.ToHashSet(StringComparer.Ordinal);
+        var found = _trace.Reachable(SelectedId, direction, visible);
+        if (found.Count == 0) return false;
+
+        _traceIds.Clear();
+        foreach (string id in found) _traceIds.Add(id);
+        Frame(_traceIds.Where(_nodes.ContainsKey).Select(id => _nodes[id].Bounds));
+        InvalidateVisual();
+        return true;
+    }
+
+    public void ClearTrace()
+    {
+        if (_traceIds.Count == 0) return;
+        _traceIds.Clear();
+        InvalidateVisual();
+    }
+
+    public bool TraceActive => _traceIds.Count > 0;
+    public IReadOnlyCollection<string> TraceIds => _traceIds;
+
+    public string HeaderTextOf(string id)
+    {
+        if (_nodes.TryGetValue(id, out var node)) return HeaderText(node);
+        var obj = _model?.Get(id);
+        if (obj == null) return "";
+        string title = obj.Str("name");
+        if (title.Length == 0) title = obj.Class;
+        return title + " #" + id;
+    }
+
+    private static string HeaderText(Node node)
+    {
+        string title = node.Name.Length > 0 ? node.Name : node.Class;
+        return title + " #" + node.Id;
+    }
+
+
+
+
+
+
+
+    public IEnumerable<double> OwnershipWireDrops()
+    {
+        foreach (var node in _nodes.Values)
+        {
+            if (node.OwnerId.Length == 0) continue;
+            if (!_nodes.TryGetValue(node.OwnerId, out var owner)) continue;
+
+            yield return Math.Abs((node.Bounds.Y + node.Bounds.Height / 2)
+                                  - (owner.Bounds.Y + owner.Bounds.Height / 2));
+        }
+    }
+
+    public IReadOnlyCollection<string> Collapsed => _collapsed;
+
+
+    public int OwnedCount(string id) => _own.Under(id).Count(_nodes.ContainsKey);
+
+    public IReadOnlyList<string> OwnedIds(string id) => _own.Under(id).Where(_nodes.ContainsKey).ToList();
+
+
+
+
+    public int HiddenCount => Math.Max(0, _placedCount - _nodes.Count);
+
+    public bool IsCollapsed(string id) => _collapsed.Contains(id);
+
+
+
+
+    public void SelectForTest(IEnumerable<string> ids)
+    {
+        _selected.Clear();
+        foreach (string id in ids) if (_nodes.ContainsKey(id)) _selected.Add(id);
+        InvalidateVisual();
+    }
+
+    public void DragForTest(string id, double byX, double byY)
+    {
+        if (_layoutMode == GraphLayoutMode.Freeform && _nodes.TryGetValue(id, out var from)
+            && Move(from, byX, byY)) LayoutChanged?.Invoke();
+        InvalidateVisual();
+    }
+
+    public void RestoreFreeformPositions(IReadOnlyDictionary<string, Settings.LayoutPoint> positions)
+    {
+        _placed.Clear();
+        foreach (var (id, at) in positions)
+            if (double.IsFinite(at.X) && double.IsFinite(at.Y))
+                _placed[id] = new Point(at.X, at.Y);
+    }
+
+    public IReadOnlyDictionary<string, Settings.LayoutPoint> SnapshotFreeformPositions() =>
+        _placed.Where(pair => double.IsFinite(pair.Value.X) && double.IsFinite(pair.Value.Y))
+               .ToDictionary(pair => pair.Key,
+                   pair => new Settings.LayoutPoint(pair.Value.X, pair.Value.Y), StringComparer.Ordinal);
+
+
+    public IReadOnlyCollection<string> MovementSet(string id)
+    {
+        var picked = _selected.Contains(id) ? (IEnumerable<string>)_selected : new[] { id };
+        return _own.Moving(picked).Where(_nodes.ContainsKey).ToList();
+    }
+
+
+
+
+
+
+    public void ToggleCollapse(string id, bool deep)
+    {
+        if (!_own.Owner.ContainsKey(id)) return;
+
+        if (!deep)
+        {
+            if (!_collapsed.Add(id)) _collapsed.Remove(id);
+        }
+        else
+        {
+            var family = _own.Under(id).Append(id).Where(n => _own.Children(n).Count > 0).ToList();
+            bool anyOpen = family.Any(n => !_collapsed.Contains(n));
+
+            foreach (string node in family)
+                if (anyOpen) _collapsed.Add(node); else _collapsed.Remove(node);
+        }
+
+        if (_model != null) Show(_model);
+    }
+
+
+    private Rect ChevronRect(Node node)
+    {
+        var at = ToScreen(node.Bounds.TopLeft);
+        return new Rect(at.X + 2 * _zoom, at.Y + 3 * _zoom, 13 * _zoom, 13 * _zoom);
+    }
+
+    private bool HasFamily(Node node) => _own.Children(node.Id).Count > 0;
+
     public int DrawnCount => _nodes.Count;
+    public bool DrawingTruncated => _truncated;
     public IReadOnlyCollection<string> DrawnIds => _nodes.Keys;
 
-    /// Read only, for the window checks. A route whose two ends are not both on the canvas cannot be
-    /// drawn, so the count that matters is the drawable one rather than the file's total.
+
+
     public int RouteCount => _routes.Routes.Count;
     public int DrawableRouteCount =>
         _routes.Routes.Count(r => _nodes.ContainsKey(r.FromId) && _nodes.ContainsKey(r.ToId));
     public int NestedRouteCount => _routes.Routes.Count(r => r.IntoId.Length > 0);
 
-    /// Read only, for the window checks. How far the laid out graph runs across and down, which is
-    /// the measurement behind folding a tall depth into lanes: a graph that is far taller than it is
-    /// wide is a strip somebody has to scroll rather than a picture they can look at.
-    /// The slab of the graph the viewport is currently showing, in the graph's own units. What a
-    /// fit button claims to have done is only checkable against this.
+
+
+
+
+
     public Rect VisibleWorld() =>
         new(ToWorld(new Point(0, 0)), ToWorld(new Point(Bounds.Width, Bounds.Height)));
 
     public (double Wide, double Tall) Extent()
     {
-        if (_nodes.Count == 0) return (0, 0);
-        return (_nodes.Values.Max(n => n.Bounds.Right) - _nodes.Values.Min(n => n.Bounds.X),
-                _nodes.Values.Max(n => n.Bounds.Bottom) - _nodes.Values.Min(n => n.Bounds.Y));
+        return ExtentOf(_nodes.Values);
     }
 
-    /// The events written on a node saying it can be entered from any state of its machine.
+    public (double Wide, double Tall) VisibleExtent() =>
+        ExtentOf(_nodes.Values.Where(n => IsDrawnAtCurrentDetail(n.Id)));
+
+    private static (double Wide, double Tall) ExtentOf(IEnumerable<Node> nodes)
+    {
+        var list = nodes.ToList();
+        if (list.Count == 0) return (0, 0);
+        return (list.Max(n => n.Bounds.Right) - list.Min(n => n.Bounds.X),
+                list.Max(n => n.Bounds.Bottom) - list.Min(n => n.Bounds.Y));
+    }
+
+
     public IReadOnlyList<string> WildcardsInto(string id) =>
         _nodes.TryGetValue(id, out var node) ? node.Wildcards : Array.Empty<string>();
 
-    /// How many routes the canvas would draw as lines right now, which is direct transitions plus,
-    /// when a state is picked out, that state's share of its machine's wildcards.
+
+
     public int LineCount => RoutesToDraw().Count(r => _nodes.ContainsKey(r.FromId) && _nodes.ContainsKey(r.ToId));
     public IReadOnlyCollection<string> StartStateIds => _routes.StartStates;
     public bool IsStart(string id) => _nodes.TryGetValue(id, out var node) && node.Start;
 
     public Point? PositionOf(string id) => _nodes.TryGetValue(id, out var node) ? node.Bounds.TopLeft : null;
 
-    /// Pins a node to a point before the canvas is rebuilt. A new node is otherwise laid out by its
-    /// depth from the root, which puts it in a column of its own at the far end of the graph rather
-    /// than under the cursor that asked for it.
+
+
+
     public void Place(string id, Point at)
     {
         _placed[id] = at;
@@ -361,16 +887,19 @@ public class GraphView : Control
 
         if (_model == null) return;
 
-        // Two passes so the highlighted wires sit on top of the dimmed ones rather than being
-        // crossed by them, which is the whole point of asking for one state at a time. With nothing
-        // picked out there is nothing to sit on top of, and a second walk of four thousand nodes is
-        // not free, so that case runs the lit pass only.
-        bool focused = _highlight.Length > 0 || _needle.Length > 0;
+        if (_layoutMode == GraphLayoutMode.StructuredFlow) DrawStructuredContainers(ctx);
+
+
+
+
+
+        bool focused = _highlight.Length > 0 || _needle.Length > 0 || _traceIds.Count > 0;
         for (int pass = focused ? 0 : 1; pass < 2; pass++)
             foreach (var node in _nodes.Values)
                 for (int i = 0; i < node.Slots.Count; i++)
                     foreach (string target in node.Slots[i].Targets)
                     {
+                        if (!IsDrawnAtCurrentDetail(node.Id) || !IsDrawnAtCurrentDetail(target)) continue;
                         if (!_nodes.TryGetValue(target, out var to)) continue;
                         bool lit = Lit(node.Id, target);
                         if (lit != (pass == 1)) continue;
@@ -390,74 +919,98 @@ public class GraphView : Control
 
         foreach (var node in _nodes.Values)
         {
+            if (!IsDrawnAtCurrentDetail(node.Id)) continue;
             if (!Dimmed(node.Id)) DrawNode(ctx, node);
             else using (ctx.PushOpacity(0.4)) DrawNode(ctx, node);
         }
+
+        DrawMarquee(ctx);
     }
 
-    /// Which routes get drawn, which depends on whether a state has been picked out.
-    ///
-    /// Every transition in a state machine runs between two of its states. A wildcard is declared on
-    /// the machine rather than on a state, but that is where the rule is written down, not where it
-    /// fires from: it fires from every state the machine holds, so from any one of them it is a way
-    /// out of that state like any other.
-    ///
-    /// Drawing that literally, a line from every state to the target, is one line per state per
-    /// wildcard, and across the vanilla data that is 41,751 lines against 6,394 transitions. So it is
-    /// drawn from the state being asked about instead:
-    ///
-    /// With a state picked out, its machine's wildcards leave that state, and every line on the
-    /// canvas runs between two states, which is what the format means.
-    ///
-    /// With nothing picked out there is no state to draw them from, and the honest anchor is the
-    /// machine that declares them. They sit faint there, saying a fan exists without claiming to
-    /// come from any particular state.
+    private void DrawStructuredContainers(DrawingContext ctx)
+    {
+        if (_structuredPlan == null) return;
+
+        foreach (var machine in _structuredPlan.Machines.OrderBy(m => m.Depth))
+        {
+            if (!_structuredContainers.TryGetValue(machine.Id, out var world)) continue;
+            var box = new Rect(ToScreen(world.TopLeft), new Size(world.Width * _zoom, world.Height * _zoom));
+            if (!box.Intersects(new Rect(Bounds.Size))) continue;
+
+            bool selected = _selected.Contains(machine.Id);
+            var accent = _nodes.TryGetValue(machine.Id, out var node) ? node.Accent : Ux.RouteColour;
+            ctx.DrawRectangle(new SolidColorBrush(accent, selected ? 0.13 : 0.07),
+                              new Pen(new SolidColorBrush(accent, selected ? 0.92 : 0.68), selected ? 2.3 : 1.6),
+                              box, 10, 10);
+            Draw(ctx, HeaderTextOf(machine.Id), box.X + 10 * _zoom, box.Y + 7 * _zoom,
+                 Math.Max(9, 11 * _zoom), new SolidColorBrush(accent), box.Width - 20 * _zoom);
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private IEnumerable<StateRoutes.Route> RoutesToDraw()
     {
-        // Direct transitions only. A wildcard has no single state to leave, so any line drawn for
-        // one is either a lie about where it comes from or one line per state of the machine, which
-        // across the vanilla data is 41,751 lines against 6,394 transitions. What matters about a
-        // wildcard is that this state can be entered from anywhere and on what event, and that is
-        // said on the state itself.
+
+
+
+
+
         var direct = _routes.Routes.Where(r => !r.Wildcard);
 
         if (_highlight.Length == 0 || !_routes.MachineOfState.ContainsKey(_highlight))
             return direct;
 
-        // With a state picked out, its machine's wildcards do have a state to leave: this one. Shown
-        // then, and only then, because the question being asked is what can happen from here.
+
+
         return direct.Concat(_routes.LeavingState(_highlight).Where(r => r.Wildcard));
     }
 
-    /// The routes, over the ownership wires rather than among them.
-    ///
-    /// A route joins two states side by side in the same column, so it is drawn between the sides of
-    /// the nodes rather than between the ports: a port to port curve between neighbours doubles back
-    /// on itself and reads as a wire to somewhere else entirely.
-    ///
-    /// Labels come last and only when picked out or zoomed in. Half of all machines hold two
-    /// transitions and nine in ten hold eight, so most graphs can carry every label at once; the one
-    /// vanilla machine with 168 of them cannot, and that is what the gating is for.
+
+
+
+
+
+
+
+
+
     private void DrawRoutes(DrawingContext ctx)
     {
-        bool focused = _highlight.Length > 0 || _needle.Length > 0;
+        bool focused = _highlight.Length > 0 || _needle.Length > 0 || _traceIds.Count > 0;
         var wanted = new List<(string Text, Point At, Color Colour, bool Lit, bool Wildcard)>();
 
         foreach (var route in RoutesToDraw())
         {
             if (!_nodes.TryGetValue(route.FromId, out var from)) continue;
             if (!_nodes.TryGetValue(route.ToId, out var to)) continue;
+            if (!IsDrawnAtCurrentDetail(route.FromId) || !IsDrawnAtCurrentDetail(route.ToId)) continue;
 
             bool lit = Lit(route.FromId, route.ToId);
 
-            // A wildcard fires from any state, so every one of a machine's wildcards leaves the same
-            // node and they fan out across the whole graph. Dogmeat's paired animation machine has
-            // twenty five, which drew as a sheet of lines over everything else. They stay on screen,
-            // because a machine having them is worth seeing, but they sit back until the machine or
-            // one of its targets is picked out.
-            // Weight stays the same lit or not. What changes is the outline under it, which is what
-            // separates a picked out route from the ones it runs alongside without widening it into
-            // them.
+
+
+
+
+
+
+
+
             double weight = route.Wildcard && !lit ? 0.9 : 1.4;
             double alpha = route.Wildcard ? (lit ? 0.95 : 0.10) : lit ? 1.0 : 0.28;
             bool cased = lit && focused;
@@ -470,9 +1023,9 @@ public class GraphView : Control
             DrawLink(ctx, a, colour, weight, alpha, b, dashed: true, cased: cased);
             DrawArrowHead(ctx, a, b, colour, alpha);
 
-            // The second hop of a nested transition, which enters a state and picks a state inside
-            // it at the same time. Drawn from the state entered to the state chosen within it, so
-            // the pair reads as one route with two ends rather than as two unrelated ones.
+
+
+
             if (route.IntoId.Length > 0 && _nodes.TryGetValue(route.IntoId, out var into))
             {
                 var c = ToScreen(RouteExit(to, into));
@@ -483,8 +1036,8 @@ public class GraphView : Control
 
             if (!lit || _zoom < LabelZoom) continue;
 
-            // A wildcard's name only appears once something is picked out. Unlit, they are the bulk
-            // of the labels and none of them is the one being looked for.
+
+
             if (route.Wildcard && !focused) continue;
 
             wanted.Add((route.Wildcard ? "any: " + route.Event : route.Event,
@@ -494,15 +1047,15 @@ public class GraphView : Control
         DrawLabels(ctx, wanted);
     }
 
-    /// The labels that fit, rather than all of them.
-    ///
-    /// Routes converge, so their midpoints do too, and drawing every label put text over text in
-    /// exactly the busy places where reading one matters most. A label that would land on one
-    /// already drawn is dropped instead: the route is still there to follow, and the alternative is
-    /// a pile that names neither of them.
-    ///
-    /// Ordered so the ones worth keeping are placed first. Anything picked out beats anything not,
-    /// and a plain route beats a wildcard, whose name is the same at every one of its ends.
+
+
+
+
+
+
+
+
+
     private void DrawLabels(DrawingContext ctx,
                             List<(string Text, Point At, Color Colour, bool Lit, bool Wildcard)> wanted)
     {
@@ -526,9 +1079,9 @@ public class GraphView : Control
         }
     }
 
-    // The side of the node a route should leave from, chosen by where the other end is. A route to
-    // something above or below leaves the top or the bottom, which is the common case: a machine's
-    // states are laid out in one column.
+
+
+
     private static Point RouteExit(Node from, Node to) =>
         to.Bounds.Center.Y < from.Bounds.Y ? new Point(from.Bounds.Center.X, from.Bounds.Y)
         : to.Bounds.Center.Y > from.Bounds.Bottom ? new Point(from.Bounds.Center.X, from.Bounds.Bottom)
@@ -553,8 +1106,8 @@ public class GraphView : Control
         ctx.DrawGeometry(new SolidColorBrush(colour, alpha), null, geometry);
     }
 
-    // A weapon graph holds a few thousand wires and only a handful are on screen. The curve stays
-    // inside its endpoints' box widened by the bend, so a box test is enough to drop the rest.
+
+
     private bool OffScreen(Point from, Point to)
     {
         double margin = Math.Max(40, Math.Abs(to.X - from.X) * 0.45) + 10;
@@ -564,12 +1117,12 @@ public class GraphView : Control
             || Math.Min(from.Y, to.Y) > Bounds.Height;
     }
 
-    /// A wire between two points. `to` sits after the alpha so the ownership calls that have always
-    /// passed three numbers keep reading the way they did.
-    ///
-    /// Dashed is what tells a route from a wire. They mean different things, a route being an event
-    /// the game sends and a wire being one object holding another, and drawing both as solid curves
-    /// in different colours left the two reading as one kind of thing.
+
+
+
+
+
+
     private void DrawLink(DrawingContext ctx, Point from, Color colour, double width, double alpha,
                           Point to, bool dashed = false, bool cased = false)
     {
@@ -580,8 +1133,8 @@ public class GraphView : Control
             g.BeginFigure(from, false);
             if (dashed)
             {
-                // A route joins states that usually sit one above the other, where a horizontal bend
-                // would loop out sideways and back. Bending along the run keeps it between its ends.
+
+
                 var lift = new Vector((to.X - from.X) * 0.3, (to.Y - from.Y) * 0.15);
                 g.CubicBezierTo(from + lift, to - lift, to);
             }
@@ -592,13 +1145,13 @@ public class GraphView : Control
             g.EndFigure(false);
         }
 
-        // An outline under the line rather than a thicker line on top of it.
-        //
-        // Picking a route out used to mean drawing it fatter, which fails exactly where it is needed:
-        // routes converge, and two fat lines running together read as one fat line. A casing gives
-        // each its own edge, so lines crossing or running side by side stay countable without any of
-        // them taking more room. Drawn in the opposite of the canvas, which is the one colour
-        // guaranteed to separate from both the background and every wire on it.
+
+
+
+
+
+
+
         if (cased)
         {
             var casing = new Pen(new SolidColorBrush(Ux.Casing, 0.95), width + 2.6)
@@ -613,17 +1166,30 @@ public class GraphView : Control
         ctx.DrawGeometry(null, pen, geometry);
     }
 
+
+
+    private void DrawMarquee(DrawingContext ctx)
+    {
+        if (_marquee.Width < 1 && _marquee.Height < 1) return;
+
+        var box = new Rect(ToScreen(_marquee.TopLeft),
+                           new Size(_marquee.Width * _zoom, _marquee.Height * _zoom));
+
+        ctx.DrawRectangle(new SolidColorBrush(Ux.RouteColour, 0.10),
+                          new Pen(new SolidColorBrush(Ux.RouteColour, 0.7), 1), box);
+    }
+
     private void DrawNode(DrawingContext ctx, Node node)
     {
         var r = new Rect(ToScreen(node.Bounds.TopLeft), new Size(node.Bounds.Width * _zoom, node.Bounds.Height * _zoom));
         if (!r.Intersects(new Rect(Bounds.Size))) return;
 
-        bool selected = node.Id == SelectedId;
+        bool selected = _selected.Contains(node.Id);
         var body = new SolidColorBrush(selected ? Ux.CardHover : Ux.Card);
 
-        // A node the check faulted is outlined in its level's colour rather than its class colour,
-        // and gets a soft halo outside the border so it is findable while zoomed out, where a one
-        // pixel edge is a pixel.
+
+
+
         Color? fault = node.Problem switch
         {
             GraphValidator.Level.Error => Ux.Bad,
@@ -636,23 +1202,76 @@ public class GraphView : Control
                 ctx.DrawRectangle(null, new Pen(new SolidColorBrush(colour, 0.10 * ring), ring * 2 + 1),
                                   r.Inflate(ring * 1.5), 5, 5);
 
-        var edge = new Pen(new SolidColorBrush(fault ?? node.Accent), fault != null ? 2.5 : selected ? 2 : 1);
+
+
+
+        if (node.Active)
+            for (int ring = 4; ring >= 1; ring--)
+                ctx.DrawRectangle(null, new Pen(new SolidColorBrush(Ux.RouteColour, 0.16 * ring), ring * 2 + 2),
+                                  r.Inflate(ring * 2.0), 6, 6);
+
+        var borderColour = node.Active ? Ux.RouteColour : fault ?? node.Accent;
+        var edge = new Pen(new SolidColorBrush(borderColour), node.Active ? 3 : fault != null ? 2.5 : selected ? 2 : 1);
         ctx.DrawRectangle(body, edge, r, 4, 4);
-        ctx.DrawRectangle(new SolidColorBrush(fault ?? node.Accent, fault != null ? 0.22 : 0.35), null,
+
+
+
+
+
+
+
+        if (_sharedBy.ContainsKey(node.Id))
+            ctx.DrawRectangle(null,
+                new Pen(new SolidColorBrush(borderColour, selected ? 0.28 : 0.45), 1),
+                r.Deflate(3), 3, 3);
+        ctx.DrawRectangle(new SolidColorBrush(borderColour, node.Active ? 0.30 : fault != null ? 0.22 : 0.35), null,
             new Rect(r.X, r.Y, r.Width, HeaderHeight * _zoom), 4, 4);
 
         double scale = _zoom;
         var faultBrush = fault is { } f ? new SolidColorBrush(f) : null;
         string title = node.Name.Length > 0 ? node.Name : node.Class;
-        Draw(ctx, title, r.X + 6 * scale, r.Y + 4 * scale, 11 * scale,
-             faultBrush ?? Ux.TitleBrush, r.Width - 12 * scale);
+        string chipText = "#" + node.Id;
+
+
+
+        bool family = HasFamily(node);
+        double titleAt = family ? 18 : 6;
+        double chipWidth = Math.Clamp((chipText.Length * 6 + 10) * scale, 24 * scale, 58 * scale);
+        var chip = new Rect(r.Right - (chipWidth + 5 * scale), r.Y + 4 * scale,
+                            chipWidth, 13 * scale);
+
+        Draw(ctx, title, r.X + titleAt * scale, r.Y + 4 * scale, 11 * scale,
+             faultBrush ?? Ux.TitleBrush, r.Width - (titleAt + 14) * scale - chipWidth);
+        ctx.DrawRectangle(new SolidColorBrush(Ux.Base, 0.38), null, chip, 3, 3);
+        Draw(ctx, chipText, chip.X + 3 * scale, chip.Y + 1 * scale, 8 * scale,
+             Ux.MetaBrush, chip.Width - 6 * scale);
+
+        if (family)
+        {
+            bool shut = _collapsed.Contains(node.Id);
+            var chevron = ChevronRect(node);
+            Draw(ctx, shut ? ">" : "v", chevron.X + 2 * scale, chevron.Y - 1 * scale, 11 * scale,
+                 shut ? new SolidColorBrush(node.Accent) : Ux.MutedBrush, chevron.Width);
+
+
+
+
+            if (shut)
+            {
+                int held = _own.HiddenBy(_collapsed, node.Id);
+                var badge = new Rect(r.Right - 66 * scale, r.Bottom - 15 * scale, 62 * scale, 13 * scale);
+                ctx.DrawRectangle(new SolidColorBrush(node.Accent, 0.30), null, badge, 3, 3);
+                Draw(ctx, $"+{held} hidden", badge.X + 4 * scale, badge.Y + 1 * scale, 8 * scale,
+                     Ux.TitleBrush, badge.Width - 6 * scale);
+            }
+        }
         Draw(ctx, node.Empty ? node.Class + "  nothing to play" : node.Class,
              r.X + 6 * scale, r.Y + (HeaderHeight + 1) * scale, 9 * scale,
              faultBrush ?? new SolidColorBrush(node.Accent), r.Width - 12 * scale);
 
-        // The state its machine starts in. A machine's states are otherwise identical on the canvas
-        // and which one the graph begins in cannot be read off the picture at all: it is a number on
-        // the machine, matched against a number on the state, neither of which is drawn.
+
+
+
         if (node.Start)
         {
             var badge = new Rect(r.Right - 30 * scale, r.Y - 7 * scale, 28 * scale, 13 * scale);
@@ -681,14 +1300,14 @@ public class GraphView : Control
         DrawWildcards(ctx, node, r, scale);
     }
 
-    /// The events that enter this state from any state of its machine, listed on the state.
-    ///
-    /// This is the wildcard, and it is deliberately not a line. A wildcard fires from every state
-    /// the machine holds, so there is no single place for a line to start: drawing one from the
-    /// machine says something the format does not, and drawing one from each state is 41,751 lines
-    /// across the vanilla data against 6,394 transitions. Neither is readable and neither is the
-    /// question. The question is whether this state can be entered from anywhere and on what, which
-    /// is a fact about this state, so it is written here.
+
+
+
+
+
+
+
+
     private void DrawWildcards(DrawingContext ctx, Node node, Rect r, double scale)
     {
         if (node.Wildcards.Count == 0) return;
@@ -698,8 +1317,8 @@ public class GraphView : Control
 
         for (int i = 0; i < shown; i++)
         {
-            // The last row carries the remainder rather than being dropped, so a state with twenty
-            // ways in never looks like a state with four.
+
+
             bool last = i == shown - 1 && node.Wildcards.Count > shown;
             string text = last
                 ? $"any: {node.Wildcards[i]}  +{node.Wildcards.Count - shown + 1} more"
@@ -719,12 +1338,75 @@ public class GraphView : Control
         ctx.DrawText(formatted, new Point(rightAlign ? x + maxWidth - formatted.Width : x, y));
     }
 
+
+
+
+
+
+    private bool Move(Node from, double byX, double byY)
+    {
+        if (_layoutMode != GraphLayoutMode.Freeform || byX == 0 && byY == 0) return false;
+        var picked = _selected.Contains(from.Id) ? (IEnumerable<string>)_selected : new[] { from.Id };
+        bool moved = false;
+
+        foreach (string id in _own.Moving(picked))
+        {
+            if (!_nodes.TryGetValue(id, out var node)) continue;
+            node.Bounds = node.Bounds.WithX(node.Bounds.X + byX).WithY(node.Bounds.Y + byY);
+            _placed[id] = node.Bounds.TopLeft;
+            moved = true;
+        }
+        return moved;
+    }
+
+
+
+
+
+
+
+
+
+    private void Hovering(Node? node)
+    {
+        string over = node?.Id ?? "";
+        if (over == _hovered) return;
+        _hovered = over;
+
+        string tip = SharedTip(over);
+        ToolTip.SetTip(this, tip.Length > 0 ? tip : null);
+    }
+
+
+
+
+
+
+
+    public string SharedTip(string id)
+    {
+        if (id.Length == 0) return "";
+
+        var borrowers = SharedBy(id);
+        if (borrowers.Count == 0) return "";
+
+        string owner = OwnerOf(id);
+        var homes = new List<string>();
+        if (owner.Length > 0) homes.Add(_nameOf.GetValueOrDefault(owner, "#" + owner) + " (owner)");
+        foreach (string by in borrowers) homes.Add(_nameOf.GetValueOrDefault(by, "#" + by));
+
+        return $"Shared by {homes.Count} parents: {string.Join(", ", homes)}";
+    }
+
+    private string _hovered = "";
+
     private Node? NodeAt(Point world) =>
-        _nodes.Values.LastOrDefault(n => n.Bounds.Contains(world));
+        _nodes.Values.LastOrDefault(n => IsDrawnAtCurrentDetail(n.Id) && n.Bounds.Contains(world));
 
     private (Node Node, int Slot)? PortAt(Point world)
     {
         foreach (var node in _nodes.Values)
+            if (IsDrawnAtCurrentDetail(node.Id))
             for (int i = 0; i < node.Slots.Count; i++)
                 if (Distance(node.OutPort(i), world) < PortRadius * 2.5)
                     return (node, i);
@@ -744,7 +1426,7 @@ public class GraphView : Control
         if (props.IsRightButtonPressed)
         {
             var hit = NodeAt(world);
-            SelectedId = hit?.Id ?? "";
+            Select(hit?.Id ?? "");
             Selected?.Invoke(SelectedId);
             AddRequested?.Invoke("", "", world);
             InvalidateVisual();
@@ -753,23 +1435,42 @@ public class GraphView : Control
 
         if (props.IsMiddleButtonPressed) { _panning = true; return; }
 
+
+
+        foreach (var candidate in _nodes.Values)
+        {
+            if (!HasFamily(candidate) || !ChevronRect(candidate).Contains(screen)) continue;
+            ToggleCollapse(candidate.Id, e.KeyModifiers.HasFlag(KeyModifiers.Control));
+            return;
+        }
+
         var port = PortAt(world);
         if (port != null) { _wiring = port; _wireTo = screen; return; }
 
         var node = NodeAt(world);
         if (node != null)
         {
-            SelectedId = node.Id;
-            Selected?.Invoke(node.Id);
-            // A second click opens the fields rather than starting a drag, so the node does not
-            // shift by a pixel on the way to editing it.
+            if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
+            {
+                if (!_selected.Remove(node.Id)) _selected.Add(node.Id);
+            }
+
+
+            else if (!_selected.Contains(node.Id)) Select(node.Id);
+
+            Selected?.Invoke(SelectedId);
+
+
             if (e.ClickCount >= 2) Activated?.Invoke(node.Id);
             else _dragNode = node;
         }
         else
         {
-            SelectedId = "";
-            _panning = true;
+
+
+            _selected.Clear();
+            _marqueeFrom = world;
+            _marquee = new Rect(world, world);
             Selected?.Invoke("");
         }
         InvalidateVisual();
@@ -781,13 +1482,20 @@ public class GraphView : Control
         var delta = screen - _lastPointer;
         _lastPointer = screen;
 
+        Hovering(NodeAt(ToWorld(screen)));
+
         if (_wiring != null) { _wireTo = screen; InvalidateVisual(); return; }
+
+        if (_marqueeFrom is { } from)
+        {
+            _marquee = new Rect(from, ToWorld(screen));
+            InvalidateVisual();
+            return;
+        }
 
         if (_dragNode != null)
         {
-            _dragNode.Bounds = _dragNode.Bounds.WithX(_dragNode.Bounds.X + delta.X / _zoom)
-                                               .WithY(_dragNode.Bounds.Y + delta.Y / _zoom);
-            _placed[_dragNode.Id] = _dragNode.Bounds.TopLeft;
+            if (Move(_dragNode, delta.X / _zoom, delta.Y / _zoom)) _dragChanged = true;
             InvalidateVisual();
             return;
         }
@@ -797,6 +1505,24 @@ public class GraphView : Control
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
+        if (_marqueeFrom != null)
+        {
+            _marqueeFrom = null;
+
+
+
+            foreach (string id in _order)
+                if (_nodes.TryGetValue(id, out var node) && IsDrawnAtCurrentDetail(id)
+                                                    && node.Bounds.Intersects(_marquee))
+                    _selected.Add(id);
+
+            Selected?.Invoke(SelectedId);
+            _marquee = default;
+            _dragNode = null;
+            InvalidateVisual();
+            return;
+        }
+
         if (_wiring is { } w)
         {
             var target = NodeAt(ToWorld(e.GetPosition(this)));
@@ -804,7 +1530,7 @@ public class GraphView : Control
 
             if (target != null && target.Id != w.Node.Id)
             {
-                // Refuse the pairing here rather than writing it and reporting it afterwards.
+
                 int from = GraphLinks.Accepts(slot.Field), to = GraphLinks.FamilyOf(target.Class);
                 if (from == to || GraphLinks.ValidPairs.Contains((from, to)))
                     LinkRequested?.Invoke(w.Node.Id, slot.Field, target.Id);
@@ -819,6 +1545,8 @@ public class GraphView : Control
 
         _wiring = null;
         _dragNode = null;
+        if (_dragChanged && _layoutMode == GraphLayoutMode.Freeform) LayoutChanged?.Invoke();
+        _dragChanged = false;
         _panning = false;
         InvalidateVisual();
     }
@@ -828,9 +1556,11 @@ public class GraphView : Control
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         var before = ToWorld(e.GetPosition(this));
+        var detail = CurrentDetail();
         _zoom = Math.Clamp(_zoom * (e.Delta.Y > 0 ? 1.12 : 1 / 1.12), 0.15, 3.0);
         var after = ToWorld(e.GetPosition(this));
         _pan += (after - before) * _zoom;
+        ReflowForDetail(detail);
         InvalidateVisual();
     }
 
@@ -838,7 +1568,20 @@ public class GraphView : Control
     {
         if (e.Key == Key.Delete && SelectedId.Length > 0)
         {
-            DeleteRequested?.Invoke(SelectedId);
+
+
+
+
+
+
+
+            if (_selected.Count > 1)
+                Refused?.Invoke($"{_selected.Count} nodes are selected. Deleting is one at a time, " +
+                                "because taking an object out renumbers the ones above it. " +
+                                "Click one node, or click empty canvas to clear the selection, " +
+                                "then delete.");
+            else DeleteRequested?.Invoke(SelectedId);
+
             e.Handled = true;
         }
 
@@ -849,36 +1592,45 @@ public class GraphView : Control
         }
     }
 
-    /// Read only, for the headless renderer: a picture has to be taken at a chosen zoom rather than
-    /// at whatever the last interaction left behind.
+
+
     public void SetZoom(double zoom)
     {
+        var detail = CurrentDetail();
         _zoom = Math.Clamp(zoom, 0.15, 3.0);
+        ReflowForDetail(detail);
         InvalidateVisual();
     }
 
-    /// Fit the whole graph in the viewport.
-    ///
-    /// This used to set a fixed zoom of 0.7 and move the corner into view, which is not fitting
-    /// anything: Dogmeat's default behaviour lays out 8,890 by 5,589, so at 0.7 the button put you
-    /// in the top left corner of something seven screens across and said it had framed it. The zoom
-    /// is worked out from what there is to show.
-    public void FrameAll() => Frame(_nodes.Values.Select(n => n.Bounds));
 
-    /// Fit one node and everything it is joined to, which is what somebody asking about a machine
-    /// wants: that machine and its states filling the view instead of being a tenth of it.
+
+
+
+
+
+    public void FrameAll()
+    {
+        var detail = CurrentDetail();
+        Frame(_nodes.Values.Where(n => IsDrawnAtCurrentDetail(n.Id)).Select(n => n.Bounds));
+        if (_layoutMode == GraphLayoutMode.StructuredFlow && detail != CurrentDetail())
+            Frame(_nodes.Values.Where(n => IsDrawnAtCurrentDetail(n.Id)).Select(n => n.Bounds));
+    }
+
+
+
     public void FrameRelated()
     {
         if (_highlight.Length == 0) { FrameAll(); return; }
 
         var of = _related.Count > 0 ? _related : new HashSet<string> { _highlight };
-        Frame(of.Where(_nodes.ContainsKey).Select(id => _nodes[id].Bounds));
+        Frame(of.Where(id => _nodes.ContainsKey(id) && IsDrawnAtCurrentDetail(id)).Select(id => _nodes[id].Bounds));
     }
 
     private void Frame(IEnumerable<Rect> what)
     {
         var boxes = what.ToList();
         if (boxes.Count == 0 || Bounds.Width < 1 || Bounds.Height < 1) return;
+        var detail = CurrentDetail();
 
         double minX = boxes.Min(b => b.X), minY = boxes.Min(b => b.Y);
         double maxX = boxes.Max(b => b.Right), maxY = boxes.Max(b => b.Bottom);
@@ -886,13 +1638,25 @@ public class GraphView : Control
         const double Margin = 40;
         double wide = Math.Max(1, maxX - minX), tall = Math.Max(1, maxY - minY);
 
-        _zoom = Math.Clamp(Math.Min((Bounds.Width - Margin * 2) / wide,
-                                    (Bounds.Height - Margin * 2) / tall), 0.02, 1.5);
 
-        // Centred rather than corner aligned. A graph wider than it is tall leaves a band of empty
-        // canvas otherwise, and the thing being looked at sits against one edge of it.
+
+
+
+        _zoom = Math.Clamp(Math.Min((Bounds.Width - Margin * 2) / wide,
+                                    (Bounds.Height - Margin * 2) / tall), 0.005, 1.5);
+        ReflowForDetail(detail);
+
+
+
         _pan = new Point(Bounds.Width / 2 - (minX + wide / 2) * _zoom,
                          Bounds.Height / 2 - (minY + tall / 2) * _zoom);
         InvalidateVisual();
+    }
+
+    private void ReflowForDetail(StructuredFlowDetail before)
+    {
+        if (_layoutMode != GraphLayoutMode.StructuredFlow) return;
+        if (before != CurrentDetail() && _model != null) Show(_model);
+        else BuildStructuredContainers();
     }
 }

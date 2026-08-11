@@ -3,32 +3,32 @@ using System.Collections.Generic;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// What a spline compressed animation's data blob is made of, in one place.
-//
-// The reader has carried this knowledge inside its decompressor since the beginning, spelled out
-// three times over for position, rotation and scale. Writing a blob needs the same knowledge facing
-// the other way, and two copies of a bit layout is how one of them quietly goes wrong. So the layout
-// lives here and both directions read it from here.
-//
-// The blob is a run of blocks. A block covers maxFramesPerBlock consecutive frames and starts with
-// one four byte mask per track, then every track's channels in order: position, rotation, scale.
-// Nothing in the block says where a track's data starts; it is found only by decoding every track
-// before it, which is why a single wrong width shifts the rest of the block rather than one value.
+
+
+
+
+
+
+
+
+
+
+
 public static class SplineFormat
 {
-    /// How a channel varies across a block.
+
     public enum Channel
     {
-        /// Not driven. Position and rotation fall back to nothing, scale to one.
+
         Identity,
-        /// One value for the whole block, written once.
+
         Static,
-        /// A B-spline: knots, a range per axis, then quantised control points.
+
         Spline,
     }
 
-    // The mask is four bytes. The first holds the three quantisation formats, and the other three
-    // hold the channel kinds, low nibble static and high nibble spline, one bit per axis.
+
+
     public const int QuantByte = 0;
     public const int PosByte   = 1;
     public const int RotByte   = 2;
@@ -40,23 +40,23 @@ public static class SplineFormat
 
     public static Channel ScaleKind(byte flags, int axis) => PosKind(flags, axis);
 
-    // Rotation has no axes, so the whole nibble is the flag rather than one bit of it. Vanilla sets
-    // every bit of the nibble rather than one, which is why this tests the nibble and not bit four.
+
+
     public static Channel RotKind(byte flags) =>
         ((flags >> 4) & 0x0F) != 0 ? Channel.Spline :
         (flags & 0x0F) != 0        ? Channel.Static : Channel.Identity;
 
-    /// The bytes a control point of a rotation takes, by quantisation format.
+
     public static int RotWidth(int format) => format switch
     {
-        0 => 4,   // 32 bit, polar
-        1 => 5,   // 40 bit
-        2 => 6,   // 48 bit
-        5 => 16,  // four floats
+        0 => 4,
+        1 => 5,
+        2 => 6,
+        5 => 16,
         _ => 5,
     };
 
-    /// What a rotation control point has to start on. The narrow formats pack without padding.
+
     public static int RotAlign(int format) => format switch
     {
         1 or 3 => 1,
@@ -70,12 +70,12 @@ public static class SplineFormat
         return over == 0 ? value : value + (to - over);
     }
 
-    /// The knot vector a block of this shape carries: clamped, integer valued, one span per frame.
-    ///
-    /// The count is fixed by the format, numItems + degree + 2 where numItems is one less than the
-    /// number of control points, which is the ordinary clamped B-spline count written a different
-    /// way. The values are frame indices inside the block and are stored as single bytes, which is
-    /// what caps a block at 256 frames rather than any field width in the header.
+
+
+
+
+
+
     public static byte[] Knots(int controlPoints, int degree, int framesInBlock)
     {
         int count = controlPoints + degree + 1;
@@ -86,19 +86,19 @@ public static class SplineFormat
         for (int i = 0; i <= degree; i++) knots[i] = 0;
         for (int i = 1; i <= interior; i++)
         {
-            // Spread the interior knots evenly across the block. Rounded rather than truncated so a
-            // knot vector never repeats a value it did not mean to, which would collapse a span.
+
+
             double at = (double)i * last / (interior + 1);
             knots[degree + i] = (byte)Math.Clamp((int)Math.Round(at), 0, 255);
         }
         for (int i = 0; i < degree + 1; i++) knots[count - 1 - i] = (byte)Math.Clamp(last, 0, 255);
 
-        // A repeated interior knot is legal but means a span of zero width, and the evaluator divides
-        // by that width. Nudging is wrong, so the fit asks for fewer control points instead.
+
+
         return knots;
     }
 
-    /// Whether a knot vector has a usable span for every frame it covers.
+
     public static bool KnotsUsable(byte[] knots, int controlPoints, int degree)
     {
         for (int i = degree; i < controlPoints; i++)
@@ -106,12 +106,12 @@ public static class SplineFormat
         return true;
     }
 
-    // The curve itself.
-    //
-    // This is the one place a control point becomes a frame value. The decoder called its own copy
-    // for years; the encoder has to fit against exactly the curve the decoder will draw, and two
-    // implementations of a basis function that agree today are two that can stop agreeing. So both
-    // call these, and a fit measured with them is measured against what a reader will actually get.
+
+
+
+
+
+
 
     public static int FindKnotSpan(int degree, float t, int controlPoints, float[] knots)
     {
@@ -129,10 +129,10 @@ public static class SplineFormat
         return mid;
     }
 
-    /// The basis values at t, highest index first, which is the order the sums below read them in.
-    ///
-    /// Written in place rather than returned so a fit can call it once per frame across a search over
-    /// control point counts without allocating a small array every time.
+
+
+
+
     public static void Basis(int span, int degree, float t, float[] knots, float[] into)
     {
         Array.Clear(into, 0, degree + 1);
@@ -188,12 +188,12 @@ public static class SplineFormat
         return System.Numerics.Quaternion.Normalize(total);
     }
 
-    // Quantisation, both ways.
-    //
-    // The reading side of each of these already existed and is what the game's files are decoded
-    // with. The writing side is its inverse and is put beside it deliberately: an encoder whose
-    // rounding does not match the decoder's spacing loses a bit of range at one end and nobody
-    // notices until a value at the very top of a channel's range comes back wrong.
+
+
+
+
+
+
 
     public static float Read16(ushort raw, float min, float max) => min + (max - min) * (raw / 65535f);
 

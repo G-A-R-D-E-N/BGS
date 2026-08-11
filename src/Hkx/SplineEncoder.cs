@@ -4,46 +4,46 @@ using System.Numerics;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Writing an animation's frames back out as a spline compressed blob.
-//
-// This is the half of the codec that never existed. Reading one of these has worked for a long time,
-// which is why the tool can show a clip and draw it; nothing could produce one, so saving a clip had
-// to write every frame out uncompressed instead. That is correct and several times the size, and it
-// is why a clip could not be edited and left looking like the clip it replaced.
-//
-// The layout is not chosen here. Every position, width and alignment below is the decoder's walk
-// turned around, because the only reader that matters reads it that way, and the choices that are
-// genuinely free were counted across the 13,514 vanilla animations rather than picked: sixteen bit
-// positions and scales, forty bit rotations, 256 frames to a block. The counts are in `symrm
-// splinestats`.
-//
-// What is deliberately not attempted: float tracks. Nothing here decodes them, and a blob whose
-// transform tracks are right and whose float tracks are absent is a file the engine reads off the
-// end of. Refused rather than approximated, the same way the interleaved writer refuses them.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public static class SplineEncoder
 {
-    /// Frames to a block. Every one of the 13,514 vanilla spline animations uses this, with no
-    /// exceptions, and the knots are single bytes holding a frame index inside the block, so 256 is
-    /// also the most the format can hold.
+
+
+
     public const int FramesPerBlock = 256;
 
     public sealed record Options
     {
-        /// How far a bone may sit from where it was, in Havok units. A vanilla human is about 115
-        /// units tall, so a hundredth of a unit is well under anything visible.
+
+
         public float PositionTolerance { get; init; } = 0.01f;
 
-        /// How far a bone may be turned from where it was, in radians. A thousandth is about three
-        /// hundredths of a degree.
+
+
         public float RotationTolerance { get; init; } = 0.001f;
 
         public float ScaleTolerance { get; init; } = 0.0005f;
 
-        /// 1 for forty bit rotations, which is what 1,173,390 of the 1,291,826 vanilla track blocks
-        /// use, or 2 for the forty eight bit form the other 118,436 use.
+
+
         public int RotationFormat { get; init; } = 1;
 
-        /// Below this a channel is called unchanging and written once instead of as a curve.
+
         public float StaticTolerance { get; init; } = 1e-6f;
     }
 
@@ -60,16 +60,16 @@ public static class SplineEncoder
         int MaxFramesPerBlock, int MaskAndQuantizationSize, float Duration, float BlockDuration,
         float BlockInverseDuration, float FrameDuration, Report Report);
 
-    /// hkaAnimation::AnimationType for this class. Read off the shipped files rather than counted out
-    /// of the enum, because the enum has entries the game does not use and an off by one there writes
-    /// a file the engine will read as a different codec entirely. All 1,501 sampled say 3.
+
+
+
     public const int AnimationType = 3;
 
-    /// Turns decoded frames into the bytes an hkaSplineCompressedAnimation carries.
-    ///
-    /// The animation's own timing is carried across rather than recomputed. A clip's duration is what
-    /// the behaviour graph times transitions against, so deriving it from a frame count would retime
-    /// every clip that did not happen to divide evenly.
+
+
+
+
+
     public static Blob Encode(HkxAnimationData animation, Options? options = null)
     {
         var opts = options ?? new Options();
@@ -95,9 +95,9 @@ public static class SplineEncoder
 
         for (int block = 0; block < blocks; block++)
         {
-            // Blocks start on a sixteen byte boundary. The format does not require it, since every
-            // block is found through its own recorded offset, but it costs at most fifteen bytes a
-            // block and keeps the blob looking like the ones the game ships.
+
+
+
             while (body.Count % 16 != 0) body.Add(0);
             offsets[block] = body.Count;
 
@@ -123,21 +123,21 @@ public static class SplineEncoder
             body.AddRange(masks);
             body.AddRange(channels);
 
-            // Where this block's float channels would begin, which is where its transform channels
-            // end, before the padding that carries the blob on to the next block. Nothing here writes
-            // float tracks, so no reader will follow it, and it is filled in properly anyway because
-            // the shipped files fill it in properly: on 1,486 of 1,501 sampled it lands at the end of
-            // the block's own data with only the padding between it and the next block.
+
+
+
+
+
             floatOffsets[block] = body.Count;
         }
 
         float frameDuration = animation.FrameDuration > 0 ? animation.FrameDuration
                             : frames > 1 ? animation.Duration / (frames - 1) : animation.Duration;
 
-        // A block covers the span between its first and last frame, not one frame more. Measured, not
-        // reasoned about: every one of 1,501 sampled animations has blockDuration equal to
-        // frameDuration times one less than maxFramesPerBlock, and none has it equal to
-        // frameDuration times maxFramesPerBlock.
+
+
+
+
         float blockDuration = frameDuration * (FramesPerBlock - 1);
 
         var report = new Report(tracks, frames, blocks, identity, statics, splines, exact,
@@ -150,16 +150,16 @@ public static class SplineEncoder
 
     private readonly record struct Masks(byte Quant, byte Pos, byte Rot, byte Scale);
 
-    // One track's three channels, in the order the decoder walks them and with the padding it steps
-    // over. The channel bytes are built into a list of their own so the alignment can be measured
-    // from the start of the block's channel area, which is where the decoder measures it from.
+
+
+
     private static Masks WriteTrack(HkxTrackData track, int first, int inBlock, Options opts,
         List<byte> into, ref int identity, ref int statics, ref int splines, ref int exact,
         ref float worstPos, ref float worstRot, ref float worstScale)
     {
-        // Position and scale are written the same way as each other and differently from rotation.
-        // The neutral value differs, which is the only reason the two calls are not one: a position
-        // nobody drives is nothing, and a scale nobody drives is one.
+
+
+
         byte pos = WriteVector(Slice(track.Translations, first, inBlock, Vector3.Zero), Vector3.Zero,
             opts.PositionTolerance, opts.StaticTolerance, into, ref identity, ref statics, ref splines,
             ref exact, ref worstPos);
@@ -171,9 +171,9 @@ public static class SplineEncoder
             opts.ScaleTolerance, opts.StaticTolerance, into, ref identity, ref statics, ref splines,
             ref exact, ref worstScale);
 
-        // Sixteen bit positions and scales, forty bit rotations, which is what vanilla uses
-        // everywhere. The rotation format is the only one the options can move, because it is the
-        // only one vanilla itself is not unanimous about.
+
+
+
         byte quant = (byte)(1 | ((opts.RotationFormat & 0x0F) << 2) | (1 << 6));
 
         Pad4(into);
@@ -223,17 +223,17 @@ public static class SplineEncoder
 
         if (!anySpline)
         {
-            // No curve, so no header and no knots: just the axes that hold a value, as plain floats.
+
             for (int a = 0; a < 3; a++)
                 if (kind[a] == SplineFormat.Channel.Static) AddFloat(into, axes[a][0]);
             Pad4(into);
             return flags;
         }
 
-        // Every curve on this track's channel shares one knot vector, so they are fitted first and
-        // the widest of them decides the shape all three are written with. Fitting them separately
-        // and writing the first one's knots would put the other two on a curve they were not fitted
-        // to, which is the kind of fault that shows as one axis drifting and the others clean.
+
+
+
+
         var fitted = new SplineFit.Curve?[3];
         int controlPoints = 0, degree = 0;
         for (int a = 0; a < 3; a++)
@@ -248,16 +248,16 @@ public static class SplineEncoder
             }
         }
 
-        // Refit anything that came out smaller onto the shared shape, so all three agree.
-        //
-        // A refit is not automatically as good as the fit it replaces. The shared shape is the widest
-        // axis's, and the widest axis is not always the fussiest one: an axis that needed a control
-        // point per frame at degree one can be made to share a degree three shape with more control
-        // points than it asked for and still come out worse, because what it needed was the exact
-        // interpolation and not the width. Measured on the corpus that is not a small effect. It was
-        // 55 of the 13,514 vanilla clips drifting up to 1.59 units, on hand and finger bones during
-        // talking idles, while their rotations stayed clean. So the refits are measured, and if any
-        // of them misses the tolerance all three axes drop to the shape that cannot miss.
+
+
+
+
+
+
+
+
+
+
         for (int a = 0; a < 3; a++)
         {
             if (fitted[a] == null) continue;
@@ -331,9 +331,9 @@ public static class SplineEncoder
             AddQuat(into, format, samples[0]);
             Pad4(into);
 
-            // The low nibble is what marks a rotation as unchanging. Every bit of it is set because
-            // that is what vanilla writes: 250,434 of its unchanging rotations are 0x0f and the ones
-            // that are not carry other bits alongside rather than instead.
+
+
+
             return 0x0F;
         }
 
@@ -346,9 +346,9 @@ public static class SplineEncoder
         into.Add((byte)fit.Degree);
         into.AddRange(fit.Knots);
 
-        // Only the rotation's own alignment here, and no rounding up to four. The decoder aligns to
-        // the quantisation width and nothing else at this point, so a blob padded to four would put
-        // every control point one word late for the whole rest of the block.
+
+
+
         AlignTo(into, SplineFormat.RotAlign(format));
         foreach (var q in fit.ControlPoints) AddQuat(into, format, q);
         Pad4(into);
@@ -389,16 +389,16 @@ public static class SplineEncoder
         while (into.Count % to != 0) into.Add(0);
     }
 
-    // Reading a blob back without a file around it.
-    //
-    // The decoder in HkxBinaryReader only reaches a blob through a packfile, which is the right shape
-    // for reading the game's files and the wrong shape for checking an encoder: a difference could
-    // then be the blob or it could be everything the file writer did around it. This walks the blob
-    // alone, so a gate built on it is measuring the codec and nothing else.
-    //
-    // It is a second implementation of the same walk, which is usually the thing to avoid. Here it is
-    // the point. If this and the reader ever disagree about where a run starts, one of them is wrong
-    // about the format, and a gate that used the reader's own walk would agree with itself either way.
+
+
+
+
+
+
+
+
+
+
     public static void Decode(byte[] blob, int[] blockOffsets, int tracks, int frames,
         int maskAndQuantizationSize, int framesPerBlock, HkxAnimationData into)
     {

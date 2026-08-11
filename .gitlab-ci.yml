@@ -39,8 +39,8 @@ variables:
       - .nuget/packages
     when: always
 
-# The format layer builds graphs in memory, so this needs no game files and no Java. A red gate
-# here stops a broken release being cut.
+# The format layer builds graphs in memory, so this needs no game files or external tools. A red
+# gate here stops a broken release being cut.
 format:
   extends: .dotnet
   stage: test
@@ -62,16 +62,7 @@ window:
   needs: [format, window]
   script:
     - dotnet publish app/BehaviourStudio.csproj -c Release -r $RID -o out
-    # hkxpack rides beside the binary rather than inside it, because the JVM has to open it as a
-    # file. MIT, and its licence travels with it because the licence says so.
-    - mkdir -p out/tools
-    # apache-2.0.txt covers Guava, which hkxpack carries shaded inside its own jar and ships no
-    # licence for. Apache-2.0 requires the text to travel with it.
-    - cp tools/hkxpack-cli.jar tools/hkxpack-LICENSE.txt tools/apache-2.0.txt THIRD_PARTY_NOTICES.md out/tools/
-    # The tool's own licence sits at the top of the zip rather than in tools/, because that folder is
-    # where other people's software lives. A download with no licence in it is a download nobody may
-    # legally pass on.
-    - cp LICENSE out/
+    - cp LICENSE THIRD_PARTY_NOTICES.md out/
     - ls -la out
     - test -f "out/$BINARY"
     - mv out "BehaviourGraphStudio-$RID"
@@ -101,17 +92,13 @@ standalone:
   image: debian:bookworm-slim
   needs: [linux]
   script:
-    - apt-get update -qq && apt-get install -y -qq unzip default-jre-headless >/dev/null
+    - apt-get update -qq && apt-get install -y -qq unzip >/dev/null
     - unzip -q BehaviourGraphStudio-linux-x64.zip
     - cd BehaviourGraphStudio-linux-x64
     - chmod +x BehaviourGraphStudio
     - ./BehaviourGraphStudio --version
-    # The bundled jar has to be the real thing, not a zero byte file that only looks bundled, and
-    # all three licences have to have survived the trip into the zip.
     - test -s LICENSE
-    - test -s tools/hkxpack-LICENSE.txt
-    - test -s tools/apache-2.0.txt
-    - java -jar tools/hkxpack-cli.jar | head -3
+    - test -s THIRD_PARTY_NOTICES.md
 
 # On main these run on their own, which is how a merge cuts a release. Anywhere else they wait
 # for somebody to press play in the pipeline view, so a branch can be handed to a tester as a real
@@ -144,7 +131,7 @@ release:
     - echo "release for $CI_COMMIT_SHORT_SHA"
   release:
     tag_name: "build-$CI_COMMIT_SHORT_SHA"
-    description: "Behaviour Graph Studio. One file, nothing to install. Saving additionally needs a Java runtime."
+    description: "Behaviour Graph Studio. One file, nothing to install."
     assets:
       links:
         - name: "Behaviour Graph Studio (Linux x86_64)"

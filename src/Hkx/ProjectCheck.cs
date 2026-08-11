@@ -5,11 +5,11 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// The same checks GraphValidator runs on the open file, run across every behaviour the project owns.
-//
-// One file's checks cannot see the problems that only exist between files: a behaviour that plays an
-// animation no file in the chain provides, or a folder cloned under a new name where the character
-// still names the old paths. Both read as fine one file at a time.
+
+
+
+
+
 public static class ProjectCheck
 {
     public sealed class FileResult
@@ -40,9 +40,9 @@ public static class ProjectCheck
         }
     }
 
-    /// Every behaviour file the project owns. The character names one, which is the root; the rest are
-    /// reached through hkbBehaviorReferenceGenerator and are simply the other files in the folder, so
-    /// the folder is what is walked rather than the reference graph.
+
+
+
     public static List<string> BehaviourFiles(ProjectChain chain)
     {
         var found = new List<string>();
@@ -60,8 +60,7 @@ public static class ProjectCheck
         return found;
     }
 
-    public static Result Run(ProjectChain chain, string? java = null, string? jar = null,
-                             Action<string>? progress = null)
+    public static Result Run(ProjectChain chain, Action<string>? progress = null)
     {
         var result = new Result();
         var files = BehaviourFiles(chain);
@@ -75,11 +74,10 @@ public static class ProjectCheck
 
             try
             {
-                string xml = HkxTextEdit.TextOf(path, java, jar);
+                string xml = HkxTextEdit.TextOf(path);
                 if (xml.Length == 0)
                 {
-                    file.Error = "holds a class this build cannot describe, and there is no hkxpack " +
-                                 "to fall back on";
+                    file.Error = "holds a class this build cannot describe";
                     continue;
                 }
 

@@ -26,10 +26,39 @@ public class MainWindow : Window
     private readonly Inspector _treeProps = new(340);
     private readonly Inspector _graphProps = new(360);
     private readonly GraphView _graph = new();
+    private readonly ColumnDefinition _graphCenterColumn = new(new GridLength(1, GridUnitType.Star)) { MinWidth = 720 };
+    private readonly ColumnDefinition _graphRightSplitterColumn = new(new GridLength(6, GridUnitType.Pixel));
+    private readonly ColumnDefinition _graphRightColumn = new(new GridLength(380, GridUnitType.Pixel))
+        { MinWidth = 360, MaxWidth = 480 };
+    private readonly RowDefinition _graphDrawerSplitterRow = new(new GridLength(0, GridUnitType.Pixel));
+    private readonly RowDefinition _graphDrawerRow = new(new GridLength(0, GridUnitType.Pixel))
+        { MaxHeight = 300 };
+    private GridSplitter? _graphRightSplitter;
+    private GridSplitter? _graphDrawerSplitter;
+    private Control? _graphDrawer;
+    private Control? _graphEditShelf;
+    private TabControl? _graphDrawerTabs;
+    private Border? _graphCanvasHost;
+    private Border? _graphPropertiesHost;
+    private Border? _playbackViewportHost;
+    private readonly List<string> _graphToolbarGroups = new();
+    private bool _graphToolbarGroupLabelsHaveFixedLineHeight;
+    private WorkspaceWindow? _workspaceWindow;
+    private LegendWindow? _legendWindow;
+    private int _workspaceWindowInstances;
+    private Button? _drawerButton;
+    private readonly HkGrid _machineNavigator = new(("Machine", -4), ("ID", 70), ("Run", 62));
+    private bool _machineNavigatorRebuilding;
+    private readonly List<string> _machineNavigatorIds = new();
+    private readonly List<string> _machineNavigatorLabels = new();
+    private readonly HashSet<string> _machineNavigatorActiveIds = new(StringComparer.Ordinal);
+    private bool _graphRightOpen = true;
+    private bool _graphDrawerOpen;
+    private double _graphRightWidth = 380;
+    private double _graphDrawerHeight = 110;
     private readonly Button _saveButton;
     private readonly Button _undoButton;
     private readonly Button _redoButton;
-    private readonly Button _findJava;
 
     private readonly HkGrid _tree = new(("Node", -4), ("Havok class", -3), ("Animation", -4), ("Offset", 90));
     private readonly HkGrid _symbols =
@@ -55,14 +84,14 @@ public class MainWindow : Window
     private int _frameStart;
     private int _aimedFrame = -1;
 
-    /// Which frame the boxes above are showing, as the track and the frame it came from, or -1 for
-    /// neither. A frame is not addressable by anything in the file, so it is addressed by where it
-    /// sits, and the row carries that.
+
+
+
     private int _editTrack = -1, _editFrame = -1;
 
-    /// Whether a frame has been changed since the file was opened. Kept apart from the behaviour
-    /// graph's own dirty flag: an animation is a different kind of file, saved a different way, and
-    /// running the two together would offer to write a clip out of a behaviour.
+
+
+
     private bool _animationEdited;
 
     private readonly TextBox _symbolName = Ux.Field("name", 170);
@@ -83,10 +112,10 @@ public class MainWindow : Window
     private HkxAnimationData? _poseAnimation;
     private string _poseSource = "";
 
-    /// Where the open clip travels, which the drawn pose does not show. Motion is extracted in this
-    /// format: a walk plays on the spot and carries its displacement separately, so the bones stay
-    /// put no matter how far the clip takes you. Measured rather than assumed: a Dogmeat walk that
-    /// travels 1,060 units moves its root bone 0.000 and its centre of mass 0.312.
+
+
+
+
     private RootMotion.Motion _poseMotion = new();
     private bool _followTravel;
     private int _poseFrame;
@@ -95,9 +124,9 @@ public class MainWindow : Window
     private HkxSkeleton? _cachedSkeleton;
     private string _cachedSkeletonFor = "";
 
-    // The mesh, its edges worked out once, and which skeleton bone each of its own bones is. All
-    // three are per shape and none of them change while scrubbing, so only the vertex positions are
-    // recomputed per frame.
+
+
+
     private readonly List<(NifShape Shape, SkinnedMesh.Binding Binding, List<(int From, int To)> Edges)>
         _meshShapes = new();
     private string _meshPath = "";
@@ -111,30 +140,100 @@ public class MainWindow : Window
     private readonly HkGrid _problems = new(("", 70), ("Object", -3), ("What is wrong", -7));
     private readonly TextBlock _problemBar = new() { Foreground = Ux.MetaBrush, FontSize = 12, Margin = new Thickness(2, 6, 2, 2) };
 
+    private long _documentStamp;                 // bumped on every document change
+    private long CaptureStamp() => _documentStamp;
+
+    public Func<ProjectChain, IProgress<string>, Task<ProjectCheck.Result>>? ValidateProjectRunner;
+    public Func<string, Task<PapyrusEvents.Index>>? PapyrusScanRunner;
+
+
+    private GraphRun? _run;
+    private readonly ComboBox _runEvents = new()
+        { MinWidth = 190, MaxWidth = 260, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private readonly TextBlock _runSummary = new()
+        { Foreground = Ux.MetaBrush, FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
+          TextWrapping = TextWrapping.Wrap, Margin = new Thickness(10, 0, 0, 0) };
+    private readonly TextBlock _runtimeStatus = new()
+        { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+          HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 700 };
+    private readonly HkGrid _running = new(("Machine", -4), ("Is in state", -4), ("Weight", 70));
+    private readonly HkGrid _runStopsGrid = new(("Stops", -3), ("Why", -6));
+    private readonly HkGrid _runHeldBackGrid = new(("Held back", -3), ("Condition", -6));
+    private readonly HkGrid _runLog = new(("Event and transition log", -1));
+    private readonly TextBox _runOutput = new()
+    {
+        IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+        Background = Ux.CardBrush, Foreground = Ux.MetaBrush, BorderBrush = Ux.BorderBrush,
+        BorderThickness = new Thickness(1), Padding = new Thickness(8), FontSize = 12,
+    };
+    private readonly List<string> _runOutputLines = new();
+    private readonly TextBlock _runStops = new()
+        { Foreground = Ux.WarnBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+          Margin = new Thickness(2, 4, 2, 2) };
+    private Button _step = Ux.Secondary("Step 0.1s");
+
+
+
+
+
+
+
+    private readonly ComboBox _runVariables = new()
+        { MinWidth = 170, MaxWidth = 230, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private readonly TextBox _runValue = new()
+        { Width = 80, Foreground = Ux.CodeBrush, FontSize = 12, Watermark = "value" };
+    private readonly Button _setRunVariable = Ux.Secondary("Set variable");
+    private readonly TextBlock _runHeldBack = new()
+        { Foreground = Ux.WarnBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+          Margin = new Thickness(2, 4, 2, 2) };
+
+
+
+
+    private static NativePaste.Clip? _clip;
+    private readonly ComboBox _pasteInto = new()
+        { MinWidth = 210, MaxWidth = 300, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private readonly TextBlock _pasteSummary = new()
+        { Foreground = Ux.MetaBrush, FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
+          TextWrapping = TextWrapping.Wrap, Margin = new Thickness(10, 0, 0, 0) };
+    private Button _pasteButton = Ux.Primary("Paste subtree");
+
+    private readonly TextBox _templateName = Ux.Field("template name", 150);
+    private readonly ComboBox _templates = new()
+        { MinWidth = 210, MaxWidth = 300, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private Button _applyTemplate = Ux.Secondary("Apply template");
+    private readonly ComboBox _predefinedTemplates = new()
+        { MinWidth = 190, MaxWidth = 250, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private readonly StackPanel _predefinedSlots = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
+    private readonly Dictionary<string, Control> _predefinedValues = new(StringComparer.Ordinal);
+    private readonly Button _applyPredefinedTemplate = Ux.Primary("Create template");
+
     private readonly Dictionary<int, int> _offsetToIndex = new();
     private HashSet<string> _emptyStates = new();
     private List<string> _objectIds = new();
 
-    // The open file's own bytes, which is where the properties panel gets its values. Null when the
-    // file could not be taken apart, in which case the panel falls back to hkxpack for everything.
+
+
     private PackfileObjects? _bytes;
 
-    // Fields changed since the file was read, as "objectId.field". An edit lands in the text form
-    // and not in the bytes until it is saved, so for these the text form is the newer of the two and
-    // reading the bytes would put the old value back on screen under the person typing.
+
+
+
     private readonly HashSet<string> _editedFields = new(StringComparer.Ordinal);
 
-    // Why the bytes are not being read, when they are not. Kept rather than printed on the spot,
-    // because the load says several things after this point and the last one wins the status line.
+
+
     private string _classWarning = "";
     private List<HkxBehaviorParser.BehaviorNode> _objects = new();
     private HkxBehaviorParser.BehaviorNode? _root;
 
     private string _hkxPath = "";
+    private bool _closeApproved;
+    private bool _reloading;
 
-    /// Set when the open file is a copy pulled out of a BA2 rather than a file on disk. The copy is
-    /// in a temporary folder, so saving into it would write somewhere the user will never look and
-    /// leave the archive untouched, which is worse than refusing.
+
+
+
     private bool _readOnly;
     private string _readOnlyWhy = "";
     private string _xmlPath = "";
@@ -144,10 +243,10 @@ public class MainWindow : Window
     private readonly List<Action> _fieldCommits = new();
     private bool _dirty;
 
-    // The document is one string, so a step back is a copy of it. Every mutation goes through Commit,
-    // which is the only place _xmlText is allowed to change outside a load, so nothing can edit
-    // behind the stack's back. Depth is capped because a long session on a seven megabyte weapon
-    // behaviour would otherwise keep every version of it alive.
+
+
+
+
     private const int UndoDepth = 100;
     private readonly List<string> _undo = new();
     private readonly List<string> _redo = new();
@@ -160,7 +259,6 @@ public class MainWindow : Window
         Height = 940;
         Background = Ux.BaseBrush;
 
-        HkxTextEdit.AppDirectory = AppContext.BaseDirectory;
         _pathField.Text = Settings.Get("last_path");
 
         var open = Ux.Primary("Open");
@@ -195,10 +293,6 @@ public class MainWindow : Window
         _redoButton.Click += (_, _) => Redo();
         ToolTip.SetTip(_redoButton, "Ctrl+Y");
 
-        _findJava = Ux.Secondary("Find Java...");
-        _findJava.IsVisible = false;
-        _findJava.Click += async (_, _) => await PickJava();
-
         KeyDown += OnWindowKey;
 
         _tree.SelectionChanged += OnTreeSelected;
@@ -230,7 +324,7 @@ public class MainWindow : Window
                 (Ux.Pill(_summary), false),
                 (Bar(_filter, expand, collapse), false),
                 (tabs, true),
-                (Bar(Ux.Pill(_status), _findJava, _undoButton, _redoButton, checkProject, check, _saveButton), false)),
+                (Bar(Ux.Pill(_status), _undoButton, _redoButton, checkProject, check, _saveButton), false)),
         };
 
         SetSummary("No file loaded.", Ux.MutedBrush);
@@ -254,8 +348,56 @@ public class MainWindow : Window
         Child = content,
     };
 
-    // The last control in the row is the one that stretches, unless a later one is a button, which
-    // is the layout every bar in this window happens to want.
+    private Border GraphToolbarGroup(string name, params Control[] controls)
+    {
+        var label = new TextBlock
+        {
+            Text = name.ToUpperInvariant(),
+            Foreground = Ux.MutedBrush,
+            FontSize = 10,
+            FontWeight = FontWeight.Bold,
+            LineHeight = 14,
+            Height = 20,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+        };
+        var tag = new Border
+        {
+            Background = Ux.BaseBrush,
+            BorderBrush = Ux.BorderBrush,
+            BorderThickness = new Thickness(0, 0, 1, 0),
+            Padding = new Thickness(8, 2),
+            Child = label,
+        };
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 5,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        row.Children.Add(tag);
+        foreach (var control in controls)
+        {
+            control.VerticalAlignment = VerticalAlignment.Center;
+            if (control is Button or ComboBox) control.MinHeight = 28;
+            row.Children.Add(control);
+        }
+
+        _graphToolbarGroups.Add(name);
+        _graphToolbarGroupLabelsHaveFixedLineHeight = true;
+        return new Border
+        {
+            Background = Ux.CardBrush,
+            BorderBrush = Ux.BorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(1, 1, 6, 1),
+            Child = row,
+        };
+    }
+
+
+
     private static Control Bar(params Control[] controls)
     {
         var panel = new DockPanel { LastChildFill = true };
@@ -282,31 +424,16 @@ public class MainWindow : Window
         return grid;
     }
 
-    // The problem list sits under the canvas rather than in a dialog, because the point of it is to
-    // be read while looking at the node it is about.
+
+
+
     private Control BuildGraphTab()
     {
-        _problems.Height = 150;
         _problems.SelectionChanged += OnProblemSelected;
 
-        var splitter = new GridSplitter { Width = 6, Background = Brushes.Transparent };
 
-        // The canvas draws six node colours, three kinds of line and two badges, and none of them
-        // says what it means. That is a lot to hold in your head on a graph with eight hundred boxes
-        // in it, and the answer is not fewer marks: it is the marks having somewhere to be looked up.
-        _legend = BuildLegend();
-        _legend.IsVisible = false;
 
-        var legendButton = Ux.Secondary("Legend");
-        legendButton.Click += (_, _) =>
-        {
-            _legend.IsVisible = !_legend.IsVisible;
-            legendButton.Content = _legend.IsVisible ? "Hide legend" : "Legend";
-        };
 
-        // A behaviour lays out several screens across. Without a way back to the whole of it, being
-        // anywhere in particular means being lost, and the answer to a graph feeling overwhelming is
-        // usually being able to see all of it rather than there being less of it.
         var fitAll = Ux.Secondary("Fit all");
         fitAll.Click += (_, _) =>
         {
@@ -314,9 +441,9 @@ public class MainWindow : Window
             _graph.FrameAll();
         };
 
-        // With a node picked out, its own neighbourhood filling the view. This is the one that makes
-        // a big file workable: a machine and its states are a readable picture, and the rest of the
-        // file being off screen is the point rather than a loss.
+
+
+
         var fitPicked = Ux.Secondary("Fit selection");
         fitPicked.Click += (_, _) =>
         {
@@ -325,48 +452,979 @@ public class MainWindow : Window
             _graph.FrameRelated();
         };
 
-        var top = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-        foreach (var button in new[] { legendButton, fitAll, fitPicked })
-        {
-            button.Margin = new Thickness(0, 0, 8, 0);
-            DockPanel.SetDock(button, Dock.Left);
-            top.Children.Add(button);
-        }
-        top.Children.Add(new Panel());
+        Control view = BuildViewMenu(fitAll, fitPicked);
+        _graphToolbarGroups.Clear();
+        _graphToolbarGroupLabelsHaveFixedLineHeight = false;
+        view = GraphToolbarGroup("View", view, fitAll, fitPicked);
+        var runBar = BuildRunControls();
+        var pasteBar = BuildPasteControls();
+        _graphEditShelf = Framed(pasteBar);
+        _graphEditShelf.IsVisible = false;
+        var edit = Ux.Secondary("Edit tools");
+        edit.Click += (_, _) => SetGraphEditShelfOpen(!_graphEditShelf.IsVisible);
+        var editGroup = GraphToolbarGroup("Edit", edit);
+        var simulation = GraphToolbarGroup("Simulation", runBar);
 
-        var panel = new DockPanel { LastChildFill = true };
-        DockPanel.SetDock(top, Dock.Top);
-        DockPanel.SetDock(_problemBar, Dock.Bottom);
-        DockPanel.SetDock(_problems, Dock.Bottom);
-        DockPanel.SetDock(_graphProps, Dock.Right);
-        DockPanel.SetDock(splitter, Dock.Right);
-        DockPanel.SetDock(_legend, Dock.Left);
-        panel.Children.Add(top);
-        panel.Children.Add(_problemBar);
-        panel.Children.Add(_problems);
-        panel.Children.Add(_graphProps);
-        panel.Children.Add(splitter);
-        panel.Children.Add(_legend);
-        panel.Children.Add(Framed(_graph));
+        var toolbarLeft = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        toolbarLeft.Children.Add(view);
+        toolbarLeft.Children.Add(editGroup);
+        toolbarLeft.Children.Add(simulation);
+        var toolbar = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(toolbarLeft, Dock.Left);
+        toolbar.Children.Add(toolbarLeft);
+        toolbar.Children.Add(_runSummary);
+        var toolbarHost = new Border
+        {
+            Padding = new Thickness(0, 10, 0, 8),
+            Child = toolbar,
+        };
+
+        _graphRightSplitter = new GridSplitter { Width = 6, Background = Ux.BorderBrush,
+            ResizeDirection = GridResizeDirection.Columns };
+
+        var workspace = new Grid();
+        workspace.ColumnDefinitions.Add(_graphCenterColumn);
+        workspace.ColumnDefinitions.Add(_graphRightSplitterColumn);
+        workspace.ColumnDefinitions.Add(_graphRightColumn);
+        _graphCanvasHost = Framed(_graph);
+        _graphCanvasHost.ClipToBounds = true;
+        Grid.SetColumn(_graphCanvasHost, 0);
+        Grid.SetColumn(_graphRightSplitter, 1);
+        _graphProps.SetHeaderAction("Collapse", () => SetGraphRightPaneOpen(false));
+        _graphPropertiesHost = Framed(_graphProps);
+        _graphPropertiesHost.ClipToBounds = true;
+        Grid.SetColumn(_graphPropertiesHost, 2);
+        workspace.Children.Add(_graphCanvasHost);
+        workspace.Children.Add(_graphRightSplitter);
+        workspace.Children.Add(_graphPropertiesHost);
+
+        var problems = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(_problemBar, Dock.Top);
+        problems.Children.Add(_problemBar);
+        problems.Children.Add(_problems);
+
+        _graphDrawerTabs = new TabControl { Padding = new Thickness(6, 0, 6, 0) };
+        _graphDrawerTabs.Items.Add(Tab("Problems", problems));
+        _graphDrawerTabs.Items.Add(Tab("Output", _runOutput));
+
+        var drawer = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 6), IsVisible = false,
+            ClipToBounds = true };
+        _graphDrawer = drawer;
+        drawer.Children.Add(_graphDrawerTabs);
+
+        _drawerButton = Ux.Secondary("Show diagnostics");
+        _drawerButton.Click += (_, _) => SetGraphDrawerOpen(!_graphDrawerOpen);
+        ToolTip.SetTip(_drawerButton, "Show validation findings and diagnostic output below the graph.");
+        var drawerBar = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 0,
+            Margin = new Thickness(0, 8, 0, 0),
+        };
+        drawerBar.Children.Add(_drawerButton);
+
+        _graphDrawerSplitter = new GridSplitter { Height = 6, Background = Ux.BorderBrush,
+            ResizeDirection = GridResizeDirection.Rows, IsVisible = false };
+
+        var graphWorkspace = new Grid();
+        graphWorkspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        graphWorkspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        graphWorkspace.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
+        graphWorkspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        graphWorkspace.RowDefinitions.Add(_graphDrawerSplitterRow);
+        graphWorkspace.RowDefinitions.Add(_graphDrawerRow);
+        Grid.SetRow(toolbarHost, 0);
+        Grid.SetRow(_graphEditShelf, 1);
+        Grid.SetRow(workspace, 2);
+        Grid.SetRow(drawerBar, 3);
+        Grid.SetRow(_graphDrawerSplitter, 4);
+        Grid.SetRow(drawer, 5);
+        graphWorkspace.Children.Add(toolbarHost);
+        graphWorkspace.Children.Add(_graphEditShelf);
+        graphWorkspace.Children.Add(workspace);
+        graphWorkspace.Children.Add(drawerBar);
+        graphWorkspace.Children.Add(_graphDrawerSplitter);
+        graphWorkspace.Children.Add(drawer);
 
         _problems.IsVisible = false;
         _problemBar.IsVisible = false;
-        return panel;
+        _running.IsVisible = false;
+        return graphWorkspace;
     }
 
-    private Control _legend = new Panel();
 
-    /// Read only, for the window checks.
-    public Control Legend => _legend;
 
-    /// What everything on the canvas means, in the words somebody reading a graph would use.
-    ///
-    /// Every colour here is asked for by class name rather than written down again, so the legend
-    /// cannot come to disagree with the picture. A legend that is wrong is worse than none: it is
-    /// read as the answer rather than checked against the thing it describes.
+
+    private Button BuildViewMenu(Control fitAll, Control fitPicked)
+    {
+        var button = Ux.Secondary("View ▾");
+        var menu = new ContextMenu();
+        var workspace = ViewItem("Workspace", OpenWorkspaceWindow);
+        var properties = ViewItem("Properties", () => SetGraphRightPaneOpen(!_graphRightOpen));
+        var problems = ViewItem("Problems", () => OpenGraphDrawer("Problems"));
+        var output = ViewItem("Output", () => OpenGraphDrawer("Output"));
+        var legend = ViewItem("Legend", OpenLegendWindow);
+        var focus = ViewItem("Focus tree", FocusSelectedMachine);
+        var full = ViewItem("Show full graph", ShowFullGraph);
+        var freeform = ViewItem("Freeform", () => SetGraphLayoutMode(GraphLayoutMode.Freeform));
+        var structured = ViewItem("Structured Flow", () => SetGraphLayoutMode(GraphLayoutMode.StructuredFlow));
+        var upstream = ViewItem("Trace upstream", () => TraceSelected(GraphTrace.Direction.Upstream));
+        var downstream = ViewItem("Trace downstream", () => TraceSelected(GraphTrace.Direction.Downstream));
+        var both = ViewItem("Trace both", () => TraceSelected(GraphTrace.Direction.Both));
+        var clear = ViewItem("Clear trace", _graph.ClearTrace);
+        foreach (var item in new MenuItem[]
+                 { workspace, properties, problems, output, legend, freeform, structured, focus, full,
+                   upstream, downstream, both, clear })
+            menu.Items.Add(item);
+
+        button.ContextMenu = menu;
+        button.Click += (_, _) =>
+        {
+            workspace.Header = WorkspaceVisible ? "Workspace   Open" : "Workspace   Closed";
+            legend.Header = LegendWindowVisible ? "Legend   Open" : "Legend   Closed";
+            properties.Header = _graphRightOpen ? "Properties   Open" : "Properties   Closed";
+            freeform.Header = _graph.LayoutMode == GraphLayoutMode.Freeform ? "✓ Freeform" : "Freeform";
+            structured.Header = _graph.LayoutMode == GraphLayoutMode.StructuredFlow
+                ? "✓ Structured Flow" : "Structured Flow";
+            menu.Open(button);
+        };
+        ToolTip.SetTip(button, "Open workspace tools, panels, graph focus, tracing, and reference material.");
+        return button;
+    }
+
+    private static MenuItem ViewItem(string label, Action action)
+    {
+        var item = new MenuItem { Header = label };
+        item.Click += (_, _) => action();
+        return item;
+    }
+
+    private void OpenGraphDrawer(string tab)
+    {
+        SetGraphDrawerOpen(true);
+        SelectGraphDrawerTab(tab);
+    }
+
+    private void SetGraphLayoutMode(GraphLayoutMode mode)
+    {
+        _graph.SetLayoutMode(mode);
+        SetStatus(mode == GraphLayoutMode.StructuredFlow
+            ? "Structured Flow shows the state-machine hierarchy."
+            : "Freeform shows the raw object dependency graph.", Ux.MetaBrush);
+    }
+
+    private Control BuildWorkspaceRuntimeTab()
+    {
+        var variables = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(14, 0, 14, 10),
+        };
+        variables.Children.Add(Ux.SectionTitle("Variables"));
+        variables.Children.Add(_runVariables);
+        variables.Children.Add(_runValue);
+        variables.Children.Add(_setRunVariable);
+
+        var sections = new Grid();
+        sections.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+        sections.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+        sections.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
+        sections.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
+        PlaceRuntime(_running, sections, 0, 0, new Thickness(14, 0, 5, 5));
+        PlaceRuntime(_runStopsGrid, sections, 1, 0, new Thickness(5, 0, 14, 5));
+        PlaceRuntime(_runHeldBackGrid, sections, 0, 1, new Thickness(14, 5, 5, 14));
+        PlaceRuntime(_runLog, sections, 1, 1, new Thickness(5, 5, 14, 14));
+
+        var content = new DockPanel { LastChildFill = true };
+        var header = new DockPanel { Margin = new Thickness(14, 12, 14, 8) };
+        header.Children.Add(Ux.SectionTitle("Simulation runtime"));
+        header.Children.Add(_runtimeStatus);
+        DockPanel.SetDock(header, Dock.Top);
+        DockPanel.SetDock(variables, Dock.Top);
+        content.Children.Add(header);
+        content.Children.Add(variables);
+        content.Children.Add(sections);
+        return content;
+    }
+
+    private static void PlaceRuntime(Control control, Grid grid, int column, int row, Thickness margin)
+    {
+        control.Margin = margin;
+        Grid.SetColumn(control, column);
+        Grid.SetRow(control, row);
+        grid.Children.Add(control);
+    }
+
+
+
+
+
+
+
+
+    private Control BuildRunControls()
+    {
+        var send = Ux.Primary("Send");
+        send.Click += (_, _) => SendRunEvent();
+
+        var restart = Ux.Secondary("Restart");
+        ToolTip.SetTip(restart, "Put the graph back in the state it starts in.");
+        restart.Click += (_, _) => StartRun("Back at the start.");
+
+
+
+
+        _step = Ux.Secondary("Step 0.1s");
+        ToolTip.SetTip(_step, "Advance time so a transition in progress blends further.");
+        _step.Click += (_, _) =>
+        {
+            if (_run == null) return;
+
+
+
+
+
+            var byTime = _run.Advance(0.1f);
+            if (byTime.Count > 0)
+            {
+                RefreshRun($"Stepped 0.1s. {byTime.Count} transition(s) fired because a clip reached " +
+                           $"a point in itself: {string.Join(", ", byTime.Select(f => f.Event).Distinct())}.");
+                return;
+            }
+
+            RefreshRun(_run.Blending ? "Stepped 0.1s, still blending." : "Stepped 0.1s, blend finished.");
+        };
+
+
+
+
+        _running.SelectionChanged += () =>
+        {
+            if (_running.SelectedTag is string id && id.Length > 0 && _graph.FocusOn(id))
+                SelectObjectId(id);
+        };
+
+        var label = Ux.Label("Event");
+        label.FontSize = 11;
+        label.Margin = new Thickness(2, 0, 0, 0);
+
+
+
+        _runValue.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) SetRunVariable(); };
+        _runVariables.SelectionChanged += (_, _) => ShowRunVariable();
+        ToolTip.SetTip(_setRunVariable, "Change a simulation variable before sending the next event.");
+        _setRunVariable.Click += (_, _) => SetRunVariable();
+
+        var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
+        foreach (var control in new Control[] { label, _runEvents, send, _step, restart })
+            left.Children.Add(control);
+
+        SetRunSummary("Open a behaviour, then send it an event to watch which state goes active.",
+            Ux.MutedBrush);
+        return left;
+    }
+
+
+
+
+
+
+
+
+
+
+
+    private Control BuildPasteControls()
+    {
+        var copy = Ux.Secondary("Copy subtree");
+        ToolTip.SetTip(copy, "Take the selected node and everything it owns, ready to paste.");
+        copy.Click += (_, _) => CopySubtree();
+
+        _pasteButton = Ux.Primary("Paste subtree");
+        ToolTip.SetTip(_pasteButton,
+            "Put a fresh copy into this file and save it. The file is kept as .bak first.");
+        _pasteButton.Click += (_, _) => PasteSubtree();
+        _pasteButton.IsEnabled = false;
+
+        var label = new TextBlock
+        {
+            Text = "Attach to",
+            Foreground = Ux.MetaBrush,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+
+
+
+
+
+        var save = Ux.Secondary("Save as template");
+        ToolTip.SetTip(save, "Keep the selected node and everything it owns, so it can be used again " +
+                             "in another file later.");
+        save.Click += (_, _) => SaveTemplate();
+
+        _applyTemplate.Click += (_, _) => ApplyStoredTemplate();
+        _applyTemplate.IsEnabled = false;
+        ToolTip.SetTip(_applyTemplate,
+            "Put a kept shape into this file and save it. The file is kept as .bak first.");
+
+
+
+
+        _templates.SelectionChanged += (_, _) => DescribeTemplate();
+        _predefinedTemplates.ItemsSource = PredefinedTemplates.All().Select(template => template.Id).ToList();
+        _predefinedTemplates.SelectionChanged += (_, _) => RefreshPredefinedTemplateEditors();
+        _applyPredefinedTemplate.Click += (_, _) => ApplyPredefinedTemplate();
+        if (_predefinedTemplates.Items.Count > 0) _predefinedTemplates.SelectedIndex = 0;
+
+        var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        foreach (var control in new Control[] { copy, label, _pasteInto, _pasteButton,
+                                                _templateName, save, _templates, _applyTemplate })
+            left.Children.Add(control);
+
+        var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 6), LastChildFill = true };
+        DockPanel.SetDock(left, Dock.Left);
+        bar.Children.Add(left);
+        bar.Children.Add(_pasteSummary);
+
+        var predefined = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6,
+                                          Margin = new Thickness(0, 6, 0, 0) };
+        predefined.Children.Add(new TextBlock { Text = "Predefined", Foreground = Ux.MetaBrush,
+                                                FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        predefined.Children.Add(_predefinedTemplates);
+        predefined.Children.Add(_predefinedSlots);
+        predefined.Children.Add(_applyPredefinedTemplate);
+
+        var all = new StackPanel();
+        all.Children.Add(bar);
+        all.Children.Add(predefined);
+
+        RefreshPasteSlots();
+        RefreshTemplates();
+        _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
+        RefreshPredefinedTemplateEditors();
+        return all;
+    }
+
+
+
+
+
+
+
+    private void RefreshPasteSlots()
+    {
+        var slots = new List<string> { Unattached };
+
+        if (_bytes != null && _selectedId.Length > 0
+            && int.TryParse(_selectedId, out int id)
+            && id - NativeGraphModel.FirstId >= 0
+            && id - NativeGraphModel.FirstId < _bytes.Instances.Count)
+        {
+            var instance = _bytes.Instances[id - NativeGraphModel.FirstId];
+            foreach (var member in HavokClassTypes.Shipped.Members(instance.ClassName))
+            {
+                if (!member.Written) continue;
+                bool one = member.VType == "TYPE_POINTER";
+                bool many = member.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY"
+                            && member.VSub == "TYPE_POINTER";
+                if (one || many) slots.Add($"#{_selectedId}.{member.Name}" + (many ? "[]" : ""));
+            }
+        }
+
+        string chosen = _pasteInto.SelectedItem as string ?? Unattached;
+        _pasteInto.ItemsSource = slots;
+        _pasteInto.SelectedItem = slots.Contains(chosen) ? chosen : Unattached;
+
+        _pasteButton.IsEnabled = _clip != null && !_readOnly && _hkxPath.Length > 0;
+        _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
+        if (_clip != null && _pasteSummary.Text?.Length == 0) SetPasteSummary(Held(_clip), Ux.MetaBrush);
+    }
+
+    private const string Unattached = "(leave it unattached)";
+
+    private static string Held(NativePaste.Clip clip)
+    {
+        var tree = clip.Tree;
+        string what = $"Holding #{tree.RootId} {tree.RootClass} from " +
+                      $"{Path.GetFileName(clip.Path)}: {tree.Ids.Count} object(s)";
+        if (tree.Shared.Count > 0) what += $", {tree.Shared.Count} shared with the rest of that file";
+        if (tree.Events.Count > 0) what += $", {tree.Events.Count} event(s)";
+        if (tree.Variables.Count > 0) what += $", {tree.Variables.Count} variable(s)";
+        return what + ".";
+    }
+
+    private void CopySubtree()
+    {
+        if (_hkxPath.Length == 0 || _selectedId.Length == 0)
+        {
+            SetPasteSummary("Pick a node on the canvas or in the tree first.", Ux.MutedBrush);
+            return;
+        }
+
+        if (!int.TryParse(_selectedId, out int id))
+        {
+            SetPasteSummary($"#{_selectedId} is not an object this file numbers, so there is nothing " +
+                            "to copy.", Ux.BadBrush);
+            return;
+        }
+
+        try
+        {
+            _clip = NativePaste.Copy(_hkxPath, id);
+            SetPasteSummary(Held(_clip) + " Open the file to paste it into, or paste it here.",
+                            Ux.MetaBrush);
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("Nothing copied: " + e.Message, Ux.BadBrush);
+        }
+
+        RefreshPasteSlots();
+    }
+
+    private void PasteSubtree()
+    {
+        if (_clip == null) { SetPasteSummary("Nothing has been copied yet.", Ux.MutedBrush); return; }
+        if (_readOnly) { SetPasteSummary("Not pasted: " + _readOnlyWhy, Ux.BadBrush); return; }
+
+
+
+        if (_dirty)
+        {
+            SetPasteSummary("Save your other changes first. Pasting writes the file and reads it " +
+                            "back, which would lose them.", Ux.BadBrush);
+            return;
+        }
+
+        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
+        if (blocked != null) { SetPasteSummary("Cannot paste: " + blocked, Ux.BadBrush); return; }
+
+        int attachTo = -1;
+        string field = "";
+        if (_pasteInto.SelectedItem as string is { } slot && slot != Unattached)
+        {
+            int dot = slot.IndexOf('.');
+            attachTo = int.Parse(slot[1..dot]);
+            field = slot[(dot + 1)..].TrimEnd('[', ']');
+        }
+
+        NativePaste.Result written;
+        try
+        {
+            written = NativePaste.Paste(_hkxPath, _clip, attachTo, field);
+
+            FileSafety.Backup(_hkxPath);
+            FileSafety.Replace(_hkxPath, written.Bytes);
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("Nothing pasted, and the file is untouched: " + e.Message, Ux.BadBrush);
+            return;
+        }
+
+        string said = written.Note + $" The file before this is kept as {Path.GetFileName(_hkxPath + ".bak")}.";
+
+        try
+        {
+            Load();
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("The file was pasted into, but the editor could not reload it: " +
+                            e.Message, Ux.BadBrush);
+            return;
+        }
+        SelectObjectId(written.RootId.ToString());
+        SetPasteSummary(said, Ux.MetaBrush);
+        SetStatus(said, Ux.MetaBrush);
+    }
+
+
+
+
+
+
+
+    private void SaveTemplate()
+    {
+        if (_bytes == null || _hkxPath.Length == 0)
+        {
+            SetPasteSummary("Open a behaviour first.", Ux.MutedBrush);
+            return;
+        }
+
+        if (_selectedId.Length == 0 || !int.TryParse(_selectedId, out int id))
+        {
+            SetPasteSummary("Pick a node on the canvas or in the tree first.", Ux.MutedBrush);
+            return;
+        }
+
+        string name = _templateName.Text?.Trim() ?? "";
+        if (name.Length == 0)
+        {
+            SetPasteSummary("Give the template a name in the box first, so it can be told apart from " +
+                            "the others later.", Ux.MutedBrush);
+            return;
+        }
+
+        try
+        {
+            var kept = TemplateStore.Lift(_hkxPath, id, name, $"from #{id} of {Path.GetFileName(_hkxPath)}");
+            _templateName.Text = "";
+            RefreshTemplates();
+            _templates.SelectedItem = kept.Slug;
+
+            SetPasteSummary($"Kept '{kept.Name}': {kept.Objects} object(s) from #{id}. " +
+                            (kept.Events.Count + kept.Variables.Count > 0
+                                ? $"It uses {kept.Events.Count + kept.Variables.Count} symbol(s) by name, so a " +
+                                  "file it goes into has to declare them."
+                                : "It uses no events or variables, so it fits anywhere."),
+                            Ux.MetaBrush);
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("Nothing kept: " + e.Message, Ux.BadBrush);
+        }
+    }
+
+
+    private void ApplyStoredTemplate()
+    {
+        if (_templates.SelectedItem as string is not { } slug || slug.Length == 0)
+        {
+            SetPasteSummary("Pick a template first.", Ux.MutedBrush);
+            return;
+        }
+
+        var template = TemplateStore.Get(slug);
+        if (template == null) { SetPasteSummary("That template is no longer there.", Ux.BadBrush); return; }
+
+        if (_readOnly) { SetPasteSummary("Not applied: " + _readOnlyWhy, Ux.BadBrush); return; }
+
+
+
+        if (_dirty)
+        {
+            SetPasteSummary("Save your other changes first. Applying a template writes the file and " +
+                            "reads it back, which would lose them.", Ux.BadBrush);
+            return;
+        }
+
+        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
+        if (blocked != null) { SetPasteSummary("Cannot apply: " + blocked, Ux.BadBrush); return; }
+
+        int attachTo = -1;
+        string field = "";
+        if (_pasteInto.SelectedItem as string is { } slot && slot != Unattached)
+        {
+            int dot = slot.IndexOf('.');
+            attachTo = int.Parse(slot[1..dot]);
+            field = slot[(dot + 1)..].TrimEnd('[', ']');
+        }
+
+        NativePaste.Result written;
+        try
+        {
+            written = TemplateStore.Apply(template, _hkxPath, attachTo, field);
+
+            FileSafety.Backup(_hkxPath);
+            FileSafety.Replace(_hkxPath, written.Bytes);
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("Nothing applied, and the file is untouched: " + e.Message, Ux.BadBrush);
+            return;
+        }
+
+        string said = $"Applied '{template.Name}'. {written.Note} " +
+                      $"The file before this is kept as {Path.GetFileName(_hkxPath + ".bak")}.";
+
+        try
+        {
+            Load();
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("The template was written, but the editor could not reload the file: " +
+                            e.Message, Ux.BadBrush);
+            return;
+        }
+        SelectObjectId(written.RootId.ToString());
+        SetPasteSummary(said, Ux.MetaBrush);
+        SetStatus(said, Ux.MetaBrush);
+    }
+
+
+    private void RefreshTemplates()
+    {
+        var kept = TemplateStore.All();
+        _templates.ItemsSource = kept.Select(t => t.Slug).ToList();
+        _applyTemplate.IsEnabled = kept.Count > 0 && _bytes != null;
+        if (kept.Count > 0 && _templates.SelectedItem == null) _templates.SelectedIndex = 0;
+    }
+
+
+
+
+
+
+
+    private void DescribeTemplate()
+    {
+        if (_templates.SelectedItem as string is not { } slug) return;
+
+        var template = TemplateStore.Get(slug);
+        if (template == null) return;
+
+        if (_bytes == null)
+        {
+            SetPasteSummary($"'{template.Name}': {template.Objects} object(s). Open a behaviour to put " +
+                            "it into one.", Ux.MutedBrush);
+            return;
+        }
+
+        try
+        {
+            var fit = TemplateStore.Against(template, _bytes);
+            SetPasteSummary($"'{template.Name}': {template.Objects} object(s) from {template.FromFile}. " +
+                            (fit.Fits ? "Everything it needs is already declared here."
+                                      : "Before this can go in, " + fit + " on the symbols tab."),
+                            fit.Fits ? Ux.MetaBrush : Ux.WarnBrush);
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("Could not tell whether that fits: " + e.Message, Ux.BadBrush);
+        }
+    }
+
+    private void RefreshPredefinedTemplateEditors()
+    {
+        _predefinedSlots.Children.Clear();
+        _predefinedValues.Clear();
+        _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
+
+        if (_predefinedTemplates.SelectedItem as string is not { } id) return;
+        var template = PredefinedTemplates.Get(id);
+        if (template == null) return;
+
+        foreach (var slot in template.Slots)
+        {
+            Control control;
+            if (slot.Kind == PredefinedTemplates.SlotKind.Choice)
+            {
+                var choices = new ComboBox { MinWidth = 120, Foreground = Ux.CodeBrush, FontSize = 12,
+                                             ItemsSource = slot.Choices?.ToList() ?? new List<string>() };
+                choices.SelectedItem = slot.DefaultValue;
+                control = choices;
+            }
+            else
+            {
+                control = Ux.Field(slot.DisplayName + (slot.Required ? " *" : ""), 130);
+                ((TextBox)control).Text = slot.DefaultValue;
+            }
+            ToolTip.SetTip(control, slot.Description);
+            _predefinedValues[slot.Key] = control;
+            _predefinedSlots.Children.Add(control);
+        }
+
+        SetPasteSummary($"{template.DisplayName}: {template.Description}", Ux.MetaBrush);
+    }
+
+    private void ApplyPredefinedTemplate()
+    {
+        if (_predefinedTemplates.SelectedItem as string is not { } id) return;
+        if (_readOnly) { SetPasteSummary("Not created: " + _readOnlyWhy, Ux.BadBrush); return; }
+        if (_dirty) { SetPasteSummary("Save your other changes first.", Ux.BadBrush); return; }
+        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
+        if (blocked != null) { SetPasteSummary("Cannot create: " + blocked, Ux.BadBrush); return; }
+
+        var raw = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, control) in _predefinedValues)
+            raw[key] = control is ComboBox choice ? choice.SelectedItem as string ?? "" : ((TextBox)control).Text ?? "";
+
+        var result = PredefinedTemplates.Instantiate(_hkxPath, id, raw);
+        if (!result.Possible || result.Bytes == null)
+        {
+            SetPasteSummary("Nothing created: " + result.Refusal, Ux.BadBrush);
+            return;
+        }
+
+        try
+        {
+            FileSafety.Backup(_hkxPath);
+            FileSafety.Replace(_hkxPath, result.Bytes);
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("Nothing was created: the file could not be replaced. " + e.Message, Ux.BadBrush);
+            return;
+        }
+
+        try
+        {
+            Load();
+        }
+        catch (Exception e)
+        {
+            SetPasteSummary("The template was written, but the editor could not reload the file. " +
+                            e.Message, Ux.BadBrush);
+            return;
+        }
+        SelectObjectId(result.RootId.ToString());
+        SetPasteSummary(result.Summary + $" The file before this is kept as {Path.GetFileName(_hkxPath + ".bak")}.",
+                        Ux.MetaBrush);
+    }
+
+    private void SetPasteSummary(string text, IBrush brush)
+    {
+        _pasteSummary.Text = text;
+        _pasteSummary.Foreground = brush;
+    }
+
+
+    public IReadOnlyList<string> TemplateNames =>
+        (_templates.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
+    public bool CanApplyTemplate => _applyTemplate.IsEnabled;
+    public bool CanCreatePredefinedTemplate => _applyPredefinedTemplate.IsEnabled;
+    public void SaveTemplateForTest(string name)
+    {
+        _templateName.Text = name;
+        SaveTemplate();
+    }
+    public void ChooseTemplateForTest(string slug)
+    {
+        if (!TemplateNames.Contains(slug)) return;
+
+
+
+
+        _templates.SelectedItem = slug;
+        DescribeTemplate();
+    }
+    public void ApplyTemplateForTest() => ApplyStoredTemplate();
+
+
+    public string ClipSummary => _clip == null ? "" : Held(_clip);
+    public IReadOnlyList<string> PasteSlots =>
+        (_pasteInto.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
+    public string PasteAnswer => _pasteSummary.Text ?? "";
+    public bool CanPaste => _pasteButton.IsEnabled;
+    public void CopyForTest() => CopySubtree();
+    public void PasteForTest(string slot)
+    {
+        if (PasteSlots.Contains(slot)) _pasteInto.SelectedItem = slot;
+        PasteSubtree();
+    }
+
+
+    private void StartRun(string note = "Started at the graph's root.")
+    {
+        _graph.ClearActive();
+        _running.Clear();
+        _runStopsGrid.Clear();
+        _runHeldBackGrid.Clear();
+        _runLog.Clear();
+        _runOutputLines.Clear();
+        _runOutput.Text = "";
+        _running.IsVisible = false;
+        _step.IsEnabled = false;
+        SetMachineNavigatorActive(Array.Empty<string>());
+
+        var model = Model();
+        if (model.Objects.Count == 0)
+        {
+            _run = null;
+            _runEvents.ItemsSource = null;
+            _runVariables.ItemsSource = null;
+            SetRunSummary("Open a behaviour to run it.", Ux.MutedBrush);
+            return;
+        }
+
+        _run = GraphRun.Start(model);
+        if (_run.RootId.Length == 0)
+        {
+            _run = null;
+            _runEvents.ItemsSource = null;
+            _runVariables.ItemsSource = null;
+            SetRunSummary("This is a project or character file rather than a graph, so there is " +
+                          "nothing in it to run.", Ux.MutedBrush);
+            return;
+        }
+
+
+
+
+        if (_bytes != null && _hkxPath.Length > 0)
+        {
+            try
+            {
+                _run.Time(ClipTiming.All(_bytes, SymbolEditor.EventNames(model),
+                                         ClipTiming.FromDisk(_hkxPath)));
+            }
+            catch (Exception)
+            {
+
+
+            }
+        }
+
+        _runEvents.ItemsSource = _run.Events;
+        _runVariables.ItemsSource = _run.Variables;
+        if (_run.Variables.Count > 0) _runVariables.SelectedIndex = 0;
+        ShowRunVariable();
+        if (_run.Events.Count > 0) _runEvents.SelectedIndex = 0;
+        RefreshRun(note);
+    }
+
+    private void SendRunEvent()
+    {
+        if (_run == null)
+        {
+            SetRunSummary("Open a behaviour first.", Ux.MutedBrush);
+            return;
+        }
+
+        if (_runEvents.SelectedItem is not string name || name.Length == 0)
+        {
+            SetRunSummary("Choose an event to send.", Ux.MutedBrush);
+            return;
+        }
+
+        var fired = _run.Send(name);
+        int held = _run.HeldBack.Count;
+
+        _runLog.Add(null, "Event: " + name);
+        foreach (var move in fired)
+            _runLog.Add(null, $"Transition: {move.Event} to {move.ToStateName}").Tag(move.ToStateId);
+
+
+
+
+        string said = fired.Count == 0
+            ? held == 0
+              ? $"Sent {name}. Nothing in a running state was listening for it."
+              : $"Sent {name}. Something was listening, but {held} transition(s) are held back by a condition."
+            : $"Sent {name}. {fired.Count} transition(s) fired." +
+              (held > 0 ? $" {held} other(s) held back by a condition." : "");
+
+        RefreshRun(said);
+    }
+
+
+    private void ShowRunVariable()
+    {
+        if (_run == null || _runVariables.SelectedItem is not string name) return;
+        _runValue.Text = _run.ValueOf(name) is double value
+            ? value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : "";
+    }
+
+    private void SetRunVariable()
+    {
+        if (_run == null) { SetRunSummary("Open a behaviour first.", Ux.MutedBrush); return; }
+
+        if (_runVariables.SelectedItem is not string name || name.Length == 0)
+        {
+            SetRunSummary("Choose a variable to set.", Ux.MutedBrush);
+            return;
+        }
+
+        if (!double.TryParse(_runValue.Text ?? "", System.Globalization.NumberStyles.Float,
+                             System.Globalization.CultureInfo.InvariantCulture, out double value))
+        {
+            SetRunSummary($"'{_runValue.Text}' is not a number, so {name} was not changed.", Ux.BadBrush);
+            return;
+        }
+
+        try
+        {
+            _run.Set(name, value);
+            RefreshRun($"{name} is now {value.ToString(System.Globalization.CultureInfo.InvariantCulture)}. " +
+                       "Send an event to see what that changes.");
+        }
+        catch (ArgumentException e)
+        {
+            SetRunSummary(e.Message, Ux.BadBrush);
+        }
+    }
+
+
+    private void RefreshRun(string note)
+    {
+        if (_run == null) return;
+
+        var here = _run.Where();
+        _graph.ShowActive(here.Select(a => a.StateId));
+        SetMachineNavigatorActive(here.Where(a => !a.Fading).Select(a => a.MachineId));
+        AddRunOutput(note);
+
+        _running.Clear();
+        foreach (var active in here)
+        {
+            string machine = active.MachineName.Length > 0 ? active.MachineName : "#" + active.MachineId;
+            if (active.Fading) machine = "leaving " + machine;
+            var row = _running.Add(null,
+                machine,
+                active.StateName.Length > 0 ? active.StateName : "#" + active.StateId,
+                $"{active.Weight * 100:F0}%")
+                .Tag(active.StateId);
+
+
+
+            if (active.Fading) row.Colour(0, Ux.MutedBrush).Colour(1, Ux.MutedBrush).Colour(2, Ux.MutedBrush);
+        }
+        _running.IsVisible = true;
+
+
+
+        _step.IsEnabled = _run.Blending;
+
+        _runStopsGrid.Clear();
+        foreach (var stop in _run.Stops)
+            _runStopsGrid.Add(null, stop.ClassName, stop.Why).Tag(stop.ObjectId);
+
+
+
+        _runHeldBackGrid.Clear();
+        foreach (var held in _run.HeldBack)
+            _runHeldBackGrid.Add(null, held.Event + " to " +
+                                   (held.ToStateName.Length > 0 ? held.ToStateName : "#" + held.ToStateId),
+                                   held.Condition).Tag(held.ToStateId);
+
+        int machines = here.Count(a => !a.Fading);
+        string blending = _run.Blending ? "  A transition is blending; Step to move it along." : "";
+        SetRunSummary($"{machines} machine(s) running.  {note}{blending}", Ux.MetaBrush);
+    }
+
+    private void SetRunSummary(string text, IBrush brush)
+    {
+        _runSummary.Text = text;
+        _runSummary.Foreground = brush;
+        _runtimeStatus.Text = text;
+        _runtimeStatus.Foreground = brush;
+    }
+
+    private void AddRunOutput(string text)
+    {
+        if (text.Length == 0) return;
+        _runOutputLines.Add(text);
+        if (_runOutputLines.Count > 120) _runOutputLines.RemoveRange(0, _runOutputLines.Count - 120);
+        _runOutput.Text = string.Join(Environment.NewLine, _runOutputLines);
+    }
+
+
+
+
+
+
     private Control BuildLegend()
     {
-        var body = new StackPanel { Spacing = 4, Width = 284 };
+
+
+        var body = new StackPanel { Spacing = 4 };
 
         void Heading(string text)
         {
@@ -377,11 +1435,7 @@ public class MainWindow : Window
 
         void Swatch(Control mark, string name, string what)
         {
-            // Width given rather than inherited. The row is a DockPanel with the swatch docked left,
-            // and the words filling what is left of a panel that is itself inside a scroll viewer,
-            // which measures its content as though it had all the room in the world. Left to itself
-            // the last word of every explanation sat past the edge of the panel.
-            var words = new StackPanel { Spacing = 1, Width = 212 };
+            var words = new StackPanel { Spacing = 1 };
             var title = Ux.Label(name);
             title.Foreground = Ux.TitleBrush;
             words.Children.Add(title);
@@ -395,8 +1449,11 @@ public class MainWindow : Window
             mark.Margin = new Thickness(0, 3, 8, 0);
             mark.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top;
 
-            var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
-            DockPanel.SetDock(mark, Dock.Left);
+            var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
+            row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+            Grid.SetColumn(mark, 0);
+            Grid.SetColumn(words, 1);
             row.Children.Add(mark);
             row.Children.Add(words);
             body.Children.Add(row);
@@ -457,10 +1514,10 @@ public class MainWindow : Window
                             "Written on the state rather than drawn as a line, because a wildcard " +
                             "fires from every state and so has no one place a line could start.");
 
-        // Drawn at the size it is on a node rather than the size the row would like. The first
-        // version squeezed it into a twelve pixel strip with eight point text, which is the one
-        // sample in the legend nobody could read, and the point of a sample is that it is
-        // recognisable when you next meet it.
+
+
+
+
         Swatch(new Border
         {
             CornerRadius = new CornerRadius(3),
@@ -475,6 +1532,20 @@ public class MainWindow : Window
                 Foreground = Ux.BaseBrush,
             },
         }, "Start", "The state its machine begins in. One per machine, at the top right of the box.");
+
+        Swatch(new Border
+        {
+            Width = 20,
+            Height = 12,
+            CornerRadius = new CornerRadius(3),
+            Background = new SolidColorBrush(Ux.RouteColour, 0.30),
+            BorderBrush = new SolidColorBrush(Ux.RouteColour),
+            BorderThickness = new Thickness(2),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
+        }, "Teal glow: running now",
+           "The state a machine is in right now, while the graph is being stepped. Send an event " +
+           "with the box above the canvas and watch these move. Several light at once, because " +
+           "several machines run at the same time.");
 
         Swatch(Wire(Ux.Bad, false), "Red outline",
                "Check graph found something wrong here. The list under the canvas says what.");
@@ -495,23 +1566,18 @@ public class MainWindow : Window
             line.Foreground = Ux.MetaBrush;
             line.FontSize = 11;
             line.TextWrapping = TextWrapping.Wrap;
-            line.Width = 240;
             line.Margin = new Thickness(0, 3, 0, 0);
             body.Children.Add(line);
         }
 
-        return new Border
+        return new ScrollViewer
         {
-            Background = Ux.CardBrush,
-            BorderBrush = Ux.BorderBrush,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(10, 6, 10, 10),
-            Margin = new Thickness(0, 0, 8, 0),
-            Child = new ScrollViewer
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            Content = new Border
             {
-                Content = body,
-                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+                Padding = new Thickness(12, 4, 12, 12),
+                Child = body,
             },
         };
     }
@@ -539,8 +1605,8 @@ public class MainWindow : Window
         return split;
     }
 
-    // Read only, for the window checks. Which page is showing and how many rows it drew are the two
-    // things a paged view can lie about.
+
+
     public HkGrid AnimationGrid => _animation;
     public string FramePageLabel => _framePage.Text ?? "";
     public int AnimationFrameCount => _animationData?.NumFrames ?? 0;
@@ -550,8 +1616,8 @@ public class MainWindow : Window
     public string FractionAnswer => _fractionAnswer.Text ?? "";
     public int AimedFrame => _aimedFrame;
 
-    // The frame editing boxes, which are only meaningful together: what they hold, whether a frame
-    // is picked at all, and whether anything has been changed since the file was opened.
+
+
     public string FrameEditAnswer => _frameEditAnswer.Text ?? "";
     public string FramePositionText => _framePosition.Text ?? "";
     public string FrameRotationText => _frameRotation.Text ?? "";
@@ -564,13 +1630,182 @@ public class MainWindow : Window
     public string LoadedXml => _xmlText;
     public Inspector GraphProperties => _graphProps;
     public GraphView Canvas => _graph;
+    public GraphLayoutMode GraphLayoutModeForTest => _graph.LayoutMode;
 
-    /// Selects through the same handler a click on the canvas uses, so a check exercises the path a
-    /// person takes rather than a parallel one.
+
+
+
+    public bool GraphLeftPanePresent => false;
+    public bool GraphRightPaneOpen => _graphRightOpen;
+    public bool GraphDrawerOpen => _graphDrawerOpen;
+    public double GraphRightPaneWidth => _graphRightColumn.Width.Value;
+    public double GraphDrawerHeight => _graphDrawerRow.Height.Value;
+    public double GraphDrawerDefaultHeight => _graphDrawerHeight;
+    public double GraphCenterMinWidth => _graphCenterColumn.MinWidth;
+    public bool GraphDrawerContentsVisible => _graphDrawer?.IsVisible ?? false;
+    public bool GraphEditShelfOpen => _graphEditShelf?.IsVisible ?? false;
+    public bool GraphCanvasHostClips => _graphCanvasHost?.ClipToBounds ?? false;
+    public bool GraphPropertiesHostClips => _graphPropertiesHost?.ClipToBounds ?? false;
+    public IReadOnlyList<string> MachineNavigatorIds => _machineNavigatorIds;
+    public IReadOnlyList<string> MachineNavigatorLabels => _machineNavigatorLabels;
+    public IReadOnlyCollection<string> MachineNavigatorActiveIds => _machineNavigatorActiveIds;
+    public bool GraphFocusTreeActive => _graph.FocusTreeActive;
+    public string SelectedObjectId => _selectedId;
+    public double GraphToolbarTopInset => 10;
+    public IReadOnlyList<string> GraphToolbarGroups => _graphToolbarGroups;
+    public bool GraphToolbarGroupLabelsHaveFixedLineHeight => _graphToolbarGroupLabelsHaveFixedLineHeight;
+    public bool PlaybackViewportClips => (_playbackViewportHost?.ClipToBounds ?? false) && _skeleton.ClipToBounds;
+    public IReadOnlyList<string> GraphDrawerTabs => _graphDrawerTabs?.Items.OfType<TabItem>()
+        .Select(tab => tab.Header?.ToString() ?? "").ToList() ?? (IReadOnlyList<string>)Array.Empty<string>();
+    public string SelectedGraphDrawerTab => _graphDrawerTabs?.SelectedItem is TabItem tab
+        ? tab.Header?.ToString() ?? "" : "";
+    public bool WorkspaceVisible => _workspaceWindow?.IsVisible ?? false;
+    public bool WorkspaceRuntimeVisible => WorkspaceVisible;
+    public int WorkspaceWindowInstances => _workspaceWindowInstances;
+    public WorkspaceWindow? WorkspaceWindowForTest => _workspaceWindow;
+    public bool LegendWindowVisible => _legendWindow?.IsVisible ?? false;
+    public LegendWindow? LegendWindowForTest => _legendWindow;
+
+    public void SetGraphEditShelfOpen(bool open)
+    {
+        if (_graphEditShelf != null) _graphEditShelf.IsVisible = open;
+    }
+
+    public void SelectGraphDrawerTab(string header)
+    {
+        if (_graphDrawerTabs == null) return;
+        _graphDrawerTabs.SelectedItem = _graphDrawerTabs.Items.OfType<TabItem>()
+            .FirstOrDefault(tab => tab.Header?.ToString() == header);
+    }
+
+    public void SetGraphRightPaneOpen(bool open)
+    {
+        _graphRightOpen = open;
+        _graphProps.IsVisible = open;
+        _graphRightColumn.MinWidth = open ? 360 : 0;
+        _graphRightColumn.Width = Pixels(open ? _graphRightWidth : 0);
+        _graphRightSplitterColumn.Width = Pixels(open ? 6 : 0);
+        if (_graphRightSplitter != null) _graphRightSplitter.IsVisible = open;
+    }
+
+    public void SetGraphDrawerOpen(bool open)
+    {
+        _graphDrawerOpen = open;
+        _graphDrawerRow.MinHeight = open ? 80 : 0;
+        _graphDrawerRow.Height = Pixels(open ? _graphDrawerHeight : 0);
+        _graphDrawerSplitterRow.Height = Pixels(open ? 6 : 0);
+        if (_graphDrawer != null) _graphDrawer.IsVisible = open;
+        if (_graphDrawerSplitter != null) _graphDrawerSplitter.IsVisible = open;
+        if (_drawerButton != null) _drawerButton.Content = open ? "Hide diagnostics" : "Show diagnostics";
+    }
+
+    public void ResizeGraphRightPaneForTest(double width)
+    {
+        _graphRightWidth = Math.Clamp(width, 360, 480);
+        if (_graphRightOpen) _graphRightColumn.Width = Pixels(_graphRightWidth);
+    }
+
+    public void ResizeGraphDrawerForTest(double height)
+    {
+        _graphDrawerHeight = Math.Clamp(height, 80, 300);
+        if (_graphDrawerOpen) _graphDrawerRow.Height = Pixels(_graphDrawerHeight);
+    }
+
+    public bool SelectMachineForTest(string machineId) => _machineNavigator.SelectByTag(machineId);
+
+    public void FilterMachinesForTest(string text)
+    {
+        OpenWorkspaceWindow();
+        _workspaceWindow?.FilterMachinesForTest(text);
+    }
+
+    public void FocusTreeForTest() => FocusSelectedMachine();
+
+    public void ShowFullGraphForTest() => ShowFullGraph();
+
+    public void SetGraphLayoutModeForTest(GraphLayoutMode mode) => SetGraphLayoutMode(mode);
+
+    public void ClearRunForTest()
+    {
+        _run = null;
+        _graph.ClearActive();
+        _running.Clear();
+        _running.IsVisible = false;
+        SetMachineNavigatorActive(Array.Empty<string>());
+    }
+
+    public void StartRunForTest() => StartRun();
+
+    private static GridLength Pixels(double value) => new(value, GridUnitType.Pixel);
+
+    private void OpenWorkspaceWindow()
+    {
+        if (_workspaceWindow == null)
+        {
+            _machineNavigator.SelectionChanged += OnMachineNavigatorSelected;
+            _workspaceWindow = new WorkspaceWindow(_machineNavigator, BuildWorkspaceRuntimeTab(),
+                                                     FilterMachines);
+            _workspaceWindowInstances++;
+        }
+        _workspaceWindow.Present(this);
+    }
+
+    private void OpenLegendWindow()
+    {
+        _legendWindow ??= new LegendWindow(BuildLegend());
+        _legendWindow.Present(this);
+    }
+
+    public void OpenWorkspaceForTest() => OpenWorkspaceWindow();
+
+    public void CloseWorkspaceForTest() => _workspaceWindow?.CloseForTest();
+
+    public void OpenLegendForTest() => OpenLegendWindow();
+
+
+    public bool RunReady => _run != null;
+    public bool RunBlending => _run?.Blending ?? false;
+    public int RunEventCount => _run?.Events.Count ?? 0;
+    public IReadOnlyList<string> RunEvents => _run?.Events ?? Array.Empty<string>();
+
+
+    public void StepForTest(float seconds) { _run?.Advance(seconds); RefreshRun("stepped"); }
+
+
+
+    public int TimedClipCount => _run?.Playing().Count(p => p.Clip.Known) ?? 0;
+    public int RunningCount => _running.RowCount;
+    public bool RunningVisible => _running.IsVisible;
+
+
+    public void SendEventForTest(string name)
+    {
+        _runEvents.SelectedItem = name;
+        SendRunEvent();
+    }
+
+    public IReadOnlyList<string> RunVariables =>
+        (_runVariables.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
+    public int RunHeldBack => _run?.HeldBack.Count ?? 0;
+    public bool RunHeldBackVisible => _runHeldBackGrid.RowCount > 0;
+    public string RunHeldBackText => _runHeldBack.Text ?? "";
+    public string RunSummary => _runSummary.Text ?? "";
+    public double? RunValueOf(string name) => _run?.ValueOf(name);
+
+
+    public void SetVariableForTest(string name, string value)
+    {
+        _runVariables.SelectedItem = name;
+        _runValue.Text = value;
+        SetRunVariable();
+    }
+
+
+
     public void SelectNode(string objectId) => SelectObjectId(objectId);
 
-    /// The same, from the tree's end: sets the tree's own selection and lets its handler run, rather
-    /// than calling what that handler calls. The two used to reach different places.
+
+
     public bool SelectFromTree(string objectId)
     {
         int index = _objectIds.IndexOf(objectId);
@@ -581,8 +1816,8 @@ public class MainWindow : Window
         return false;
     }
 
-    /// Drives the fraction lookup the way a person does, through the same field and the same handler,
-    /// so a check exercises what the button exercises rather than a parallel path.
+
+
     public void LookUpFraction(string typed)
     {
         _fraction.Text = typed;
@@ -595,7 +1830,7 @@ public class MainWindow : Window
         ShowAnimationFrames();
     }
 
-    /// Picks a frame row the way clicking one does, so the boxes fill through the same handler.
+
     public bool PickFrame(int track, int frame)
     {
         bool found = _animation.SelectByTag($"f:{track}:{frame}");
@@ -603,15 +1838,32 @@ public class MainWindow : Window
         return found;
     }
 
-    /// Types a position into the box and presses the button, which is the whole edit path.
+
     public void TypeFramePosition(string text)
     {
         _framePosition.Text = text;
         SetFrame();
     }
 
-    /// Presses the save button. Only worth driving on a copy: it writes the file.
+
     public void PressSaveAnimation() => SaveAnimation();
+
+    public bool SaveCurrentForTest() => SaveCurrent();
+
+    public void SaveForTest() => Save();
+    public Func<Exception>? ReloadFaultForTest;
+    public Func<Exception>? VerifyFaultForTest;
+    public Func<DiscardChoice>? DiscardDecision;
+    public void SetXmlForTest(string xml) => Commit(xml);
+
+    public int ProblemCount => _problems.RowCount;
+
+    public Task ValidateProjectForTest() => ValidateProject();
+    public Task ScanPapyrusForTest(string folder) => ScanPapyrusFolder(folder, null);
+    public void MarkAnimationEditedForTest() => _animationEdited = true;
+    public bool IsDirty => _dirty;
+    public string StatusForTest => _status.Text ?? "";
+    public string PathFieldForTest => _pathField.Text ?? "";
 
     private Control BuildAnimationTab()
     {
@@ -635,9 +1887,9 @@ public class MainWindow : Window
         DockPanel.SetDock(bar, Dock.Top);
         panel.Children.Add(bar);
 
-        // The question a variable driven clip actually asks: I am about to set the fraction to this,
-        // which pose am I asking for. Answering it needs the page to move to that frame, not just a
-        // number printed somewhere, so this jumps and marks the row.
+
+
+
         var aim = Ux.Secondary("Find frame");
         aim.Click += (_, _) => AimAtFraction();
         _fraction.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) AimAtFraction(); };
@@ -651,12 +1903,13 @@ public class MainWindow : Window
         DockPanel.SetDock(tools, Dock.Top);
         panel.Children.Add(tools);
 
-        // Changing a frame. Nothing here re-encodes a compressed animation, so a saved clip is
-        // written out uncompressed, which is a much larger file holding exactly the frames that went
-        // into it. That is said on the button rather than discovered afterwards.
+
+
+
+
         var apply = Ux.Secondary("Set frame");
         apply.Click += (_, _) => SetFrame();
-        var write = Ux.Primary("Save uncompressed");
+        var write = Ux.Primary("Save changes");
         write.Click += (_, _) => SaveAnimation();
 
         foreach (var box in new[] { _framePosition, _frameRotation, _frameScale })
@@ -674,8 +1927,8 @@ public class MainWindow : Window
         return panel;
     }
 
-    /// Fills the boxes from whichever frame row is selected, so a frame is changed by picking it
-    /// rather than by typing where it is.
+
+
     private void ShowSelectedFrame()
     {
         var anim = _animationData;
@@ -715,15 +1968,34 @@ public class MainWindow : Window
         }
     }
 
+    internal static string TempDirKey(string path)
+    {
+        string full = Path.GetFullPath(path);
+        byte[] hash = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(full));
+        return Path.GetFileNameWithoutExtension(full) + "-" + Convert.ToHexString(hash)[..12];
+    }
+
+    private static bool ContainsNonFinite(string? text)
+    {
+        var parts = (text ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries);
+        foreach (string part in parts)
+            if (float.TryParse(part.Trim(), System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out float f) &&
+                (float.IsNaN(f) || float.IsInfinity(f)))
+                return true;
+        return false;
+    }
+
     private static string Triple(System.Numerics.Vector3 v) => $"{F(v.X)}, {F(v.Y)}, {F(v.Z)}";
 
     private static string F(float value) =>
         value.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
 
-    /// Writes the boxes back into the frame they came from.
-    ///
-    /// Only into the decoded animation held in memory. Nothing reaches the file until it is saved,
-    /// which is what makes several frames changeable before anything is written.
+
+
+
+
     private void SetFrame()
     {
         var anim = _animationData;
@@ -735,6 +2007,14 @@ public class MainWindow : Window
         }
 
         var track = anim.Tracks[_editTrack];
+
+        if (ContainsNonFinite(_framePosition.Text) || ContainsNonFinite(_frameRotation.Text) ||
+            ContainsNonFinite(_frameScale.Text))
+        {
+            _frameEditAnswer.Text = "NaN and Infinity are not allowed here — every number must be finite.";
+            _frameEditAnswer.Foreground = Ux.BadBrush;
+            return;
+        }
 
         if (!Numbers(_framePosition.Text, 3, out float[] position) ||
             !Numbers(_frameRotation.Text, 4, out float[] rotation) ||
@@ -751,8 +2031,8 @@ public class MainWindow : Window
             track.Rotations[_editFrame] =
                 new System.Numerics.Quaternion(rotation[0], rotation[1], rotation[2], rotation[3]);
 
-        // A track with no scale of its own prints none, so an empty box means leave it as it was
-        // rather than set it to nothing.
+
+
         if (Numbers(_frameScale.Text, 3, out float[] scale) && _editFrame < track.Scales.Count)
             track.Scales[_editFrame] = new System.Numerics.Vector3(scale[0], scale[1], scale[2]);
 
@@ -774,34 +2054,35 @@ public class MainWindow : Window
 
         for (int i = 0; i < wanted; i++)
             if (!float.TryParse(parts[i].Trim(), System.Globalization.NumberStyles.Float,
-                                System.Globalization.CultureInfo.InvariantCulture, out values[i]))
+                                System.Globalization.CultureInfo.InvariantCulture, out values[i]) ||
+                float.IsNaN(values[i]) || float.IsInfinity(values[i]))
                 return false;
 
         return true;
     }
 
-    /// Writes the clip back, as the kind of animation it was where that is possible.
-    ///
-    /// A spline compressed clip is written back spline compressed, and the file comes out smaller
-    /// than the one it replaced. Anything else still goes back as
-    /// `hkaInterleavedUncompressedAnimation`, every frame of every track stored as it is, which is
-    /// exact and several times the size. That is the only option for a lossless compressed clip,
-    /// since nothing here re-encodes one.
-    private void SaveAnimation()
+
+
+
+
+
+
+
+    private bool SaveAnimation()
     {
         var anim = _animationData;
         if (anim == null)
         {
             _frameEditAnswer.Text = "This is not an animation file.";
             _frameEditAnswer.Foreground = Ux.BadBrush;
-            return;
+            return false;
         }
 
         if (_readOnly)
         {
             _frameEditAnswer.Text = "Not saved: " + _readOnlyWhy;
             _frameEditAnswer.Foreground = Ux.BadBrush;
-            return;
+            return false;
         }
 
         string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
@@ -809,48 +2090,117 @@ public class MainWindow : Window
         {
             _frameEditAnswer.Text = "Cannot save: " + blocked;
             _frameEditAnswer.Foreground = Ux.BadBrush;
-            return;
+            return false;
         }
 
+        bool asSpline;
+        NativeAnimation.Result written;
         try
         {
-            bool asSpline = anim.AnimationClass == NativeAnimation.SplineClass;
-            var written = asSpline
+            asSpline = anim.AnimationClass == NativeAnimation.SplineClass;
+            written = asSpline
                 ? NativeAnimation.Recompress(_hkxPath, anim)
                 : NativeAnimation.Interleave(_hkxPath, anim);
-
-            string backup = _hkxPath + ".bak";
-            if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
-            ReplaceFile(_hkxPath, written.Bytes);
-
-            _animationEdited = false;
-
-            // The size is worth saying either way round, because the two paths differ by about a
-            // factor of six and somebody who saves a clip and finds the file has grown should be able
-            // to see from this line why.
-            string size = written.Grew >= 0 ? $"{written.Grew} bytes larger" : $"{-written.Grew} bytes smaller";
-            string said =
-                $"Saved {written.Frames} frame(s) of {written.Tracks} track(s) " +
-                (asSpline ? "spline compressed" : "uncompressed") +
-                $", {size}. The original is kept as {Path.GetFileName(backup)}.";
-
-            // Reloaded first and told afterwards. Opening a file clears these boxes, which is right
-            // when a different file is opened and wrong here: saying it before the reload put the
-            // message up and wiped it in the same breath, so pressing Save appeared to do nothing.
-            Load();
-            _frameEditAnswer.Text = said;
-            _frameEditAnswer.Foreground = Ux.MetaBrush;
-            SetStatus(said, Ux.MetaBrush);
         }
         catch (Exception e)
         {
             _frameEditAnswer.Text = "Not saved, and the original is untouched: " + e.Message;
             _frameEditAnswer.Foreground = Ux.BadBrush;
+            return false;
+        }
+
+        try
+        {
+            VerifyAnimation(written, asSpline);
+        }
+        catch (Exception e)
+        {
+            _frameEditAnswer.Text = "The rebuilt animation failed verification, so nothing was written: " + e.Message;
+            _frameEditAnswer.Foreground = Ux.BadBrush;
+            return false;
+        }
+
+        try
+        {
+            FileSafety.Backup(_hkxPath);
+            FileSafety.Replace(_hkxPath, written.Bytes);
+        }
+        catch (Exception e)
+        {
+            _frameEditAnswer.Text = "Not saved: the file could not be written: " + e.Message;
+            _frameEditAnswer.Foreground = Ux.BadBrush;
+            return false;
+        }
+
+        _animationEdited = false;
+
+        string size = written.Grew >= 0 ? $"{written.Grew} bytes larger" : $"{-written.Grew} bytes smaller";
+        string said =
+            $"Saved {written.Frames} frame(s) of {written.Tracks} track(s) " +
+            (asSpline ? "spline compressed" : "uncompressed") +
+            $", {size}. The original is kept as {Path.GetFileName(_hkxPath + ".bak")}.";
+
+        try
+        {
+            Load();
+        }
+        catch (Exception e)
+        {
+            _frameEditAnswer.Text = "The file was saved, but the editor could not reload it: " + e.Message;
+            _frameEditAnswer.Foreground = Ux.BadBrush;
+            return false;
+        }
+
+        _frameEditAnswer.Text = said;
+        _frameEditAnswer.Foreground = Ux.MetaBrush;
+        SetStatus(said, Ux.MetaBrush);
+        return true;
+    }
+
+    private void VerifyAnimation(NativeAnimation.Result written, bool asSpline)
+    {
+        var rebuilt = new HkxBinaryReader().ParseHkx(written.Bytes);
+        if (rebuilt.HasUnsupportedAnimation)
+            throw new InvalidDataException(
+                $"the rebuilt file decodes as {rebuilt.AnimationClass}, which is not supported");
+
+        var objects = new PackfileObjects(PackfileImage.Read(written.Bytes));
+        var mismatched = HavokClassTypes.Shipped.SignatureProblems(objects.ClassNames());
+        if (mismatched.Count > 0)
+            throw new InvalidDataException("rebuilt class signatures do not match: " + mismatched[0]);
+
+        string expectedClass = asSpline ? NativeAnimation.SplineClass : NativeAnimation.InterleavedClass;
+        if (rebuilt.AnimationClass != expectedClass)
+            throw new InvalidDataException(
+                $"rebuilt decodes as {rebuilt.AnimationClass}, expected {expectedClass}");
+        if (rebuilt.NumTracks != written.Tracks)
+            throw new InvalidDataException(
+                $"rebuilt decodes to {rebuilt.NumTracks} track(s), expected {written.Tracks}");
+        if (rebuilt.NumFrames != written.Frames)
+            throw new InvalidDataException(
+                $"rebuilt decodes to {rebuilt.NumFrames} frame(s), expected {written.Frames}");
+
+        var anim = _animationData;
+        if (anim == null) return;
+        if (Math.Abs(rebuilt.Duration - anim.Duration) > 1e-3f)
+            throw new InvalidDataException(
+                $"rebuilt duration {rebuilt.Duration} differs from the edited {anim.Duration}");
+
+        if (_editTrack >= 0 && _editFrame >= 0 && _editTrack < rebuilt.Tracks.Count &&
+            _editFrame < rebuilt.Tracks[_editTrack].Translations.Count)
+        {
+            var wanted = anim.Tracks[_editTrack].Translations[_editFrame];
+            var landed = rebuilt.Tracks[_editTrack].Translations[_editFrame];
+            float drift = (landed - wanted).Length();
+            float limit = asSpline ? 0.05f : 0.001f;
+            if (drift > limit)
+                throw new InvalidDataException(
+                    $"the edited frame did not survive re-encoding (drift {drift})");
         }
     }
 
-    /// userControlledTimeFraction is what a bound variable drives, so this is the lookup the clip work
-    /// needs: type the fraction, land on the frame, see the transform that plays there.
+
+
     private void AimAtFraction()
     {
         var anim = _animationData;
@@ -863,7 +2213,8 @@ public class MainWindow : Window
 
         string typed = (_fraction.Text ?? "").Trim();
         if (!float.TryParse(typed, System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out float fraction))
+                            System.Globalization.CultureInfo.InvariantCulture, out float fraction) ||
+            float.IsNaN(fraction) || float.IsInfinity(fraction))
         {
             _fractionAnswer.Text = $"\"{typed}\" is not a number between 0 and 1.";
             _fractionAnswer.Foreground = Ux.BadBrush;
@@ -879,13 +2230,13 @@ public class MainWindow : Window
             $"of {Math.Max(anim.NumFrames - 1, 0)}, at {_aimedFrame * anim.FrameDuration:F3}s{clamped}";
         _fractionAnswer.Foreground = Ux.MetaBrush;
 
-        // Land the page on the frame rather than leaving the reader to find it.
+
         _frameStart = _aimedFrame / FramesPerPage * FramesPerPage;
         ShowAnimationFrames();
     }
 
-    // A page of frames rather than a cap. The old grid stopped at 300 rows per track and said how
-    // many it had dropped, which is honest but leaves the rest of a long animation unreachable.
+
+
     private void PageFrames(int by)
     {
         if (_animationData == null) return;
@@ -901,18 +2252,18 @@ public class MainWindow : Window
         ShowAnimationFrames();
     }
 
-    // An animation is a different kind of file from a behaviour, so this runs on its own rather than
-    // hanging off the behaviour parse. A class the reader cannot decode has to say so here, in the
-    // panel, and not only on the console: the whole point of making the reader refuse loudly was
-    // that somebody using the window finds out.
+
+
+
+
     private bool BuildAnimation(string path)
     {
         _animation.Clear();
         _animationData = null;
         _animationSkeleton = null;
         _frameStart = 0;
-        // A frame aimed at in the last file means nothing in this one, and neither does a frame
-        // picked for editing or a change made to one.
+
+
         _aimedFrame = -1;
         _editTrack = _editFrame = -1;
         _animationEdited = false;
@@ -991,8 +2342,8 @@ public class MainWindow : Window
             int frames = Math.Max(Math.Max(track.Translations.Count, track.Rotations.Count), track.Scales.Count);
             bool scaled = HkxTrackData.IsScaled(track);
 
-            // Filtering to one bone is what makes this a browser rather than a wall: a character
-            // animation has 95 tracks, and reading one bone's motion means seeing only that bone.
+
+
             var head = _animation.Add(null, name, frames.ToString(), "", "", "", scaled ? "scaled" : "")
                                  .Colour(0, Ux.TitleBrush).Colour(1, Ux.DisabledBrush).Colour(5, Ux.BadBrush);
             if (needle.Length == 0) head.Collapse();
@@ -1003,13 +2354,13 @@ public class MainWindow : Window
                     ? $"{track.Translations[f].X:F3}, {track.Translations[f].Y:F3}, {track.Translations[f].Z:F3}" : "";
                 string rot = f < track.Rotations.Count
                     ? $"{track.Rotations[f].X:F4}, {track.Rotations[f].Y:F4}, {track.Rotations[f].Z:F4}, {track.Rotations[f].W:F4}" : "";
-                // Only the tracks that carry a scale print one. Filling every row of every animation
-                // with 1.000, 1.000, 1.000 would bury the 130 vanilla animations that actually scale.
+
+
                 string scl = scaled && f < track.Scales.Count
                     ? $"{track.Scales[f].X:F4}, {track.Scales[f].Y:F4}, {track.Scales[f].Z:F4}" : "";
                 bool aimed = f == _aimedFrame;
-                // Tagged with where it sits, because nothing in the file names a frame. That is what
-                // makes a row selectable and therefore changeable.
+
+
                 _animation.Add(head, aimed ? "->" : "", f.ToString(), $"{f * anim.FrameDuration:F3}s", pos, rot, scl)
                           .Tag($"f:{t}:{f}")
                           .Colour(0, Ux.AccentBrush)
@@ -1023,22 +2374,39 @@ public class MainWindow : Window
                       .Colour(0, Ux.MutedBrush).Colour(1, Ux.DisabledBrush);
     }
 
-    // The bone names live in the skeleton, not the animation. An animation's annotation tracks are
-    // named after bones by convention and are empty in plenty of vanilla files, so the real name
-    // comes through transformTrackToBoneIndices.
+
+
+
     private static HkxSkeleton? SiblingSkeleton(string animationPath)
     {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(animationPath)) ?? "");
-        for (int up = 0; up < 4 && dir != null; up++, dir = dir.Parent)
-        {
-            string assets = Path.Combine(dir.FullName, "CharacterAssets");
-            if (!Directory.Exists(assets)) continue;
+        string? assets = FindSiblingSkeletonFolder(animationPath);
+        if (assets == null) return null;
 
-            foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
+        foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
+        {
+            try { return new HkxBinaryReader().ReadSkeleton(file); }
+            catch { }
+        }
+        return null;
+    }
+
+
+
+
+    internal static string? FindSiblingSkeletonFolder(string animationPath)
+    {
+        var dir = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(animationPath)) ?? "");
+        while (dir != null)
+        {
+            if (dir.Name.Equals("Animations", StringComparison.OrdinalIgnoreCase))
             {
-                try { return new HkxBinaryReader().ReadSkeleton(file); }
-                catch { /* not a skeleton, try the next */ }
+                var characterRoot = dir.Parent;
+                if (characterRoot == null) return null;
+
+                string assets = Path.Combine(characterRoot.FullName, "CharacterAssets");
+                return Directory.Exists(assets) ? assets : null;
             }
+            dir = dir.Parent;
         }
         return null;
     }
@@ -1055,9 +2423,9 @@ public class MainWindow : Window
         return annotation.Length > 0 ? annotation : $"track {track}";
     }
 
-    // A clip generator names an animation, and until now the only way to know what that animation was
-    // was to remember it. Nothing here writes to the document: scrubbing and playing are views of a
-    // file on disk, so they take no undo step and cannot make the graph dirty.
+
+
+
     private Control BuildPlaybackTab()
     {
         _playButton.Click += (_, _) => TogglePlay();
@@ -1113,8 +2481,8 @@ public class MainWindow : Window
 
         _scrub.PropertyChanged += (_, e) =>
         {
-            // Set from code as well as dragged, so without this every ShowFrame would call itself
-            // back through the slider.
+
+
             if (e.Property != Avalonia.Controls.Primitives.RangeBase.ValueProperty || _scrubbing) return;
             ShowFrame((int)Math.Round(_scrub.Value), stop: true);
         };
@@ -1137,18 +2505,21 @@ public class MainWindow : Window
         DockPanel.SetDock(scrubRow, Dock.Bottom);
         panel.Children.Add(bar);
         panel.Children.Add(scrubRow);
-        panel.Children.Add(WithClipPicker(Framed(_skeleton)));
+        _skeleton.ClipToBounds = true;
+        _playbackViewportHost = Framed(_skeleton);
+        _playbackViewportHost.ClipToBounds = true;
+        panel.Children.Add(WithClipPicker(_playbackViewportHost));
 
-        // Says that a model is a second, separate step. What plays here is the skeleton, and waiting
-        // for a character to appear on its own is waiting for something that never happens.
+
+
         SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
                            "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
         return panel;
     }
 
-    /// The rig this behaviour belongs to. The behaviour file does not name one; the character does,
-    /// which is why this comes off the chain rather than off the open file. Cached because selecting
-    /// a clip resolves it, and re-reading a 95 bone skeleton off disk on every click is felt.
+
+
+
     private HkxSkeleton? PoseSkeleton()
     {
         if (_cachedSkeletonFor == _hkxPath && _cachedSkeleton != null) return _cachedSkeleton;
@@ -1158,9 +2529,9 @@ public class MainWindow : Window
         return _cachedSkeleton;
     }
 
-    // Selecting a clip is what asks the question, so selecting one is what answers it. Silent when
-    // the selection is not a clip, or names an animation that is not on disk: a behaviour is mostly
-    // nodes that play nothing, and a message per click would be noise.
+
+
+
     private void LoadPoseFromSelection(bool announce)
     {
         if (_xmlText.Length == 0 || _selectedId.Length == 0)
@@ -1223,8 +2594,8 @@ public class MainWindow : Window
         if (refusal != null)
         {
             SetPlaybackSummary($"{label}: {refusal}", Ux.WarnBrush);
-            // The rig is still worth drawing: it is the thing the reader is trying to place the
-            // animation onto, and an empty box says nothing at all.
+
+
             if (_poseSkeleton != null) _skeleton.Show(AnimationPose.ReferencePose(_poseSkeleton));
             _poseAnimation = null;
             _poseSource = "";
@@ -1236,8 +2607,8 @@ public class MainWindow : Window
         _poseSource = animationPath;
         _poseFrame = 0;
 
-        // Read off the file rather than off the decoded tracks, because it is not in them: the
-        // displacement lives in its own object and never reaches a bone.
+
+
         try { _poseMotion = RootMotion.Read(animationPath); }
         catch { _poseMotion = new RootMotion.Motion(); }
 
@@ -1254,9 +2625,9 @@ public class MainWindow : Window
         int driven = 0;
         foreach (int track in AnimationPose.TracksByBone(_poseSkeleton!, animation)) if (track >= 0) driven++;
 
-        // Travel is said here whether or not it is being drawn, because it is invisible otherwise:
-        // the bones stay on the spot, so a clip that takes the character 1,060 units looks exactly
-        // like one that goes nowhere until this line says so.
+
+
+
         string travelled = _poseMotion.Any
             ? $"   travels {_poseMotion.Travel.Length():F0} units" +
               (Math.Abs(_poseMotion.Turn) > 0.02f
@@ -1271,16 +2642,16 @@ public class MainWindow : Window
         UpdateFrameLabel();
     }
 
-    /// Opens a behaviour straight out of a BA2, without unpacking the archive around it.
-    ///
-    /// Every behaviour in the game is inside Fallout4 - Animations.ba2, and reaching one of them used
-    /// to mean writing all 29,716 entries to disk first. Reading the index takes about a second and
-    /// touches no file data, so the browser lists the archive itself.
-    ///
-    /// The chosen file is written to a temporary folder and opened from there, because everything
-    /// downstream of here works on a path: the project chain, the animation reader, the mesh, the
-    /// validator. What it is not is somewhere to save. The window goes read only, and says so, rather
-    /// than letting an edit land in a temporary file the user will never find again.
+
+
+
+
+
+
+
+
+
+
     private async Task OpenFromArchive()
     {
         var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -1317,11 +2688,11 @@ public class MainWindow : Window
 
             try
             {
-                // Under a folder named for the archive, so two files of the same name out of two
-                // archives do not land on top of each other, and the folder is one a person can find
-                // if they want the copy afterwards.
+
+
+
                 string folder = Path.Combine(Path.GetTempPath(), "BehaviourGraphStudio",
-                                             Path.GetFileNameWithoutExtension(archivePath));
+                                             TempDirKey(archivePath));
                 Directory.CreateDirectory(folder);
 
                 string copy = Path.Combine(folder, entry.Name.Replace('/', '_'));
@@ -1344,9 +2715,9 @@ public class MainWindow : Window
         }
     }
 
-    // The behaviour chain names no mesh, and neither does the skeleton, so the only honest way to
-    // find one today is to be told. Pointing at a .nif is that, and the race record lookup that would
-    // do it automatically is a separate job.
+
+
+
     private async Task PickMesh()
     {
         var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -1365,8 +2736,8 @@ public class MainWindow : Window
         if (path != null) LoadMesh(path);
     }
 
-    /// Returns false when the mesh could not be drawn, having already said why. The caller must not
-    /// then overwrite that with a message about the mesh it thinks it loaded.
+
+
     private bool LoadMesh(string path)
     {
         var skeleton = PoseSkeleton();
@@ -1402,13 +2773,14 @@ public class MainWindow : Window
         }
 
         _meshPath = path;
-        Settings.Set("last_mesh_folder", Path.GetDirectoryName(path) ?? "");
+        string? settingsWarning = RememberSetting("last_mesh_folder", Path.GetDirectoryName(path) ?? "",
+                                                  "The mesh loaded");
 
         int vertices = _meshShapes.Sum(m => m.Shape.Vertices.Count);
         int edges = _meshShapes.Sum(m => m.Edges.Count);
 
-        // A bone the mesh names and the skeleton does not is the failure that shows up as a limb
-        // quietly missing, so it is named here rather than left to be noticed.
+
+
         var missing = _meshShapes.SelectMany(m => m.Binding.Unmatched).Distinct().ToList();
         float drift = _meshShapes.Max(m => SkinnedMesh.BindError(m.Shape, m.Binding, skeleton));
 
@@ -1420,28 +2792,11 @@ public class MainWindow : Window
                       (missing.Count > 6 ? ", and more" : "") +
                       ". Vertices weighted only to those stay at their rest position.";
 
-        SetPlaybackSummary(report, missing.Count > 0 ? Ux.WarnBrush : Ux.MetaBrush);
+        SetPlaybackSummary(settingsWarning ?? report,
+                           settingsWarning == null && missing.Count == 0 ? Ux.MetaBrush : Ux.WarnBrush);
         ShowFrame(_poseFrame, stop: false);
         _skeleton.Frame();
         return true;
-    }
-
-    /// Writes beside the target and moves the finished file into place. WriteAllBytes truncates
-    /// before it writes, so a disk filling up or a mod manager taking the file mid write would leave
-    /// the game's own file empty, with nothing but the backup to show it ever had contents.
-    private static void ReplaceFile(string path, byte[] bytes)
-    {
-        string staging = path + ".writing";
-        try
-        {
-            File.WriteAllBytes(staging, bytes);
-            File.Move(staging, path, overwrite: true);
-        }
-        catch
-        {
-            try { if (File.Exists(staging)) File.Delete(staging); } catch (IOException) { }
-            throw;
-        }
     }
 
     private void ClearMesh()
@@ -1451,8 +2806,8 @@ public class MainWindow : Window
         _skeleton.ShowMesh(null);
     }
 
-    // Only the vertex positions are recomputed per frame. The edge list and the bone matching are
-    // worked out when the mesh is loaded and do not change while scrubbing.
+
+
     private void UpdateMesh(AnimationPose.Pose pose, HkxSkeleton skeleton)
     {
         if (_meshShapes.Count == 0) { _skeleton.ShowMesh(null); return; }
@@ -1477,8 +2832,8 @@ public class MainWindow : Window
         _poseAnimation = null;
         _poseSource = "";
         _poseFrame = 0;
-        // Left behind, the last clip's travel would be reported for the next one, and a stationary
-        // clip would be drawn walking down the path of the one before it.
+
+
         _poseMotion = new RootMotion.Motion();
         _cachedSkeleton = null;
         _cachedSkeletonFor = "";
@@ -1488,14 +2843,14 @@ public class MainWindow : Window
         _scrubbing = false;
         _skeleton.Reset();
         _frameLabel.Text = "";
-        // Says that a model is a second, separate step. What plays here is the skeleton, and waiting
-        // for a character to appear on its own is waiting for something that never happens.
+
+
         SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
                            "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
     }
 
-    // Every clip in the file down the right hand side, with its own properties under it, so a clip
-    // can be found, played and changed without leaving playback for the tree or the graph.
+
+
     private Control WithClipPicker(Control viewport)
     {
         _clips.SelectionChanged += () =>
@@ -1532,9 +2887,9 @@ public class MainWindow : Window
         return split;
     }
 
-    // Hangs the character's own model on the skeleton when there is exactly one obvious candidate.
-    // Loading it here rather than on the first frame means the viewport is still empty until a clip
-    // is picked, which is what a mesh with no pose should look like.
+
+
+
     private void FindMeshForFile()
     {
         var found = MeshLookup.Find(_hkxPath, _projectChain?.Root, _projectChain?.SkeletonPath);
@@ -1550,6 +2905,8 @@ public class MainWindow : Window
                            Ux.MutedBrush);
     }
 
+
+
     private void BuildClipList(BehaviourGraphModel model)
     {
         _clips.Clear();
@@ -1561,6 +2918,35 @@ public class MainWindow : Window
                   .Colour(1, animation.Length > 0 ? Ux.CodeBrush : Ux.MutedBrush)
                   .Tag(clip.Id);
         }
+
+        if (_clips.RowCount == 0) ShowLoneAnimation();
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    private void ShowLoneAnimation()
+    {
+        if (_animationData is not { NumFrames: > 0 }) return;
+
+
+
+        _clips.Add(null, Path.GetFileNameWithoutExtension(_hkxPath),
+                   $"{_animationData.Duration:F2}s, {_animationData.NumFrames} frames")
+              .Colour(0, Ux.TitleBrush)
+              .Colour(1, Ux.CodeBrush);
+
+        _clips.SelectFirst();
     }
 
     private void TogglePlay()
@@ -1573,24 +2959,24 @@ public class MainWindow : Window
 
         if (_clock != null) { Stop(); return; }
 
-        // The selected clip's own playbackSpeed, so changing it here shows the change here. Without
-        // this the preview always ran at the animation's native rate and an edited speed looked like
-        // an edit that had not taken, when it had and had been saved.
+
+
+
         _clock = new DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(
                 Math.Clamp(_poseAnimation.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4)),
         };
-        // Looping rather than stopping at the end: nearly every clip in a behaviour graph is a loop,
-        // and one that is not still reads better repeating than freezing on its last frame.
+
+
         _clock.Tick += (_, _) => ShowFrame(_poseFrame + 1 > _scrub.Maximum ? 0 : _poseFrame + 1, stop: false);
         _clock.Start();
         _playButton.Content = "Pause";
     }
 
-    /// How fast the selected clip says to play, or full speed when nothing sensible is set. Zero and
-    /// negative are treated as full speed rather than as a stopped or reversed preview: the engine
-    /// reads them as its own thing, and guessing which would be inventing behaviour.
+
+
+
     private float SelectedPlaybackSpeed()
     {
         if (_xmlText.Length == 0 || _selectedId.Length == 0) return 1f;
@@ -1616,8 +3002,8 @@ public class MainWindow : Window
 
         _poseFrame = Math.Clamp(frame, 0, Math.Max(0, _poseAnimation.NumFrames - 1));
 
-        // Update, not Show: re-fitting on every frame would jump the camera about as the pose's own
-        // bounds change under it.
+
+
         var posed = AnimationPose.At(_poseSkeleton, _poseAnimation, _poseFrame);
         if (_followTravel) posed = WithTravel(posed);
 
@@ -1630,12 +3016,12 @@ public class MainWindow : Window
         UpdateFrameLabel();
     }
 
-    /// The same pose, moved along the path the clip carries.
-    ///
-    /// Motion is extracted in this format, so a walk plays on the spot and the displacement lives in
-    /// its own object. Drawing it means putting the two back together, which is what the game does to
-    /// the object rather than to the rig. The turn is about the animation's own up axis rather than
-    /// an assumed one, because the file states which axis that is.
+
+
+
+
+
+
     private AnimationPose.Pose WithTravel(AnimationPose.Pose pose)
     {
         if (!_poseMotion.Any || _poseAnimation == null) return pose;
@@ -1677,22 +3063,22 @@ public class MainWindow : Window
         _playbackSummary.Foreground = brush;
     }
 
-    /// Read only, for the window checks.
+
     public SkeletonView Viewport => _skeleton;
     public int PoseFrame => _poseFrame;
     public int PoseFrameCount => _poseAnimation?.NumFrames ?? 0;
     public string PlaybackSummary => _playbackSummary.Text ?? "";
     public bool IsPlaying => _clock != null;
 
-    /// Drives playback through the same handlers the buttons use.
+
     public void ScrubTo(int frame) => ShowFrame(frame, stop: true);
     public void LoadPoseFrom(string animationPath) => LoadPose(animationPath, Path.GetFileName(animationPath));
     public AnimationPose.Pose? PoseNow =>
         _poseSkeleton == null ? null : AnimationPose.At(_poseSkeleton, _poseAnimation, _poseFrame);
 
-    // Two mods edit one behaviour and the question is what each of them touched. The object walk is
-    // the same one the repack guard uses; the only difference is that it is pointed at somebody
-    // else's file instead of at this file's own repack.
+
+
+
     private Control BuildDiffTab()
     {
         var compare = Ux.Secondary("Compare with...");
@@ -1734,9 +3120,6 @@ public class MainWindow : Window
         string? other = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
         if (other == null) return;
 
-        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
-        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-
         if (_xmlText.Length == 0)
         {
             SetDiffSummary("Nothing is open to compare against.", Ux.BadBrush);
@@ -1744,13 +3127,15 @@ public class MainWindow : Window
         }
 
         _diff.Clear();
-        SetDiffSummary($"Unpacking {Path.GetFileName(other)}...", Ux.MutedBrush);
+        SetDiffSummary($"Reading {Path.GetFileName(other)}...", Ux.MutedBrush);
 
         BehaviourDiff.Result result;
         try
         {
+            long stamp = CaptureStamp();
             string mine = _xmlText;
-            result = await Task.Run(() => ComputeDiff(mine, other, java, jar));
+            result = await Task.Run(() => ComputeDiff(mine, other));
+            if (stamp != _documentStamp) return;  // document or revision moved on; discard
         }
         catch (Exception ex)
         {
@@ -1761,10 +3146,10 @@ public class MainWindow : Window
         ShowDiff(Path.GetFileName(other), result);
     }
 
-    /// The other file's text, written from its bytes where the class table describes it and unpacked
-    /// with hkxpack where it does not. Same order as opening a file, and for the same reason:
-    /// comparing is a reading, and a reading should not need Java.
-    private static string TextOf(string path, string? java, string? jar)
+
+
+
+    private static string TextOf(string path)
     {
         try
         {
@@ -1776,33 +3161,26 @@ public class MainWindow : Window
         }
         catch (Exception) { }
 
-        if (java == null || jar == null) return "";
-
-        string work = Path.Combine(Path.GetTempPath(), "bgs_compare");
-        HkxTextEdit.ResetDirectory(work);
-        return HkxTextEdit.ReadXml(HkxTextEdit.Unpack(java, jar, path, work));
+        return "";
     }
 
-    private static BehaviourDiff.Result ComputeDiff(string mine, string other, string? java, string? jar)
+    private static BehaviourDiff.Result ComputeDiff(string mine, string other)
     {
-        string theirs = TextOf(other, java, jar);
+        string theirs = TextOf(other);
         if (theirs.Length == 0)
             throw new InvalidOperationException(
-                "this file's classes are not ones this build describes, and there is no hkxpack " +
-                "to fall back on");
+                "this file's classes are not ones this build describes");
 
         return BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(theirs));
     }
 
-    /// Runs the comparison through the same code the picker feeds, so a check exercises what a person
-    /// does rather than a parallel path. Returns what the panel now says.
+
+
     public string CompareLoadedWith(string other)
     {
-        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
-        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
         if (_xmlText.Length == 0) return "";
 
-        ShowDiff(Path.GetFileName(other), ComputeDiff(_xmlText, other, java, jar));
+        ShowDiff(Path.GetFileName(other), ComputeDiff(_xmlText, other));
         return _diffSummary.Text ?? "";
     }
 
@@ -1842,8 +3220,12 @@ public class MainWindow : Window
         _diffSummary.Foreground = brush;
     }
 
-    /// Read only, for the window checks.
+
     public HkGrid DiffGrid => _diff;
+
+
+
+    public HkGrid ClipGrid => _clips;
 
     private Control BuildSymbolsTab()
     {
@@ -1896,9 +3278,9 @@ public class MainWindow : Window
         return panel;
     }
 
-    // A transition can listen for an event nothing in its own file sends, which looks broken and
-    // usually is not: the sender is a script. Pointing at the Papyrus sources answers it. Optional
-    // throughout, and silent when it is not set.
+
+
+
     private async Task PickScriptsFolder()
     {
         var picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
@@ -1910,17 +3292,37 @@ public class MainWindow : Window
         string? folder = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
         if (folder == null) return;
 
-        Settings.Set("scripts", folder);
+        string? settingsWarning = RememberSetting("scripts", folder, "The scripts folder was selected");
+        await ScanPapyrusFolder(folder, settingsWarning);
+    }
+
+    private async Task ScanPapyrusFolder(string folder, string? settingsWarning)
+    {
         _papyrusScanned = true;
-        _papyrus = await Task.Run(() => PapyrusEvents.Scan(folder));
-        SetStatus(_papyrus.ToString(), _papyrus.ScriptsRead == 0 ? Ux.MutedBrush : Ux.MetaBrush);
+        long stamp = CaptureStamp();
+        try
+        {
+            _papyrus = PapyrusScanRunner != null
+                ? await PapyrusScanRunner(folder)
+                : await Task.Run(() => PapyrusEvents.Scan(folder));
+        }
+        catch (Exception e)
+        {
+            if (stamp != _documentStamp) return;
+            Console.Error.WriteLine($"Scripts scan failed: {e}");
+            SetStatus("Scripts scan failed. The Papyrus sources could not be read.", Ux.BadBrush);
+            return;
+        }
+        if (stamp != _documentStamp) return;      // document or revision moved on; discard
+        SetStatus(settingsWarning ?? _papyrus.ToString(),
+                  settingsWarning == null && _papyrus.ScriptsRead > 0 ? Ux.MetaBrush : Ux.MutedBrush);
 
         if (_xmlText.Length > 0) BuildSymbols(Model());
     }
 
-    // Opens where the last file came from. Behaviours, characters, skeletons and animations all sit
-    // in sibling folders of one project, so the next file wanted is nearly always a couple of clicks
-    // from the last one rather than somewhere new.
+
+
+
     private async Task Browse()
     {
         var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -1941,8 +3343,9 @@ public class MainWindow : Window
         string? path = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
         if (path == null) return;
 
-        Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
         Open(path);
+        if (RememberSetting("last_folder", Path.GetDirectoryName(path) ?? "", "The file opened") is { } warning)
+            SetStatus(warning, Ux.WarnBrush);
     }
 
     private async Task<IStorageFolder?> StartFolder()
@@ -1966,14 +3369,116 @@ public class MainWindow : Window
         Load();
     }
 
-    /// The mesh to draw on this file's skeleton, named from outside because nothing inside a
-    /// behaviour, a character or a skeleton names one.
+    private static string? RememberSetting(string key, string value, string action)
+    {
+        return Settings.TrySet(key, value, out string failure)
+            ? null
+            : $"{action}, but the preference was not saved: {failure}";
+    }
+
+
+
     public void OpenMesh(string nifPath) => LoadMesh(nifPath);
 
     public int MeshEdges => _skeleton.DrawnEdges;
 
+    public static string? RefuseReason(string path)
+    {
+        string name = Path.GetFileName(path);
+        bool looksHavok = name.EndsWith(".hkx", StringComparison.OrdinalIgnoreCase) ||
+                          name.EndsWith(".hkt", StringComparison.OrdinalIgnoreCase);
+        if (!looksHavok)
+            return $"{name} does not look like a Havok behaviour file. " +
+                   "Behaviour Graph Studio opens Fallout 4 .hkx behaviour files.";
+        if (!HkxBinaryReader.IsFo4Hkx(path))
+            return $"{name} is not a Fallout 4 hk_2014.1.0-r1 packfile.";
+        return null;
+    }
+
+    private bool ConfirmDiscard(string what)
+    {
+        CommitPendingFields();
+        if (_reloading) return true;
+        if (!_dirty && !_animationEdited) return true;
+        return (DiscardDecision ?? (() => ShowDiscardDialog(what)))() switch
+        {
+            DiscardChoice.Discard => true,
+            DiscardChoice.Save => SaveCurrent(),
+            _ => false,
+        };
+    }
+
+    private DiscardChoice ShowDiscardDialog(string what)
+    {
+        var dialog = new DiscardDialog(what);
+        dialog.ShowDialog(this);
+        while (dialog.IsVisible)
+        {
+            Dispatcher.UIThread.RunJobs();
+            System.Threading.Thread.Sleep(10);
+        }
+        return dialog.Choice;
+    }
+
+    private async Task<DiscardChoice> ShowDiscardDialogAsync(string what)
+    {
+        var dialog = new DiscardDialog(what);
+        return await dialog.ShowDialog<DiscardChoice>(this);
+    }
+
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        base.OnClosing(e);
+        if (e.Cancel || _closeApproved) return;
+        e.Cancel = true;
+        _ = CloseAfterDecision();
+    }
+
+    private async Task CloseAfterDecision()
+    {
+        DiscardChoice choice;
+        if (DiscardDecision is { } decide) choice = decide();
+        else choice = await ShowDiscardDialogAsync("close the window");
+
+        bool proceed = choice switch
+        {
+            DiscardChoice.Discard => true,
+            DiscardChoice.Save => SaveCurrent(),
+            _ => false,
+        };
+        if (proceed)
+        {
+            _closeApproved = true;
+            Close();
+        }
+    }
+
     private void Load()
     {
+        string path = (_pathField.Text ?? "").Trim().Trim('"');
+        if (path.Length == 0) { SetSummary("Enter the path to a .hkx file.", Ux.MutedBrush); return; }
+        if (!File.Exists(path))
+        {
+            string full = Path.GetFullPath(path);
+            SetSummary(full == path ? "Not found: " + path
+                                    : $"Not found: {path}, which from here means {full}", Ux.BadBrush);
+            if (_hkxPath.Length > 0) _pathField.Text = _hkxPath;
+            return;
+        }
+        if (RefuseReason(path) is { } reason)
+        {
+            SetSummary(reason, Ux.BadBrush);
+            if (_hkxPath.Length > 0) _pathField.Text = _hkxPath;
+            return;
+        }
+
+        if (!ConfirmDiscard("open this file"))
+        {
+            if (_hkxPath.Length > 0) _pathField.Text = _hkxPath;
+            return;
+        }
+
+        _documentStamp++;
         _tree.Clear();
         _clips.Clear();
         ClearProps();
@@ -1983,63 +3488,55 @@ public class MainWindow : Window
         _editedFields.Clear();
         _xmlText = "";
         _xmlPath = "";
-        // Cleared with the text. Left behind, the previous file's reading would answer for a file
-        // that failed to open.
+
+
         _reading = new BehaviourGraphModel();
         _selectedId = "";
         _projectChain = null;
         _emptyStates = new HashSet<string>();
-        // Object ids start again at #1 in the next file, so anything the canvas remembers by id is
-        // about to be applied to a different object entirely.
+
+
         _graph.Reset();
+        BuildMachineNavigator(new BehaviourGraphModel());
+        SetMachineNavigatorActive(Array.Empty<string>());
         ClearPose();
         ResetHistory();
         _readOnly = false;
         _readOnlyWhy = "";
 
-        string path = (_pathField.Text ?? "").Trim().Trim('"');
-        if (path.Length == 0) { SetSummary("Enter the path to a .hkx file.", Ux.MutedBrush); return; }
-        if (!File.Exists(path))
-        {
-            // Says where a relative path actually landed. Relative to the working directory the app
-            // was started in, not to the file box, so the same text works from one place and not
-            // another and the bare path in the message looks correct while being wrong.
-            string full = Path.GetFullPath(path);
-            SetSummary(full == path ? "Not found: " + path
-                                    : $"Not found: {path}, which from here means {full}", Ux.BadBrush);
-            return;
-        }
-        if (!HkxBinaryReader.IsFo4Hkx(path))
-        {
-            SetSummary("Not a Fallout 4 hk_2014.1.0-r1 packfile.", Ux.MutedBrush);
-            return;
-        }
 
-        // Animations are read on their own path. A behaviour file simply has no animation object in
-        // it and the tab says so, but an animation file has no behaviour root, so this has to happen
-        // before the root check below rejects it.
+
+
         bool isAnimation = BuildAnimation(path);
 
         var root = HkxBehaviorParser.ParseBehavior(path);
         if (root == null)
         {
             _hkxPath = path;
-            Settings.Set("last_path", path);
-            Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
+            string? rootSettingsWarning = RememberSetting("last_path", path, "The file opened") ??
+                                          RememberSetting("last_folder", Path.GetDirectoryName(path) ?? "",
+                                                          "The file opened");
             SetSummary(isAnimation
                 ? $"{Path.GetFileName(path)}   an animation, not a behaviour. See the Animation and Playback tabs."
                 : "Parsed as FO4 hkx, but no root object was resolved.", Ux.MutedBrush);
-            SetStatus(_animationSummary.Text ?? "", _animationSummary.Foreground ?? Ux.MutedBrush);
+            SetStatus(rootSettingsWarning ?? _animationSummary.Text ?? "",
+                      rootSettingsWarning == null ? _animationSummary.Foreground ?? Ux.MutedBrush : Ux.WarnBrush);
 
-            // An animation opened on its own has no clip pointing at it, so the selection path never
-            // fires. It is still the thing on screen, so it is what plays.
+
+
+
+
+            BuildClipList(new BehaviourGraphModel());
+
+
+
             if (_animationData != null) LoadPose(path, Path.GetFileName(path));
             return;
         }
 
-        // A behaviour is a different layout entirely and the animation reader refuses it outright,
-        // which is true but reads as a fault. Once the behaviour parse has succeeded, say the plain
-        // thing instead.
+
+
+
         if (!isAnimation)
         {
             _animationSummary.Text = "This is a behaviour file. It holds no animation.";
@@ -2053,23 +3550,23 @@ public class MainWindow : Window
         _objects = new List<HkxBehaviorParser.BehaviorNode>(HkxBehaviorParser.LastObjects);
         for (int i = 0; i < _objects.Count; i++) _offsetToIndex[_objects[i].Offset] = i;
 
-        // Not fatal if it fails: the panel falls back to hkxpack field by field, so a file this
-        // cannot take apart still shows its values, just none of them from the bytes.
+
+
         _classWarning = "";
         try
         {
             var bytes = new PackfileObjects(PackfileImage.Read(path));
 
-            // A packfile stores the signature of every class it names, and a signature is what a
-            // class definition is. If the file's disagrees with ours then this build's idea of where
-            // a field sits was written for a different version of that class, and reading a value
-            // out of it would be quiet nonsense rather than an error. So the bytes are put aside
-            // and the panel goes back to reading through hkxpack, which reads the file's own
-            // definitions rather than ours.
+
+
+
+
+
+
             var problems = HavokClassTypes.Shipped.SignatureProblems(bytes.ClassNames());
             if (problems.Count > 0)
             {
-                _classWarning = $"Read through hkxpack only: {problems[0]}" +
+                _classWarning = $"Unsupported class signature: {problems[0]}" +
                                 (problems.Count > 1 ? $", and {problems.Count - 1} more like it" : "") +
                                 ". Values are not read from the bytes when the classes do not match.";
                 _bytes = null;
@@ -2077,6 +3574,11 @@ public class MainWindow : Window
             else _bytes = bytes;
         }
         catch (Exception) { _bytes = null; }
+
+
+
+        RefreshTemplates();
+        _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
 
         var classes = new HashSet<string>();
         int clips = 0;
@@ -2086,31 +3588,34 @@ public class MainWindow : Window
             if (!string.IsNullOrEmpty(o.AnimationName)) clips++;
         }
 
-        // The class warning goes here rather than on the status line because the status line has
-        // four ways out of PrepareEditing and only one of them was carrying it: a file with classes
-        // we do not describe *and* no Java present reported the Java and swallowed the rest.
-        SetSummary($"{Path.GetFileName(path)}   root {root.ClassName}   {_objects.Count} objects   " +
-                   $"{classes.Count} classes   {clips} clip references" +
-                   (_classWarning.Length > 0 ? "   —   " + _classWarning : ""),
-                   _classWarning.Length > 0 ? Ux.WarnBrush : Ux.TitleBrush);
+
+
+
+        SetSummary(isAnimation
+                       ? $"{Path.GetFileName(path)}   an animation, not a behaviour. See the Animation and Playback tabs."
+                       : $"{Path.GetFileName(path)}   root {root.ClassName}   {_objects.Count} objects   " +
+                         $"{classes.Count} classes   {clips} clip references" +
+                         (_classWarning.Length > 0 ? "   —   " + _classWarning : ""),
+                   isAnimation ? Ux.MutedBrush : _classWarning.Length > 0 ? Ux.WarnBrush : Ux.TitleBrush);
 
         RebuildTree();
-        Settings.Set("last_path", path);
-        Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
+        string? settingsWarning = RememberSetting("last_path", path, "The file opened") ??
+                                  RememberSetting("last_folder", Path.GetDirectoryName(path) ?? "", "The file opened");
         PrepareEditing();
 
-        // An animation file parses as a graph of objects too, so it comes down this path rather than
-        // the one above. Either way, if the open file holds frames then it is the thing on screen and
-        // it is what plays.
+
+
+
         if (_animationData != null) LoadPose(path, Path.GetFileName(path));
+        if (settingsWarning != null) SetStatus(settingsWarning, Ux.WarnBrush);
     }
 
-    /// The reading everything else works from.
-    ///
-    /// The text is authoritative while there is any, because an edit is made by rewriting it and the
-    /// bytes on disk are then out of date until the file is saved. With no text there is nothing to
-    /// be out of date, so the reading taken from the file when it was opened is the answer. That is
-    /// what lets the graph, the symbols and the properties fill on a machine with no Java on it.
+
+
+
+
+
+
     private BehaviourGraphModel Model() =>
         _xmlText.Length > 0 ? BehaviourGraphModel.Parse(_xmlText) : _reading;
 
@@ -2118,42 +3623,30 @@ public class MainWindow : Window
 
     private void PrepareEditing()
     {
-        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
-        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-        bool text = java != null && jar != null;
-
-        _findJava.IsVisible = java == null;
-
-        // The graph comes out of the file's own bytes now. It used to come out of hkxpack's text,
-        // which is why a machine without Java showed a tree and four empty tabs. The two readings
-        // were compared field by field and consumer by consumer across every vanilla behaviour and
-        // came out the same, so this is the same picture drawn without the dependency.
         var reading = _bytes == null ? null : NativeGraphModel.From(_bytes);
 
-        // The text form is written from the file's own bytes when the class table can describe it,
-        // and unpacked with hkxpack when it cannot. That is what takes Java off the editing path as
-        // well as the reading one: an edit is made by rewriting this text, so with no text every edit
-        // was refused.
-        //
-        // The two texts were set against each other line by line across every vanilla behaviour. Of
-        // the 370 files hkxpack reads correctly, all 370 come out identical, 385,773 lines of them.
-        // The other 128 hold a class hkxpack strides wrongly, so its own text is misaligned and there
-        // is nothing there to match.
+
+
+
+
+
+
+
+
         bool own = false;
         if (_bytes != null && reading != null)
         {
             try
             {
-                string work = Path.Combine(Path.GetTempPath(), "bgs_edit",
-                                           Path.GetFileNameWithoutExtension(_hkxPath));
+                string work = Path.Combine(Path.GetTempPath(), "bgs_edit", TempDirKey(_hkxPath));
                 HkxTextEdit.ResetDirectory(work);
 
-                // Written to disk as well as held in memory, because saving a structural change still
-                // packs this file back through hkxpack when Java is there to do it.
+
+
                 _xmlPath = Path.Combine(work, Path.GetFileNameWithoutExtension(_hkxPath) + ".xml");
-                // Read off disk rather than from the objects already in hand, because the writer
-                // needs the file's header as well as its objects and the file has not changed since
-                // it was opened.
+
+
+
                 _xmlText = NativeXml.From(File.ReadAllBytes(_hkxPath));
                 File.WriteAllText(_xmlPath, _xmlText);
 
@@ -2173,81 +3666,41 @@ public class MainWindow : Window
             }
         }
 
-        if (text && !own)
-        {
-            try
-            {
-                string work = Path.Combine(Path.GetTempPath(), "bgs_edit",
-                                           Path.GetFileNameWithoutExtension(_hkxPath));
-                HkxTextEdit.ResetDirectory(work);
-
-                _xmlPath = HkxTextEdit.Unpack(java!, jar!, _hkxPath, work);
-                _xmlText = HkxTextEdit.ReadXml(_xmlPath);
-                _objectIds = HkxTextEdit.ObjectIds(_xmlText);
-
-                // Editing works by rewriting the text, so a text form that does not line up with the
-                // file is not something to edit through. The picture below still draws.
-                if (_objectIds.Count != _objects.Count)
-                {
-                    _xmlText = "";
-                    _objectIds = new List<string>();
-                }
-            }
-            catch (Exception ex)
-            {
-                _xmlText = "";
-                _objectIds = new List<string>();
-                if (reading == null)
-                {
-                    ResetHistory();
-                    SetStatus("Read only: " + ex.Message.Split('\n')[0], Ux.MutedBrush);
-                    return;
-                }
-            }
-        }
-
         ResetHistory();
 
         var model = reading ?? (_xmlText.Length > 0 ? Model() : null);
         if (model == null)
         {
-            string missing = java == null && jar == null ? "Java and hkxpack are missing"
-                           : java == null ? "Java is missing"
-                           : jar == null ? "hkxpack-cli.jar is missing"
-                           : "the file's classes are not ones this build describes";
-
             SetStatus("Read only, so the Graph, Symbols, Chain and Animation tabs stay empty: " +
-                      missing + ". The tree is read straight from the binary and does not need " +
-                      "either. " +
-                      (java == null ? "Install a Java runtime, or press Find Java if one is already installed somewhere this did not look. " : "") +
-                      (jar == null ? $"Put hkxpack-cli.jar in a tools folder beside the program, at {Path.Combine(AppContext.BaseDirectory, "tools")}. " : "") +
-                      "Save stays off until then.", Ux.WarnBrush);
+                      "this file holds a class this build cannot describe. The tree is read straight " +
+                      "from the binary. Save stays off for this file.", Ux.WarnBrush);
             return;
         }
 
-        // Both readings number the objects the same way, so either can say which id sits at which
-        // position. The text's list is preferred only because editing writes back through it.
+
+
         if (_objectIds.Count == 0) _objectIds = model.Objects.Select(o => o.Id).ToList();
         _reading = model;
 
-        // The tree drew before the model existed, so the states holding nothing were unknown when it
-        // was built. Now they are known, so it is built again.
+
+
         _emptyStates = GraphValidator.StatesWithNoGenerator(model);
         RebuildTree();
 
         _graph.Show(model);
         _graph.FrameAll();
+        BuildMachineNavigator(model);
         BuildSymbols(model);
         BuildClipList(model);
-        BuildChain(java, jar);
+        BuildChain();
         FindMeshForFile();
+        StartRun();
 
-        string source = reading != null ? "read from the file itself" : "read through hkxpack";
+        string source = reading != null ? "read from the file itself" : "read by the internal developer fallback";
         SetStatus(_xmlText.Length > 0
             ? $"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, {source}."
             : $"{_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, {source}. " +
-              "This file holds a class this build cannot describe, so editing it needs Java and " +
-              "hkxpack-cli.jar. Every other file edits and saves without either.",
+              "This file holds a class this build cannot describe, so it is read only.",
             _xmlText.Length > 0 ? Ux.MetaBrush : Ux.WarnBrush);
     }
 
@@ -2257,8 +3710,105 @@ public class MainWindow : Window
         && index < _objectIds.Count
         && _emptyStates.Contains(_objectIds[index]);
 
-    // The properties panel is not cleared here: the tree is rebuilt on every keystroke in the filter,
-    // and the node whose fields are open is usually the reason the filter is being typed.
+    private void BuildMachineNavigator(BehaviourGraphModel model)
+    {
+        string selected = _machineNavigator.SelectedTag as string ?? "";
+        _machineNavigatorRebuilding = true;
+        try
+        {
+            _machineNavigator.Clear();
+            _machineNavigatorIds.Clear();
+            _machineNavigatorLabels.Clear();
+
+            string filter = _workspaceWindow?.MachineFilterText ?? "";
+            foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+            {
+                string name = machine.Str("name");
+                if (name.Length == 0) name = "hkbStateMachine";
+                string id = "#" + machine.Id;
+                if (filter.Length > 0 && !name.Contains(filter, StringComparison.OrdinalIgnoreCase) &&
+                    !id.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
+                bool active = _machineNavigatorActiveIds.Contains(machine.Id);
+
+                _machineNavigatorIds.Add(machine.Id);
+                _machineNavigatorLabels.Add(name + " " + id);
+
+                var row = _machineNavigator.Add(null, name, id, active ? "running" : "").Tag(machine.Id);
+                var activeBrush = new SolidColorBrush(Ux.Good);
+                row.Colour(0, active ? activeBrush : Ux.TitleBrush)
+                   .Colour(1, Ux.CodeBrush)
+                   .Colour(2, active ? activeBrush : Ux.MutedBrush);
+            }
+
+            if (selected.Length > 0) _machineNavigator.SelectByTag(selected);
+        }
+        finally
+        {
+            _machineNavigatorRebuilding = false;
+        }
+    }
+
+    private void FilterMachines(string text)
+    {
+        if (_reading.Objects.Count > 0) BuildMachineNavigator(_reading);
+    }
+
+    private void SetMachineNavigatorActive(IEnumerable<string> activeMachineIds)
+    {
+        _machineNavigatorActiveIds.Clear();
+        foreach (string id in activeMachineIds) _machineNavigatorActiveIds.Add(id);
+        if (_reading.Objects.Count > 0) BuildMachineNavigator(_reading);
+    }
+
+    private void OnMachineNavigatorSelected()
+    {
+        if (_machineNavigatorRebuilding) return;
+        if (_machineNavigator.SelectedTag is not string id || id.Length == 0) return;
+        if (_graph.FocusOn(id)) SelectObjectId(id);
+        else SelectObjectId(id);
+    }
+
+    private string SelectedMachineId()
+    {
+        if (_machineNavigator.SelectedTag is string machineId && machineId.Length > 0)
+            return machineId;
+        var selected = Model().Get(_selectedId);
+        return selected?.Class == "hkbStateMachine" ? _selectedId : "";
+    }
+
+    private void FocusSelectedMachine()
+    {
+        string machineId = SelectedMachineId();
+        if (machineId.Length == 0)
+        {
+            SetStatus("Choose a machine before focusing its tree.", Ux.MutedBrush);
+            return;
+        }
+
+        if (_graph.SetFocusTree(machineId))
+            SetStatus($"Focused machine #{machineId}. Use Show full graph to clear the focus.", Ux.MetaBrush);
+    }
+
+    private void ShowFullGraph()
+    {
+        _graph.ClearFocusTree();
+        SetStatus("Showing the full graph.", Ux.MetaBrush);
+    }
+
+    private void TraceSelected(GraphTrace.Direction direction)
+    {
+        if (_graph.Trace(direction))
+        {
+            SetStatus($"Traced {direction.ToString().ToLowerInvariant()} dependencies for #{_graph.SelectedId}.",
+                      Ux.MetaBrush);
+            return;
+        }
+
+        SetStatus("Select a visible graph node before tracing.", Ux.MutedBrush);
+    }
+
+
+
     private void RebuildTree()
     {
         _tree.Clear();
@@ -2285,9 +3835,9 @@ public class MainWindow : Window
         }
     }
 
-    // The box sits above the tabs and used to drive only the tree, so on the Graph tab typing in it
-    // did nothing at all. It filters whichever view is showing now. The canvas dims rather than
-    // jumping while you type; Enter is what moves the view onto the first match.
+
+
+
     private void ApplyFilter()
     {
         RebuildTree();
@@ -2298,7 +3848,10 @@ public class MainWindow : Window
 
         if (needle.Length == 0)
         {
-            SetStatus($"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn.", Ux.MetaBrush);
+            SetStatus($"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn." +
+                      (_graph.DrawingTruncated
+                          ? $" Drawing stops at the first {GraphView.MaxNodes} objects."
+                          : ""), Ux.MetaBrush);
             return;
         }
 
@@ -2319,7 +3872,7 @@ public class MainWindow : Window
         SelectObjectId(first);
     }
 
-    /// Drives the filter through the same handlers typing does.
+
     public void Filter(string needle)
     {
         _filter.Text = needle;
@@ -2340,8 +3893,8 @@ public class MainWindow : Window
 
         bool repeat = !seen.Add(node.Offset);
         string label = string.IsNullOrEmpty(node.NodeName) ? node.ClassName : node.NodeName;
-        // Offsets map to xml object ids the same way selection resolves them, so a state the graph
-        // marks as empty is the same row the tree marks.
+
+
         bool empty = IsEmptyState(node.Offset);
 
         var row = _tree.Add(parent, repeat ? label + "  (shown above)" : label,
@@ -2354,9 +3907,9 @@ public class MainWindow : Window
         foreach (var child in node.Children) AddTreeNode(child, row, seen, ref rows);
     }
 
-    // Through the same handler a canvas click uses, not a parallel one. Filling only the properties
-    // panel here is what left the tree unable to load a pose, and would leave it behind again the
-    // next time selecting a node has to do something else as well.
+
+
+
     private void OnTreeSelected()
     {
         ClearProps();
@@ -2373,15 +3926,19 @@ public class MainWindow : Window
         _selectedId = "";
         if (objectId.Length == 0 || _xmlText.Length == 0) return;
 
-        // One parse for both. On a weapon behaviour a parse is a tenth of a second, and selecting a
-        // node was paying for two of them.
+
+
         var model = Model();
         ShowProps(objectId, model);
         SetStatus(Describe(model, objectId), Ux.MetaBrush);
 
-        // Selecting a clip is what asks what it plays, so it is what answers it. Quiet when the
-        // selection plays nothing, which is most nodes in a graph.
+
+
         LoadPoseFromSelection(announce: false);
+
+
+
+        RefreshPasteSlots();
     }
 
     private string Describe(string id) => Describe(Model(), id);
@@ -2402,16 +3959,16 @@ public class MainWindow : Window
         _clipProps.Clear();
     }
 
-    // Both panels are filled, because which one is on screen depends on the tab and a node can be
-    // reached from either. The model is parsed once and handed to both: on a shipped weapon graph
-    // that parse is the expensive part of selecting a node.
+
+
+
     private void ShowProps(string objectId) => ShowProps(objectId, Model());
 
     private void ShowProps(string objectId, BehaviourGraphModel model)
     {
         _selectedId = objectId;
-        // One list for all three panels, cleared once here rather than in FillProps, which runs
-        // three times and would leave only the last panel's boxes registered.
+
+
         _fieldCommits.Clear();
         FillProps(_treeProps, objectId, model);
         FillProps(_graphProps, objectId, model);
@@ -2419,9 +3976,9 @@ public class MainWindow : Window
         _clips.SelectByTag(objectId);
     }
 
-    /// The values the panel shows, read from the file's own bytes wherever they can be, and from
-    /// hkxpack's text for the fields they cannot: a struct written inline is the only kind left, and
-    /// a handful of those should not decide where the other forty values come from.
+
+
+
     private List<PanelFields.Field> PanelValues(string objectId,
                                                 IReadOnlyList<HkxTextEdit.Param> parameters)
     {
@@ -2433,9 +3990,9 @@ public class MainWindow : Window
                                                           PanelFields.Source.Fallback, p.Value))
                         .ToList();
 
-        // The id the rest of the window is keyed on, for whatever an object points at. Both lists are
-        // in file order and the load refuses to go on unless they are the same length, so the
-        // position in one is the position in the other.
+
+
+
         string Reference(PackfileObjects.Instance? target, bool wasNull)
         {
             if (wasNull) return "null";
@@ -2459,15 +4016,18 @@ public class MainWindow : Window
 
         int fromXml = parameters.Count(p => p.From == PanelFields.Source.Fallback);
         var heading = Ux.Label($"#{objectId}   {className}   {parameters.Count} editable fields" +
-                               (fromXml > 0 ? $", {fromXml} of them read through hkxpack" : ""));
+                               (fromXml > 0 ? $", {fromXml} from fallback metadata" : ""));
         heading.TextWrapping = TextWrapping.Wrap;
         panel.Add(heading);
 
-        // An array of structs is shown one element at a time rather than as one flat run of boxes.
-        // The file writes an element's fields together, so the fields sharing a group arrive
-        // together and a run of them is an element. A transition array with five transitions in it
-        // is eighty boxes laid out flat, with every name repeated once per element and nothing
-        // saying where one transition ends and the next begins.
+        if (AddBoneArraySection(panel, objectId, className))
+            return;
+
+
+
+
+
+
         var summaries = ElementSummary.For(model, objectId);
 
         for (int i = 0; i < parameters.Count;)
@@ -2475,7 +4035,7 @@ public class MainWindow : Window
             string group = parameters[i].Group;
             if (group.Length == 0)
             {
-                panel.Add(FieldRow(parameters[i], objectId));
+                panel.Add(FieldRow(panel, parameters[i], objectId));
                 i++;
                 continue;
             }
@@ -2483,8 +4043,8 @@ public class MainWindow : Window
             int end = i;
             while (end < parameters.Count && parameters[end].Group == group) end++;
 
-            var inside = new StackPanel { Spacing = 6, Margin = new Thickness(8, 4, 0, 4) };
-            for (int f = i; f < end; f++) inside.Children.Add(FieldRow(parameters[f], objectId));
+            var inside = new StackPanel { Spacing = 6, Margin = new Thickness(8, 4, 0, 4), ClipToBounds = true };
+            for (int f = i; f < end; f++) inside.Children.Add(FieldRow(panel, parameters[f], objectId));
 
             panel.Add(ElementBlock(group, summaries.GetValueOrDefault(group, ""), inside));
             i = end;
@@ -2492,19 +4052,151 @@ public class MainWindow : Window
 
         AddSymbolSection(panel, objectId, model);
         AddBindingSection(panel, objectId, model);
+        AddBlendSection(panel, objectId, model, className);
     }
 
-    /// One element of an array of structs, behind a line saying what it is.
-    ///
-    /// Collapsed to start with, because the point is that five transitions read as five lines. The
-    /// summary is what the element means rather than what it is called, and an element with no
-    /// summary shows its index alone: a made up description would read as a fact about the file.
+
+
+
+
+    private bool AddBoneArraySection(Inspector panel, string objectId, string className)
+    {
+        bool weights = className == "hkbBoneWeightArray";
+        bool indices = className == "hkbBoneIndexArray";
+        if (!weights && !indices) return false;
+
+        string field = weights ? "boneWeights" : "boneIndices";
+        var values = HkxTextEdit.ArrayValues(_xmlText, objectId, field);
+        if (values == null) return false;
+        var skeleton = PoseSkeleton();
+        panel.Add(Ux.SectionTitle(weights ? "bone weights" : "bone indices"));
+
+        if (skeleton == null)
+        {
+            var unavailable = Ux.Label("No skeleton is available, so values remain numeric.");
+            unavailable.TextWrapping = TextWrapping.Wrap;
+            unavailable.Foreground = Ux.WarnBrush;
+            panel.Add(unavailable);
+        }
+
+        for (int i = 0; i < values.Count; i++)
+        {
+            int row = i;
+            int bone = row;
+            if (indices) int.TryParse(values[row], out bone);
+
+            string name = skeleton != null && bone >= 0 && bone < skeleton.BoneNames.Count
+                ? skeleton.BoneNames[bone]
+                : skeleton == null ? "bone name unavailable" : $"bone {bone} is outside this skeleton";
+
+            var label = Ux.Label($"{row}  {name}");
+            label.Width = 188;
+            label.TextTrimming = TextTrimming.CharacterEllipsis;
+            ToolTip.SetTip(label, weights
+                ? $"weight for skeleton bone {row}: {name}"
+                : $"entry {row} names skeleton bone {bone}: {name}");
+
+            var value = Ux.Field();
+            value.Text = values[row];
+            string original = values[row];
+            void Commit()
+            {
+                string now = value.Text ?? original;
+                if (now == original) return;
+
+                string before = values[row];
+                values[row] = now;
+                if (SetArrayValues(objectId, field, values)) original = now;
+                else { values[row] = before; value.Text = original; }
+            }
+
+            _fieldCommits.Add(Commit);
+            value.LostFocus += (_, _) => Commit();
+            value.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) Commit(); };
+
+            panel.Add(panel.TwoColumnRow(label, value, 188));
+        }
+
+        return true;
+    }
+
+    private bool SetArrayValues(string objectId, string field, IReadOnlyList<string> values)
+    {
+        if (_xmlText.Length == 0) return false;
+        try
+        {
+            Commit(HkxTextEdit.SetArrayValues(_xmlText, objectId, field, values));
+            _editedFields.Add(objectId + "." + field);
+            SetStatus($"#{objectId}.{field} = {values.Count} value(s)   (unsaved)", Ux.CodeBrush);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message.Split('\n')[0], Ux.MutedBrush);
+            return false;
+        }
+    }
+
+
+
+
+
+
+
+    private void AddBlendSection(Inspector panel, string objectId, BehaviourGraphModel model, string className)
+    {
+        if (className != "hkbBlenderGenerator") return;
+
+        BlendWeights.Result blend;
+        try { blend = BlendWeights.Of(model, objectId); }
+        catch (Exception) { return; }
+
+        panel.Add(Ux.SectionTitle("what it blends"));
+
+        string head = blend.Mode switch
+        {
+            BlendWeights.Mode.Mix => "Mixes every child by weight.",
+            BlendWeights.Mode.Parametric => $"Parametric on {blend.Parameter} = {blend.ParameterValue:F3}.",
+            _ => $"Parametric, driven by the variable {blend.Parameter}, so the mix is set at runtime.",
+        };
+        var headLabel = Ux.Label(head);
+        headLabel.TextWrapping = TextWrapping.Wrap;
+        headLabel.Foreground = blend.Resolved ? Ux.MetaBrush : Ux.WarnBrush;
+        panel.Add(headLabel);
+
+        foreach (var child in blend.Children)
+        {
+            string who = child.GeneratorName.Length > 0 ? child.GeneratorName : "#" + child.GeneratorId;
+            string share = child.WeightDriven
+                ? $"driven by {child.WeightDriver}"
+                : blend.Mode == BlendWeights.Mode.Mix
+                    ? $"{child.Contribution * 100:F0}%"
+                    : blend.Mode == BlendWeights.Mode.Parametric
+                        ? $"at {child.Weight:F2}, {child.Contribution * 100:F0}% now"
+                        : $"at {child.Weight:F2}";
+
+            var text = Ux.Label($"{who}   {share}");
+            text.TextWrapping = TextWrapping.Wrap;
+            if (child.WeightDriven) text.Foreground = Ux.WarnBrush;
+            panel.Add(text);
+        }
+    }
+
+
+
+
+
+
     private static Control ElementBlock(string group, string summary, Control inside)
     {
-        var header = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8 };
+        var header = new Grid { ClipToBounds = true };
+        header.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        header.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
 
         var index = Ux.Label(group);
         index.Foreground = Ux.MutedBrush;
+        index.Margin = new Thickness(0, 0, 8, 0);
+        Grid.SetColumn(index, 0);
         header.Children.Add(index);
 
         if (summary.Length > 0)
@@ -2512,6 +4204,8 @@ public class MainWindow : Window
             var said = Ux.Label(summary);
             said.Foreground = Ux.CodeBrush;
             said.TextTrimming = TextTrimming.CharacterEllipsis;
+            said.ClipToBounds = true;
+            Grid.SetColumn(said, 1);
             ToolTip.SetTip(said, summary);
             header.Children.Add(said);
         }
@@ -2522,27 +4216,28 @@ public class MainWindow : Window
             Content = inside,
             IsExpanded = false,
             Padding = new Thickness(0),
+            ClipToBounds = true,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
         };
     }
 
-    private Control FieldRow(PanelFields.Field p, string owner)
+    private Control FieldRow(Inspector panel, PanelFields.Field p, string owner)
     {
-        // An enum whose values the class table declares becomes a list rather than a box. The names
-        // are the ones the game registers, not ours, and PanelFields only offers them when the value
-        // already in the file is one of them, so picking from the list can never be the only way to
-        // keep what is there.
-        if (p.Options.Count > 0) return EnumRow(p, owner);
+
+
+
+
+        if (p.Options.Count > 0) return EnumRow(panel, p, owner);
 
         string address = p.Address;
         string original = p.Value;
 
         var field = Ux.Field();
         field.Text = p.Value;
-        // Committing is driven by what the box holds, not by which box has focus. Focus is the
-        // usual trigger, but a window closing has no focus change to hang off, and asking every
-        // field whether it differs is both simpler and safe: one that has not been touched
-        // commits nothing, and one already committed commits nothing twice.
+
+
+
+
         void Commit()
         {
             if (field.Text == original) return;
@@ -2562,30 +4257,26 @@ public class MainWindow : Window
         label.TextTrimming = TextTrimming.CharacterEllipsis;
         ToolTip.SetTip(label, Tip(p));
 
-        var row = new DockPanel();
-        DockPanel.SetDock(label, Dock.Left);
-        row.Children.Add(label);
-        row.Children.Add(field);
-        return row;
+        return panel.TwoColumnRow(label, field);
     }
 
-    // The other direction of the usages question: not who touches this symbol, but which symbols this
-    // node touches. An index on its own says nothing, so each one is resolved to its declared name.
-    /// One property row whose value is chosen from a list rather than typed.
-    ///
-    /// Committing is driven by what the control holds, the same way a text box is, so a window
-    /// closing with a changed selection still writes it.
-    /// What hovering a field's name says.
-    ///
-    /// Three parts, and they are in this order because that is the order they can be relied on. The
-    /// address is always exact: the label is cut off when the name is long, and inside an array
-    /// element there are several fields with the same name, so the first thing the tip has to answer
-    /// is which field this is and where an edit goes. Then what the field is, which the class table
-    /// knows for certain. Then what it means, which is only there for the fields this project has
-    /// actually established, with where that came from.
-    ///
-    /// Nothing is written for a field nobody has checked. A plausible sentence would read with the
-    /// same authority as a measured one and there would be no way to tell them apart.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private static string Tip(PanelFields.Field p)
     {
         var lines = new List<string> { p.Address };
@@ -2602,7 +4293,7 @@ public class MainWindow : Window
         return string.Join("\n", lines);
     }
 
-    private Control EnumRow(PanelFields.Field p, string owner)
+    private Control EnumRow(Inspector panel, PanelFields.Field p, string owner)
     {
         var choice = new ComboBox
         {
@@ -2633,11 +4324,7 @@ public class MainWindow : Window
         label.TextTrimming = TextTrimming.CharacterEllipsis;
         ToolTip.SetTip(label, Tip(p));
 
-        var row = new DockPanel();
-        DockPanel.SetDock(label, Dock.Left);
-        row.Children.Add(label);
-        row.Children.Add(choice);
-        return row;
+        return panel.TwoColumnRow(label, choice);
     }
 
     private void AddSymbolSection(Inspector panel, string objectId, BehaviourGraphModel model)
@@ -2694,8 +4381,8 @@ public class MainWindow : Window
             panel.Add(row);
         }
 
-        // Stacked rather than one row: the member path alone is wider than this panel, and a row
-        // that does not fit gets its left end cut off rather than shrinking.
+
+
         var member = Ux.Field("member, e.g. userControlledTimeFraction");
         var variable = Ux.Field("variable name");
         var bind = Ux.Secondary("Bind");
@@ -2707,8 +4394,8 @@ public class MainWindow : Window
         panel.Add(bind);
     }
 
-    // Scanned once, on the first build that needs it, rather than at startup: a full Base folder is
-    // several thousand files and nobody who never opens the Symbols tab should pay for it.
+
+
     private void EnsurePapyrus()
     {
         if (_papyrusScanned) return;
@@ -2744,8 +4431,8 @@ public class MainWindow : Window
                                          i < values.Count ? SymbolEditor.DecodeValue(type, values[i]) : "",
                                          Users(readers, events: false, i)).Tag($"v:{i}"));
 
-            // Every reader as its own row, so "is this variable used" is answered by looking rather
-            // than by reading the whole file, and each answer can be clicked through to the node.
+
+
             var sites = variableSites.Where(u => u.Index == i)
                                      .GroupBy(u => (u.ObjectId, u.Owner, u.Member)).ToList();
             if (sites.Count == 0) continue;
@@ -2756,9 +4443,9 @@ public class MainWindow : Window
                             site.Count(), "");
         }
 
-        // The text form while there is one, because an edit rewrites it and the bytes on disk are
-        // out of date until the file is saved. The reading taken when the file was opened otherwise,
-        // which is what fills the roles with no Java on the machine.
+
+
+
         var usage = _xmlText.Length > 0 ? EventUsage.ByEvent(_xmlText)
                   : _bytes != null ? EventUsage.ByEvent(_bytes)
                   : new Dictionary<int, List<EventUsage.Line>>();
@@ -2791,8 +4478,8 @@ public class MainWindow : Window
                 }
             }
 
-            // Papyrus is reported as information, never as a verdict: the engine sends events itself,
-            // so a name no script sends is not evidence of anything.
+
+
             if (scripts.Length == 0) continue;
             if (lines == null) row.Collapse();
             _symbols.Add(row, "papyrus", "", scripts, "", "scripts address events by name, not by index")
@@ -2803,9 +4490,9 @@ public class MainWindow : Window
             _symbols.Add(null, "", "", "this graph declares no variables or events").Colour(2, Ux.DisabledBrush);
     }
 
-    // One place that names a symbol, tagged with the object so selecting it goes there. The object's
-    // own name is what a reader recognises; the class alone is not, since a graph holds hundreds of
-    // the same class.
+
+
+
     private void AddUsageRow(HkRow parent, string what, string objectId, string owner, string member,
                              int count, string note)
     {
@@ -2829,20 +4516,20 @@ public class MainWindow : Window
         .Colour(0, Ux.MutedBrush).Colour(1, Ux.DisabledBrush).Colour(2, Ux.TitleBrush).Colour(3, Ux.CodeBrush)
         .Colour(4, row.Text(4).StartsWith("nothing") ? Ux.DisabledBrush : Ux.MetaBrush);
 
-    // This column is what the file references, not everything that uses the symbol. Game code
-    // addresses both variables and events by name rather than index, so an empty column means no
-    // consumer was found in this file, not that the symbol is dead. The Pip-Boy's iTabSync and
-    // iCatSync are the worked example: nothing in the graph reads them, the game writes them and
-    // reads them back, and the tab switching itself runs on events.
-    // One scan for every index rather than one scan per symbol. A weapon behaviour declares 873
-    // symbols against seven megabytes of text, and asking one at a time took about two minutes of
-    // the load.
-    /// Where every index is written, out of the text while there is any and out of the file's own
-    /// bytes when there is not.
-    ///
-    /// The text is preferred for the same reason the model is: an edit rewrites it, so it is the
-    /// current state of the graph and the bytes on disk are behind until the file is saved. The two
-    /// walks were compared across every vanilla behaviour, 21,624 usages, and agreed on all of them.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private List<SymbolIndexFixup.Usage> Usages(bool events) =>
         _xmlText.Length > 0 ? SymbolIndexFixup.Usages(_xmlText, events)
         : _bytes != null ? SymbolIndexFixup.Usages(_bytes, events)
@@ -2882,10 +4569,10 @@ public class MainWindow : Window
             .Select(g => g.Count() > 1 ? $"{g.Key} x{g.Count()}" : g.Key).Take(4));
     }
 
-    private void BuildChain(string? java, string? jar)
+    private void BuildChain()
     {
         _chain.Clear();
-        var chain = ProjectChain.Resolve(_hkxPath, java, jar);
+        var chain = ProjectChain.Resolve(_hkxPath);
         _projectChain = chain;
 
         foreach (var link in chain.Links)
@@ -2907,12 +4594,12 @@ public class MainWindow : Window
         foreach (string v in values) _chain.Add(head, "", v).Colour(1, colour);
     }
 
-    // Selecting a row loads it into the edit boxes, so rename and set value act on what is on
-    // screen rather than on whatever was typed last.
+
+
     private void OnSymbolSelected()
     {
-        // A usage row is a place to go, not a symbol to edit. Same jump the problem list uses, so a
-        // result found here lands the same way a result found by Check graph does.
+
+
         if (_symbols.SelectedTag is string jump && jump.StartsWith('#'))
         {
             string id = jump[1..];
@@ -2939,16 +4626,16 @@ public class MainWindow : Window
             ? SymbolEditor.DecodeValue(type, values[index])
             : "";
 
-        // Empty rather than zero where the array stops short of this variable, because the array is
-        // allowed to stop short and an unbounded variable is not one bounded to zero.
+
+
         var bounds = SymbolEditor.VariableBounds(model);
         _symbolMin.Text = index < bounds.Count ? SymbolEditor.DecodeValue(type, bounds[index].Min) : "";
         _symbolMax.Text = index < bounds.Count ? SymbolEditor.DecodeValue(type, bounds[index].Max) : "";
     }
 
-    /// Gives the selected variable a min and a max, which nothing in the window could do before: the
-    /// array could be inherited from vanilla or lost, never authored, so a variable added here never
-    /// got a bound at all.
+
+
+
     private void SetSymbolBounds()
     {
         if (!SelectedSymbol(out bool variable, out int index) || !variable)
@@ -2979,8 +4666,8 @@ public class MainWindow : Window
     {
         variable = false;
         index = -1;
-        // Usage rows are tagged with an object id and live in the same tree, so the shape of the tag
-        // is what separates them, not its length.
+
+
         if (_symbols.SelectedTag is not string tag || tag.Length < 3 || tag[1] != ':') return false;
         variable = tag[0] == 'v';
         return int.TryParse(tag[2..], out index);
@@ -3018,9 +4705,9 @@ public class MainWindow : Window
             string name = (_symbolName.Text ?? "").Trim();
             if (name.Length == 0) throw new ArgumentException("type the new name first");
             xml = SymbolEditor.Rename(xml, variable, index, name);
-            // The name is the contract with everything outside the file: the engine's setters take
-            // a name and resolve it against variableNames, and Papyrus sends events by name. A
-            // rename breaks those callers silently, with no error anywhere.
+
+
+
             SetStatus($"renamed {(variable ? "variable" : "event")} {index} to '{name}'. " +
                       "Game code and scripts address it by name, so anything outside this file that " +
                       "used the old name now silently does nothing.   (unsaved)", Ux.CodeBrush);
@@ -3084,8 +4771,8 @@ public class MainWindow : Window
         }
     }
 
-    // A drag out to empty canvas says two things a right click does not: which slot wanted a node,
-    // and where. Both are held until the menu is answered, because the menu is what says what kind.
+
+
     private void ShowAddMenu(string fromId, string field, Point at)
     {
         if (_xmlText.Length == 0) return;
@@ -3151,9 +4838,9 @@ public class MainWindow : Window
 
         try
         {
-            // A drag names the slot, so the node goes into that one rather than whichever slot the
-            // parent's class would otherwise be given. Dragging off a clip's triggers and getting a
-            // generator hung on something else is not what the wire said.
+
+
+
             bool bySlot = field.Length > 0 && parentId.Length > 0;
             string xml = GraphAuthor.AddNode(_xmlText, kind, name, animation, bySlot ? "" : parentId,
                                              out string newId, out string note);
@@ -3172,8 +4859,8 @@ public class MainWindow : Window
                 }
             }
 
-            // Creating the node and wiring it up is one action to whoever did it, so it is one step
-            // back, not two.
+
+
             Commit(xml);
             SetStatus(note + $"   (#{newId}, unsaved)", Ux.CodeBrush);
             RefreshAfterEdit(newId);
@@ -3242,8 +4929,8 @@ public class MainWindow : Window
                 declared = $"declared variable '{variableName}' at index {index}, and ";
             }
 
-            // Declaring the variable and binding it is one action, so undo takes both back together
-            // rather than leaving an orphan variable behind.
+
+
             Commit(BindingEditor.AddBinding(xml, objectId, memberPath, index));
             SetStatus($"{declared}#{objectId}.{memberPath} driven by {variableName}   (unsaved)", Ux.CodeBrush);
             RefreshAfterEdit(objectId);
@@ -3277,11 +4964,11 @@ public class MainWindow : Window
         ShowProps(objectId);
     }
 
-    /// Commits anything typed into a property field but not yet left, as leaving it would. Saving
-    /// calls this first, so a value typed and not blurred is part of what gets written rather than
-    /// missing from it. Deliberately not called when the window closes: closing discards the whole
-    /// unsaved document anyway, and writing a game file on an accidental close is worse than losing
-    /// edits that were never saved.
+
+
+
+
+
     public void CommitPendingFields()
     {
         foreach (var commit in _fieldCommits.ToList()) commit();
@@ -3293,13 +4980,13 @@ public class MainWindow : Window
         if (!SetParam(objectId, address, field.Text ?? "")) field.Text = original;
     }
 
-    /// Writes one field and reports whether it took, so a control that has to put itself back on a
-    /// refusal can. Shared by the typed boxes and the enum lists rather than written twice.
-    ///
-    /// `address` is where the field sits rather than what it is called: `transitions[1].eventId` for
-    /// one element of an array of structs, and a bare name for a field the object holds directly,
-    /// which is the same string it always was. Naming the field alone reached the first one with
-    /// that name, so every box below the first element of an array wrote the first element's value.
+
+
+
+
+
+
+
     private bool SetParam(string objectId, string address, string value)
     {
         if (_xmlText.Length == 0) return false;
@@ -3310,8 +4997,8 @@ public class MainWindow : Window
             _editedFields.Add(objectId + "." + address);
             SetStatus($"#{objectId}.{address} = {value}   (unsaved)", Ux.CodeBrush);
 
-            // Retimes a preview that is already running, so an edited speed shows up without having
-            // to stop and start playback to see it.
+
+
             if (address == "playbackSpeed" && objectId == _selectedId && _clock != null)
                 _clock.Interval = TimeSpan.FromSeconds(
                     Math.Clamp(_poseAnimation!.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4));
@@ -3325,8 +5012,8 @@ public class MainWindow : Window
         }
     }
 
-    // hkxpack checks shape, not meaning, so this is the only thing standing between a bad edit and
-    // finding out in game.
+
+
     private void Validate()
     {
         if (_xmlText.Length == 0 && _reading.Objects.Count == 0)
@@ -3335,9 +5022,9 @@ public class MainWindow : Window
             return;
         }
 
-        // Every check runs either way now. With no text the model and the index walk both come from
-        // the file's own bytes, so the checker sees the same graph it would have seen through
-        // hkxpack rather than a smaller one.
+
+
+
         var findings = _xmlText.Length > 0
             ? GraphValidator.Check(_xmlText, _projectChain)
             : GraphValidator.Check(_reading, _projectChain, _bytes);
@@ -3379,9 +5066,9 @@ public class MainWindow : Window
                   errors.Count > 0 ? Ux.BadBrush : Ux.MutedBrush);
     }
 
-    // Most real problems only exist between files, so the same checks run over every behaviour the
-    // project owns and report once. Results carry a file, and a node in another file cannot be jumped
-    // to on this file's canvas, so the click handler says so rather than silently doing nothing.
+
+
+
     private async Task ValidateProject()
     {
         var chain = _projectChain;
@@ -3392,19 +5079,38 @@ public class MainWindow : Window
             return;
         }
 
-        // Java is not asked for. The files around this one are read the same way this one is, from
-        // their own bytes, and hkxpack is only reached for when a file holds a class this build
-        // cannot describe. A file that cannot be read either way is reported as one unread file
-        // rather than stopping the whole check.
-        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
-        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
+
+
+
 
         _problems.Clear();
         _problems.IsVisible = _problemBar.IsVisible = true;
         _problemBar.Text = "Reading the project...";
 
-        var progress = new Progress<string>(s => SetStatus("Checking " + s, Ux.MutedBrush));
-        var result = await Task.Run(() => ProjectCheck.Run(chain, java, jar, s => ((IProgress<string>)progress).Report(s)));
+        long stamp = CaptureStamp();
+        var progress = new Progress<string>(s =>
+        {
+            if (stamp == _documentStamp) SetStatus("Checking " + s, Ux.MutedBrush);
+        });
+
+        ProjectCheck.Result result;
+        try
+        {
+            result = ValidateProjectRunner != null
+                ? await ValidateProjectRunner(chain, progress)
+                : await Task.Run(() => ProjectCheck.Run(
+                    chain, s => ((IProgress<string>)progress).Report(s)));
+        }
+        catch (Exception e)
+        {
+            if (stamp != _documentStamp) return;
+            Console.Error.WriteLine($"Project check failed: {e}");
+            _problemBar.Text = "Project check failed.";
+            SetStatus("Project check failed. The project files could not be read.", Ux.BadBrush);
+            return;
+        }
+
+        if (stamp != _documentStamp) return;      // document or revision moved on; discard
 
         foreach (var file in result.Files.Where(f => f.Error.Length > 0 || f.Findings.Count > 0))
         {
@@ -3429,11 +5135,15 @@ public class MainWindow : Window
         SetStatus("Project checked. " + result, result.Errors > 0 ? Ux.BadBrush : Ux.MetaBrush);
     }
 
-    /// Writes the changed values straight into the file's own bytes, leaving everything else exactly
-    /// as it was on disk. Returns false when the edit is not one that can be written that way, which
-    /// is not a failure: the caller then does it the old way.
-    private bool SavedInPlace()
+
+
+
+    private bool SavedInPlace() => SaveCurrent();
+
+    private bool SaveCurrent()
     {
+        if (_readOnly) { SetStatus("Not saved: " + _readOnlyWhy, Ux.BadBrush); return false; }
+
         NativeSave.Plan plan;
         try
         {
@@ -3442,46 +5152,83 @@ public class MainWindow : Window
         catch (Exception e)
         {
             SetStatus("Could not work out what changed, so nothing was written: " + e.Message, Ux.BadBrush);
-            return true;
+            return false;
         }
 
-        if (!plan.Possible || plan.Empty) return false;
+        if (!plan.Possible)
+        {
+            SetStatus(plan.Refusal ?? "native save does not support this edit yet", Ux.BadBrush);
+            return false;
+        }
+        if (plan.Empty) { SetStatus("Nothing to save.", Ux.MutedBrush); return false; }
 
         string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
-        if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return true; }
+        if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return false; }
 
+        byte[] bytes;
         try
         {
-            byte[] bytes = NativeSave.Apply(_hkxPath, plan);
-
-            string backup = _hkxPath + ".bak";
-            if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
-            ReplaceFile(_hkxPath, bytes);
-
-            ResetHistory();
-
-            // Said plainly, because deleting is the one save that moves things. Every other kind
-            // leaves the rest of the file where it was, and somebody who has just deleted a node
-            // should be told that this one did not.
-            string how = plan.Gone.Count > 0
-                ? $"and took out {plan.Gone.Count} object{(plan.Gone.Count == 1 ? "" : "s")}, " +
-                  "so the file was laid out again and everything after them has moved. Object " +
-                  "numbers above the ones deleted have changed. "
-                : plan.Grows
-                    ? "with anything that grew added on the end so nothing already in it moved. "
-                    : "leaving every other byte as it was. ";
-
-            SetStatus($"Saved {plan.Changes.Count} " +
-                      $"change{(plan.Changes.Count == 1 ? "" : "s")} straight into the file, " + how +
-                      $"The original is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
-            Load();
-            return true;
+            bytes = NativeSave.Apply(_hkxPath, plan);
         }
         catch (Exception e)
         {
             SetStatus("Not saved, and the original is untouched: " + e.Message, Ux.BadBrush);
-            return true;
+            return false;
         }
+
+        try
+        {
+            SaveVerifier.Verify(File.ReadAllBytes(_hkxPath), bytes, plan);
+            if (VerifyFaultForTest is { } verifyFault) throw verifyFault();
+        }
+        catch (Exception e)
+        {
+            SetStatus("The rebuilt file failed verification, so nothing was written: " + e.Message,
+                      Ux.BadBrush);
+            return false;
+        }
+
+        try
+        {
+            FileSafety.Backup(_hkxPath);
+            FileSafety.Replace(_hkxPath, bytes);
+        }
+        catch (Exception e)
+        {
+            SetStatus("Not saved: the file could not be written: " + e.Message, Ux.BadBrush);
+            return false;
+        }
+
+        ResetHistory();
+
+        string how = plan.Gone.Count > 0
+            ? $"and took out {plan.Gone.Count} object{(plan.Gone.Count == 1 ? "" : "s")}, " +
+              "so the file was laid out again and everything after them has moved. Object " +
+              "numbers above the ones deleted have changed. "
+            : plan.Grows
+                ? "with anything that grew added on the end so nothing already in it moved. "
+                : "leaving every other byte as it was. ";
+
+        SetStatus($"Saved {plan.Changes.Count} " +
+                  $"change{(plan.Changes.Count == 1 ? "" : "s")} straight into the file, " + how +
+                  $"The original is kept as {Path.GetFileName(_hkxPath + ".bak")}.", Ux.MetaBrush);
+
+        try
+        {
+            _reloading = true;
+            Load();
+            if (ReloadFaultForTest is { } fault) throw fault();
+        }
+        catch (Exception e)
+        {
+            SetStatus("The file was saved, but the editor could not reload it: " + e.Message, Ux.BadBrush);
+            return false;
+        }
+        finally
+        {
+            _reloading = false;
+        }
+        return true;
     }
 
     private void Save()
@@ -3491,68 +5238,13 @@ public class MainWindow : Window
 
         if (_readOnly) { SetStatus("Not saved: " + _readOnlyWhy, Ux.BadBrush); return; }
 
-        // The graph checks apply whichever way the file gets written. The hkxpack round trip warning
-        // does not, because writing the bytes in place has no round trip to lose anything in, so it
-        // is asked for separately below rather than folded in here.
-        string? refusal = GraphValidator.RefuseToSave(_xmlText, includeRepackLosses: false);
+
+
+
+        string? refusal = GraphValidator.SaveRefusal(_xmlText, _savedXml, includeRepackLosses: false);
         if (refusal != null) { SetStatus(refusal, Ux.BadBrush); return; }
 
-        if (SavedInPlace()) return;
-
-        string? java = HkxTextEdit.FindJava(Settings.Get("java"));
-        string? jar = HkxTextEdit.FindHkxPack(Settings.Get("hkxpack"), AppContext.BaseDirectory);
-        if (java == null) { SetStatus("Cannot save: no Java runtime found.", Ux.BadBrush); return; }
-        if (jar == null) { SetStatus("Cannot save: hkxpack-cli.jar not found.", Ux.BadBrush); return; }
-
-        // Asked before packing rather than after. Packing a weapon behaviour takes seconds, and
-        // finding out at the end that the file was read only all along wastes all of them.
-        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
-        if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return; }
-
-        // Only the rebuild loses things, so this is where the warning belongs.
-        string? lossy = GraphValidator.RepackWouldLose(_xmlText);
-        if (lossy != null) { SetStatus(lossy, Ux.BadBrush); return; }
-
-        try
-        {
-            File.WriteAllText(_xmlPath, _xmlText);
-            string packed = HkxTextEdit.Repack(java, jar, _xmlPath);
-
-            var drift = VerifyRepack(java, jar, packed);
-            if (!drift.Clean)
-            {
-                SetStatus($"Not saved, and the original is untouched: the repack {drift}.", Ux.BadBrush);
-                return;
-            }
-
-            string backup = _hkxPath + ".bak";
-            if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
-            File.Copy(packed, _hkxPath, true);
-
-            ResetHistory();
-            SetStatus($"Saved. The original is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
-            Load();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            SetStatus("Save failed: " + (HkxTextEdit.WhyNotWritable(_hkxPath) ??
-                      "Windows refused the write. Your original is untouched."), Ux.BadBrush);
-        }
-        catch (Exception ex)
-        {
-            SetStatus("Save failed: " + ex.Message.Split('\n')[0], Ux.BadBrush);
-        }
-    }
-
-    // Read the file hkxpack just wrote back out and count what is in it. Done before the original
-    // is overwritten, so a repack that silently drops objects costs nothing.
-    private RepackCheck.Drift VerifyRepack(string java, string jar, string packed)
-    {
-        string work = Path.Combine(Path.GetTempPath(), "bgs_verify", Path.GetFileNameWithoutExtension(_hkxPath));
-        HkxTextEdit.ResetDirectory(work);
-
-        string xml = HkxTextEdit.Unpack(java, jar, packed, work);
-        return RepackCheck.Compare(RepackCheck.Take(_xmlText), RepackCheck.Take(HkxTextEdit.ReadXml(xml)));
+        SavedInPlace();
     }
 
     private void OnWindowKey(object? sender, Avalonia.Input.KeyEventArgs e)
@@ -3565,12 +5257,13 @@ public class MainWindow : Window
         else if (e.Key == Avalonia.Input.Key.Y || (e.Key == Avalonia.Input.Key.Z && shift)) { Redo(); e.Handled = true; }
     }
 
-    /// The only place the loaded document changes outside a load. Every editing path routes here so
-    /// the step back is taken before the change lands, and so nothing can mutate around the stack.
+
+
     private void Commit(string newXml)
     {
         if (newXml == _xmlText) return;
 
+        _documentStamp++;
         _undo.Add(_xmlText);
         if (_undo.Count > UndoDepth) _undo.RemoveAt(0);
         _redo.Clear();
@@ -3586,15 +5279,15 @@ public class MainWindow : Window
         RefreshDirty();
     }
 
-    // Dirty is measured against what was last written rather than latched on, so undoing back past
-    // the last save says so instead of claiming there is still something to write.
+
+
     private void RefreshDirty()
     {
         _dirty = _xmlText.Length > 0 && _xmlText != _savedXml;
 
-        // A file opened out of an archive can be edited and read, it just cannot be written back
-        // where it came from. Greying the button says that before an edit rather than after it, and
-        // Save refuses as well, so the answer does not depend on the button being right.
+
+
+
         _saveButton.IsEnabled = _dirty && !_readOnly;
         if (_readOnly) ToolTip.SetTip(_saveButton, _readOnlyWhy);
         _undoButton.IsEnabled = _undo.Count > 0;
@@ -3619,10 +5312,11 @@ public class MainWindow : Window
         AfterHistoryMove("Redone");
     }
 
-    // The tree, the canvas, the symbol table and the properties panel all read from the document, so
-    // all four are rebuilt. Leaving any of them showing the old version is worse than not having undo.
+
+
     private void AfterHistoryMove(string what)
     {
+        _documentStamp++;
         RefreshDirty();
 
         var model = Model();
@@ -3639,55 +5333,7 @@ public class MainWindow : Window
                   Ux.MetaBrush);
     }
 
-    // Java that autodetection missed. Validated by running it rather than accepted on its name, so a
-    // wrong pick says so here instead of at the next save.
-    private async Task PickJava()
-    {
-        var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Find the Java launcher",
-            AllowMultiple = false,
-            SuggestedStartLocation = await JavaStartFolder(),
-            FileTypeFilter = new[]
-            {
-                new FilePickerFileType("Java launcher") { Patterns = new[] { "java", "java.exe" } },
-                FilePickerFileTypes.All,
-            },
-        });
 
-        string? path = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
-        if (path == null) return;
-
-        SetStatus($"Running {Path.GetFileName(path)} -version...", Ux.MutedBrush);
-        string? bad = await Task.Run(() => HkxTextEdit.WhyNotJava(path));
-        if (bad != null) { SetStatus(bad + " Nothing was changed.", Ux.BadBrush); return; }
-
-        string version = await Task.Run(() => HkxTextEdit.JavaVersion(path));
-        Settings.Set("java", path);
-        _findJava.IsVisible = false;
-        SetStatus($"Java accepted: {version}", Ux.MetaBrush);
-
-        // Read only is lifted by redoing the unpack, not by flipping a flag: the four tabs that were
-        // empty are empty because the text form was never produced.
-        if (_hkxPath.Length > 0 && _root != null) PrepareEditing();
-    }
-
-    private async Task<IStorageFolder?> JavaStartFolder()
-    {
-        string[] candidates =
-        {
-            Path.GetDirectoryName(Settings.Get("java")) ?? "",
-            Path.Combine(Environment.GetEnvironmentVariable("JAVA_HOME") ?? "", "bin"),
-            @"C:\Program Files\Java",
-            "/usr/lib/jvm",
-        };
-
-        foreach (string dir in candidates)
-            if (dir.Length > 0 && Directory.Exists(dir))
-                return await StorageProvider.TryGetFolderFromPathAsync(dir);
-
-        return null;
-    }
 
     private void SetSummary(string text, IBrush brush)
     {

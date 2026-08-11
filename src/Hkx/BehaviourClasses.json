@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "havokVersion": "hk_2014.1.0-r1",
-  "note": "Field names and order are ground truth from Fallout 4 files via hkxpack. Types and enum option sets are cross-referenced against the two MIT Skyrim tools.",
+  "note": "Field names and order are checked-in native metadata. Historical measurement used hkxpack; types and enum option sets are cross-referenced against the two MIT Skyrim tools.",
   "sources": {
     "haviour": "https://github.com/Pentalimbed/Haviour (MIT) - src/hkx/hkclass.inl",
     "skyrim-behavior-editor": "https://github.com/Jonahex/Skyrim-Behavior-Editor- (MIT) - src/hkxclasses",

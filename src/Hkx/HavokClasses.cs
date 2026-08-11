@@ -7,16 +7,16 @@ using System.Text.Json;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Where every field of every Havok class lives inside an object, by byte offset.
-//
-// Read out of Fallout 4 itself rather than guessed or taken from an SDK. The game builds these
-// descriptions at startup, one function per class, and each one names the class, its parent, how big
-// an instance is, and where every field sits. Dumping those gave 935 classes; the data file beside
-// this one is that dump, and the sweep is written up in the F4SE workspace under
-// ReverseEngineering/03-FINDINGS.md.
-//
-// A class only declares the fields it adds, so anything inherited has to be walked for. Fields are
-// laid out parent first, which is why an inherited offset needs no adjusting.
+
+
+
+
+
+
+
+
+
+
 public sealed class HavokClasses
 {
     public sealed class Member
@@ -25,9 +25,9 @@ public sealed class HavokClasses
         public int Offset { get; init; }
         public string Type { get; init; } = "";
 
-        /// The class that declares the field, which is not always the class of the object holding
-        /// it. Two classes can both declare a `flags` and mean different things by it, so anything
-        /// naming the values of a field has to key on where the field comes from.
+
+
+
         public string Owner { get; init; } = "";
 
         public override string ToString() => $"+{Offset} {Name} {Type}";
@@ -39,7 +39,7 @@ public sealed class HavokClasses
         public string? Parent { get; init; }
         public int Size { get; init; }
 
-        /// Only what this class adds. Use Members for the whole object.
+
         public IReadOnlyList<Member> Declared { get; init; } = Array.Empty<Member>();
     }
 
@@ -54,8 +54,8 @@ public sealed class HavokClasses
     public Layout? this[string className] =>
         _byName.TryGetValue(className, out var layout) ? layout : null;
 
-    /// Every field of an object of this class, inherited ones included, in offset order. Empty when
-    /// the class is not one we have, which a caller must tell apart from a class with no fields.
+
+
     public IReadOnlyList<Member> Members(string className)
     {
         if (_resolved.TryGetValue(className, out var cached)) return cached;
@@ -64,7 +64,7 @@ public sealed class HavokClasses
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (string? at = className; at != null; )
         {
-            if (!seen.Add(at)) break;             // a cycle in the parent chain would hang here
+            if (!seen.Add(at)) break;
             if (!_byName.TryGetValue(at, out var layout)) break;
             all.AddRange(layout.Declared);
             at = layout.Parent;
@@ -92,9 +92,9 @@ public sealed class HavokClasses
             return Parse(stream);
         }
 
-        // Running from a build that did not embed the data. Falling back to the file beside the
-        // source keeps the command line tools working from a checkout; shipping without it would
-        // otherwise fail as an empty class list, which reads as "no fields" rather than "no data".
+
+
+
         string beside = Path.Combine(AppContext.BaseDirectory, "HavokClassLayouts.json");
         if (File.Exists(beside)) using (var stream = File.OpenRead(beside)) return Parse(stream);
 
