@@ -858,7 +858,7 @@ public static class NativeSave
 
         BitConverter.GetBytes(elements.Length).CopyTo(data.Data, at + 8);
         uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)elements.Length).CopyTo(data.Data, at + 12);
+        BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(capacity, elements.Length)).CopyTo(data.Data, at + 12);
 
         return true;
     }
@@ -925,7 +925,7 @@ public static class NativeSave
             data.SetLocal(at, -1);
             BitConverter.GetBytes(0).CopyTo(data.Data, at + 8);
             uint none = BitConverter.ToUInt32(data.Data, at + 12);
-            BitConverter.GetBytes(none & 0xC0000000u).CopyTo(data.Data, at + 12);
+            BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(none, 0)).CopyTo(data.Data, at + 12);
             return true;
         }
 
@@ -934,7 +934,7 @@ public static class NativeSave
 
         BitConverter.GetBytes(count).CopyTo(data.Data, at + 8);
         uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)count).CopyTo(data.Data, at + 12);
+        BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(capacity, count)).CopyTo(data.Data, at + 12);
         return true;
     }
 
@@ -985,7 +985,7 @@ public static class NativeSave
             data.SetLocal(at, -1);
             BitConverter.GetBytes(0).CopyTo(data.Data, at + 8);
             uint was = BitConverter.ToUInt32(data.Data, at + 12);
-            BitConverter.GetBytes(was & 0xC0000000u).CopyTo(data.Data, at + 12);
+            BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(was, 0)).CopyTo(data.Data, at + 12);
             return true;
         }
 
@@ -1008,7 +1008,7 @@ public static class NativeSave
 
         BitConverter.GetBytes(names.Count).CopyTo(data.Data, at + 8);
         uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)names.Count).CopyTo(data.Data, at + 12);
+        BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(capacity, names.Count)).CopyTo(data.Data, at + 12);
         return true;
     }
 
@@ -1070,7 +1070,7 @@ public static class NativeSave
 
         BitConverter.GetBytes(count).CopyTo(data.Data, at + 8);
         uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)count).CopyTo(data.Data, at + 12);
+        BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(capacity, count)).CopyTo(data.Data, at + 12);
 
 
 

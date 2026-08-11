@@ -55,6 +55,7 @@ public static class Tests
         ("EveryFindingPointsAtAnObject", EveryFindingPointsAtAnObject),
         ("AShortBoundsArrayStaysLinedUp", AShortBoundsArrayStaysLinedUp),
         ("ABoundCanBeAuthoredPastTheEndOfTheArray", ABoundCanBeAuthoredPastTheEndOfTheArray),
+        ("NestedStructValuesReadBackFromTheModel", NestedStructValuesReadBackFromTheModel),
         ("AValueInsideAStructArrayIsWrittenInPlace", AValueInsideAStructArrayIsWrittenInPlace),
         ("AStructArrayCanBeMadeLonger", AStructArrayCanBeMadeLonger),
         ("WindowsLineEndingsStillEdit", WindowsLineEndingsStillEdit),
@@ -149,6 +150,7 @@ public static class Tests
         ("KeepingTheFramesCostsNothingAtAll", KeepingTheFramesCostsNothingAtAll),
         ("ARetimeSaysWhatTheResamplingCost", ARetimeSaysWhatTheResamplingCost),
         ("ARotationIsReadAlongTheArcNotAcrossIt", ARotationIsReadAlongTheArcNotAcrossIt),
+        ("GrowingAnEmptyArrayKeepsTheDoNotFreeFlag", GrowingAnEmptyArrayKeepsTheDoNotFreeFlag),
     };
 
 
@@ -1652,6 +1654,29 @@ public static class Tests
 
 
 
+
+    private static void NestedStructValuesReadBackFromTheModel()
+    {
+        Console.WriteLine("\nnested struct values read back from the model, not just the raw xml");
+
+        var model = BehaviourGraphModel.Parse(ThreeVariablesWithTwoBounds());
+        var data = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraphData");
+        CheckTrue("the row model carries the nested rows",
+                  data != null && data.StructLists.TryGetValue("variableBounds", out var rows) && rows.Count == 2);
+
+        var bounds = SymbolEditor.VariableBounds(model);
+        Check("the first bound's minimum is read through the nested struct", "0", bounds[0].Min);
+        Check("and its maximum", "10", bounds[0].Max);
+        Check("the second bound too", "20", bounds[1].Max);
+
+        string after = SymbolEditor.SetVariableBounds(ThreeVariablesWithTwoBounds(), 2, "-5", "35");
+        var grown = SymbolEditor.VariableBounds(BehaviourGraphModel.Parse(after));
+        Check("a bound authored past the end reads back", 3, grown.Count);
+        Check("its minimum", "-5", grown[2].Min);
+        Check("and its maximum", "35", grown[2].Max);
+        Check("the earlier bounds are untouched", "10", grown[0].Max);
+        Check("and so is the second", "20", grown[1].Max);
+    }
 
     private static void ABoundCanBeAuthoredPastTheEndOfTheArray()
     {
@@ -6799,5 +6824,205 @@ public static class Tests
             Math.Abs(toFirst - arc / 2) < 1e-3f);
 
         Check("an end is still itself", frames[1], AnimationEdit.Turned(frames, 1f));
+    }
+
+
+
+
+
+    private static void GrowingAnEmptyArrayKeepsTheDoNotFreeFlag()
+    {
+        Console.WriteLine("\ngrowing an empty array keeps the do-not-free flag on the capacity word");
+
+        const string Head = """
+            <?xml version="1.0" encoding="ascii"?>
+            <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+                <hksection name="__data__">
+            """;
+        const string Tail = """
+                </hksection>
+            </hkpackfile>
+            """;
+
+        // Struct array: growing hkbBehaviorGraphData.variableBounds from nothing is Regrow.
+        const string StructBefore = """
+            <hkobject class="hkbBehaviorGraphData" name="#90" signature="0x95aca5d">
+                <hkparam name="variableInfos" numelements="1">
+                    <hkobject>
+                        <hkparam name="type">VARIABLE_TYPE_REAL</hkparam>
+                    </hkobject>
+                </hkparam>
+                <hkparam name="eventInfos" numelements="0"></hkparam>
+                <hkparam name="variableBounds" numelements="0"></hkparam>
+            </hkobject>
+            """;
+        string StructAfter = StructBefore.Replace(
+            "<hkparam name=\"variableBounds\" numelements=\"0\"></hkparam>",
+            """
+            <hkparam name="variableBounds" numelements="1">
+                <hkobject>
+                    <hkparam name="min">
+                        <hkobject class="hkbVariableValue" name="min" signature="0xb99bd6a">
+                            <hkparam name="value">-5</hkparam>
+                        </hkobject>
+                    </hkparam>
+                    <hkparam name="max">
+                        <hkobject class="hkbVariableValue" name="max" signature="0xb99bd6a">
+                            <hkparam name="value">35</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+            </hkparam>
+            """);
+
+        var structImage = EmptyArrayImage("hkbBehaviorGraphData");
+        var structPlan = NativeSave.Compare(Head + StructBefore + Tail, Head + StructAfter + Tail);
+        CheckTrue("struct growth is planned", structPlan.Possible);
+        CheckTrue("as one grow plus its two element fills",
+                  structPlan.Changes.Count == 3 &&
+                  structPlan.Changes.Count(c => c.Grow) == 1 &&
+                  structPlan.Changes.Count(c => c.InElement) == 2);
+        var structBytes = AppliedEmptyGrowth(structImage, Head + StructBefore + Tail, Head + StructAfter + Tail);
+        Check("struct capacity word carries bit 31", "0x80000001",
+              $"0x{CapacityWord(structBytes, "hkbBehaviorGraphData", "variableBounds"):x8}");
+
+        var structRead = new PackfileObjects(PackfileImage.Read(structBytes));
+        Check("the bound reopens as one element", 1,
+              structRead.ReadArray(structRead.Instances[0], "variableBounds")?.Count);
+        string roundTrip = NativeXml.From(structBytes);
+        CheckTrue("and its minimum value survives the reparse",
+                  roundTrip.Contains("<hkparam name=\"value\">-5</hkparam>", StringComparison.Ordinal));
+        CheckTrue("and its maximum value survives the reparse",
+                  roundTrip.Contains("<hkparam name=\"value\">35</hkparam>", StringComparison.Ordinal));
+
+        // Pointer array: giving hkbStateMachine.states a first element is Resize.
+        const string StatesBefore = """
+            <hkobject class="hkbStateMachine" name="#90" signature="0xa5896bcf">
+                <hkparam name="name">Root</hkparam>
+                <hkparam name="startStateId">0</hkparam>
+                <hkparam name="wildcardTransitions">null</hkparam>
+                <hkparam name="states" numelements="0"></hkparam>
+            </hkobject>
+            <hkobject class="hkbStateMachineStateInfo" name="#91" signature="0x39d76713">
+                <hkparam name="name">A</hkparam>
+                <hkparam name="stateId">0</hkparam>
+                <hkparam name="generator">null</hkparam>
+                <hkparam name="transitions">null</hkparam>
+            </hkobject>
+            """;
+        string StatesAfter = StatesBefore.Replace(
+            "<hkparam name=\"states\" numelements=\"0\"></hkparam>",
+            "<hkparam name=\"states\" numelements=\"1\">#91</hkparam>");
+
+        var statesImage = EmptyArrayImage("hkbStateMachine", "hkbStateMachineStateInfo");
+        var statesPlan = NativeSave.Compare(Head + StatesBefore + Tail, Head + StatesAfter + Tail);
+        CheckTrue("pointer growth is planned", statesPlan.Possible);
+        CheckTrue("as one array resize",
+                  statesPlan.Changes.Count == 1 && statesPlan.Changes[0].Array &&
+                  !statesPlan.Changes[0].Text && !statesPlan.Changes[0].Grow);
+        var statesBytes = AppliedEmptyGrowth(statesImage, Head + StatesBefore + Tail, Head + StatesAfter + Tail);
+        Check("pointer capacity word carries bit 31", "0x80000001",
+              $"0x{CapacityWord(statesBytes, "hkbStateMachine", "states"):x8}");
+        var statesRead = new PackfileObjects(PackfileImage.Read(statesBytes));
+        Check("the state is in the array", 1,
+              statesRead.ReadRefArray(statesRead.Instances[0], "states")?.Count);
+
+        // Value array: giving hkbBoneIndexArray.boneIndices a first number is ResizeValues.
+        const string NumbersBefore = """
+            <hkobject class="hkbBoneIndexArray" name="#90" signature="0x8a02c4a1">
+                <hkparam name="boneIndices" numelements="0"></hkparam>
+            </hkobject>
+            """;
+        string NumbersAfter = NumbersBefore.Replace(
+            "<hkparam name=\"boneIndices\" numelements=\"0\"></hkparam>",
+            "<hkparam name=\"boneIndices\" numelements=\"1\">7</hkparam>");
+
+        var numbersImage = EmptyArrayImage("hkbBoneIndexArray");
+        var numbersPlan = NativeSave.Compare(Head + NumbersBefore + Tail, Head + NumbersAfter + Tail);
+        CheckTrue("value growth is planned", numbersPlan.Possible);
+        CheckTrue("as one value array resize",
+                  numbersPlan.Changes.Count == 1 && numbersPlan.Changes[0].Array &&
+                  !numbersPlan.Changes[0].Text && !numbersPlan.Changes[0].Grow);
+        var numbersBytes = AppliedEmptyGrowth(numbersImage, Head + NumbersBefore + Tail, Head + NumbersAfter + Tail);
+        Check("value capacity word carries bit 31", "0x80000001",
+              $"0x{CapacityWord(numbersBytes, "hkbBoneIndexArray", "boneIndices"):x8}");
+        var numbersRead = new PackfileObjects(PackfileImage.Read(numbersBytes));
+        Check("the number is in the array", 7,
+              numbersRead.ReadValueArray(numbersRead.Instances[0], "boneIndices", 2,
+                                         (b, at) => (int)BitConverter.ToInt16(b, at))?[0]);
+
+        // String array: giving hkbBehaviorGraphStringData.eventNames a first name is ResizeText.
+        const string NamesBefore = """
+            <hkobject class="hkbBehaviorGraphStringData" name="#90" signature="0xc713064e">
+                <hkparam name="eventNames" numelements="0"></hkparam>
+            </hkobject>
+            """;
+        string NamesAfter = NamesBefore.Replace(
+            "<hkparam name=\"eventNames\" numelements=\"0\"></hkparam>",
+            "<hkparam name=\"eventNames\" numelements=\"1\">\n" +
+            "                    <hkcstring>Sprint</hkcstring>\n" +
+            "                </hkparam>");
+
+        var namesImage = EmptyArrayImage("hkbBehaviorGraphStringData");
+        var namesPlan = NativeSave.Compare(Head + NamesBefore + Tail, Head + NamesAfter + Tail);
+        CheckTrue("name growth is planned", namesPlan.Possible);
+        CheckTrue("as one text array resize",
+                  namesPlan.Changes.Count == 1 && namesPlan.Changes[0].Array &&
+                  namesPlan.Changes[0].Text && !namesPlan.Changes[0].Grow);
+        var namesBytes = AppliedEmptyGrowth(namesImage, Head + NamesBefore + Tail, Head + NamesAfter + Tail);
+        Check("name capacity word carries bit 31", "0x80000001",
+              $"0x{CapacityWord(namesBytes, "hkbBehaviorGraphStringData", "eventNames"):x8}");
+        var namesRead = new PackfileObjects(PackfileImage.Read(namesBytes));
+        Check("the name is in the array", "Sprint",
+              namesRead.ReadStringArray(namesRead.Instances[0], "eventNames")?[0]);
+    }
+
+    private static PackfileImage EmptyArrayImage(params string[] classes)
+    {
+        var types = HavokClassTypes.Shipped;
+        int offset = 0, nameAt = 5;
+        var data = new byte[0];
+        var names = new List<byte>();
+        var virtuals = new List<byte>();
+
+        foreach (string className in classes)
+        {
+            int size = types[className]!.Size ?? 0;
+            data = data.Concat(new byte[size]).ToArray();
+
+            var entry = new byte[5 + className.Length + 1];
+            BitConverter.GetBytes(types[className]!.Signature).CopyTo(entry, 0);
+            entry[4] = 0x09;
+            System.Text.Encoding.ASCII.GetBytes(className).CopyTo(entry, 5);
+            names.AddRange(entry);
+            virtuals.AddRange(Triple(offset, 0, nameAt));
+
+            offset += (size + 15) / 16 * 16;
+            nameAt += 5 + className.Length + 1;
+        }
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names.ToArray() });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            VirtualFixups = virtuals.ToArray(),
+        });
+        return image;
+    }
+
+    private static byte[] AppliedEmptyGrowth(PackfileImage image, string before, string after)
+    {
+        var plan = NativeSave.Compare(before, after);
+        if (!plan.Possible)
+            throw new InvalidOperationException("empty-array growth was refused: " + plan.Refusal);
+        return PackfileImage.Read(NativeSave.Apply(image.Rebuild(), plan)).Rebuild();
+    }
+
+    private static uint CapacityWord(byte[] bytes, string className, string field)
+    {
+        int at = HavokClasses.Shipped.Field(className, field)!.Offset;
+        return BitConverter.ToUInt32(PackfileImage.Read(bytes).Section("__data__")!.Data, at + 12);
     }
 }

@@ -254,12 +254,12 @@ public class MainWindow : Window
         _pathField.Text = Settings.Get("last_path");
 
         var open = Ux.Primary("Open");
-        open.Click += (_, _) => Load();
+        open.Click += async (_, _) => await Load();
         var browse = Ux.Secondary("Browse...");
         browse.Click += async (_, _) => await Browse();
         var archive = Ux.Secondary("From archive...");
         archive.Click += async (_, _) => await OpenFromArchive();
-        _pathField.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) Load(); };
+        _pathField.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) _ = Load(); };
 
         var expand = Ux.Secondary("Expand all");
         expand.Click += (_, _) => _tree.SetAllExpanded(true);
@@ -269,12 +269,12 @@ public class MainWindow : Window
         _filter.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) JumpToFirstMatch(); };
 
         var check = Ux.Secondary("Check graph");
-        check.Click += (_, _) => Validate();
+        check.Click += async (_, _) => await Validate();
         var checkProject = Ux.Secondary("Check project");
         checkProject.Click += async (_, _) => await ValidateProject();
         _saveButton = Ux.Primary("Save to .hkx");
         _saveButton.IsEnabled = false;
-        _saveButton.Click += (_, _) => Save();
+        _saveButton.Click += async (_, _) => await Save();
 
         _undoButton = Ux.Secondary("Undo");
         _undoButton.IsEnabled = false;
@@ -736,7 +736,7 @@ public class MainWindow : Window
         _pasteButton = Ux.Primary("Paste subtree");
         ToolTip.SetTip(_pasteButton,
             "Put a fresh copy into this file and save it. The file is kept as .bak first.");
-        _pasteButton.Click += (_, _) => PasteSubtree();
+        _pasteButton.Click += async (_, _) => await PasteSubtree();
         _pasteButton.IsEnabled = false;
 
         var label = new TextBlock
@@ -757,7 +757,7 @@ public class MainWindow : Window
                              "in another file later.");
         save.Click += (_, _) => SaveTemplate();
 
-        _applyTemplate.Click += (_, _) => ApplyStoredTemplate();
+        _applyTemplate.Click += async (_, _) => await ApplyStoredTemplate();
         _applyTemplate.IsEnabled = false;
         ToolTip.SetTip(_applyTemplate,
             "Put a kept shape into this file and save it. The file is kept as .bak first.");
@@ -768,7 +768,7 @@ public class MainWindow : Window
         _templates.SelectionChanged += (_, _) => DescribeTemplate();
         _predefinedTemplates.ItemsSource = PredefinedTemplates.All().Select(template => template.Id).ToList();
         _predefinedTemplates.SelectionChanged += (_, _) => RefreshPredefinedTemplateEditors();
-        _applyPredefinedTemplate.Click += (_, _) => ApplyPredefinedTemplate();
+        _applyPredefinedTemplate.Click += async (_, _) => await ApplyPredefinedTemplate();
         if (_predefinedTemplates.Items.Count > 0) _predefinedTemplates.SelectedIndex = 0;
 
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -877,7 +877,7 @@ public class MainWindow : Window
         RefreshPasteSlots();
     }
 
-    private void PasteSubtree()
+    private async Task PasteSubtree()
     {
         if (_clip == null) { SetPasteSummary("Nothing has been copied yet.", Ux.MutedBrush); return; }
         if (_readOnly) { SetPasteSummary("Not pasted: " + _readOnlyWhy, Ux.BadBrush); return; }
@@ -915,7 +915,7 @@ public class MainWindow : Window
 
 
 
-            Load();
+            await Load();
             SelectObjectId(written.RootId.ToString());
             SetPasteSummary(said, Ux.MetaBrush);
             SetStatus(said, Ux.MetaBrush);
@@ -975,7 +975,7 @@ public class MainWindow : Window
     }
 
 
-    private void ApplyStoredTemplate()
+    private async Task ApplyStoredTemplate()
     {
         if (_templates.SelectedItem as string is not { } slug || slug.Length == 0)
         {
@@ -1020,7 +1020,7 @@ public class MainWindow : Window
             string said = $"Applied '{template.Name}'. {written.Note} " +
                           $"The file before this is kept as {Path.GetFileName(backup)}.";
 
-            Load();
+            await Load();
             SelectObjectId(written.RootId.ToString());
             SetPasteSummary(said, Ux.MetaBrush);
             SetStatus(said, Ux.MetaBrush);
@@ -1107,7 +1107,7 @@ public class MainWindow : Window
         SetPasteSummary($"{template.DisplayName}: {template.Description}", Ux.MetaBrush);
     }
 
-    private void ApplyPredefinedTemplate()
+    private async Task ApplyPredefinedTemplate()
     {
         if (_predefinedTemplates.SelectedItem as string is not { } id) return;
         if (_readOnly) { SetPasteSummary("Not created: " + _readOnlyWhy, Ux.BadBrush); return; }
@@ -1129,7 +1129,7 @@ public class MainWindow : Window
         string backup = _hkxPath + ".bak";
         if (!File.Exists(backup)) File.Copy(_hkxPath, backup);
         ReplaceFile(_hkxPath, result.Bytes);
-        Load();
+        await Load();
         SelectObjectId(result.RootId.ToString());
         SetPasteSummary(result.Summary + $" The file before this is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
     }
@@ -1160,7 +1160,7 @@ public class MainWindow : Window
         _templates.SelectedItem = slug;
         DescribeTemplate();
     }
-    public void ApplyTemplateForTest() => ApplyStoredTemplate();
+    public void ApplyTemplateForTest() => Pump(ApplyStoredTemplate());
 
 
     public string ClipSummary => _clip == null ? "" : Held(_clip);
@@ -1172,7 +1172,7 @@ public class MainWindow : Window
     public void PasteForTest(string slot)
     {
         if (PasteSlots.Contains(slot)) _pasteInto.SelectedItem = slot;
-        PasteSubtree();
+        Pump(PasteSubtree());
     }
 
 
@@ -1802,7 +1802,7 @@ public class MainWindow : Window
     }
 
 
-    public void PressSaveAnimation() => SaveAnimation();
+    public void PressSaveAnimation() => Pump(SaveAnimation());
 
     private Control BuildAnimationTab()
     {
@@ -1849,7 +1849,7 @@ public class MainWindow : Window
         var apply = Ux.Secondary("Set frame");
         apply.Click += (_, _) => SetFrame();
         var write = Ux.Primary("Save changes");
-        write.Click += (_, _) => SaveAnimation();
+        write.Click += async (_, _) => await SaveAnimation();
 
         foreach (var box in new[] { _framePosition, _frameRotation, _frameScale })
             box.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) SetFrame(); };
@@ -1979,7 +1979,7 @@ public class MainWindow : Window
 
 
 
-    private void SaveAnimation()
+    private async Task SaveAnimation()
     {
         var anim = _animationData;
         if (anim == null)
@@ -2029,7 +2029,7 @@ public class MainWindow : Window
 
 
 
-            Load();
+            await Load();
             _frameEditAnswer.Text = said;
             _frameEditAnswer.Foreground = Ux.MetaBrush;
             SetStatus(said, Ux.MetaBrush);
@@ -2096,59 +2096,6 @@ public class MainWindow : Window
 
 
 
-
-    private bool BuildAnimation(string path)
-    {
-        _animation.Clear();
-        _animationData = null;
-        _animationSkeleton = null;
-        _frameStart = 0;
-
-
-        _aimedFrame = -1;
-        _editTrack = _editFrame = -1;
-        _animationEdited = false;
-        _fractionAnswer.Text = "";
-        _framePosition.Text = _frameRotation.Text = _frameScale.Text = "";
-        _frameEditAnswer.Text = "";
-
-        HkxAnimationData anim;
-        try
-        {
-            if (!new HkxBinaryReader().TryReadAnimation(path, out anim))
-            {
-                _animationSummary.Text =
-                    $"Unsupported: {anim.AnimationClass} (decode not implemented yet). " +
-                    $"Only {HkxAnimationData.SupportedAnimationClasses} are read, so there is no frame data to show.";
-                _animationSummary.Foreground = Ux.BadBrush;
-                _animation.Add(null, anim.AnimationClass, "", "", "no frame data was read from this file", "")
-                          .Colour(0, Ux.BadBrush).Colour(3, Ux.MutedBrush);
-                return true;
-            }
-        }
-        catch (Exception ex)
-        {
-            _animationSummary.Text = "Could not read this file as an animation: " + ex.Message.Split('\n')[0];
-            _animationSummary.Foreground = Ux.BadBrush;
-            return false;
-        }
-
-        bool anyFrames = anim.Tracks.Any(t => t.Rotations.Count > 0 || t.Translations.Count > 0);
-        if (!anyFrames || anim.NumFrames <= 0)
-        {
-            _animationSummary.Text = anim.AnimationClass.Length == 0
-                ? "This file holds no animation."
-                : $"{anim.AnimationClass} is present but decoded to no frames, so the file is an empty container.";
-            _animationSummary.Foreground = Ux.MutedBrush;
-            return anim.AnimationClass.Length > 0;
-        }
-
-        _animationData = anim;
-        _animationSkeleton = SiblingSkeleton(path);
-        _frameStart = 0;
-        ShowAnimationFrames();
-        return true;
-    }
 
     private void ShowAnimationFrames()
     {
@@ -2406,7 +2353,9 @@ public class MainWindow : Window
         LoadPose(path, animation);
     }
 
-    private void LoadPose(string animationPath, string label)
+    private void LoadPose(string animationPath, string label) => LoadPose(animationPath, label, null);
+
+    private void LoadPose(string animationPath, string label, HkxAnimationData? read)
     {
         if (_poseSource == animationPath) return;
 
@@ -2414,21 +2363,28 @@ public class MainWindow : Window
         _poseSkeleton = PoseSkeleton();
 
         HkxAnimationData animation;
-        try
+        if (read != null)
         {
-            if (!new HkxBinaryReader().TryReadAnimation(animationPath, out animation))
+            animation = read;
+        }
+        else
+        {
+            try
             {
-                SetPlaybackSummary($"{label}: {animation.AnimationClass} is not decoded, so it cannot be drawn.",
-                                   Ux.BadBrush);
+                if (!new HkxBinaryReader().TryReadAnimation(animationPath, out animation))
+                {
+                    SetPlaybackSummary($"{label}: {animation.AnimationClass} is not decoded, so it cannot be drawn.",
+                                       Ux.BadBrush);
+                    ClearPose();
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                SetPlaybackSummary($"Could not read {label}: {ex.Message.Split('\n')[0]}", Ux.BadBrush);
                 ClearPose();
                 return;
             }
-        }
-        catch (Exception ex)
-        {
-            SetPlaybackSummary($"Could not read {label}: {ex.Message.Split('\n')[0]}", Ux.BadBrush);
-            ClearPose();
-            return;
         }
 
         string? refusal = AnimationPose.WhyNotPosable(_poseSkeleton, animation);
@@ -2540,7 +2496,7 @@ public class MainWindow : Window
                 File.WriteAllBytes(copy, archive.Read(entry));
 
                 _pathField.Text = copy;
-                Load();
+                await Load();
 
                 _readOnly = true;
                 _readOnlyWhy = $"{entry.FileName} came out of {Path.GetFileName(archivePath)}, and " +
@@ -3200,7 +3156,7 @@ public class MainWindow : Window
     public void Open(string path)
     {
         _pathField.Text = path;
-        Load();
+        Pump(Load());
     }
 
 
@@ -3209,7 +3165,69 @@ public class MainWindow : Window
 
     public int MeshEdges => _skeleton.DrawnEdges;
 
-    private void Load()
+    /// <summary>
+    /// Why this path cannot be opened, or null when it can. The extension check
+    /// mirrors the file picker's filter; the content check is the Fallout 4
+    /// packfile gate.
+    /// </summary>
+    public static string? RefuseReason(string path)
+    {
+        string name = Path.GetFileName(path);
+        bool looksHavok = name.EndsWith(".hkx", StringComparison.OrdinalIgnoreCase) ||
+                          name.EndsWith(".hkt", StringComparison.OrdinalIgnoreCase);
+        if (!looksHavok)
+            return $"{name} does not look like a Havok behaviour file. " +
+                   "Behaviour Graph Studio opens Fallout 4 .hkx behaviour files.";
+
+        if (!HkxBinaryReader.IsFo4Hkx(path))
+            return $"{name} is not a Fallout 4 hk_2014.1.0-r1 packfile. " +
+                   "It may be from another game or engine, or it may be damaged.";
+
+        return null;
+    }
+
+    private NotBehaviourDialog? _notBehaviourDialog;
+
+    private void ShowNotBehaviourDialog(string reason)
+    {
+        if (_notBehaviourDialog is { IsVisible: true }) return;
+        IsEnabled = false;
+        _notBehaviourDialog = new NotBehaviourDialog(reason, () =>
+        {
+            IsEnabled = true;
+            _notBehaviourDialog = null;
+        });
+        _notBehaviourDialog.Show(this);
+    }
+
+    private bool _loading;
+
+    private async Task Load()
+    {
+        if (_loading) return;
+        _loading = true;
+        try
+        {
+            await LoadCore();
+        }
+        catch (Exception e)
+        {
+            SetStatus("Could not open it: " + e.Message.Split('\n')[0], Ux.BadBrush);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static void Pump(Task task)
+    {
+        while (!task.IsCompleted)
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        task.GetAwaiter().GetResult();
+    }
+
+    private async Task LoadCore()
     {
         _tree.Clear();
         _clips.Clear();
@@ -3221,12 +3239,10 @@ public class MainWindow : Window
         _xmlText = "";
         _xmlPath = "";
 
-
         _reading = new BehaviourGraphModel();
         _selectedId = "";
         _projectChain = null;
         _emptyStates = new HashSet<string>();
-
 
         _graph.Reset();
         BuildMachineNavigator(new BehaviourGraphModel());
@@ -3240,26 +3256,34 @@ public class MainWindow : Window
         if (path.Length == 0) { SetSummary("Enter the path to a .hkx file.", Ux.MutedBrush); return; }
         if (!File.Exists(path))
         {
-
-
-
             string full = Path.GetFullPath(path);
             SetSummary(full == path ? "Not found: " + path
                                     : $"Not found: {path}, which from here means {full}", Ux.BadBrush);
             return;
         }
-        if (!HkxBinaryReader.IsFo4Hkx(path))
+        if (RefuseReason(path) is { } reason)
         {
-            SetSummary("Not a Fallout 4 hk_2014.1.0-r1 packfile.", Ux.MutedBrush);
+            SetSummary(reason, Ux.BadBrush);
+            ShowNotBehaviourDialog(reason);
             return;
         }
 
+        _animation.Clear();
+        _animationData = null;
+        _animationSkeleton = null;
+        _frameStart = 0;
+        _aimedFrame = -1;
+        _editTrack = _editFrame = -1;
+        _animationEdited = false;
+        _fractionAnswer.Text = "";
+        _framePosition.Text = _frameRotation.Text = _frameScale.Text = "";
+        _frameEditAnswer.Text = "";
 
+        var animation = await Task.Run(() => ReadAnimation(path));
+        bool isAnimation = ApplyAnimationRead(animation);
 
-
-        bool isAnimation = BuildAnimation(path);
-
-        var root = HkxBehaviorParser.ParseBehavior(path);
+        var parsed = await Task.Run(() => ParseBehavior(path));
+        var root = parsed.Root;
         if (root == null)
         {
             _hkxPath = path;
@@ -3269,21 +3293,10 @@ public class MainWindow : Window
                 ? $"{Path.GetFileName(path)}   an animation, not a behaviour. See the Animation and Playback tabs."
                 : "Parsed as FO4 hkx, but no root object was resolved.", Ux.MutedBrush);
             SetStatus(_animationSummary.Text ?? "", _animationSummary.Foreground ?? Ux.MutedBrush);
-
-
-
-
-
             BuildClipList(new BehaviourGraphModel());
-
-
-
-            if (_animationData != null) LoadPose(path, Path.GetFileName(path));
+            if (_animationData != null) LoadPose(path, Path.GetFileName(path), _animationData);
             return;
         }
-
-
-
 
         if (!isAnimation)
         {
@@ -3295,35 +3308,12 @@ public class MainWindow : Window
 
         _hkxPath = path;
         _root = root;
-        _objects = new List<HkxBehaviorParser.BehaviorNode>(HkxBehaviorParser.LastObjects);
+        _objects = parsed.Objects;
         for (int i = 0; i < _objects.Count; i++) _offsetToIndex[_objects[i].Offset] = i;
 
-
-
-        _classWarning = "";
-        try
-        {
-            var bytes = new PackfileObjects(PackfileImage.Read(path));
-
-
-
-
-
-
-
-            var problems = HavokClassTypes.Shipped.SignatureProblems(bytes.ClassNames());
-            if (problems.Count > 0)
-            {
-                _classWarning = $"Unsupported class signature: {problems[0]}" +
-                                (problems.Count > 1 ? $", and {problems.Count - 1} more like it" : "") +
-                                ". Values are not read from the bytes when the classes do not match.";
-                _bytes = null;
-            }
-            else _bytes = bytes;
-        }
-        catch (Exception) { _bytes = null; }
-
-
+        var pack = await Task.Run(() => ReadPackfile(path));
+        _classWarning = pack.Warning;
+        _bytes = pack.Bytes;
 
         RefreshTemplates();
         _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
@@ -3336,87 +3326,149 @@ public class MainWindow : Window
             if (!string.IsNullOrEmpty(o.AnimationName)) clips++;
         }
 
-
-
-
         SetSummary(isAnimation
                        ? $"{Path.GetFileName(path)}   an animation, not a behaviour. See the Animation and Playback tabs."
                        : $"{Path.GetFileName(path)}   root {root.ClassName}   {_objects.Count} objects   " +
                          $"{classes.Count} classes   {clips} clip references" +
-                         (_classWarning.Length > 0 ? "   —   " + _classWarning : ""),
+                         (_classWarning.Length > 0 ? "   \u2014   " + _classWarning : ""),
                    isAnimation ? Ux.MutedBrush : _classWarning.Length > 0 ? Ux.WarnBrush : Ux.TitleBrush);
 
         RebuildTree();
         Settings.Set("last_path", path);
         Settings.Set("last_folder", Path.GetDirectoryName(path) ?? "");
-        PrepareEditing();
 
+        var edit = await Task.Run(() => PrepareEditRead(_bytes, _hkxPath, _objects.Count));
+        ApplyEditRead(edit);
 
-
-
-        if (_animationData != null) LoadPose(path, Path.GetFileName(path));
+        if (_animationData != null) LoadPose(path, Path.GetFileName(path), _animationData);
     }
 
+    private sealed record AnimationRead(HkxAnimationData? Data, HkxSkeleton? Skeleton, string ClassName,
+                                        string Message, bool IsError, bool IsUnsupported, bool IsAnimation);
 
-
-
-
-
-
-    private BehaviourGraphModel Model() =>
-        _xmlText.Length > 0 ? BehaviourGraphModel.Parse(_xmlText) : _reading;
-
-    private BehaviourGraphModel _reading = new();
-
-    private void PrepareEditing()
+    private static AnimationRead ReadAnimation(string path)
     {
-        var reading = _bytes == null ? null : NativeGraphModel.From(_bytes);
-
-
-
-
-
-
-
-
-
-        bool own = false;
-        if (_bytes != null && reading != null)
+        HkxAnimationData anim;
+        try
         {
-            try
+            if (!new HkxBinaryReader().TryReadAnimation(path, out anim))
+                return new AnimationRead(null, null, anim.AnimationClass,
+                    $"Unsupported: {anim.AnimationClass} (decode not implemented yet). " +
+                    $"Only {HkxAnimationData.SupportedAnimationClasses} are read, so there is no frame data to show.",
+                    IsError: false, IsUnsupported: true, IsAnimation: true);
+        }
+        catch (Exception ex)
+        {
+            return new AnimationRead(null, null, "",
+                "Could not read this file as an animation: " + ex.Message.Split('\n')[0],
+                IsError: true, IsUnsupported: false, IsAnimation: false);
+        }
+
+        bool anyFrames = anim.Tracks.Any(t => t.Rotations.Count > 0 || t.Translations.Count > 0);
+        if (!anyFrames || anim.NumFrames <= 0)
+            return new AnimationRead(null, null, anim.AnimationClass,
+                anim.AnimationClass.Length == 0
+                    ? "This file holds no animation."
+                    : $"{anim.AnimationClass} is present but decoded to no frames, so the file is an empty container.",
+                IsError: false, IsUnsupported: false, IsAnimation: anim.AnimationClass.Length > 0);
+
+        return new AnimationRead(anim, SiblingSkeleton(path), anim.AnimationClass, "",
+            IsError: false, IsUnsupported: false, IsAnimation: true);
+    }
+
+    private bool ApplyAnimationRead(AnimationRead read)
+    {
+        if (read.Data == null)
+        {
+            _animationSummary.Text = read.Message;
+            if (read.IsError)
             {
-                string work = Path.Combine(Path.GetTempPath(), "bgs_edit",
-                                           Path.GetFileNameWithoutExtension(_hkxPath));
+                _animationSummary.Foreground = Ux.BadBrush;
+                return false;
+            }
+            if (read.IsUnsupported)
+            {
+                _animationSummary.Foreground = Ux.BadBrush;
+                _animation.Add(null, read.ClassName, "", "", "no frame data was read from this file", "")
+                          .Colour(0, Ux.BadBrush).Colour(3, Ux.MutedBrush);
+                return true;
+            }
+            _animationSummary.Foreground = Ux.MutedBrush;
+            return read.IsAnimation;
+        }
+
+        _animationData = read.Data;
+        _animationSkeleton = read.Skeleton;
+        _frameStart = 0;
+        ShowAnimationFrames();
+        return true;
+    }
+
+    private static (HkxBehaviorParser.BehaviorNode? Root, List<HkxBehaviorParser.BehaviorNode> Objects) ParseBehavior(string path)
+    {
+        var root = HkxBehaviorParser.ParseBehavior(path);
+        return (root, new List<HkxBehaviorParser.BehaviorNode>(HkxBehaviorParser.LastObjects));
+    }
+
+    private static (PackfileObjects? Bytes, string Warning) ReadPackfile(string path)
+    {
+        try
+        {
+            var bytes = new PackfileObjects(PackfileImage.Read(path));
+            var problems = HavokClassTypes.Shipped.SignatureProblems(bytes.ClassNames());
+            if (problems.Count == 0) return (bytes, "");
+            return (null, "Unsupported class signature: " + problems[0] +
+                          (problems.Count > 1 ? $", and {problems.Count - 1} more like it" : "") +
+                          ". Values are not read from the bytes when the classes do not match.");
+        }
+        catch (Exception) { return (null, ""); }
+    }
+
+    private sealed record EditRead(string XmlPath, string XmlText, List<string> ObjectIds, BehaviourGraphModel? Model);
+
+    private static EditRead PrepareEditRead(PackfileObjects? bytes, string hkxPath, int expectedObjects)
+    {
+        string xmlPath = "";
+        string xmlText = "";
+        List<string> objectIds = new();
+        BehaviourGraphModel? model = null;
+        try
+        {
+            var reading = bytes == null ? null : NativeGraphModel.From(bytes);
+            if (bytes != null && reading != null)
+            {
+                string work = Path.Combine(Path.GetTempPath(), "bgs_edit", Path.GetFileNameWithoutExtension(hkxPath));
                 HkxTextEdit.ResetDirectory(work);
-
-
-
-                _xmlPath = Path.Combine(work, Path.GetFileNameWithoutExtension(_hkxPath) + ".xml");
-
-
-
-                _xmlText = NativeXml.From(File.ReadAllBytes(_hkxPath));
-                File.WriteAllText(_xmlPath, _xmlText);
-
-                _objectIds = HkxTextEdit.ObjectIds(_xmlText);
-                own = _objectIds.Count == _objects.Count;
-
+                xmlPath = Path.Combine(work, Path.GetFileNameWithoutExtension(hkxPath) + ".xml");
+                xmlText = NativeXml.From(File.ReadAllBytes(hkxPath));
+                File.WriteAllText(xmlPath, xmlText);
+                objectIds = HkxTextEdit.ObjectIds(xmlText);
+                bool own = objectIds.Count == expectedObjects;
                 if (!own)
                 {
-                    _xmlText = "";
-                    _objectIds = new List<string>();
+                    xmlText = "";
+                    objectIds = new List<string>();
                 }
             }
-            catch
-            {
-                _xmlText = "";
-                _objectIds = new List<string>();
-            }
+            model = reading;
         }
+        catch
+        {
+            xmlText = "";
+            objectIds = new List<string>();
+        }
+        return new EditRead(xmlPath, xmlText, objectIds, model);
+    }
+
+    private void ApplyEditRead(EditRead edit)
+    {
+        _xmlPath = edit.XmlPath;
+        _xmlText = edit.XmlText;
+        _objectIds = edit.ObjectIds;
 
         ResetHistory();
 
-        var model = reading ?? (_xmlText.Length > 0 ? Model() : null);
+        var model = edit.Model;
         if (model == null)
         {
             SetStatus("Read only, so the Graph, Symbols, Chain and Animation tabs stay empty: " +
@@ -3425,12 +3477,8 @@ public class MainWindow : Window
             return;
         }
 
-
-
         if (_objectIds.Count == 0) _objectIds = model.Objects.Select(o => o.Id).ToList();
         _reading = model;
-
-
 
         _emptyStates = GraphValidator.StatesWithNoGenerator(model);
         RebuildTree();
@@ -3444,13 +3492,25 @@ public class MainWindow : Window
         FindMeshForFile();
         StartRun();
 
-        string source = reading != null ? "read from the file itself" : "read by the internal developer fallback";
         SetStatus(_xmlText.Length > 0
-            ? $"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, {source}."
-            : $"{_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, {source}. " +
+            ? $"Editable. {_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, read from the file itself."
+            : $"{_objectIds.Count} objects mapped, {_graph.DrawnCount} drawn, read from the file itself. " +
               "This file holds a class this build cannot describe, so it is read only.",
             _xmlText.Length > 0 ? Ux.MetaBrush : Ux.WarnBrush);
     }
+
+
+
+
+
+
+
+
+    private BehaviourGraphModel Model() =>
+        _xmlText.Length > 0 ? BehaviourGraphModel.Parse(_xmlText) : _reading;
+
+    private BehaviourGraphModel _reading = new();
+
 
     private bool IsEmptyState(int offset) =>
         _emptyStates.Count > 0
@@ -4759,7 +4819,7 @@ public class MainWindow : Window
 
 
 
-    private void Validate()
+    private async Task Validate()
     {
         if (_xmlText.Length == 0 && _reading.Objects.Count == 0)
         {
@@ -4767,12 +4827,14 @@ public class MainWindow : Window
             return;
         }
 
+        string xmlText = _xmlText;
+        var reading = _reading;
+        var projectChain = _projectChain;
+        var bytes = _bytes;
 
-
-
-        var findings = _xmlText.Length > 0
-            ? GraphValidator.Check(_xmlText, _projectChain)
-            : GraphValidator.Check(_reading, _projectChain, _bytes);
+        var findings = await Task.Run(() => xmlText.Length > 0
+            ? GraphValidator.Check(xmlText, projectChain)
+            : GraphValidator.Check(reading, projectChain, bytes));
         var errors = findings.Where(f => f.Level == GraphValidator.Level.Error).ToList();
         var warnings = findings.Where(f => f.Level == GraphValidator.Level.Warning).ToList();
 
@@ -4861,7 +4923,7 @@ public class MainWindow : Window
 
 
 
-    private bool SavedInPlace()
+    private async Task<bool> SavedInPlace()
     {
         NativeSave.Plan plan;
         try
@@ -4874,7 +4936,12 @@ public class MainWindow : Window
             return true;
         }
 
-        if (!plan.Possible || plan.Empty) return false;
+        if (!plan.Possible || plan.Empty)
+        {
+            SetStatus("Not saved, and the original is untouched: " +
+                      (plan.Refusal ?? "the change did not reach the native saver."), Ux.BadBrush);
+            return true;
+        }
 
         string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
         if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return true; }
@@ -4903,7 +4970,7 @@ public class MainWindow : Window
             SetStatus($"Saved {plan.Changes.Count} " +
                       $"change{(plan.Changes.Count == 1 ? "" : "s")} straight into the file, " + how +
                       $"The original is kept as {Path.GetFileName(backup)}.", Ux.MetaBrush);
-            Load();
+            await Load();
             return true;
         }
         catch (Exception e)
@@ -4913,7 +4980,7 @@ public class MainWindow : Window
         }
     }
 
-    private void Save()
+    private async Task Save()
     {
         CommitPendingFields();
         if (!_dirty || _xmlText.Length == 0) return;
@@ -4926,9 +4993,9 @@ public class MainWindow : Window
         string? refusal = GraphValidator.RefuseToSave(_xmlText, includeRepackLosses: false);
         if (refusal != null) { SetStatus(refusal, Ux.BadBrush); return; }
 
-        if (SavedInPlace()) return;
-        SetStatus("Not saved, and the original is untouched: native save does not support this edit yet.",
-                  Ux.BadBrush);
+        // Every path of SavedInPlace reports its own outcome (refusal detail included), so
+        // there is no remaining case for a generic fallback message here.
+        await SavedInPlace();
     }
 
     private void OnWindowKey(object? sender, Avalonia.Input.KeyEventArgs e)

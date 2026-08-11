@@ -69,6 +69,7 @@ public sealed class BehaviourGraphModel
     {
         int depth = 0;
         string current = "";
+        string nestedInto = "";
         List<Dictionary<string, string>>? structList = null;
         Dictionary<string, string>? element = null;
 
@@ -84,6 +85,7 @@ public sealed class BehaviourGraphModel
                 if (closing)
                 {
                     depth--;
+                    if (depth == 1) nestedInto = "";
                     if (depth == 0 && element != null && structList != null)
                     {
                         structList.Add(element);
@@ -157,6 +159,12 @@ public sealed class BehaviourGraphModel
             else if (depth == 1 && element != null)
             {
                 element[name] = inner;
+                if (inner.Length == 0) nestedInto = name;
+            }
+            else if (depth == 2 && element != null && nestedInto.Length > 0 && inner.Length > 0)
+            {
+                if (!element.TryGetValue(nestedInto, out string? have) || have.Length == 0)
+                    element[nestedInto] = inner;
             }
             else if (depth == 1 && current.Length > 0 && obj.Structs.TryGetValue(current, out var st))
             {

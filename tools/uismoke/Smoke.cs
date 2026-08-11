@@ -177,6 +177,7 @@ public static class Smoke
     public static int Main(string[] args)
     {
         if (args.Length >= 2 && args[0] == "--png") return Png(args);
+        if (args.Length >= 3 && args[0] == "--verify") return Verify.Run(args);
 
         AppBuilder.Configure<HeadlessApp>().UseHeadless(new AvaloniaHeadlessPlatformOptions())
             .SetupWithoutStarting();
