@@ -550,7 +550,7 @@ public static class NativePaste
 
         BitConverter.GetBytes(keep.Count).CopyTo(data.Data, at + 8);
         uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes(PackfileSection.ArrayCapacityWord(capacity, keep.Count)).CopyTo(data.Data, at + 12);
+        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)keep.Count).CopyTo(data.Data, at + 12);
 
         return $"added to #{attachToId}.{field} as element {keep.Count - 1}";
     }

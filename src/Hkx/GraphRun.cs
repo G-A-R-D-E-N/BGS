@@ -555,40 +555,46 @@ public sealed class GraphRun
 
 
 
+            (StateRoutes.Route Route, (int Priority, int Order, string Condition, float Duration) Detail)? pick = null;
             foreach (var held in candidates)
             {
                 if (held.Detail.Condition.Length > 0) ConditionsWeighed++;
-                if (Test(held.Detail.Condition) != Expression.Verdict.False) continue;
+                var verdict = Test(held.Detail.Condition);
+                if (verdict == Expression.Verdict.True)
+                {
+                    pick = held;
+                    break;                                  // highest-priority True wins
+                }
                 var to = _model.Get(held.Route.ToId);
                 _blocked.Add(new Blocked(machineId, stateId, held.Route.ToId, to?.Str("name") ?? "",
                                          held.Route.Event, held.Detail.Condition));
+                if (verdict == Expression.Verdict.Unknown)
+                    break;                                  // cannot decide past an Unknown
             }
 
-            var pick = candidates.FirstOrDefault(x => Test(x.Detail.Condition) != Expression.Verdict.False);
+            if (pick is not { } selected) continue;
 
-            if (pick.Route == null) continue;
+            var target = _model.Get(selected.Route.ToId);
+            fired.Add(new Fired(machineId, stateId, selected.Route.ToId, target?.Str("name") ?? "",
+                selected.Route.Event, selected.Detail.Priority, selected.Detail.Condition.Length > 0, selected.Detail.Condition));
 
-            var target = _model.Get(pick.Route.ToId);
-            fired.Add(new Fired(machineId, stateId, pick.Route.ToId, target?.Str("name") ?? "",
-                pick.Route.Event, pick.Detail.Priority, pick.Detail.Condition.Length > 0, pick.Detail.Condition));
-
-            moved[machineId] = pick.Route.ToId;
+            moved[machineId] = selected.Route.ToId;
 
 
 
 
 
-            if (pick.Detail.Duration > 0 && pick.Route.ToId != stateId)
-                _blending[machineId] = new Blend(machineId, stateId, pick.Route.ToId, pick.Detail.Duration, 0);
+            if (selected.Detail.Duration > 0 && selected.Route.ToId != stateId)
+                _blending[machineId] = new Blend(machineId, stateId, selected.Route.ToId, selected.Detail.Duration, 0);
             else
                 _blending.Remove(machineId);
 
 
 
-            if (pick.Route.IntoId.Length > 0)
+            if (selected.Route.IntoId.Length > 0)
             {
-                string inner = _routes.MachineOfState.TryGetValue(pick.Route.IntoId, out var m) ? m : "";
-                if (inner.Length > 0) moved[inner] = pick.Route.IntoId;
+                string inner = _routes.MachineOfState.TryGetValue(selected.Route.IntoId, out var m) ? m : "";
+                if (inner.Length > 0) moved[inner] = selected.Route.IntoId;
             }
         }
 

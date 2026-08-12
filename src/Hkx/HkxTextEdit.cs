@@ -202,7 +202,7 @@ public static class HkxTextEdit
         opening = Regex.Replace(opening, @"numelements=""\d+""", $"numelements=\"{values.Count}\"");
         string replacement = values.Count == 0
             ? $"<hkparam name=\"{paramName}\" numelements=\"0\"/>"
-            : opening + Escape(string.Join(" ", values)) + "</hkparam>";
+            : opening + EscapeXml(string.Join(" ", values)) + "</hkparam>";
 
         string rewritten = block[..param.Index] + replacement + block[(param.Index + param.Length)..];
         return xmlText[..start] + rewritten + xmlText[(start + length)..];
@@ -220,7 +220,7 @@ public static class HkxTextEdit
 
     private static string Decode(string value) => System.Net.WebUtility.HtmlDecode(value);
 
-    private static string Escape(string value) =>
+    public static string EscapeXml(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 
     public static string SetParam(string xmlText, string id, string paramName, string newValue)
@@ -237,7 +237,7 @@ public static class HkxTextEdit
             replaced = true;
             string body = newValue.Length == 0
                 ? $"<hkparam name=\"{paramName}\"/>"
-                : $"<hkparam name=\"{paramName}\">{Escape(newValue)}</hkparam>";
+                : $"<hkparam name=\"{paramName}\">{EscapeXml(newValue)}</hkparam>";
             return m.Groups["indent"].Value + body;
         });
 
@@ -314,7 +314,7 @@ public static class HkxTextEdit
 
         string body = newValue.Length == 0
             ? $"<hkparam name=\"{last}\"/>"
-            : $"<hkparam name=\"{last}\">{Escape(newValue)}</hkparam>";
+            : $"<hkparam name=\"{last}\">{EscapeXml(newValue)}</hkparam>";
 
         string rewritten = block[..target.Start] + body + block[target.End..];
         return xmlText[..start] + rewritten + xmlText[(start + length)..];

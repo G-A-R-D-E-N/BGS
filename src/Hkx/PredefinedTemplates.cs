@@ -61,13 +61,14 @@ public static class PredefinedTemplates
         new Definition(
             "blend-generator",
             "Blend Generator",
-            "Creates a blend generator with a requested number of child slots.",
+            "Creates a blend generator whose children each play an existing generator.",
             "hkbBlenderGenerator",
             new[]
             {
                 new Slot("name", "Name", "The generator name.", SlotKind.Text, false, "New Blend"),
-                new Slot("children", "Children", "How many empty blend child slots to create.", SlotKind.Count,
-                         true, Minimum: MinimumBlendChildren, Maximum: MaximumBlendChildren),
+                new Slot("generators", "Generators",
+                         "Object ids of the hkbGenerator children, space separated, " +
+                         $"{MinimumBlendChildren}..{MaximumBlendChildren}.", SlotKind.Text, true),
             }),
         new Definition(
             "state-with-generator",
@@ -165,7 +166,7 @@ public static class PredefinedTemplates
                 int id = NativeGraphModel.FirstId + objects.Instances.Count + created.Count;
                 int index = objects.Instances.Count(i => i.ClassName == className) +
                             plan.Count(c => c.Added && c.ClassName == className);
-                plan.Add(new NativeSave.Change(className, index, "", "#" + id, Added: true));
+                plan.Add(new NativeSave.Change(className, index, "", "#" + id, Added: true, Id: id));
                 created.Add(id);
                 return id;
             }
@@ -173,9 +174,9 @@ public static class PredefinedTemplates
                                                    created.TakeWhile(value => value != id)
                                                           .Count(value => plan.First(c => c.Added && c.Value == "#" + value).ClassName == className);
             void Field(string className, int id, string field, string value) =>
-                plan.Add(new NativeSave.Change(className, Index(className, id), field, value));
+                plan.Add(new NativeSave.Change(className, Index(className, id), field, value, Id: id));
             void Ref(string className, int id, string field, int target) =>
-                plan.Add(new NativeSave.Change(className, Index(className, id), field, "#" + target, Ref: true));
+                plan.Add(new NativeSave.Change(className, Index(className, id), field, "#" + target, Ref: true, Id: id));
 
             int Clip()
             {
@@ -197,7 +198,24 @@ public static class PredefinedTemplates
             if (templateId == "clip-generator") root = Clip();
             else if (templateId == "blend-generator")
             {
-                int count = resolved.Count("children");
+                var generatorIds = resolved.Text("generators")
+                    .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(text => text.StartsWith('#') ? text[1..] : text)
+                    .ToList();
+                if (generatorIds.Count < MinimumBlendChildren ||
+                    generatorIds.Count > MaximumBlendChildren)
+                    return Failed($"Blend generators take between {MinimumBlendChildren} and " +
+                                  $"{MaximumBlendChildren} generator children.");
+                foreach (string text in generatorIds)
+                {
+                    if (!int.TryParse(text, System.Globalization.NumberStyles.Integer,
+                                      System.Globalization.CultureInfo.InvariantCulture, out int gen) ||
+                        gen < NativeGraphModel.FirstId ||
+                        !TryObject(gen, objects, out string genClass) ||
+                        !IsA(genClass, "hkbGenerator"))
+                        return Failed($"'{text}' is not a generator in this file.");
+                }
+
                 root = Add("hkbBlenderGenerator");
                 Field("hkbBlenderGenerator", root, "name", resolved.Text("name"));
                 Field("hkbBlenderGenerator", root, "blendParameter", "1");
@@ -205,14 +223,17 @@ public static class PredefinedTemplates
                 Field("hkbBlenderGenerator", root, "indexOfSyncMasterChild", "-1");
                 Field("hkbBlenderGenerator", root, "flags", "8");
                 var children = new List<int>();
-                for (int i = 0; i < count; i++)
+                foreach (string text in generatorIds)
                 {
+                    int gen = int.Parse(text, System.Globalization.NumberStyles.Integer,
+                                        System.Globalization.CultureInfo.InvariantCulture);
                     int child = Add("hkbBlenderGeneratorChild");
                     Field("hkbBlenderGeneratorChild", child, "weight", "1");
+                    Ref("hkbBlenderGeneratorChild", child, "generator", gen);
                     children.Add(child);
                 }
                 plan.Add(new NativeSave.Change("hkbBlenderGenerator", Index("hkbBlenderGenerator", root),
-                                                "children", string.Join(" ", children.Select(id => "#" + id)), Array: true));
+                                                "children", string.Join(" ", children.Select(id => "#" + id)), Array: true, Id: root));
             }
             else
             {
@@ -245,7 +266,7 @@ public static class PredefinedTemplates
                     ?.Select(state => state == null ? "null" : "#" + (NativeGraphModel.FirstId + objects.Instances.ToList().IndexOf(state)))
                     .Append("#" + root) ?? new[] { "#" + root };
                 plan.Add(new NativeSave.Change("hkbStateMachine", objects.Instances.Take(machine - NativeGraphModel.FirstId)
-                    .Count(instance => instance.ClassName == "hkbStateMachine"), "states", string.Join(" ", states), Array: true));
+                    .Count(instance => instance.ClassName == "hkbStateMachine"), "states", string.Join(" ", states), Array: true, Id: machine));
             }
 
             byte[] bytes = NativeSave.Apply(source, new NativeSave.Plan(plan, null));

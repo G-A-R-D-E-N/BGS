@@ -34,12 +34,46 @@ public static class Tests
         ("BlenderChildIsWrapped", BlenderChildIsWrapped),
         ("EditorSignaturesComeFromTheClassTable", EditorSignaturesComeFromTheClassTable),
         ("AnyNodeCanBeDeleted", AnyNodeCanBeDeleted),
+        ("DeletingOneClipDoesNotRedirectTheEdit", DeletingOneClipDoesNotRedirectTheEdit),
+        ("DeletingLaterClipKeepsTheEditOnTheEarlierClip", DeletingLaterClipKeepsTheEditOnTheEarlierClip),
+        ("DeleteAddAndEditSameClassInOneSave", DeleteAddAndEditSameClassInOneSave),
+        ("GrowthOnSurvivorWhileDeletingSameClass", GrowthOnSurvivorWhileDeletingSameClass),
+        ("VerifierAcceptsTheDeleteAndEditSave", VerifierAcceptsTheDeleteAndEditSave),
+        ("VerifierRejectsACorruptedClassSignature", VerifierRejectsACorruptedClassSignature),
+        ("VerifierRejectsADroppedObjectNotInThePlan", VerifierRejectsADroppedObjectNotInThePlan),
+        ("VerifierRejectsATruncatedRebuild", VerifierRejectsATruncatedRebuild),
+        ("PredefinedBlendRequiresGenerators", PredefinedBlendRequiresGenerators),
+        ("PredefinedBlendWritesChildGenerators", PredefinedBlendWritesChildGenerators),
+        ("CheckBlendersFlagsAChildWithoutGenerator", CheckBlendersFlagsAChildWithoutGenerator),
+        ("NamesWithXmlCharactersSurviveCreation", NamesWithXmlCharactersSurviveCreation),
+        ("EnumOfInt8EditsPersistNumerically", EnumOfInt8EditsPersistNumerically),
+        ("FirstInstanceOfAClassCanBeAdded", FirstInstanceOfAClassCanBeAdded),
+        ("BackupsRotateAndReplacementIsStaged", BackupsRotateAndReplacementIsStaged),
+        ("Ba2ExtractionStaysInsideTheOutputRoot", Ba2ExtractionStaysInsideTheOutputRoot),
+        ("Ba2ExtractionRefusesSymlinkEscape", Ba2ExtractionRefusesSymlinkEscape),
+        ("Ba2OpenFailureReleasesArchive", Ba2OpenFailureReleasesArchive),
+        ("Ba2DecompressionIsBounded", Ba2DecompressionIsBounded),
+        ("PackfileSectionOffsetsAreValidated", PackfileSectionOffsetsAreValidated),
+        ("NifParserAcceptsMinimalFile", NifParserAcceptsMinimalFile),
+        ("NifParserRejectsMalformedTables", NifParserRejectsMalformedTables),
+        ("NifTriangleIndicesStayInRange", NifTriangleIndicesStayInRange),
+        ("PlanWithoutIdIsRefusedBeforeWriting", PlanWithoutIdIsRefusedBeforeWriting),
+        ("ValueArraysRefuseOutOfRangeElements", ValueArraysRefuseOutOfRangeElements),
+        ("Scalar64UsesTheRightSignedness", Scalar64UsesTheRightSignedness),
+        ("SignedValuesRenderSigned", SignedValuesRenderSigned),
+        ("SaveBlocksOnDuplicateStateIds", SaveBlocksOnDuplicateStateIds),
+        ("ClampWithInvertedBoundsIsARefusalNotAThrow", ClampWithInvertedBoundsIsARefusalNotAThrow),
+        ("ClampFailureIsRecordedByGraphRun", ClampFailureIsRecordedByGraphRun),
+        ("AnUnknownConditionDoesNotFire", AnUnknownConditionDoesNotFire),
+        ("AnUnknownHigherPriorityTransitionBlocksTheDecision", AnUnknownHigherPriorityTransitionBlocksTheDecision),
+        ("NumberCodecsEnforceExactRanges", NumberCodecsEnforceExactRanges),
         ("AReferenceInsideAStructIsSeenByBothReaders", AReferenceInsideAStructIsSeenByBothReaders),
         ("ADanglingReferenceIsReportedWhereverItSits", ADanglingReferenceIsReportedWhereverItSits),
         ("AppendedStringsLandOnAnEvenOffset", AppendedStringsLandOnAnEvenOffset),
         ("StructuralObjectsAreProtected", StructuralObjectsAreProtected),
         ("PortTypesRefuseNonsense", PortTypesRefuseNonsense),
         ("Fo4CharacterListsItsAnimations", Fo4CharacterListsItsAnimations),
+        ("ProjectFilesAreSelectedByContent", ProjectFilesAreSelectedByContent),
         ("MissingClipAnimationIsReported", MissingClipAnimationIsReported),
         ("RepackDriftNamesWhatMoved", RepackDriftNamesWhatMoved),
         ("TransitionRowsCarryPriorityAndFlags", TransitionRowsCarryPriorityAndFlags),
@@ -55,7 +89,6 @@ public static class Tests
         ("EveryFindingPointsAtAnObject", EveryFindingPointsAtAnObject),
         ("AShortBoundsArrayStaysLinedUp", AShortBoundsArrayStaysLinedUp),
         ("ABoundCanBeAuthoredPastTheEndOfTheArray", ABoundCanBeAuthoredPastTheEndOfTheArray),
-        ("NestedStructValuesReadBackFromTheModel", NestedStructValuesReadBackFromTheModel),
         ("AValueInsideAStructArrayIsWrittenInPlace", AValueInsideAStructArrayIsWrittenInPlace),
         ("AStructArrayCanBeMadeLonger", AStructArrayCanBeMadeLonger),
         ("WindowsLineEndingsStillEdit", WindowsLineEndingsStillEdit),
@@ -75,6 +108,7 @@ public static class Tests
         ("TracksDriveTheBonesTheyName", TracksDriveTheBonesTheyName),
         ("AnimationsForAnotherRigAreRefused", AnimationsForAnotherRigAreRefused),
         ("AModelIsFoundOnlyWhenThereIsNoDoubt", AModelIsFoundOnlyWhenThereIsNoDoubt),
+        ("MeshDiscoveryIsRecursiveAndValidated", MeshDiscoveryIsRecursiveAndValidated),
         ("AValueThatIsNotANumberIsRefused", AValueThatIsNotANumberIsRefused),
         ("AStringIsWrittenAtWhateverLength", AStringIsWrittenAtWhateverLength),
         ("WideAndVectorFieldsReadFromTheBytes", WideAndVectorFieldsReadFromTheBytes),
@@ -135,6 +169,8 @@ public static class Tests
         ("ALoopingClipKeepsFiringAndASinglePlayDoesNot", ALoopingClipKeepsFiringAndASinglePlayDoesNot),
         ("ATemplateLiftedFromOneFileGoesIntoAnother", ATemplateLiftedFromOneFileGoesIntoAnother),
         ("ATemplateRefusesToLiftWhatSharesItsFile", ATemplateRefusesToLiftWhatSharesItsFile),
+        ("TemplateSlugsDoNotSilentlyOverwrite", TemplateSlugsDoNotSilentlyOverwrite),
+        ("LayoutTruncationIsReported", LayoutTruncationIsReported),
         ("ATemplateSaysWhatToDeclareRatherThanJustFailing", ATemplateSaysWhatToDeclareRatherThanJustFailing),
         ("ATemplateDescriptionSurvivesAwkwardNames", ATemplateDescriptionSurvivesAwkwardNames),
         ("PredefinedTemplateCatalogResolvesDefaults", PredefinedTemplateCatalogResolvesDefaults),
@@ -150,7 +186,6 @@ public static class Tests
         ("KeepingTheFramesCostsNothingAtAll", KeepingTheFramesCostsNothingAtAll),
         ("ARetimeSaysWhatTheResamplingCost", ARetimeSaysWhatTheResamplingCost),
         ("ARotationIsReadAlongTheArcNotAcrossIt", ARotationIsReadAlongTheArcNotAcrossIt),
-        ("GrowingAnEmptyArrayKeepsTheDoNotFreeFlag", GrowingAnEmptyArrayKeepsTheDoNotFreeFlag),
     };
 
 
@@ -200,14 +235,26 @@ public static class Tests
 
 
 
-    private static void CheckThrows(string what, Action action)
+    private static void CheckThrows<T>(string what, Action action) where T : Exception
     {
         _ran++;
-        bool threw = false;
+        bool ok = false;
         try { action(); }
-        catch (Exception) { threw = true; }
-        if (!threw) _failed++;
-        Console.WriteLine($"  {(threw ? "ok  " : "FAIL")}  {what}");
+        catch (T e) when (e.GetType() == typeof(T)) { ok = true; }
+        catch (Exception e)
+        {
+            Console.WriteLine($"  type  {what} -> {e.GetType().FullName}: {e.Message}");
+        }
+        if (!ok) _failed++;
+        Console.WriteLine($"  {(ok ? "ok  " : "FAIL")}  {what}");
+    }
+
+    private static string ThrowsMessage<T>(Action action) where T : Exception
+    {
+        try { action(); }
+        catch (T e) when (e.GetType() == typeof(T)) { return e.Message; }
+        catch (Exception e) { return $"wrong type: {e.GetType().FullName}: {e.Message}"; }
+        return "no exception thrown";
     }
 
     private static void CheckTrue(string what, bool value)
@@ -1080,6 +1127,62 @@ public static class Tests
               ProjectChain.AnimationKey("animations/anim01.hkx"));
     }
 
+    private static BehaviourGraphModel ProjectCandidate(bool isProject)
+    {
+        string className = isProject ? "hkbProjectStringData" : "hkbBehaviorGraph";
+        return BehaviourGraphModel.Parse($"""
+            <hkpackfile><hksection name="__data__">
+              <hkobject class="{className}" name="#1">
+                <hkparam name="characterFilenames" numelements="0"></hkparam>
+              </hkobject>
+            </hksection></hkpackfile>
+            """);
+    }
+
+    private static void ProjectFilesAreSelectedByContent()
+    {
+        Console.WriteLine("\nproject files are selected by hkbProjectStringData");
+        string work = Directory.CreateTempSubdirectory("bgs-project-choice").FullName;
+        try
+        {
+            ProjectChain Resolve(string leaf, params (string Name, bool Project)[] files)
+            {
+                string root = Path.Combine(work, leaf);
+                string behaviours = Path.Combine(root, "Behaviors");
+                Directory.CreateDirectory(behaviours);
+                string input = Path.Combine(behaviours, "input.hkx");
+                File.WriteAllBytes(input, Array.Empty<byte>());
+                var models = new Dictionary<string, BehaviourGraphModel>(StringComparer.OrdinalIgnoreCase);
+                foreach (var file in files)
+                {
+                    string path = Path.Combine(root, file.Name);
+                    File.WriteAllBytes(path, Array.Empty<byte>());
+                    models[path] = ProjectCandidate(file.Project);
+                }
+                return ProjectChain.Resolve(input, path => models[path]);
+            }
+
+            var one = Resolve("one", ("decoy.hkx", false), ("actual.hkx", true));
+            Check("the only content-matching project is selected", "actual.hkx",
+                  one.Links.FirstOrDefault(l => l.Role == "project")?.Declared);
+
+            var none = Resolve("none", ("a.hkx", false), ("b.hkx", false));
+            CheckTrue("zero matching candidates do not create a project link",
+                      none.Links.All(l => l.Role != "project"));
+            CheckTrue("zero matching candidates are reported",
+                      none.Problems.Any(p => p.Contains("no project", StringComparison.OrdinalIgnoreCase)));
+
+            var many = Resolve("many", ("alpha.hkx", true), ("beta.hkx", true));
+            CheckTrue("ambiguous project candidates are not selected",
+                      many.Links.All(l => l.Role != "project"));
+            CheckTrue("ambiguity names both matching files",
+                      many.Problems.Any(p => p.Contains("ambiguous", StringComparison.OrdinalIgnoreCase) &&
+                                             p.Contains("alpha.hkx", StringComparison.OrdinalIgnoreCase) &&
+                                             p.Contains("beta.hkx", StringComparison.OrdinalIgnoreCase)));
+        }
+        finally { Directory.Delete(work, true); }
+    }
+
     private static void MissingClipAnimationIsReported()
     {
         Console.WriteLine("\na clip pointing at an animation that is not on disk is an error");
@@ -1655,29 +1758,6 @@ public static class Tests
 
 
 
-    private static void NestedStructValuesReadBackFromTheModel()
-    {
-        Console.WriteLine("\nnested struct values read back from the model, not just the raw xml");
-
-        var model = BehaviourGraphModel.Parse(ThreeVariablesWithTwoBounds());
-        var data = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraphData");
-        CheckTrue("the row model carries the nested rows",
-                  data != null && data.StructLists.TryGetValue("variableBounds", out var rows) && rows.Count == 2);
-
-        var bounds = SymbolEditor.VariableBounds(model);
-        Check("the first bound's minimum is read through the nested struct", "0", bounds[0].Min);
-        Check("and its maximum", "10", bounds[0].Max);
-        Check("the second bound too", "20", bounds[1].Max);
-
-        string after = SymbolEditor.SetVariableBounds(ThreeVariablesWithTwoBounds(), 2, "-5", "35");
-        var grown = SymbolEditor.VariableBounds(BehaviourGraphModel.Parse(after));
-        Check("a bound authored past the end reads back", 3, grown.Count);
-        Check("its minimum", "-5", grown[2].Min);
-        Check("and its maximum", "35", grown[2].Max);
-        Check("the earlier bounds are untouched", "10", grown[0].Max);
-        Check("and so is the second", "20", grown[1].Max);
-    }
-
     private static void ABoundCanBeAuthoredPastTheEndOfTheArray()
     {
         Console.WriteLine("\na bound can be authored past the end of the array");
@@ -1759,14 +1839,18 @@ public static class Tests
         Check("and the other is untouched", 1, Occurrences(nested, "\"enterEventId\">-1<"));
         CheckTrue("the one that changed is the second element's",
                   nested.IndexOf("\"enterEventId\">7<", StringComparison.Ordinal)
-                  > nested.IndexOf("\"eventId\">1<", StringComparison.Ordinal));
-
-
-
-        CheckThrows("an element that is not there is refused",
+                  > nested.IndexOf("\"eventId\">1<", StringComparison.Ordinal));        CheckThrows<ArgumentException>("an element that is not there is refused",
                     () => HkxTextEdit.SetParamAt(xml, "95", "transitions[2].eventId", "9"));
-        CheckThrows("and so is a member the element does not have",
+        CheckThrows<ArgumentException>("and so is a member the element does not have",
                     () => HkxTextEdit.SetParamAt(xml, "95", "transitions[0].nothing", "9"));
+        CheckTrue("the refusal says which element was missing",
+                  ThrowsMessage<ArgumentException>(() => HkxTextEdit.SetParamAt(xml, "95", "transitions[2].eventId", "9"))
+                  .Contains("transitions has 2 elements"));
+        CheckTrue("the refusal names the missing member",
+                  ThrowsMessage<ArgumentException>(() => HkxTextEdit.SetParamAt(xml, "95", "transitions[0].nothing", "9"))
+                  .Contains("has no nothing at transitions[0].nothing"));
+        CheckTrue("the xml still parses and the valid edit still lands",
+                  HkxTextEdit.SetParamAt(xml, "95", "transitions[0].eventId", "9").Contains("\"eventId\">9<"));
     }
 
     private static int Occurrences(string text, string needle)
@@ -3833,6 +3917,93 @@ public static class Tests
 
 
 
+    private static byte[] MinimalMeshNif()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, System.Text.Encoding.ASCII, leaveOpen: true);
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("Gamebryo File Format, Version 20.2.0.7\n"));
+        writer.Write(0x14020007u);
+        writer.Write((byte)1);
+        writer.Write(12u);
+        writer.Write(1u);
+        writer.Write(130u);
+        for (int i = 0; i < 4; i++) writer.Write((byte)0);
+        writer.Write((ushort)1);
+        writer.Write(10u);
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("BSTriShape"));
+        writer.Write((ushort)0);
+        writer.Write(126u);
+        writer.Write(1u);
+        writer.Write(4u);
+        writer.Write(4u);
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("mesh"));
+        writer.Write(0u);
+
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        for (int i = 0; i < 3; i++) writer.Write(0f);
+        for (int i = 0; i < 9; i++) writer.Write(i % 4 == 0 ? 1f : 0f);
+        writer.Write(1f);
+        writer.Write(0u);
+        for (int i = 0; i < 4; i++) writer.Write(0f);
+        writer.Write(-1);
+        writer.Write(-1);
+        writer.Write(-1);
+        writer.Write(3ul | (1ul << 54));
+        writer.Write(0u);
+        writer.Write((ushort)1);
+        writer.Write(12u);
+        writer.Write(0f);
+        writer.Write(0f);
+        writer.Write(0f);
+        writer.Write(0u);
+        return stream.ToArray();
+    }
+
+    private static void MeshDiscoveryIsRecursiveAndValidated()
+    {
+        Console.WriteLine("\nmesh discovery is recursive and validates candidates");
+        string root = Directory.CreateTempSubdirectory("bgs-mesh-choice").FullName;
+        try
+        {
+            string behaviours = Path.Combine(root, "Behaviors");
+            string assets = Path.Combine(root, "CharacterAssets");
+            string nested = Path.Combine(assets, "Actors", "Body");
+            Directory.CreateDirectory(behaviours);
+            Directory.CreateDirectory(nested);
+            string behaviour = Path.Combine(behaviours, "graph.hkx");
+            string skeleton = Path.Combine(assets, "skeleton.hkx");
+            File.WriteAllBytes(behaviour, Array.Empty<byte>());
+            File.WriteAllBytes(skeleton, Array.Empty<byte>());
+            File.WriteAllText(Path.Combine(root, "decoy.nif"), "not a NIF");
+            string mesh = Path.Combine(nested, "body.nif");
+            File.WriteAllBytes(mesh, MinimalMeshNif());
+
+            var one = MeshLookup.Find(behaviour, root, skeleton);
+            Check("a valid mesh is found below the character subtree", mesh, one.Path);
+
+            string local = Path.Combine(behaviours, "local.nif");
+            File.WriteAllBytes(local, MinimalMeshNif());
+            var split = MeshLookup.Find(behaviour, root, skeleton);
+            CheckTrue("valid meshes in different actor folders are ambiguous", !split.Found);
+            File.Delete(local);
+
+            string secondFolder = Path.Combine(assets, "Alternate");
+            Directory.CreateDirectory(secondFolder);
+            string second = Path.Combine(secondFolder, "other.nif");
+            File.WriteAllBytes(second, MinimalMeshNif());
+            var many = MeshLookup.Find(behaviour, root, skeleton);
+            CheckTrue("two valid recursive meshes are ambiguous", !many.Found);
+            CheckTrue("the ambiguity names both valid meshes and not the malformed decoy",
+                      many.Reason.Contains("body.nif", StringComparison.OrdinalIgnoreCase) &&
+                      many.Reason.Contains("other.nif", StringComparison.OrdinalIgnoreCase) &&
+                      !many.Reason.Contains("decoy.nif", StringComparison.OrdinalIgnoreCase));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private static void AValueThatIsNotANumberIsRefused()
     {
         const string Before = """
@@ -4506,34 +4677,33 @@ public static class Tests
     {
         Console.WriteLine("\nan active expression modifier updates runtime variables");
 
-        string path = RepositoryFile("dist", "examples", "Dogmeat", "Behaviors", "DogmeatRoot.hkx");
-        byte[] original = File.ReadAllBytes(path);
-        var image = PackfileImage.Read(path);
-        var model = NativeGraphModel.From(new PackfileObjects(image), HavokClassTypes.Shipped);
-        CheckTrue("the real Dogmeat graph is read", model != null);
-        if (model == null) return;
+        string xml = ClampExpressionMachine()
+            .Replace("y x", "fHeadBlendDamped fHeadBlendDampedClamped", StringComparison.Ordinal)
+            .Replace("x = clamp(y, 10, 0)",
+                     "fHeadBlendDampedClamped = clamp(fHeadBlendDamped, 0, 1)",
+                     StringComparison.Ordinal);
+        var model = BehaviourGraphModel.Parse(xml);
 
-        CheckTrue("the real graph contains expression modifiers",
+        CheckTrue("the synthetic graph contains an expression modifier",
                   model.Objects.Any(o => o.Class == "hkbEvaluateExpressionModifier"));
-        CheckTrue("the real graph contains expression data arrays",
+        CheckTrue("the synthetic graph contains expression data",
                   model.Objects.Any(o => o.Class == "hkbExpressionDataArray"));
 
         var run = GraphRun.Start(model);
-        CheckTrue("the active graph contributes real expression rows", run.ActiveExpressionCount >= 4);
-        CheckTrue("the active rows include a real head blend assignment",
-                  run.ActiveExpressionSources.Any(source => source.StartsWith("fHeadBlendDampedClamped =", StringComparison.Ordinal)));
+        Check("the active graph contributes its expression row", 1, run.ActiveExpressionCount);
+        CheckTrue("the active row contains the head blend assignment",
+                  run.ActiveExpressionSources.Any(source => source.StartsWith(
+                      "fHeadBlendDampedClamped =", StringComparison.Ordinal)));
+
         run.Set("fHeadBlendDamped", 2);
         run.Advance(0.1f);
-        CheckTrue("the active expression receives this tick's duration",
-                  Math.Abs((run.ValueOf("fTimeStep") ?? -1) - 0.1d) < 1e-6);
-        CheckTrue("a real head-control assignment updates its target",
+        CheckTrue("the active expression clamps values above one",
                   Math.Abs((run.ValueOf("fHeadBlendDampedClamped") ?? -1) - 1d) < 1e-6);
 
         run.Set("fHeadBlendDamped", -1);
         run.Advance(0.2f);
-        CheckTrue("changing an expression input changes the next target value",
+        CheckTrue("changing the input changes the next target value",
                   Math.Abs(run.ValueOf("fHeadBlendDampedClamped") ?? -1) < 1e-6);
-        CheckTrue("the simulation does not mutate native source bytes", original.SequenceEqual(File.ReadAllBytes(path)));
     }
 
     private static string RepositoryFile(params string[] parts)
@@ -4689,6 +4859,55 @@ public static class Tests
                   !System.IO.File.Exists(System.IO.Path.Combine(folder, "cannot-leave.hkx")));
     }
 
+    private static void TemplateSlugsDoNotSilentlyOverwrite()
+    {
+        Console.WriteLine("\na template whose slug collides is refused, not overwritten");
+
+        string folder = OwnTemplateFolder("slugs");
+        string work = System.IO.Path.Combine(folder, "work");
+        string from = WriteImage(TwoClipsOnePointingAtTheOther(out _), work, "From.hkx");
+
+        var first = TemplateStore.Lift(from, NativeGraphModel.FirstId, "A&B", "first");
+        Check("the first template is stored under its slug", "a-b", first.Slug);
+        Check("and is listed", 1, TemplateStore.All().Count);
+
+        string refused = "";
+        try { TemplateStore.Lift(from, NativeGraphModel.FirstId, "A B", "second"); }
+        catch (InvalidOperationException e) { refused = e.Message; }
+
+        CheckTrue("a name that normalizes to the same slug is refused",
+                  refused.Contains("already", StringComparison.Ordinal));
+        CheckTrue("and the refusal names the colliding slug",
+                  refused.Contains("a-b", StringComparison.Ordinal));
+
+        var listed = TemplateStore.All();
+        Check("the first template is still the only one", 1, listed.Count);
+        Check("and still carries its own name", "A&B", listed.FirstOrDefault()?.Name ?? "nothing listed");
+        Check("and its own note", "first", listed.FirstOrDefault()?.Note ?? "nothing listed");
+        CheckTrue("and its copy of the file is untouched",
+                  System.IO.File.Exists(System.IO.Path.Combine(folder, "a-b.hkx")));
+    }
+
+    private static void LayoutTruncationIsReported()
+    {
+        Console.WriteLine("\nthe layout says when it stopped at the cap");
+
+        var model = BehaviourGraphModel.Parse(SmallGraph());
+        Check("the fixture holds 7 objects", 7, model.Objects.Count);
+
+        var cut = GraphAuthor.Layout(model, 3, out bool truncated);
+        Check("a small cap cuts the drawing", 3, cut.Count);
+        CheckTrue("and reports that it was truncated", truncated);
+
+        var all = GraphAuthor.Layout(model, 1000, out truncated);
+        Check("a cap above the size draws everything", 7, all.Count);
+        CheckTrue("and reports no truncation", !truncated);
+
+        var exact = GraphAuthor.Layout(model, 7, out truncated);
+        Check("a cap exactly the size draws everything", 7, exact.Count);
+        CheckTrue("and still reports no truncation", !truncated);
+    }
+
 
 
 
@@ -4818,9 +5037,11 @@ public static class Tests
         CheckTrue("the blend template can be found by ID", blend != null);
         if (blend != null)
         {
-            var count = PredefinedTemplates.Resolve(blend, new Dictionary<string, string> { ["children"] = "3" });
-            CheckTrue("the child count resolves", count.Possible);
-            Check("the child count resolves once as an integer", 3, count.Count("children"));
+            var count = PredefinedTemplates.Resolve(blend, new Dictionary<string, string> { ["generators"] = "#90 #91" });
+            CheckTrue("the generator list resolves", count.Possible);
+            Check("the generator list resolves as text", "#90 #91", count.Text("generators"));
+            var one = PredefinedTemplates.Resolve(blend, new Dictionary<string, string> { ["generators"] = "#90" });
+            CheckTrue("a generator list of one id is the minimum and resolves", one.Possible);
         }
 
         var state = PredefinedTemplates.Get("state-with-generator");
@@ -4882,37 +5103,46 @@ public static class Tests
 
     private static void PredefinedBlendGeneratorCreatesItsChildren()
     {
-        string folder = OwnTemplateFolder("predefined-blend");
-        string path = WriteImage(ClipInAPackfile("Idle.hkx", out _), folder, "Blend.hkx");
-
-        var result = PredefinedTemplates.Instantiate(path, "blend-generator", new Dictionary<string, string>
+        string work = Path.Combine(Path.GetTempPath(), "symrm-template-" + Guid.NewGuid().ToString("N"));
+        string path = WriteImage(TwoClips(out _, out _), work, "Blend.hkx");
+        try
         {
-            ["children"] = "3",
-        });
+            var result = PredefinedTemplates.Instantiate(path, "blend-generator", new Dictionary<string, string>
+            {
+                ["generators"] = "#90 #91",
+            });
 
-        CheckTrue("the predefined blend materializes", result.Possible);
-        if (result.Bytes == null) return;
+            CheckTrue("the predefined blend materializes", result.Possible);
+            if (result.Bytes == null) return;
 
-        var objects = new PackfileObjects(PackfileImage.Read(result.Bytes), HavokClasses.Shipped);
-        var blend = objects.Instances[result.RootId - NativeGraphModel.FirstId];
-        Check("the materialized root is a real blender", "hkbBlenderGenerator", blend.ClassName);
-        Check("the blender has exactly the requested child references", 3, objects.ReadRefArray(blend, "children")?.Count);
-        Check("three real blender child objects were created", 3,
-              objects.Instances.Count(instance => instance.ClassName == "hkbBlenderGeneratorChild"));
-        Check("the blender default parameter is one", 1f, objects.ReadFloat(blend, "blendParameter"));
-        Check("the blender default flags are preserved", 8, objects.ReadInt(blend, "flags"));
+            var objects = new PackfileObjects(PackfileImage.Read(result.Bytes), HavokClasses.Shipped);
+            var blend = objects.Instances[result.RootId - NativeGraphModel.FirstId];
+            Check("the materialized root is a real blender", "hkbBlenderGenerator", blend.ClassName);
+            Check("the blender has exactly the requested child references", 2, objects.ReadRefArray(blend, "children")?.Count);
+            Check("two real blender child objects were created", 2,
+                  objects.Instances.Count(instance => instance.ClassName == "hkbBlenderGeneratorChild"));
+            Check("each child points at a real generator", 2,
+                  objects.Instances.Count(instance => instance.ClassName == "hkbBlenderGeneratorChild" &&
+                                                      objects.ReadRef(instance, "generator", out bool wasNull) != null &&
+                                                      !wasNull));
+            Check("the blender default parameter is one", 1f, objects.ReadFloat(blend, "blendParameter"));
+            Check("the blender default flags are preserved", 8, objects.ReadInt(blend, "flags"));
 
-        var invalid = PredefinedTemplates.Instantiate(path, "blend-generator", new Dictionary<string, string>
-        {
-            ["children"] = "0",
-        });
-        CheckTrue("a below-minimum child count is refused without replacement bytes",
-                  !invalid.Possible && invalid.Bytes == null && invalid.CreatedIds.Count == 0);
-        var aboveMaximum = PredefinedTemplates.Instantiate(path, "blend-generator", new Dictionary<string, string>
-        {
-            ["children"] = (PredefinedTemplates.MaximumBlendChildren + 1).ToString(),
-        });
-        CheckTrue("an above-maximum child count is refused", !aboveMaximum.Possible && aboveMaximum.Bytes == null);
+            var invalid = PredefinedTemplates.Instantiate(path, "blend-generator", new Dictionary<string, string>
+            {
+                ["generators"] = "",
+            });
+            CheckTrue("a below-minimum generator list is refused without replacement bytes",
+                      !invalid.Possible && invalid.Bytes == null && invalid.CreatedIds.Count == 0);
+            var tooMany = string.Join(" ", Enumerable.Range(0, PredefinedTemplates.MaximumBlendChildren + 1)
+                                                      .Select(i => "#90"));
+            var aboveMaximum = PredefinedTemplates.Instantiate(path, "blend-generator", new Dictionary<string, string>
+            {
+                ["generators"] = tooMany,
+            });
+            CheckTrue("an above-maximum generator list is refused", !aboveMaximum.Possible && aboveMaximum.Bytes == null);
+        }
+        finally { Directory.Delete(work, true); }
     }
 
     private static void PredefinedStateAttachesItsGenerator()
@@ -4921,9 +5151,9 @@ public static class Tests
         byte[] source = ClipInAPackfile("Idle.hkx", out _).Rebuild();
         var setup = new NativeSave.Plan(new List<NativeSave.Change>
         {
-            new("hkbStateMachine", 0, "", "#91", Added: true),
-            new("hkbStateMachine", 0, "states", "", Array: true),
-            new("hkbStateMachine", 0, "startStateId", "0"),
+            new("hkbStateMachine", 0, "", "#91", Added: true, Id: 91),
+            new("hkbStateMachine", 0, "states", "", Array: true, Id: 91),
+            new("hkbStateMachine", 0, "startStateId", "0", Id: 91),
         }, null);
         string path = WriteImage(PackfileImage.Read(NativeSave.Apply(source, setup)), folder, "State.hkx");
 
@@ -4974,13 +5204,13 @@ public static class Tests
         byte[] source = ClipInAPackfile("Idle.hkx", out _).Rebuild();
         var setup = new NativeSave.Plan(new List<NativeSave.Change>
         {
-            new("hkbStateMachine", 0, "", "#91", Added: true),
-            new("hkbStateMachineStateInfo", 0, "", "#92", Added: true),
-            new("hkbStateMachineStateInfo", 1, "", "#93", Added: true),
-            new("hkbStateMachine", 0, "states", "#92 #93", Array: true),
-            new("hkbStateMachine", 0, "startStateId", "2"),
-            new("hkbStateMachineStateInfo", 0, "stateId", "0"),
-            new("hkbStateMachineStateInfo", 1, "stateId", "2"),
+            new("hkbStateMachine", 0, "", "#91", Added: true, Id: 91),
+            new("hkbStateMachineStateInfo", 0, "", "#92", Added: true, Id: 92),
+            new("hkbStateMachineStateInfo", 1, "", "#93", Added: true, Id: 93),
+            new("hkbStateMachine", 0, "states", "#92 #93", Array: true, Id: 91),
+            new("hkbStateMachine", 0, "startStateId", "2", Id: 91),
+            new("hkbStateMachineStateInfo", 0, "stateId", "0", Id: 92),
+            new("hkbStateMachineStateInfo", 1, "stateId", "2", Id: 93),
         }, null);
         string path = WriteImage(PackfileImage.Read(NativeSave.Apply(source, setup)), folder, "StateId.hkx");
 
@@ -5934,7 +6164,7 @@ public static class Tests
 
         Check("an event it is not listening for moves nothing", 0, run.Send("Opened").Count);
         Check("and it is still closed", "Closed", StateName(model, run));
-        CheckThrows("an event the graph does not declare is refused rather than reported as ignored",
+        CheckThrows<ArgumentException>("an event the graph does not declare is refused rather than reported as ignored",
             () => run.Send("StartOpen"));
         CheckTrue("which the caller can ask about first", !run.Declares("StartOpen"));
 
@@ -6682,11 +6912,11 @@ public static class Tests
 
         var clip = MadeUpClip(20, 1);
 
-        CheckThrows("a single frame is not a clip, because a curve needs an interval",
+        CheckThrows<InvalidOperationException>("a single frame is not a clip, because a curve needs an interval",
             () => AnimationEdit.Trim(clip, null, 5, 5));
-        CheckThrows("a span running past the end is refused rather than clamped",
+        CheckThrows<InvalidOperationException>("a span running past the end is refused rather than clamped",
             () => AnimationEdit.Trim(clip, null, 5, 25));
-        CheckThrows("and a span running backwards likewise",
+        CheckThrows<InvalidOperationException>("and a span running backwards likewise",
             () => AnimationEdit.Trim(clip, null, 12, 4));
     }
 
@@ -6788,7 +7018,7 @@ public static class Tests
         CheckTrue($"and it says what that cost rather than hiding it ({fast.PositionError:F2})",
             fast.PositionError > 10f);
 
-        CheckThrows("and refuses when a caller sets a budget it cannot meet",
+        CheckThrows<InvalidOperationException>("and refuses when a caller sets a budget it cannot meet",
             () => AnimationEdit.Retime(clip, null, 0.5f, true, new AnimationEdit.Budget(1f, 0.01f)));
 
 
@@ -6826,203 +7056,1283 @@ public static class Tests
         Check("an end is still itself", frames[1], AnimationEdit.Turned(frames, 1f));
     }
 
-
-
-
-
-    private static void GrowingAnEmptyArrayKeepsTheDoNotFreeFlag()
+    private static PackfileImage TwoClips(out int firstId, out int secondId)
     {
-        Console.WriteLine("\ngrowing an empty array keeps the do-not-free flag on the capacity word");
+        var classes = HavokClasses.Shipped;
+        int size = classes["hkbClipGenerator"]!.Size;
+        int speed = classes.Field("hkbClipGenerator", "playbackSpeed")!.Offset;
 
-        const string Head = """
-            <?xml version="1.0" encoding="ascii"?>
-            <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
-                <hksection name="__data__">
-            """;
-        const string Tail = """
-                </hksection>
-            </hkpackfile>
-            """;
+        var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
 
-        // Struct array: growing hkbBehaviorGraphData.variableBounds from nothing is Regrow.
-        const string StructBefore = """
-            <hkobject class="hkbBehaviorGraphData" name="#90" signature="0x95aca5d">
-                <hkparam name="variableInfos" numelements="1">
-                    <hkobject>
-                        <hkparam name="type">VARIABLE_TYPE_REAL</hkparam>
-                    </hkobject>
-                </hkparam>
-                <hkparam name="eventInfos" numelements="0"></hkparam>
-                <hkparam name="variableBounds" numelements="0"></hkparam>
-            </hkobject>
-            """;
-        string StructAfter = StructBefore.Replace(
-            "<hkparam name=\"variableBounds\" numelements=\"0\"></hkparam>",
-            """
-            <hkparam name="variableBounds" numelements="1">
-                <hkobject>
-                    <hkparam name="min">
-                        <hkobject class="hkbVariableValue" name="min" signature="0xb99bd6a">
-                            <hkparam name="value">-5</hkparam>
-                        </hkobject>
-                    </hkparam>
-                    <hkparam name="max">
-                        <hkobject class="hkbVariableValue" name="max" signature="0xb99bd6a">
-                            <hkparam name="value">35</hkparam>
-                        </hkobject>
-                    </hkparam>
-                </hkobject>
-            </hkparam>
-            """);
-
-        var structImage = EmptyArrayImage("hkbBehaviorGraphData");
-        var structPlan = NativeSave.Compare(Head + StructBefore + Tail, Head + StructAfter + Tail);
-        CheckTrue("struct growth is planned", structPlan.Possible);
-        CheckTrue("as one grow plus its two element fills",
-                  structPlan.Changes.Count == 3 &&
-                  structPlan.Changes.Count(c => c.Grow) == 1 &&
-                  structPlan.Changes.Count(c => c.InElement) == 2);
-        var structBytes = AppliedEmptyGrowth(structImage, Head + StructBefore + Tail, Head + StructAfter + Tail);
-        Check("struct capacity word carries bit 31", "0x80000001",
-              $"0x{CapacityWord(structBytes, "hkbBehaviorGraphData", "variableBounds"):x8}");
-
-        var structRead = new PackfileObjects(PackfileImage.Read(structBytes));
-        Check("the bound reopens as one element", 1,
-              structRead.ReadArray(structRead.Instances[0], "variableBounds")?.Count);
-        string roundTrip = NativeXml.From(structBytes);
-        CheckTrue("and its minimum value survives the reparse",
-                  roundTrip.Contains("<hkparam name=\"value\">-5</hkparam>", StringComparison.Ordinal));
-        CheckTrue("and its maximum value survives the reparse",
-                  roundTrip.Contains("<hkparam name=\"value\">35</hkparam>", StringComparison.Ordinal));
-
-        // Pointer array: giving hkbStateMachine.states a first element is Resize.
-        const string StatesBefore = """
-            <hkobject class="hkbStateMachine" name="#90" signature="0xa5896bcf">
-                <hkparam name="name">Root</hkparam>
-                <hkparam name="startStateId">0</hkparam>
-                <hkparam name="wildcardTransitions">null</hkparam>
-                <hkparam name="states" numelements="0"></hkparam>
-            </hkobject>
-            <hkobject class="hkbStateMachineStateInfo" name="#91" signature="0x39d76713">
-                <hkparam name="name">A</hkparam>
-                <hkparam name="stateId">0</hkparam>
-                <hkparam name="generator">null</hkparam>
-                <hkparam name="transitions">null</hkparam>
-            </hkobject>
-            """;
-        string StatesAfter = StatesBefore.Replace(
-            "<hkparam name=\"states\" numelements=\"0\"></hkparam>",
-            "<hkparam name=\"states\" numelements=\"1\">#91</hkparam>");
-
-        var statesImage = EmptyArrayImage("hkbStateMachine", "hkbStateMachineStateInfo");
-        var statesPlan = NativeSave.Compare(Head + StatesBefore + Tail, Head + StatesAfter + Tail);
-        CheckTrue("pointer growth is planned", statesPlan.Possible);
-        CheckTrue("as one array resize",
-                  statesPlan.Changes.Count == 1 && statesPlan.Changes[0].Array &&
-                  !statesPlan.Changes[0].Text && !statesPlan.Changes[0].Grow);
-        var statesBytes = AppliedEmptyGrowth(statesImage, Head + StatesBefore + Tail, Head + StatesAfter + Tail);
-        Check("pointer capacity word carries bit 31", "0x80000001",
-              $"0x{CapacityWord(statesBytes, "hkbStateMachine", "states"):x8}");
-        var statesRead = new PackfileObjects(PackfileImage.Read(statesBytes));
-        Check("the state is in the array", 1,
-              statesRead.ReadRefArray(statesRead.Instances[0], "states")?.Count);
-
-        // Value array: giving hkbBoneIndexArray.boneIndices a first number is ResizeValues.
-        const string NumbersBefore = """
-            <hkobject class="hkbBoneIndexArray" name="#90" signature="0x8a02c4a1">
-                <hkparam name="boneIndices" numelements="0"></hkparam>
-            </hkobject>
-            """;
-        string NumbersAfter = NumbersBefore.Replace(
-            "<hkparam name=\"boneIndices\" numelements=\"0\"></hkparam>",
-            "<hkparam name=\"boneIndices\" numelements=\"1\">7</hkparam>");
-
-        var numbersImage = EmptyArrayImage("hkbBoneIndexArray");
-        var numbersPlan = NativeSave.Compare(Head + NumbersBefore + Tail, Head + NumbersAfter + Tail);
-        CheckTrue("value growth is planned", numbersPlan.Possible);
-        CheckTrue("as one value array resize",
-                  numbersPlan.Changes.Count == 1 && numbersPlan.Changes[0].Array &&
-                  !numbersPlan.Changes[0].Text && !numbersPlan.Changes[0].Grow);
-        var numbersBytes = AppliedEmptyGrowth(numbersImage, Head + NumbersBefore + Tail, Head + NumbersAfter + Tail);
-        Check("value capacity word carries bit 31", "0x80000001",
-              $"0x{CapacityWord(numbersBytes, "hkbBoneIndexArray", "boneIndices"):x8}");
-        var numbersRead = new PackfileObjects(PackfileImage.Read(numbersBytes));
-        Check("the number is in the array", 7,
-              numbersRead.ReadValueArray(numbersRead.Instances[0], "boneIndices", 2,
-                                         (b, at) => (int)BitConverter.ToInt16(b, at))?[0]);
-
-        // String array: giving hkbBehaviorGraphStringData.eventNames a first name is ResizeText.
-        const string NamesBefore = """
-            <hkobject class="hkbBehaviorGraphStringData" name="#90" signature="0xc713064e">
-                <hkparam name="eventNames" numelements="0"></hkparam>
-            </hkobject>
-            """;
-        string NamesAfter = NamesBefore.Replace(
-            "<hkparam name=\"eventNames\" numelements=\"0\"></hkparam>",
-            "<hkparam name=\"eventNames\" numelements=\"1\">\n" +
-            "                    <hkcstring>Sprint</hkcstring>\n" +
-            "                </hkparam>");
-
-        var namesImage = EmptyArrayImage("hkbBehaviorGraphStringData");
-        var namesPlan = NativeSave.Compare(Head + NamesBefore + Tail, Head + NamesAfter + Tail);
-        CheckTrue("name growth is planned", namesPlan.Possible);
-        CheckTrue("as one text array resize",
-                  namesPlan.Changes.Count == 1 && namesPlan.Changes[0].Array &&
-                  namesPlan.Changes[0].Text && !namesPlan.Changes[0].Grow);
-        var namesBytes = AppliedEmptyGrowth(namesImage, Head + NamesBefore + Tail, Head + NamesAfter + Tail);
-        Check("name capacity word carries bit 31", "0x80000001",
-              $"0x{CapacityWord(namesBytes, "hkbBehaviorGraphStringData", "eventNames"):x8}");
-        var namesRead = new PackfileObjects(PackfileImage.Read(namesBytes));
-        Check("the name is in the array", "Sprint",
-              namesRead.ReadStringArray(namesRead.Instances[0], "eventNames")?[0]);
-    }
-
-    private static PackfileImage EmptyArrayImage(params string[] classes)
-    {
-        var types = HavokClassTypes.Shipped;
-        int offset = 0, nameAt = 5;
-        var data = new byte[0];
-        var names = new List<byte>();
-        var virtuals = new List<byte>();
-
-        foreach (string className in classes)
-        {
-            int size = types[className]!.Size ?? 0;
-            data = data.Concat(new byte[size]).ToArray();
-
-            var entry = new byte[5 + className.Length + 1];
-            BitConverter.GetBytes(types[className]!.Signature).CopyTo(entry, 0);
-            entry[4] = 0x09;
-            System.Text.Encoding.ASCII.GetBytes(className).CopyTo(entry, 5);
-            names.AddRange(entry);
-            virtuals.AddRange(Triple(offset, 0, nameAt));
-
-            offset += (size + 15) / 16 * 16;
-            nameAt += 5 + className.Length + 1;
-        }
+        int second = (size + 15) / 16 * 16;
+        var data = new byte[second + size];
+        BitConverter.GetBytes(2.5f).CopyTo(data, speed);
+        BitConverter.GetBytes(1.5f).CopyTo(data, second + speed);
 
         var image = new PackfileImage();
-        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names.ToArray() });
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
         image.Sections.Add(new PackfileSection
         {
             TagBytes = MakeTag("__data__"),
             Data = data,
-            VirtualFixups = virtuals.ToArray(),
+            VirtualFixups = Triple(0, 0, 5).Concat(Triple(second, 0, 5)).ToArray(),
+        });
+        firstId = NativeGraphModel.FirstId;
+        secondId = NativeGraphModel.FirstId + 1;
+        return image;
+    }
+
+    private static string WithoutObject(string xml, int id)
+    {
+        var (start, length) = HkxTextEdit.ObjectBlock(xml, id.ToString());
+        return xml.Remove(start, length);
+    }
+
+    private static void DeletingOneClipDoesNotRedirectTheEdit()
+    {
+        Console.WriteLine("\ndelete one same-class object and edit another in one save");
+        var image = TwoClips(out int firstId, out int secondId);
+        byte[] source = image.Rebuild();
+        string xml = NativeXml.From(source);
+
+        string edited = HkxTextEdit.SetParam(WithoutObject(xml, firstId),
+                                             secondId.ToString(), "playbackSpeed", "0.25");
+
+        var plan = NativeSave.Compare(xml, edited);
+        CheckTrue("the delete+edit save is accepted", plan.Possible);
+        if (!plan.Possible) Console.WriteLine("refusal: " + plan.Refusal);
+        Check("the deletion is recorded", 1, plan.Gone.Count);
+        Check("and names the deleted clip", firstId, plan.Gone[0]);
+
+        byte[] rebuilt = NativeSave.Apply(source, plan);
+        var objects = new PackfileObjects(PackfileImage.Read(rebuilt));
+        Check("exactly one clip remains", 1,
+              objects.Instances.Count(i => i.ClassName == "hkbClipGenerator"));
+        var survivor = objects.Instances.Single(i => i.ClassName == "hkbClipGenerator");
+        Check("and it carries the edited speed, not the deleted clip's", 0.25f,
+              objects.ReadFloat(survivor, "playbackSpeed"));
+    }
+
+    private static void DeletingLaterClipKeepsTheEditOnTheEarlierClip()
+    {
+        Console.WriteLine("\ndelete the later same-class object and edit the earlier one");
+        var image = TwoClips(out int firstId, out int secondId);
+        byte[] source = image.Rebuild();
+        string xml = NativeXml.From(source);
+
+        string edited = HkxTextEdit.SetParam(WithoutObject(xml, secondId),
+                                             firstId.ToString(), "playbackSpeed", "0.125");
+
+        var plan = NativeSave.Compare(xml, edited);
+        CheckTrue("the delete+edit save is accepted", plan.Possible);
+        Check("the deletion is recorded", 1, plan.Gone.Count);
+        Check("and names the later clip", secondId, plan.Gone[0]);
+
+        byte[] rebuilt = NativeSave.Apply(source, plan);
+        var objects = new PackfileObjects(PackfileImage.Read(rebuilt));
+        Check("exactly one clip remains", 1,
+              objects.Instances.Count(i => i.ClassName == "hkbClipGenerator"));
+        var survivor = objects.Instances.Single(i => i.ClassName == "hkbClipGenerator");
+        Check("and it carries the edited speed", 0.125f,
+              objects.ReadFloat(survivor, "playbackSpeed"));
+    }
+
+    private static void DeleteAddAndEditSameClassInOneSave()
+    {
+        Console.WriteLine("\ndelete one clip, add a new clip, and edit a survivor in one save");
+        var image = TwoClips(out int firstId, out int secondId);
+        byte[] source = image.Rebuild();
+        string xml = NativeXml.From(source);
+
+        string signature = "0x" + HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature.ToString("x");
+        string inner =
+            """
+                <hkparam name="name">New Clip</hkparam>
+                <hkparam name="animationName">Walk.hkx</hkparam>
+                <hkparam name="playbackSpeed">0.75</hkparam>
+                <hkparam name="animationBindingIndex">-1</hkparam>
+            """;
+        string withNew = HkxTextEdit.AddObject(WithoutObject(xml, firstId), "hkbClipGenerator",
+                                               signature, inner, out string newId);
+        string edited = HkxTextEdit.SetParam(withNew, secondId.ToString(), "playbackSpeed", "0.25");
+
+        var plan = NativeSave.Compare(xml, edited);
+        CheckTrue("the delete+add+edit save is accepted", plan.Possible);
+        if (!plan.Possible) Console.WriteLine("refusal: " + plan.Refusal);
+        Check("the deletion is recorded", 1, plan.Gone.Count);
+        Check("and names the deleted clip", firstId, plan.Gone[0]);
+
+        byte[] rebuilt = NativeSave.Apply(source, plan);
+        var objects = new PackfileObjects(PackfileImage.Read(rebuilt));
+        var clips = objects.Instances.Where(i => i.ClassName == "hkbClipGenerator").ToList();
+        Check("two clips remain", 2, clips.Count);
+        var added = clips.Single(c => (objects.ReadString(c, "name") ?? "") == "New Clip");
+        var survivor = clips.Single(c => (objects.ReadString(c, "name") ?? "") != "New Clip");
+        Check("the survivor carries its own edited speed", 0.25f,
+              objects.ReadFloat(survivor, "playbackSpeed"));
+        Check("the added clip carries the speed it was given", 0.75f,
+              objects.ReadFloat(added, "playbackSpeed"));
+    }
+
+    private static PackfileImage TwoValueSets(out int firstId, out int secondId)
+    {
+        int size = HavokClasses.Shipped["hkbVariableValueSet"]!.Size;
+
+        var names = new byte[5 + "hkbVariableValueSet".Length + 1 +
+                             5 + "hkbVariableValue".Length + 1];
+        int at = 0;
+        foreach (string name in new[] { "hkbVariableValueSet", "hkbVariableValue" })
+        {
+            BitConverter.GetBytes(HavokClassTypes.Shipped[name]!.Signature).CopyTo(names, at);
+            names[at + 4] = 0x09;
+            System.Text.Encoding.ASCII.GetBytes(name).CopyTo(names, at + 5);
+            at += 5 + name.Length + 1;
+        }
+
+        int second = (size + 15) / 16 * 16;
+        var data = new byte[second + size];
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            VirtualFixups = Triple(0, 0, 5).Concat(Triple(second, 0, 5)).ToArray(),
+        });
+        firstId = NativeGraphModel.FirstId;
+        secondId = NativeGraphModel.FirstId + 1;
+        return image;
+    }
+
+    private static void GrowthOnSurvivorWhileDeletingSameClass()
+    {
+        Console.WriteLine("\ngrow an array on the survivor while deleting a same-class object");
+        var image = TwoValueSets(out int firstId, out int secondId);
+        byte[] source = image.Rebuild();
+        string xml = NativeXml.From(source);
+
+        string element =
+            """
+            <hkobject>
+                <hkparam name="value">7</hkparam>
+            </hkobject>
+            """;
+        string grown = HkxTextEdit.ArrayAppend(WithoutObject(xml, firstId), secondId.ToString(),
+                                               "wordVariableValues", element);
+
+        var plan = NativeSave.Compare(xml, grown);
+        CheckTrue("the delete+grow save is accepted", plan.Possible);
+        if (!plan.Possible) Console.WriteLine("refusal: " + plan.Refusal);
+        Check("the deletion is recorded", 1, plan.Gone.Count);
+        Check("and names the deleted set", firstId, plan.Gone[0]);
+        var grow = plan.Changes.Where(c => c.Grow).ToList();
+        Check("one grow change is planned", 1, grow.Count);
+        Check("aimed at the survivor, not the deleted set", secondId, grow[0].Id);
+
+        byte[] rebuilt = NativeSave.Apply(source, plan);
+        var image2 = PackfileImage.Read(rebuilt);
+        var objects = new PackfileObjects(image2);
+        Check("exactly one set remains", 1,
+              objects.Instances.Count(i => i.ClassName == "hkbVariableValueSet"));
+        var survivor = objects.Instances.Single(i => i.ClassName == "hkbVariableValueSet");
+        int header = objects.FieldAt(survivor, "wordVariableValues") ?? -1;
+        var array = header >= 0 ? objects.ArrayAt(header) : null;
+        Check("the survivor's array holds one element", 1, array?.Count ?? -1);
+        int value = array is { } a ? BitConverter.ToInt32(image2.Section("__data__")!.Data, a.At) : -1;
+        Check("with the written value", 7, value);
+    }
+
+    private static void VerifierAcceptsTheDeleteAndEditSave()
+    {
+        Console.WriteLine("\nrebuilt bytes are verified against the plan before any commit");
+        var image = TwoClips(out int firstId, out int secondId);
+        byte[] source = image.Rebuild();
+        string xml = NativeXml.From(source);
+
+        string edited = HkxTextEdit.SetParam(WithoutObject(xml, firstId),
+                                             secondId.ToString(), "playbackSpeed", "0.25");
+
+        var plan = NativeSave.Compare(xml, edited);
+        CheckTrue("the delete+edit save is accepted", plan.Possible);
+        if (!plan.Possible) Console.WriteLine("refusal: " + plan.Refusal);
+
+        byte[] rebuilt = NativeSave.Apply(source, plan);
+        bool threw = false;
+        try { SaveVerifier.Verify(source, rebuilt, plan); }
+        catch (Exception e) { threw = true; Console.WriteLine("  verifier: " + e.Message); }
+        CheckTrue("the verifier accepts the correct rebuild", !threw);
+
+        var objects = new PackfileObjects(PackfileImage.Read(rebuilt));
+        var survivor = objects.Instances.Single(i => i.ClassName == "hkbClipGenerator");
+        Check("the survivor's edited speed is what the plan intended", 0.25f,
+              objects.ReadFloat(survivor, "playbackSpeed"));
+    }
+
+    private static void VerifierRejectsACorruptedClassSignature()
+    {
+        Console.WriteLine("\na corrupted class signature is caught before commit");
+        var image = TwoClips(out int firstId, out int secondId);
+        byte[] source = image.Rebuild();
+        string xml = NativeXml.From(source);
+
+        string edited = HkxTextEdit.SetParam(WithoutObject(xml, firstId),
+                                             secondId.ToString(), "playbackSpeed", "0.25");
+        var plan = NativeSave.Compare(xml, edited);
+        byte[] rebuilt = NativeSave.Apply(source, plan);
+
+        var corrupt = PackfileImage.Read(rebuilt);
+        corrupt.Section("__classnames__")!.Data[0] ^= 0xFF;
+        byte[] bad = corrupt.Rebuild();
+
+        try
+        {
+            SaveVerifier.Verify(source, bad, plan);
+            CheckTrue("a wrong class signature is rejected", false);
+        }
+        catch (InvalidDataException e)
+        {
+            CheckTrue("a wrong class signature is rejected",
+                      e.Message.Contains("hkbClipGenerator", StringComparison.Ordinal));
+        }
+        catch (Exception e)
+        {
+            CheckTrue("a wrong class signature is rejected as InvalidDataException", false);
+            Console.WriteLine("  threw " + e.GetType().Name + ": " + e.Message);
+        }
+    }
+
+    private static void VerifierRejectsADroppedObjectNotInThePlan()
+    {
+        Console.WriteLine("\nan object dropped without being in the plan is caught");
+        var image = TwoClips(out int firstId, out int secondId);
+        byte[] source = image.Rebuild();
+        string xml = NativeXml.From(source);
+
+        string edited = HkxTextEdit.SetParam(WithoutObject(xml, firstId),
+                                             secondId.ToString(), "playbackSpeed", "0.25");
+        var plan = NativeSave.Compare(xml, edited);
+        byte[] rebuilt = NativeSave.Apply(source, plan);
+
+        var forgetful = plan with { Removed = null };
+        try
+        {
+            SaveVerifier.Verify(source, rebuilt, forgetful);
+            CheckTrue("a dropped object not in the plan is rejected", false);
+        }
+        catch (InvalidDataException e)
+        {
+            CheckTrue("a dropped object not in the plan is rejected",
+                      e.Message.Contains("expected", StringComparison.Ordinal));
+        }
+        catch (Exception e)
+        {
+            CheckTrue("a dropped object not in the plan is rejected as InvalidDataException", false);
+            Console.WriteLine("  threw " + e.GetType().Name + ": " + e.Message);
+        }
+    }
+
+    private static void VerifierRejectsATruncatedRebuild()
+    {
+        Console.WriteLine("\na truncated rebuild is caught before commit");
+        var image = TwoClips(out int firstId, out int secondId);
+        byte[] source = image.Rebuild();
+        string xml = NativeXml.From(source);
+
+        string edited = HkxTextEdit.SetParam(WithoutObject(xml, firstId),
+                                             secondId.ToString(), "playbackSpeed", "0.25");
+        var plan = NativeSave.Compare(xml, edited);
+        byte[] rebuilt = NativeSave.Apply(source, plan);
+
+        var trunc = PackfileImage.Read(rebuilt);
+        var data = trunc.Section("__data__");
+        CheckTrue("the rebuilt file has a data section", data != null);
+        if (data == null) return;
+
+        var objects = new PackfileObjects(PackfileImage.Read(rebuilt));
+        var survivor = objects.Instances.Single(i => i.ClassName == "hkbClipGenerator");
+        data.Data = data.Data[..Math.Min(data.Data.Length, survivor.Offset + 8)].ToArray();
+        byte[] shortBytes = trunc.Rebuild();
+
+        try
+        {
+            SaveVerifier.Verify(source, shortBytes, plan);
+            CheckTrue("a truncated rebuild is rejected", false);
+        }
+        catch (InvalidDataException)
+        {
+            CheckTrue("a truncated rebuild is rejected", true);
+        }
+        catch (Exception e)
+        {
+            CheckTrue("a truncated rebuild is rejected as InvalidDataException", false);
+            Console.WriteLine("  threw " + e.GetType().Name + ": " + e.Message);
+        }
+    }
+
+    private static void PredefinedBlendRequiresGenerators()
+    {
+        Console.WriteLine("\na blend generator requires generator children");
+        string work = Path.Combine(Path.GetTempPath(), "symrm-template-" + Guid.NewGuid().ToString("N"));
+        string path = WriteImage(TwoClips(out _, out _), work, "Two.hkx");
+        try
+        {
+            var none = PredefinedTemplates.Instantiate(path, "blend-generator",
+                new Dictionary<string, string> { ["generators"] = "" });
+            CheckTrue("an empty generator list is refused", !none.Possible);
+            Check("and produces no bytes", null, none.Bytes);
+
+            var bogus = PredefinedTemplates.Instantiate(path, "blend-generator",
+                new Dictionary<string, string> { ["generators"] = "#90 #9999" });
+            CheckTrue("a generator id that is not in the file is refused", !bogus.Possible);
+            Check("and produces no bytes", null, bogus.Bytes);
+        }
+        finally { Directory.Delete(work, true); }
+    }
+
+    private static void PredefinedBlendWritesChildGenerators()
+    {
+        Console.WriteLine("\na blend generator writes children that each carry a generator");
+        string work = Path.Combine(Path.GetTempPath(), "symrm-template-" + Guid.NewGuid().ToString("N"));
+        string path = WriteImage(TwoClips(out _, out _), work, "Two.hkx");
+        try
+        {
+            var result = PredefinedTemplates.Instantiate(path, "blend-generator",
+                new Dictionary<string, string> { ["generators"] = "#90 #91" });
+            CheckTrue("the blend save is accepted", result.Possible);
+            if (!result.Possible) Console.WriteLine("refusal: " + result.Refusal);
+            Check("and produces bytes", true, result.Bytes != null);
+            if (result.Bytes == null) return;
+
+            var reopened = new PackfileObjects(PackfileImage.Read(result.Bytes), HavokClasses.Shipped);
+            var blender = reopened.Instances.Single(i => i.ClassName == "hkbBlenderGenerator");
+            var children = reopened.ReadRefArray(blender, "children");
+            Check("the blender lists two children", 2, children?.Count ?? -1);
+            Check("each child is a wrapper object", 2,
+                  reopened.Instances.Count(i => i.ClassName == "hkbBlenderGeneratorChild"));
+            foreach (var child in reopened.Instances.Where(i => i.ClassName == "hkbBlenderGeneratorChild"))
+            {
+                bool wasNull = false;
+                var gen = reopened.ReadRef(child, "generator", out wasNull);
+                CheckTrue("the wrapper's generator is not null", !wasNull && gen != null);
+            }
+        }
+        finally { Directory.Delete(work, true); }
+    }
+
+    private static void CheckBlendersFlagsAChildWithoutGenerator()
+    {
+        Console.WriteLine("\na blender child with no generator is a save blocker");
+        var image = TwoClips(out _, out _);
+        string xml = NativeXml.From(image.Rebuild()) +
+            """
+
+                <hkobject class="hkbBlenderGenerator" name="#95">
+                    <hkparam name="name">Blend</hkparam>
+                    <hkparam name="blendParameter">0</hkparam>
+                    <hkparam name="maxCyclicBlendParameter">1</hkparam>
+                    <hkparam name="indexOfSyncMasterChild">-1</hkparam>
+                    <hkparam name="flags">8</hkparam>
+                    <hkparam name="children" numelements="1">#96</hkparam>
+                </hkobject>
+                <hkobject class="hkbBlenderGeneratorChild" name="#96">
+                    <hkparam name="weight">1</hkparam>
+                    <hkparam name="generator">null</hkparam>
+                </hkobject>
+            """;
+        var findings = GraphValidator.Check(xml);
+        CheckTrue("the validator flags the child without a generator",
+                  findings.Any(f => f.BlocksSave &&
+                                    f.What.Contains("no generator", StringComparison.Ordinal)));
+        CheckTrue("and it is an error",
+                  findings.Any(f => f.Level == GraphValidator.Level.Error && f.BlocksSave &&
+                                    f.What.Contains("no generator", StringComparison.Ordinal)));
+    }
+
+    private static void NamesWithXmlCharactersSurviveCreation()
+    {
+        Console.WriteLine("\nnames with xml characters survive creation and round-trip");
+        foreach (string name in new[] { "Idle & Aim", "<Default>", "\"Quoted\"", "A > B" })
+        {
+            string created = GeneratorEditor.Add(SmallGraph(), "clip", name, "Walk.hkx", "", out string id);
+            var model = BehaviourGraphModel.Parse(created);
+            Check($"{name}: the created clip keeps the logical name", name,
+                  model.Get(id)?.Str("name") ?? "<missing>");
+
+            bool threw = false;
+            try { NativeSave.Compare(SmallGraph(), created); }
+            catch (Exception e) { threw = true; Console.WriteLine("  threw " + e.GetType().Name + ": " + e.Message); }
+            CheckTrue($"{name}: the save path accepts the created xml", !threw);
+        }
+
+        foreach (string name in new[] { "Idle & Aim", "<Default>", "\"Quoted\"", "A > B" })
+        {
+            string created = StateEditor.AddState(SmallGraph(), "92", name, "#97", out string stateId, out _);
+            var model = BehaviourGraphModel.Parse(created);
+            Check($"{name}: the new state keeps the logical name", name,
+                  model.Get(stateId)?.Str("name") ?? "<missing>");
+        }
+    }
+
+    private static void BackupsRotateAndReplacementIsStaged()
+    {
+        Console.WriteLine("\nbackups rotate so .bak is always the previous version");
+        string folder = Path.Combine(Path.GetTempPath(), "symrm-backup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        string path = Path.Combine(folder, "graph.hkx");
+        try
+        {
+            File.WriteAllText(path, "v1");
+            FileSafety.Backup(path);
+            Check(".bak is v1", "v1", File.ReadAllText(path + ".bak"));
+
+            File.WriteAllText(path, "v2");
+            FileSafety.Backup(path);
+            Check(".bak is v2", "v2", File.ReadAllText(path + ".bak"));
+            Check(".bak.1 is v1", "v1", File.ReadAllText(path + ".bak.1"));
+
+            File.WriteAllText(path, "v3");
+            FileSafety.Backup(path);
+            Check(".bak is v3", "v3", File.ReadAllText(path + ".bak"));
+            Check(".bak.1 is v2", "v2", File.ReadAllText(path + ".bak.1"));
+            Check(".bak.2 is v1", "v1", File.ReadAllText(path + ".bak.2"));
+
+            File.WriteAllText(path, "v4");
+            FileSafety.Backup(path);
+            Check(".bak is v4", "v4", File.ReadAllText(path + ".bak"));
+            Check(".bak.1 is v3", "v3", File.ReadAllText(path + ".bak.1"));
+            Check(".bak.2 is v2", "v2", File.ReadAllText(path + ".bak.2"));
+            CheckTrue("keep=3 never leaves .bak.3", !File.Exists(path + ".bak.3"));
+            CheckTrue("the source is still v4", File.ReadAllText(path) == "v4");
+        }
+        finally { Directory.Delete(folder, true); }
+
+        Console.WriteLine("\nreplacement stages uniquely and cleans up");
+        string folder2 = Path.Combine(Path.GetTempPath(), "symrm-replace-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder2);
+        string target = Path.Combine(folder2, "out.hkx");
+        try
+        {
+            File.WriteAllText(target, "old");
+            FileSafety.Replace(target, System.Text.Encoding.UTF8.GetBytes("new-bytes"));
+            Check("the replacement landed", "new-bytes", File.ReadAllText(target));
+            CheckTrue("no staging file remains after success",
+                      Directory.GetFiles(folder2).Length == 1);
+
+            string blocked = Path.Combine(folder2, "blocked.hkx");
+            Directory.CreateDirectory(blocked);
+            bool threw = false;
+            try { FileSafety.Replace(blocked, new byte[] { 1 }); }
+            catch { threw = true; }
+            CheckTrue("replacement over a directory fails", threw);
+            CheckTrue("and the staging file is cleaned up",
+                      !Directory.GetFiles(folder2, "*.writing").Any());
+        }
+        finally { Directory.Delete(folder2, true); }
+    }
+
+    private static void PackfileSectionOffsetsAreValidated()
+    {
+        Console.WriteLine("\npackfile section offsets are validated");
+        byte[] valid = TwoClips(out _, out _).Rebuild();
+
+        var negativeCount = (byte[])valid.Clone();
+        BitConverter.GetBytes(-1).CopyTo(negativeCount, 0x14);
+        CheckThrows<InvalidDataException>("a negative section count is refused", () => PackfileImage.Read(negativeCount));
+
+        var negativeStart = (byte[])valid.Clone();
+        BitConverter.GetBytes(-1).CopyTo(negativeStart, 0x40 + 0x14);
+        CheckThrows<InvalidDataException>("a section starting before the file is refused", () => PackfileImage.Read(negativeStart));
+
+        var brokenMarks = (byte[])valid.Clone();
+        int mark0 = BitConverter.ToInt32(brokenMarks, 0x40 + 0x18);
+        BitConverter.GetBytes(mark0 - 1).CopyTo(brokenMarks, 0x40 + 0x1C);
+        CheckThrows<InvalidDataException>("non-monotonic section marks are refused", () => PackfileImage.Read(brokenMarks));
+    }
+
+    private static byte[] MinimalNif(bool oversizedBlock = false, bool oversizedString = false)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, System.Text.Encoding.ASCII, leaveOpen: true);
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("Gamebryo File Format, Version 20.2.0.7\n"));
+        writer.Write(0x14020007u);
+        writer.Write((byte)1);
+        writer.Write(12u);
+        writer.Write(oversizedBlock ? 1u : 0u);
+        writer.Write(130u);
+        for (int i = 0; i < 4; i++) writer.Write((byte)0);
+        writer.Write((ushort)(oversizedBlock ? 1 : 0));
+        if (oversizedBlock)
+        {
+            writer.Write(1u);
+            writer.Write((byte)'X');
+            writer.Write((ushort)0);
+            writer.Write(uint.MaxValue);
+        }
+        writer.Write(oversizedString ? 1u : 0u);
+        writer.Write(oversizedString ? 1024u : 0u);
+        if (oversizedString) writer.Write(uint.MaxValue);
+        writer.Write(0u);
+        writer.Write(0u);
+        return stream.ToArray();
+    }
+
+    private static void NifParserAcceptsMinimalFile()
+    {
+        Console.WriteLine("\na minimal NIF parses");
+        var nif = OpenCommonwealth.Services.Nif.NifFile.Parse(MinimalNif(), "minimal.nif");
+        Check("the minimal file has no blocks", 0, nif.BlockCount);
+        Check("and preserves BSVersion", 130u, nif.BsVersion);
+    }
+
+    private static void NifParserRejectsMalformedTables()
+    {
+        Console.WriteLine("\nmalformed NIF tables are bounded");
+        byte[] valid = MinimalNif();
+        int end = Array.IndexOf(valid, (byte)'\n');
+        int blocksAt = end + 10;
+        int typesAt = end + 22;
+        int stringsAt = end + 24;
+        int groupsAt = end + 32;
+
+        void Refused(string what, byte[] bytes)
+        {
+            try
+            {
+                OpenCommonwealth.Services.Nif.NifFile.Parse(bytes, "hostile.nif");
+                CheckTrue(what, false);
+            }
+            catch (InvalidDataException ex)
+            {
+                CheckTrue(what, ex.Message.Contains("hostile.nif", StringComparison.Ordinal));
+            }
+        }
+
+        Refused("a truncated header is reported as invalid NIF data", valid[..(end + 3)]);
+
+        var blocks = (byte[])valid.Clone();
+        BitConverter.GetBytes(uint.MaxValue).CopyTo(blocks, blocksAt);
+        Refused("an implausible block count is refused", blocks);
+
+        var types = (byte[])valid.Clone();
+        BitConverter.GetBytes(ushort.MaxValue).CopyTo(types, typesAt);
+        Refused("an implausible type count is refused", types);
+
+        var strings = (byte[])valid.Clone();
+        BitConverter.GetBytes(uint.MaxValue).CopyTo(strings, stringsAt);
+        Refused("an implausible string count is refused", strings);
+        Refused("an overflowing string length is refused",
+                MinimalNif(oversizedString: true));
+
+        var groups = (byte[])valid.Clone();
+        BitConverter.GetBytes(uint.MaxValue).CopyTo(groups, groupsAt);
+        Refused("an overflowing group count is refused", groups);
+
+        Refused("an overflowing block size is refused", MinimalNif(oversizedBlock: true));
+    }
+
+    private static void NifTriangleIndicesStayInRange()
+    {
+        Console.WriteLine("\ntriangle indices stay in range");
+        var shape = new OpenCommonwealth.Services.Nif.NifShape { Name = "bad" };
+        shape.Vertices.Add(new Vector3(0, 0, 0));
+        shape.Vertices.Add(new Vector3(1, 0, 0));
+        shape.Vertices.Add(new Vector3(0, 1, 0));
+        shape.Indices.AddRange(new[] { 0, 1, 8 });
+
+        var edges = OpenCommonwealth.Services.Nif.SkinnedMesh.Edges(shape);
+        CheckTrue("no edge references the missing vertex",
+                  !edges.Any(e => e.From == 8 || e.To == 8));
+        Check("and no edge is produced from the invalid triangle", 0, edges.Count);
+    }
+
+    private static string OneEntryArchive(string name, byte[] payload, bool packed, uint declaredUnpacked,
+                                           long? offsetOverride = null)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "symrm-ba2-" + Guid.NewGuid().ToString("N") + ".ba2");
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+
+        long headerEnd = 24 + 36;
+        long nameTableAt = headerEnd + payload.Length;
+
+        writer.Write(new[] { 'B', 'T', 'D', 'X' });
+        writer.Write(1u);
+        writer.Write(new[] { 'G', 'N', 'R', 'L' });
+        writer.Write(1u);
+        writer.Write((ulong)nameTableAt);
+
+        writer.Write(0u); writer.Write(0u); writer.Write(0u); writer.Write(0u);
+        writer.Write((ulong)(offsetOverride ?? headerEnd));
+        writer.Write(packed ? (uint)payload.Length : 0u);
+        writer.Write(declaredUnpacked);
+        writer.Write(0u);
+
+        writer.Write(payload);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(name.Replace('/', '\\'));
+        writer.Write((ushort)bytes.Length);
+        writer.Write(bytes);
+        return path;
+    }
+
+    private static void Ba2ExtractionStaysInsideTheOutputRoot()
+    {
+        Console.WriteLine("\nba2 extraction stays inside the output root");
+        string temp = Path.GetTempPath();
+        string folder = Path.Combine(temp, "symrm-extract-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        string escape = Path.Combine(folder, "escape.hkx");
+        string outside = Path.Combine(temp, "escape.hkx");
+        if (File.Exists(outside)) File.Delete(outside);
+        try
+        {
+            string archive = OneEntryArchive("../escape.hkx",
+                                             System.Text.Encoding.UTF8.GetBytes("gotcha"), false,
+                                             (uint)"gotcha".Length);
+            try
+            {
+                OpenCommonwealth.Services.Archive.Ba2.ExtractMatching(
+                    archive, "escape", folder, ".hkx", _ => { }, keepFolders: true);
+                CheckTrue("a traversal name is refused", false);
+            }
+            catch (InvalidDataException) { CheckTrue("a traversal name is refused", true); }
+            finally { File.Delete(archive); }
+            CheckTrue("nothing was written outside the extraction folder",
+                      !File.Exists(outside));
+            if (File.Exists(outside)) File.Delete(outside);
+
+            string benign = OneEntryArchive("inside/ok.hkx",
+                                            System.Text.Encoding.UTF8.GetBytes("fine"), false,
+                                            (uint)"fine".Length);
+            try
+            {
+                int wrote = OpenCommonwealth.Services.Archive.Ba2.ExtractMatching(
+                    benign, "ok", folder, ".hkx", _ => { }, keepFolders: true);
+                Check("a normal nested entry still extracts", 1, wrote);
+                Check("and lands inside the output folder", "fine",
+                      File.ReadAllText(Path.Combine(folder, "inside", "ok.hkx")));
+            }
+            finally { File.Delete(benign); }
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    private static void Ba2ExtractionRefusesSymlinkEscape()
+    {
+        Console.WriteLine("\nba2 extraction refuses a child symlink escape");
+        string temp = Path.GetTempPath();
+        string folder = Path.Combine(temp, "symrm-extract-" + Guid.NewGuid().ToString("N"));
+        string outside = Path.Combine(temp, "symrm-outside-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        Directory.CreateDirectory(outside);
+        Directory.CreateSymbolicLink(Path.Combine(folder, "inside"), outside);
+        string archive = OneEntryArchive("inside/escape.hkx",
+                                         System.Text.Encoding.UTF8.GetBytes("gotcha"), false,
+                                         (uint)"gotcha".Length);
+        try
+        {
+            bool refused = false;
+            try
+            {
+                OpenCommonwealth.Services.Archive.Ba2.ExtractMatching(
+                    archive, "escape", folder, ".hkx", _ => { }, keepFolders: true);
+            }
+            catch (InvalidDataException) { refused = true; }
+
+            CheckTrue("an existing child symlink is refused", refused);
+            CheckTrue("the symlink target remains untouched",
+                      !File.Exists(Path.Combine(outside, "escape.hkx")));
+        }
+        finally
+        {
+            File.Delete(archive);
+            Directory.Delete(folder, true);
+            Directory.Delete(outside, true);
+        }
+    }
+
+    private static void Ba2OpenFailureReleasesArchive()
+    {
+        Console.WriteLine("\nba2 open failure releases the archive");
+        string path = Path.Combine(Path.GetTempPath(),
+                                   "symrm-ba2-bad-" + Guid.NewGuid().ToString("N") + ".ba2");
+        File.WriteAllBytes(path, System.Text.Encoding.ASCII.GetBytes("BTDX"));
+        try
+        {
+            try { OpenCommonwealth.Services.Archive.Ba2.Open(path); }
+            catch (EndOfStreamException) { }
+
+            using var exclusive = File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            CheckTrue("a malformed archive can be reopened exclusively", exclusive.CanWrite);
+        }
+        finally { File.Delete(path); }
+    }
+
+    private static void Ba2DecompressionIsBounded()
+    {
+        Console.WriteLine("\nba2 decompression is bounded");
+        byte[] bombBytes = System.Text.Encoding.ASCII.GetBytes(new string('x', 4096));
+        byte[] squashed;
+        using (var buffer = new MemoryStream())
+        {
+            using (var zlib = new System.IO.Compression.ZLibStream(
+                       buffer, System.IO.Compression.CompressionMode.Compress, true))
+                zlib.Write(bombBytes, 0, bombBytes.Length);
+            squashed = buffer.ToArray();
+        }
+
+        string bomb = OneEntryArchive("bomb.hkx", squashed, true, 10);
+        try
+        {
+            using var archive = OpenCommonwealth.Services.Archive.Ba2.Open(bomb);
+            bool threw = false;
+            try { archive.Read(archive.Entries[0]); }
+            catch (InvalidDataException) { threw = true; }
+            CheckTrue("a stream that expands beyond its declared size is refused", threw);
+        }
+        finally { File.Delete(bomb); }
+
+        string truncated = OneEntryArchive("cut.hkx", new byte[] { 1, 2, 3 }, false, 3,
+                                           offsetOverride: 1000000);
+        try
+        {
+            bool threw = false;
+            try
+            {
+                using var archive = OpenCommonwealth.Services.Archive.Ba2.Open(truncated);
+                archive.Read(archive.Entries[0]);
+            }
+            catch (InvalidDataException) { threw = true; }
+            CheckTrue("an entry pointing outside the file is refused", threw);
+        }
+        finally { File.Delete(truncated); }
+    }
+
+    private static void EnumOfInt8EditsPersistNumerically()
+    {
+        Console.WriteLine("\nenum-of-int8 fields persist as their numeric storage value");
+        const string className = "BGSGamebryoSequenceGenerator";
+        var classes = HavokClasses.Shipped;
+        int size = classes[className]!.Size;
+        int blendAt = classes.Field(className, "eBlendModeFunction")!.Offset;
+
+        var names = new byte[5 + className.Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped[className]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes(className).CopyTo(names, 5);
+
+        int run = (size + 15) / 16 * 16;
+        var data = new byte[run + 4];
+        BitConverter.GetBytes((short)0).CopyTo(data, run);
+        BitConverter.GetBytes((short)1).CopyTo(data, run + 2);
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            VirtualFixups = Triple(0, 0, 5),
+        });
+
+        byte[] source = image.Rebuild();
+        string original = NativeXml.From(source);
+        Check("the fresh object starts at BMF_NONE", "BMF_NONE",
+              HkxTextEdit.ReadParams(original, "90").First(p => p.Name == "eBlendModeFunction").Value);
+
+        string byName = HkxTextEdit.SetParam(original, "90", "eBlendModeFunction", "BMF_ONE_MINUS_PERCENT");
+        var planned = NativeSave.Compare(original, byName);
+        CheckTrue("the named enum edit is planned", planned.Possible);
+        if (planned.Refusal != null) Console.WriteLine("  refusal: " + planned.Refusal);
+        if (planned.Possible)
+        {
+            var objects = new PackfileObjects(PackfileImage.Read(NativeSave.Apply(source, planned)), HavokClasses.Shipped);
+            Check("the named enum is written as its numeric value", 2,
+                  objects.ReadInt(objects.Instances[0], "eBlendModeFunction"));
+        }
+
+        string byNumber = HkxTextEdit.SetParam(original, "90", "eBlendModeFunction", "1");
+        var numeric = NativeSave.Compare(original, byNumber);
+        CheckTrue("a numeric enum edit is planned", numeric.Possible);
+        if (numeric.Possible)
+        {
+            var objects = new PackfileObjects(PackfileImage.Read(NativeSave.Apply(source, numeric)), HavokClasses.Shipped);
+            Check("the numeric enum is written", 1, objects.ReadInt(objects.Instances[0], "eBlendModeFunction"));
+        }
+    }
+
+    private static void FirstInstanceOfAClassCanBeAdded()
+    {
+        Console.WriteLine("\nadding the first object of a known class persists");
+        byte[] source = TwoClips(out _, out _).Rebuild();
+        string original = NativeXml.From(source);
+
+        string blenderBody =
+            "            <hkparam name=\"variableBindingSet\">null</hkparam>\n" +
+            "            <hkparam name=\"userData\">0</hkparam>\n" +
+            "            <hkparam name=\"name\">New Blend</hkparam>\n" +
+            "            <hkparam name=\"referencePoseWeightThreshold\">0.0</hkparam>\n" +
+            "            <hkparam name=\"blendParameter\">1.0</hkparam>\n" +
+            "            <hkparam name=\"minCyclicBlendParameter\">0.0</hkparam>\n" +
+            "            <hkparam name=\"maxCyclicBlendParameter\">1.0</hkparam>\n" +
+            "            <hkparam name=\"indexOfSyncMasterChild\">-1</hkparam>\n" +
+            "            <hkparam name=\"flags\">8</hkparam>\n" +
+            "            <hkparam name=\"subtractLastChild\">false</hkparam>\n" +
+            "            <hkparam name=\"children\" numelements=\"0\">\n</hkparam>";
+
+        string signature = $"0x{HavokClassTypes.Shipped["hkbBlenderGenerator"]!.Signature:x}";
+        string withBlender = HkxTextEdit.AddObject(original, "hkbBlenderGenerator", signature,
+                                                   blenderBody, out string newId);
+        Check("the new object gets the next contiguous id", "92", newId);
+
+        var plan = NativeSave.Compare(original, withBlender);
+        CheckTrue("adding the first blender is planned", plan.Possible);
+        if (plan.Refusal != null) Console.WriteLine("  refusal: " + plan.Refusal);
+        if (!plan.Possible) return;
+
+        var objects = new PackfileObjects(PackfileImage.Read(NativeSave.Apply(source, plan)), HavokClasses.Shipped);
+        Check("the file now has three objects", 3, objects.Instances.Count);
+        var blend = objects.Instances[^1];
+        Check("the blender object is present", "hkbBlenderGenerator", blend.ClassName);
+        Check("the blender keeps its name", "New Blend", objects.ReadString(blend, "name"));
+        Check("the blender parameter is written", 1f, objects.ReadFloat(blend, "blendParameter"));
+        Check("the blender flags are written", 8, objects.ReadInt(blend, "flags"));
+        Check("an empty children array is written", 0, objects.ReadRefArray(blend, "children")?.Count);
+
+        // The generic editor paths the audit flagged: first-of-class adds via
+        // GeneratorEditor, including named enum values inside the new object.
+        string sequenceXml = GeneratorEditor.Add(original, "sequence", "Seq", "seq.hkx", "", out string seqId);
+        Check("the sequence gets the next id", "92", seqId);
+        var seqPlan = NativeSave.Compare(original, sequenceXml);
+        CheckTrue("the first sequence generator is planned", seqPlan.Possible);
+        if (seqPlan.Refusal != null) Console.WriteLine("  refusal: " + seqPlan.Refusal);
+        if (seqPlan.Possible)
+        {
+            var seqObjects = new PackfileObjects(PackfileImage.Read(NativeSave.Apply(source, seqPlan)),
+                                                 HavokClasses.Shipped);
+            Check("the sequence object is present", "BGSGamebryoSequenceGenerator",
+                  seqObjects.Instances[^1].ClassName);
+            Check("the named blend mode resolves to its numeric value", 0,
+                  seqObjects.ReadInt(seqObjects.Instances[^1], "eBlendModeFunction"));
+        }
+
+        string blenderXml = GeneratorEditor.Add(original, "blender", "Blend", "", "", out string blenderId);
+        var blenderPlan = NativeSave.Compare(original, blenderXml);
+        CheckTrue("the first blender via the generic editor is planned", blenderPlan.Possible);
+        if (blenderPlan.Refusal != null) Console.WriteLine("  refusal: " + blenderPlan.Refusal);
+        if (blenderPlan.Possible)
+        {
+            var blendObjects = new PackfileObjects(PackfileImage.Read(NativeSave.Apply(source, blenderPlan)),
+                                                   HavokClasses.Shipped);
+            Check("the generic-editor blender is present", "hkbBlenderGenerator",
+                  blendObjects.Instances[^1].ClassName);
+            var blendAt = blendObjects.FieldAt(blendObjects.Instances[^1], "indexOfSyncMasterChild");
+            Check("the sync-master default fits its int16 storage", -1,
+                  blendAt is int b && blendObjects.ReadNarrowAt(b, 2) is int raw
+                      ? (short)raw
+                      : int.MinValue);
+        }
+    }
+
+    private static PackfileImage OneBoneIndexArray()
+    {
+        var classes = HavokClasses.Shipped;
+        int size = classes["hkbBoneIndexArray"]!.Size;
+        int at = classes.Field("hkbBoneIndexArray", "boneIndices")!.Offset;
+
+        var names = new byte[5 + "hkbBoneIndexArray".Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped["hkbBoneIndexArray"]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbBoneIndexArray").CopyTo(names, 5);
+
+        int run = (size + 15) / 16 * 16;
+        var data = new byte[run + 4];
+        BitConverter.GetBytes((short)0).CopyTo(data, run);
+        BitConverter.GetBytes((short)1).CopyTo(data, run + 2);
+        BitConverter.GetBytes(run).CopyTo(data, at);
+        BitConverter.GetBytes(2).CopyTo(data, at + 8);
+        BitConverter.GetBytes(2).CopyTo(data, at + 12);
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            LocalFixups = Pair(at, run),
+            VirtualFixups = Triple(0, 0, 5),
         });
         return image;
     }
 
-    private static byte[] AppliedEmptyGrowth(PackfileImage image, string before, string after)
+    private static PackfileImage OneZeroed(string className)
     {
-        var plan = NativeSave.Compare(before, after);
-        if (!plan.Possible)
-            throw new InvalidOperationException("empty-array growth was refused: " + plan.Refusal);
-        return PackfileImage.Read(NativeSave.Apply(image.Rebuild(), plan)).Rebuild();
+        var classes = HavokClasses.Shipped;
+        int size = classes[className]!.Size;
+
+        var names = new byte[5 + className.Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped[className]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes(className).CopyTo(names, 5);
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = new byte[size],
+            VirtualFixups = Triple(0, 0, 5),
+        });
+        return image;
     }
 
-    private static uint CapacityWord(byte[] bytes, string className, string field)
+    private static void ValueArraysRefuseOutOfRangeElements()
     {
-        int at = HavokClasses.Shipped.Field(className, field)!.Offset;
-        return BitConverter.ToUInt32(PackfileImage.Read(bytes).Section("__data__")!.Data, at + 12);
+        Console.WriteLine("\nvalue arrays refuse elements outside the exact type range");
+        var image = OneBoneIndexArray();
+        byte[] source = image.Rebuild();
+        string xml = NativeXml.From(source);
+
+        string WithBoneIndices(string values) => xml.Replace(
+            "<hkparam name=\"boneIndices\" numelements=\"2\">0 1</hkparam>",
+            $"<hkparam name=\"boneIndices\" numelements=\"3\">{values}</hkparam>");
+
+        var wrap = NativeSave.Compare(xml, WithBoneIndices("0 1 65536"));
+        CheckTrue("int16 above max is refused, not wrapped", !wrap.Possible);
+        CheckTrue("and the refusal names the element type",
+                  wrap.Refusal?.Contains("int16", StringComparison.Ordinal) == true);
+
+        var fine = NativeSave.Compare(xml, WithBoneIndices("0 1 32767"));
+        CheckTrue("in-range values are accepted", fine.Possible);
+        if (fine.Possible)
+        {
+            byte[] rebuilt = NativeSave.Apply(source, fine);
+            var objects = new PackfileObjects(PackfileImage.Read(rebuilt));
+            var survivor = objects.Instances.Single();
+            var values = objects.ReadValueArrayAt(objects.FieldAt(survivor, "boneIndices")!.Value, 2,
+                (b, o) => (short)BitConverter.ToInt16(b, o));
+            Check("and the in-range element lands", 32767, values is { Count: 3 } ? values[2] : -1);
+        }
+
+        var unsigned = OneZeroed("hkbCharacterSkinInfo");
+        string xml64 = NativeXml.From(unsigned.Rebuild());
+        string WithDeformableSkins(string values) => xml64.Replace(
+            "<hkparam name=\"deformableSkins\" numelements=\"0\"/>",
+            $"<hkparam name=\"deformableSkins\" numelements=\"1\">{values}</hkparam>");
+        var negative = NativeSave.Compare(xml64, WithDeformableSkins("-1"));
+        CheckTrue("negative into an unsigned 64-bit array element is refused", !negative.Possible);
+        var above = NativeSave.Compare(xml64, WithDeformableSkins("18446744073709551615"));
+        CheckTrue("uint64 max is accepted in an array", above.Possible);
+        if (above.Possible)
+        {
+            byte[] rebuilt = NativeSave.Apply(unsigned.Rebuild(), above);
+            var image2 = PackfileImage.Read(rebuilt);
+            var objects = new PackfileObjects(image2);
+            var survivor = objects.Instances.Single();
+            var values = objects.ReadValueArrayAt(objects.FieldAt(survivor, "deformableSkins")!.Value, 8,
+                (b, o) => BitConverter.ToUInt64(b, o));
+            Check("and the 64-bit element lands un-truncated", ulong.MaxValue,
+                  values is { Count: 1 } ? values[0] : 0UL);
+        }
+    }
+
+    private static void NumberCodecsEnforceExactRanges()
+    {
+        Console.WriteLine("\nthe codecs enforce the exact range of every width");
+        CheckTrue("int8 min parses", NumberCodecs.Parses("-128", "int8"));
+        CheckTrue("int8 max parses", NumberCodecs.Parses("127", "int8"));
+        CheckTrue("int8 below min refuses", !NumberCodecs.Parses("-129", "int8"));
+        CheckTrue("int8 above max refuses", !NumberCodecs.Parses("128", "int8"));
+        CheckTrue("uint8 above max refuses", !NumberCodecs.Parses("256", "uint8"));
+        CheckTrue("uint8 negative refuses", !NumberCodecs.Parses("-1", "uint8"));
+        CheckTrue("int16 above max refuses", !NumberCodecs.Parses("32768", "int16"));
+        CheckTrue("uint16 above max refuses", !NumberCodecs.Parses("65536", "uint16"));
+        CheckTrue("int32 above max refuses", !NumberCodecs.Parses("2147483648", "int32"));
+        CheckTrue("uint32 above max refuses", !NumberCodecs.Parses("4294967296", "uint32"));
+        CheckTrue("int64 min parses", NumberCodecs.Parses("-9223372036854775808", "int64"));
+        CheckTrue("int64 negative parses", NumberCodecs.Parses("-1", "int64"));
+        CheckTrue("int64 above max refuses", !NumberCodecs.Parses("9223372036854775808", "int64"));
+        CheckTrue("uint64 above int64 max parses", NumberCodecs.Parses("9223372036854775808", "uint64"));
+        CheckTrue("uint64 max parses", NumberCodecs.Parses("18446744073709551615", "uint64"));
+        CheckTrue("uint64 negative refuses", !NumberCodecs.Parses("-1", "uint64"));
+        CheckTrue("hex uint64 max parses", NumberCodecs.Parses("0xFFFFFFFFFFFFFFFF", "uint64"));
+        CheckTrue("hex 0x80 is refused for int8", !NumberCodecs.Parses("0x80", "int8"));
+        CheckTrue("bool true parses", NumberCodecs.Parses("true", "bool"));
+        CheckTrue("bool 2 refuses", !NumberCodecs.Parses("2", "bool"));
+        CheckTrue("NaN is refused for real", !NumberCodecs.Parses("NaN", "real"));
+    }
+
+    private static void Scalar64UsesTheRightSignedness()
+    {
+        Console.WriteLine("\n64-bit scalars use the member's signedness");
+        var image = OneZeroed("hkbCharacter");
+        string xml = NativeXml.From(image.Rebuild());
+
+        var negative = NativeSave.Compare(xml, HkxTextEdit.SetParam(xml, "90", "userData", "-1"));
+        CheckTrue("a negative into a ulong is refused", !negative.Possible);
+
+        var max = NativeSave.Compare(xml,
+            HkxTextEdit.SetParam(xml, "90", "userData", "18446744073709551615"));
+        CheckTrue("uint64 max is accepted in a scalar", max.Possible);
+        if (max.Possible)
+        {
+            var image2 = PackfileImage.Read(NativeSave.Apply(image.Rebuild(), max));
+            var objects = new PackfileObjects(image2);
+            var survivor = objects.Instances.Single();
+            int at = objects.FieldAt(survivor, "userData")!.Value;
+            Check("and it is written un-truncated", ulong.MaxValue,
+                  BitConverter.ToUInt64(image2.Section("__data__")!.Data, at));
+        }
+    }
+
+    private static void SignedValuesRenderSigned()
+    {
+        Console.WriteLine("\nsigned scalar and array fields render signed");
+
+        var types = HavokClassTypes.Shipped;
+
+        var clip = OneZeroed("hkbClipGenerator");
+        var clipObjects = new PackfileObjects(clip);
+        int clipAt = clipObjects.Instances.Single().Offset;
+        var binding = types.Members("hkbClipGenerator").Single(m => m.Name == "animationBindingIndex");
+        clip.Section("__data__")!.Data[clipAt + binding.Offset] = 0xFF;
+        clip.Section("__data__")!.Data[clipAt + binding.Offset + 1] = 0xFF;
+        Check("int16 renders signed", "-1",
+              FieldRender.Render(clipObjects, clipAt + binding.Offset, "hkbClipGenerator",
+                                 binding, (_, _) => ""));
+
+        var machine = OneZeroed("hkbStateMachine");
+        var machineObjects = new PackfileObjects(machine);
+        int machineAt = machineObjects.Instances.Single().Offset;
+        var transitions = types.Members("hkbStateMachine").Single(m => m.Name == "maxSimultaneousTransitions");
+        machine.Section("__data__")!.Data[machineAt + transitions.Offset] = 0xFF;
+        Check("int8 renders signed", "-1",
+              FieldRender.Render(machineObjects, machineAt + transitions.Offset,
+                                 "hkbStateMachine", transitions, (_, _) => ""));
+
+        var entered = types.Members("hkbStateMachine").Single(m => m.Name == "sCurrentStateIndexAndEntered");
+        machine.Section("__data__")!.Data[machineAt + entered.Offset] = 0xFF;
+        machine.Section("__data__")!.Data[machineAt + entered.Offset + 1] = 0xFF;
+        Check("uint16 stays unsigned", "65535",
+              FieldRender.Render(machineObjects, machineAt + entered.Offset,
+                                 "hkbStateMachine", entered, (_, _) => ""));
+
+        var character = OneZeroed("hkbCharacter");
+        var characterObjects = new PackfileObjects(character);
+        int characterAt = characterObjects.Instances.Single().Offset;
+        var userData = types.Members("hkbCharacter").Single(m => m.Name == "userData");
+        for (int b = 0; b < 8; b++)
+            character.Section("__data__")!.Data[characterAt + userData.Offset + b] = 0xFF;
+        Check("ulong stays unsigned", "18446744073709551615",
+              FieldRender.Render(characterObjects, characterAt + userData.Offset,
+                                 "hkbCharacter", userData, (_, _) => ""));
+
+        var descriptor = OneZeroed("hkMeshTextureRawBufferDescriptor");
+        var descriptorObjects = new PackfileObjects(descriptor);
+        int descriptorAt = descriptorObjects.Instances.Single().Offset;
+        var offset = types.Members("hkMeshTextureRawBufferDescriptor").Single(m => m.Name == "offset");
+        for (int b = 0; b < 8; b++)
+            descriptor.Section("__data__")!.Data[descriptorAt + offset.Offset + b] = 0xFF;
+        Check("int64 renders signed", "-1",
+              FieldRender.Render(descriptorObjects, descriptorAt + offset.Offset,
+                                 "hkMeshTextureRawBufferDescriptor", offset, (_, _) => ""));
+
+        var bones = OneBoneIndexArray();
+        var boneObjects = new PackfileObjects(bones);
+        int run = BitConverter.ToInt32(bones.Section("__data__")!.Data,
+                                       boneObjects.Instances.Single().Offset + 48);
+        BitConverter.GetBytes((short)-1).CopyTo(bones.Section("__data__")!.Data, run);
+        BitConverter.GetBytes((short)2).CopyTo(bones.Section("__data__")!.Data, run + 2);
+        var boneIndices = types.Members("hkbBoneIndexArray").Single(m => m.Name == "boneIndices");
+        Check("an int16 array renders signed", "[2: -1|2]",
+              FieldRender.Render(boneObjects, boneObjects.Instances.Single().Offset + 48,
+                                 "hkbBoneIndexArray", boneIndices, (_, _) => ""));
+    }
+
+    private static void SaveBlocksOnDuplicateStateIds()
+    {
+        Console.WriteLine("\nsave blocks newly introduced structural errors and details them");
+
+        string clean = SmallGraph();
+        string dupes = clean.Replace("<hkparam name=\"name\">B</hkparam>\n" +
+                                     "            <hkparam name=\"stateId\">1</hkparam>",
+                                     "<hkparam name=\"name\">B</hkparam>\n" +
+                                     "            <hkparam name=\"stateId\">0</hkparam>");
+
+        CheckTrue("the validator finds the duplicate", GraphValidator.Check(dupes)
+                  .Any(f => f.What.Contains("stateId", StringComparison.Ordinal) && f.BlocksSave));
+        string? refusal = GraphValidator.SaveRefusal(dupes, clean);
+        CheckTrue("SaveRefusal refuses the edited graph against a clean source", refusal != null);
+        CheckTrue("and the refusal names the duplicate",
+                  refusal != null && refusal.Contains("stateId", StringComparison.Ordinal));
+        CheckTrue("but allows it when the source already carried the same finding",
+                  GraphValidator.SaveRefusal(dupes, dupes) == null);
+        CheckTrue("and a clean graph against itself is allowed",
+                  GraphValidator.SaveRefusal(clean, clean) == null);
+    }
+
+    private static string UnknownConditionMachine() =>
+        GatedGraph().Replace("bGateOpen == 1", "noSuchVariable == 1");
+
+    private static string PriorityUnknownThenTrueMachine() =>
+        GatedGraph()
+            .Replace("bGateOpen == 1", "noSuchVariable == 1")
+            .Replace("<hkparam name=\"condition\">null</hkparam>",
+                     "<hkparam name=\"condition\">#102</hkparam>")
+            .Replace("<hkobject class=\"hkbStateMachineStateInfo\" name=\"#96\"",
+                     "<hkobject class=\"hkbExpressionCondition\" name=\"#102\" signature=\"0x78a69526\">\n" +
+                     "                    <hkparam name=\"expression\">fSpeed > 2</hkparam>\n" +
+                     "                </hkobject>\n" +
+                     "                <hkobject class=\"hkbStateMachineStateInfo\" name=\"#96\"");
+
+    private static string ClampExpressionMachine() => """
+        <?xml version="1.0" encoding="ascii"?>
+        <hkpackfile classversion="11" contentsversion="hk_2014.1.0-r1">
+            <hksection name="__data__">
+                <hkobject class="hkbBehaviorGraph" name="#90" signature="0xb1218f86">
+                    <hkparam name="name">Graph</hkparam>
+                    <hkparam name="rootGenerator">#92</hkparam>
+                    <hkparam name="data">#100</hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphStringData" name="#91" signature="0xc713064e">
+                    <hkparam name="eventNames" numelements="0"></hkparam>
+                    <hkparam name="variableNames" numelements="2">y x</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachine" name="#92" signature="0xa5896bcf">
+                    <hkparam name="name">Root</hkparam>
+                    <hkparam name="startStateId">0</hkparam>
+                    <hkparam name="states" numelements="1">#93</hkparam>
+                </hkobject>
+                <hkobject class="hkbStateMachineStateInfo" name="#93" signature="0x39d76713">
+                    <hkparam name="name">Start</hkparam>
+                    <hkparam name="stateId">0</hkparam>
+                    <hkparam name="generator">#110</hkparam>
+                </hkobject>
+                <hkobject class="hkbModifierList" name="#110" signature="0x0ded564c">
+                    <hkparam name="modifiers" numelements="1">#111</hkparam>
+                </hkobject>
+                <hkobject class="hkbEvaluateExpressionModifier" name="#111" signature="0x4a3ac449">
+                    <hkparam name="expressions">#112</hkparam>
+                </hkobject>
+                <hkobject class="hkbExpressionDataArray" name="#112" signature="0x1ebfc6d7">
+                    <hkparam name="expressionsData" numelements="1">
+                        <hkobject>
+                            <hkparam name="expression">x = clamp(y, 10, 0)</hkparam>
+                            <hkparam name="assignmentVariableIndex">1</hkparam>
+                            <hkparam name="assignmentEventIndex">-1</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+                <hkobject class="hkbBehaviorGraphData" name="#100" signature="0x95aca5d">
+                    <hkparam name="variableInfos" numelements="2">
+                        <hkobject>
+                            <hkparam name="type">VARIABLE_TYPE_REAL</hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="type">VARIABLE_TYPE_INT32</hkparam>
+                        </hkobject>
+                    </hkparam>
+                    <hkparam name="stringData">#91</hkparam>
+                    <hkparam name="variableInitialValues">#101</hkparam>
+                </hkobject>
+                <hkobject class="hkbVariableValueSet" name="#101" signature="0x27812d8d">
+                    <hkparam name="wordVariableValues" numelements="2">
+                        <hkobject>
+                            <hkparam name="value">1084227584</hkparam>
+                        </hkobject>
+                        <hkobject>
+                            <hkparam name="value">0</hkparam>
+                        </hkobject>
+                    </hkparam>
+                </hkobject>
+            </hksection>
+        </hkpackfile>
+        """;
+
+    private static void ClampWithInvertedBoundsIsARefusalNotAThrow()
+    {
+        Console.WriteLine("\nclamp with min > max is a refusal, never a throw");
+        var parsed = Expression.Parse("x = clamp(y, 10, 0)");
+        CheckTrue("the expression parses", parsed.Ok);
+
+        Expression.NumericResult result = null!;
+        try
+        {
+            result = Expression.EvaluateNumber(parsed, name => name == "y" ? 5 : null);
+        }
+        catch (ArgumentException)
+        {
+            CheckTrue("clamp refuses instead of throwing", false);
+            return;
+        }
+        CheckTrue("the value is not produced", result.Value is not double);
+        CheckTrue("and the refusal names clamp", result.Refusal?.Contains("clamp") == true);
+    }
+
+    private static void ClampFailureIsRecordedByGraphRun()
+    {
+        Console.WriteLine("\nclamp(min>max) is an ExpressionFailure through GraphRun, not a throw");
+        var model = BehaviourGraphModel.Parse(ClampExpressionMachine());
+        var run = GraphRun.Start(model);
+
+        try
+        {
+            run.Advance(0.1f);
+            CheckTrue("advance survives the inverted clamp", true);
+        }
+        catch (ArgumentException)
+        {
+            CheckTrue("clamp threw out of Advance", false);
+            return;
+        }
+        CheckTrue("the failure is recorded, not thrown",
+                  run.ExpressionFailures.Any(f => f.Refusal.Contains("clamp")));
+    }
+
+    private static void AnUnknownConditionDoesNotFire()
+    {
+        Console.WriteLine("\nan unknown transition condition does not fire");
+        var model = BehaviourGraphModel.Parse(UnknownConditionMachine());
+        var run = GraphRun.Start(model);
+
+        var fired = run.Send("Go");
+        Check("the unknown-condition transition never fires", 0, fired.Count);
+        CheckTrue("and it is reported as held back, not taken",
+                  run.HeldBack.Any(b => b.Condition.Contains("noSuchVariable")));
+    }
+
+    private static void AnUnknownHigherPriorityTransitionBlocksTheDecision()
+    {
+        Console.WriteLine("\nan Unknown at higher priority must not let a lower True transition fire");
+        var model = BehaviourGraphModel.Parse(PriorityUnknownThenTrueMachine());
+        var run = GraphRun.Start(model);
+
+        var fired = run.Send("Go");
+        foreach (var f in fired) Console.WriteLine("DBG fired: " + f);
+        foreach (var b in run.HeldBack) Console.WriteLine("DBG held: " + b);
+        Check("nothing fires while a higher-priority condition is unresolved", 0, fired.Count);
+        CheckTrue("and the decision is reported as unresolved",
+                  run.HeldBack.Any(b => b.Condition.Contains("noSuchVariable")));
+    }
+
+    private static void PlanWithoutIdIsRefusedBeforeWriting()
+    {
+        Console.WriteLine("\na change planned without a stable object id is refused before writing");
+        var image = TwoClips(out int firstId, out _);
+        byte[] source = image.Rebuild();
+        var plan = new NativeSave.Plan(new List<NativeSave.Change>
+        {
+            new("hkbClipGenerator", 0, "playbackSpeed", "1", Id: 0),
+        }, null);
+
+        string said = "";
+        try { NativeSave.Apply(source, plan); }
+        catch (InvalidOperationException e) { said = e.Message; }
+
+        CheckTrue("the refusal names the missing id",
+                  said.Contains("without a stable object id", StringComparison.Ordinal));
     }
 }

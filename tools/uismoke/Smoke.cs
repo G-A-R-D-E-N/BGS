@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -177,7 +180,6 @@ public static class Smoke
     public static int Main(string[] args)
     {
         if (args.Length >= 2 && args[0] == "--png") return Png(args);
-        if (args.Length >= 3 && args[0] == "--verify") return Verify.Run(args);
 
         AppBuilder.Configure<HeadlessApp>().UseHeadless(new AvaloniaHeadlessPlatformOptions())
             .SetupWithoutStarting();
@@ -1626,6 +1628,33 @@ public static class Smoke
                       window.LoadedXml.Contains(typed, StringComparison.Ordinal));
         }
 
+        SaveCurrentOnlySucceedsWhenCommitted();
+        SaveCurrentReturnsFalseWhenBlocked();
+        ReloadFailureAfterCommitSaysSaved();
+        VerificationFailureLeavesTheSourceUntouched();
+
+        DirtyGraphSurvivesARejectedOpen();
+        GraphLayoutPersistsAcrossFreshWindow();
+        GraphLayoutCodecKeepsPathsAndSkipsInvalidRecords();
+        PreferencesReadFailureDoesNotBlockGraphOpen();
+        StructuredFlowDragStaysTransient();
+        DirtyAnimationSurvivesARejectedOpen();
+        CloseCancelsWhileDirty();
+        CloseDiscardsAfterExplicitChoice();
+        CloseSaveCommitsThenCloses();
+        CloseSaveRefusalStaysOpen();
+
+        PapyrusScanFailureIsContained();
+        StalePapyrusScanFailureIsDiscarded();
+        ProjectValidationFailureIsContained();
+        StaleProjectValidationFailureIsDiscarded();
+        StaleResultsDoNotPaintAnotherRevision();
+        StaleResultsDoNotPaintAnotherDocument();
+        SaveBlocksWithTheDetail();
+        SettingsWriteFailureLeavesExistingFileUntouched();
+        TempDirectoryKeysIncludeTheFullSourcePath();
+        NonFiniteFrameInputIsRefused();
+
         StandaloneAnimationFillsTheClipList();
         StandaloneAnimationSkeletonSearchesFromAnimationsRoot();
 
@@ -1635,11 +1664,362 @@ public static class Smoke
         return _failed == 0 ? 0 : 1;
     }
 
+    private static void SettingsWriteFailureLeavesExistingFileUntouched()
+    {
+        Console.WriteLine("\na failed settings write leaves the existing file untouched");
+        string root = Directory.CreateTempSubdirectory("bgs-settings-failure").FullName;
+        try
+        {
+            string final = Path.Combine(root, "settings.cfg");
+            File.WriteAllText(final, "old=value\n");
+
+            string blocked = Path.Combine(root, "blocked");
+            File.WriteAllText(blocked, "not a directory");
+            string temp = Path.Combine(blocked, "settings.cfg.tmp");
+
+            bool refused = false;
+            try
+            {
+                Settings.WriteAll(temp, final,
+                    new Dictionary<string, string>(StringComparer.Ordinal) { ["new"] = "value" });
+            }
+            catch (IOException)
+            {
+                refused = true;
+            }
+
+            CheckTrue("the settings write failure is surfaced", refused);
+            Check("the previous settings file is not replaced", "old=value\n", File.ReadAllText(final));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static void TempDirectoryKeysIncludeTheFullSourcePath()
+    {
+        Console.WriteLine("\ntemp editing directories distinguish same-named source files");
+        string first = MainWindow.TempDirKey(Path.Combine("one", "shared.hkx"));
+        string second = MainWindow.TempDirKey(Path.Combine("two", "shared.hkx"));
+
+        CheckTrue("same-basename files in different folders get different temp keys", first != second);
+        CheckTrue("the readable basename is retained in both keys",
+                  first.StartsWith("shared-", StringComparison.Ordinal) &&
+                  second.StartsWith("shared-", StringComparison.Ordinal));
+    }
+
+    private static void NonFiniteFrameInputIsRefused()
+    {
+        Console.WriteLine("\nnon-finite frame input is refused without mutating the animation");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        var track = new OpenCommonwealth.Services.Hkx.HkxTrackData();
+        track.Translations.Add(new System.Numerics.Vector3(11.5f, -22.25f, 33.75f));
+        track.Rotations.Add(System.Numerics.Quaternion.Identity);
+        track.Scales.Add(System.Numerics.Vector3.One);
+        var animation = new OpenCommonwealth.Services.Hkx.HkxAnimationData
+        {
+            NumFrames = 1,
+            NumTracks = 1,
+            AnimationClass = "hkaInterleavedUncompressedAnimation",
+            Tracks = { track },
+        };
+
+        var dataField = typeof(MainWindow).GetField(
+            "_animationData", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        dataField.SetValue(window, animation);
+        typeof(MainWindow).GetMethod(
+            "ShowAnimationFrames", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(window, null);
+
+        CheckTrue("the synthetic frame can be selected", window.PickFrame(0, 0));
+        var before = window.FramePosition(0, 0);
+
+        window.TypeFramePosition("NaN, -22.25, 33.75");
+        Check("NaN leaves the frame position untouched", before, window.FramePosition(0, 0));
+        CheckTrue("NaN refusal explains that values must be finite",
+                  window.FrameEditAnswer.Contains("finite", StringComparison.OrdinalIgnoreCase));
+
+        window.TypeFramePosition("Infinity, -22.25, 33.75");
+        Check("Infinity leaves the frame position untouched", before, window.FramePosition(0, 0));
+        CheckTrue("Infinity refusal explains that values must be finite",
+                  window.FrameEditAnswer.Contains("finite", StringComparison.OrdinalIgnoreCase));
+
+        window.Close();
+    }
 
 
 
 
 
+
+
+    private static byte[] OneMachineBytes()
+    {
+        // A one-state state machine whose loaded XML can be edited into a duplicate stateId.
+        var names = new byte[5 + "hkbStateMachine".Length + 1];
+        BitConverter.GetBytes(OpenCommonwealth.Services.Hkx.HavokClassTypes.Shipped["hkbStateMachine"]!.Signature)
+                    .CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbStateMachine").CopyTo(names, 5);
+
+        int size = OpenCommonwealth.Services.Hkx.HavokClasses.Shipped["hkbStateMachine"]!.Size;
+        var data = new byte[(size + 15) / 16 * 16];
+
+        var image = new OpenCommonwealth.Services.Hkx.PackfileImage();
+        image.Sections.Add(new OpenCommonwealth.Services.Hkx.PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"),
+            Data = names,
+        });
+        image.Sections.Add(new OpenCommonwealth.Services.Hkx.PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            VirtualFixups = Triple(0, 0, 5),
+        });
+        return image.Rebuild();
+    }
+
+    private static void SaveBlocksWithTheDetail()
+    {
+        Console.WriteLine("\nsave blocks a newly introduced structural error with the detail");
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-save-blocked.hkx");
+        System.IO.File.WriteAllBytes(path, OneMachineBytes());
+        byte[] before = System.IO.File.ReadAllBytes(path);
+
+        var window = new MainWindow();
+        window.Show();
+        window.Open(path);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        // Add a second state sharing stateId 0 by appending to the machine's states array.
+        string xml = window.LoadedXml;
+        string dupes = xml.Replace("<hkparam name=\"states\" numelements=\"0\">\n</hkparam>",
+                                   "<hkparam name=\"states\" numelements=\"2\">#91 #92</hkparam>")
+                          .Replace("</hksection>",
+                              "\n            <hkobject class=\"hkbStateMachineStateInfo\" name=\"#91\" " +
+                              "signature=\"0x39d76713\">\n" +
+                              "                <hkparam name=\"name\">A</hkparam>\n" +
+                              "                <hkparam name=\"stateId\">0</hkparam>\n" +
+                              "                <hkparam name=\"generator\">#93</hkparam>\n" +
+                              "                <hkparam name=\"transitions\">null</hkparam>\n" +
+                              "            </hkobject>\n" +
+                              "            <hkobject class=\"hkbStateMachineStateInfo\" name=\"#92\" " +
+                              "signature=\"0x39d76713\">\n" +
+                              "                <hkparam name=\"name\">Dup</hkparam>\n" +
+                              "                <hkparam name=\"stateId\">0</hkparam>\n" +
+                              "                <hkparam name=\"generator\">#94</hkparam>\n" +
+                              "                <hkparam name=\"transitions\">null</hkparam>\n" +
+                              "            </hkobject>\n" +
+                              "            <hkobject class=\"hkbClipGenerator\" name=\"#93\" signature=\"0xd4cc9f6\">\n" +
+                              "                <hkparam name=\"name\">ClipA</hkparam>\n" +
+                              "                <hkparam name=\"animationName\">a.hkx</hkparam>\n" +
+                              "                <hkparam name=\"triggers\">null</hkparam>\n" +
+                              "            </hkobject>\n" +
+                              "            <hkobject class=\"hkbClipGenerator\" name=\"#94\" signature=\"0xd4cc9f6\">\n" +
+                              "                <hkparam name=\"name\">ClipDup</hkparam>\n" +
+                              "                <hkparam name=\"animationName\">dup.hkx</hkparam>\n" +
+                              "                <hkparam name=\"triggers\">null</hkparam>\n" +
+                              "            </hkobject>\n" +
+                              "        </hksection>");
+
+        CheckTrue("the duplicate is injected into the XML", dupes.Contains("Dup", StringComparison.Ordinal));
+        window.SetXmlForTest(dupes);
+        CheckTrue("the duplicate makes the document dirty", window.IsDirty);
+
+        window.SaveForTest();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        CheckTrue("the source file's bytes are unchanged", System.IO.File.ReadAllBytes(path).SequenceEqual(before));
+        CheckTrue("the status names the blocking detail",
+                  window.StatusForTest.Contains("stateId", StringComparison.Ordinal) ||
+                  window.StatusForTest.Contains("ambiguous", StringComparison.Ordinal));
+        CheckTrue("and the document stays dirty", window.IsDirty);
+        window.Close();
+    }
+
+    private static OpenCommonwealth.Services.Hkx.ProjectCheck.Result ProjectResultWithAnError()
+    {
+        var result = new OpenCommonwealth.Services.Hkx.ProjectCheck.Result();
+        var file = new OpenCommonwealth.Services.Hkx.ProjectCheck.FileResult
+        {
+            Name = "stale.hkx",
+            Path = "stale.hkx",
+        };
+        file.Findings.Add(new OpenCommonwealth.Services.Hkx.GraphValidator.Finding
+        {
+            Level = OpenCommonwealth.Services.Hkx.GraphValidator.Level.Error,
+            Where = "a stale object",
+            What = "deliberately reported late",
+        });
+        result.Files.Add(file);
+        return result;
+    }
+
+    private static void PapyrusScanFailureIsContained()
+    {
+        Console.WriteLine("\na Papyrus scan worker failure is contained");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.Open(WriteOneClip("bgs-smoke-papyrus-failure"));
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.PapyrusScanRunner = _ =>
+            System.Threading.Tasks.Task.FromException<OpenCommonwealth.Services.Hkx.PapyrusEvents.Index>(
+                new InvalidOperationException("scan exploded"));
+
+        var started = window.ScanPapyrusForTest("unused");
+        PumpUntil(started);
+        CheckTrue("the Papyrus scan task does not leak its exception", !started.IsFaulted);
+        CheckTrue("the active document receives a concise scan failure status",
+                  window.StatusForTest.Contains("Scripts scan failed", StringComparison.Ordinal));
+        window.Close();
+    }
+
+    private static void StalePapyrusScanFailureIsDiscarded()
+    {
+        Console.WriteLine("\na stale Papyrus scan failure is discarded");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.Open(WriteOneClip("bgs-smoke-stale-papyrus-failure"));
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        var gate = new System.Threading.Tasks.TaskCompletionSource<OpenCommonwealth.Services.Hkx.PapyrusEvents.Index>();
+        window.PapyrusScanRunner = _ => gate.Task;
+
+        var started = window.ScanPapyrusForTest("unused");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.75"));
+        string currentStatus = window.StatusForTest;
+        gate.SetException(new InvalidOperationException("late scan failure"));
+        PumpUntil(started);
+
+        CheckTrue("the stale Papyrus task does not leak its exception", !started.IsFaulted);
+        Check("the stale scan failure does not replace the current status", currentStatus,
+              window.StatusForTest);
+        window.Close();
+    }
+
+    private static void ProjectValidationFailureIsContained()
+    {
+        Console.WriteLine("\na project validation worker failure is contained");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        window.Open(WriteOneClip("bgs-smoke-validation-failure"));
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.ValidateProjectRunner = (_, _) =>
+            System.Threading.Tasks.Task.FromException<OpenCommonwealth.Services.Hkx.ProjectCheck.Result>(
+                new InvalidOperationException("worker exploded"));
+
+        var started = window.ValidateProjectForTest();
+        PumpUntil(started);
+        CheckTrue("the validation task does not leak its exception", !started.IsFaulted);
+        CheckTrue("the active document receives a concise failure status",
+                  window.StatusForTest.Contains("Project check failed", StringComparison.Ordinal));
+        window.Close();
+    }
+
+    private static void StaleProjectValidationFailureIsDiscarded()
+    {
+        Console.WriteLine("\na stale project validation failure is discarded");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        window.Open(WriteOneClip("bgs-smoke-stale-validation-failure"));
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        var gate = new System.Threading.Tasks.TaskCompletionSource<OpenCommonwealth.Services.Hkx.ProjectCheck.Result>();
+        window.ValidateProjectRunner = (_, _) => gate.Task;
+
+        var started = window.ValidateProjectForTest();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.5"));
+        string currentStatus = window.StatusForTest;
+        gate.SetException(new InvalidOperationException("late failure"));
+        PumpUntil(started);
+
+        CheckTrue("the stale validation task does not leak its exception", !started.IsFaulted);
+        Check("the stale failure does not replace the current status", currentStatus,
+              window.StatusForTest);
+        window.Close();
+    }
+
+    private static void StaleResultsDoNotPaintAnotherRevision()
+    {
+        Console.WriteLine("\na stale check result never paints a newer revision");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string good = WriteOneClip("bgs-smoke-stale-revision");
+        window.Open(good);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("the file opens clean", window.ProblemCount == 0);
+
+        var gate = new System.Threading.Tasks.TaskCompletionSource<OpenCommonwealth.Services.Hkx.ProjectCheck.Result>();
+        window.ValidateProjectRunner =
+            (_, _) => System.Threading.Tasks.Task.Run(async () => await gate.Task);
+
+        var started = window.ValidateProjectForTest();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.25"));
+        CheckTrue("editing the revision makes the document dirty", window.IsDirty);
+
+        gate.SetResult(ProjectResultWithAnError());
+        PumpUntil(started);
+        CheckTrue("the stale finding is discarded, not painted", window.ProblemCount == 0);
+        window.Close();
+    }
+
+    private static void StaleResultsDoNotPaintAnotherDocument()
+    {
+        Console.WriteLine("\na stale check result never paints another document");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string first = WriteOneClip("bgs-smoke-stale-doc-1");
+        string second = WriteOneClip("bgs-smoke-stale-doc-2");
+        window.Open(first);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("the first file opens clean", window.ProblemCount == 0);
+
+        var gate = new System.Threading.Tasks.TaskCompletionSource<OpenCommonwealth.Services.Hkx.ProjectCheck.Result>();
+        window.ValidateProjectRunner =
+            (_, _) => System.Threading.Tasks.Task.Run(async () => await gate.Task);
+
+        var started = window.ValidateProjectForTest();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.DiscardDecision = () => DiscardChoice.Discard;
+        window.Open(second);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("the second file opens", window.LoadedXml.Length > 0);
+
+        gate.SetResult(ProjectResultWithAnError());
+        PumpUntil(started);
+        CheckTrue("the stale finding is discarded, not painted", window.ProblemCount == 0);
+        window.Close();
+    }
+
+    private static void PumpUntil(System.Threading.Tasks.Task task)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!task.IsCompleted && DateTime.UtcNow < deadline)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            System.Threading.Thread.Sleep(10);
+        }
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+    }
 
     private static void StandaloneAnimationFillsTheClipList()
     {
@@ -1714,6 +2094,8 @@ public static class Smoke
               MainWindow.FindSiblingSkeletonFolder(deep) ?? "");
         Check("an unrelated higher CharacterAssets folder is not selected", "",
               MainWindow.FindSiblingSkeletonFolder(outside) ?? "");
+        Check("a behaviour can use the selected animation's sibling skeleton", assets,
+              MainWindow.FindPoseSkeletonFolder(outside, deep) ?? "");
 
         const string sampleAnimation = "dist/examples/Dogmeat/Animations/IdleOutroDogmeatWalkForward.hkx";
         const string sampleSkeleton = "dist/examples/Dogmeat/CharacterAssets/skeleton.hkx";
@@ -2068,6 +2450,513 @@ public static class Smoke
         _ran++;
         if (!value) _failed++;
         Console.WriteLine($"  {(value ? "ok  " : "FAIL")}  {what}");
+    }
+
+    private static string WriteOneClip(string name)
+    {
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), name + ".hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        return path;
+    }
+
+    private static void DirtyGraphSurvivesARejectedOpen()
+    {
+        Console.WriteLine("\na dirty graph survives opening a rejected file");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string good = WriteOneClip("bgs-smoke-lifecycle");
+        window.Open(good);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.9"));
+        CheckTrue("the document is dirty", window.IsDirty);
+
+        int before = window.LoadedXml.Length;
+        window.DiscardDecision = () => DiscardChoice.Cancel;
+        window.Open(good + ".missing");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("a missing file leaves the document intact", window.LoadedXml.Length == before);
+        CheckTrue("and keeps it dirty", window.IsDirty);
+        Check("and the path field is restored to the open document", window.PathFieldForTest, good);
+
+        window.DiscardDecision = () => DiscardChoice.Discard;
+        System.IO.File.WriteAllBytes(good + ".not-an-hkx", new byte[] { 1, 2, 3, 4 });
+        window.Open(good + ".not-an-hkx");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("a refused file also leaves the document intact", window.LoadedXml.Length == before);
+        CheckTrue("and still dirty", window.IsDirty);
+
+        window.DiscardDecision = () => DiscardChoice.Cancel;
+        window.Open(good);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("a cancelled valid open keeps the document", window.LoadedXml.Length == before);
+        CheckTrue("and keeps it dirty", window.IsDirty);
+
+        window.DiscardDecision = () => DiscardChoice.Discard;
+        window.Open(good);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("an allowed discard replaces the document", window.LoadedXml.Length > 0);
+        CheckTrue("and it is the new file's XML",
+                  window.LoadedXml.Contains("playbackSpeed", StringComparison.Ordinal));
+        CheckTrue("and the document is no longer dirty", !window.IsDirty);
+        window.Close();
+    }
+
+    private static void GraphLayoutPersistsAcrossFreshWindow()
+    {
+        Console.WriteLine("\na graph layout persists across a fresh window");
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-layout-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        try
+        {
+            WithTemporarySettings(_ =>
+            {
+                var first = new MainWindow(); first.Show(); first.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                const string id = "90";
+                first.Canvas.DragForTest(id, 73, -29); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                var moved = first.Canvas.PositionOf(id)!.Value;
+                var second = new MainWindow(); second.Show(); second.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                Check("graph layout survives fresh-window reload", moved, second.Canvas.PositionOf(id)!.Value);
+                second.Close(); first.Close();
+            });
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    private static void GraphLayoutCodecKeepsPathsAndSkipsInvalidRecords()
+    {
+        Console.WriteLine("\ngraph layout codec isolates paths and skips invalid records");
+        WithTemporarySettings(settingsPath =>
+        {
+            string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-layout-codec-{Guid.NewGuid():N}");
+            System.IO.Directory.CreateDirectory(folder);
+            try
+            {
+                string first = System.IO.Path.Combine(folder, "first.hkx");
+                string second = System.IO.Path.Combine(folder, "second.hkx");
+                CheckTrue("a first path layout writes", Settings.TrySetGraphLayout(first,
+                    new Dictionary<string, Settings.LayoutPoint> { ["one"] = new(1, 2) }, out _));
+                CheckTrue("a second path layout writes", Settings.TrySetGraphLayout(second,
+                    new Dictionary<string, Settings.LayoutPoint> { ["two"] = new(3, 4) }, out _));
+                Check("different full paths keep separate layouts", new Point(1, 2),
+                    new Point(Settings.GetGraphLayout(first)["one"].X, Settings.GetGraphLayout(first)["one"].Y));
+                Check("different full paths keep their own coordinates", new Point(3, 4),
+                    new Point(Settings.GetGraphLayout(second)["two"].X, Settings.GetGraphLayout(second)["two"].Y));
+                CheckTrue("different full paths do not share node IDs", !Settings.GetGraphLayout(second).ContainsKey("one"));
+
+                string relative = System.IO.Path.GetRelativePath(Environment.CurrentDirectory, first);
+                CheckTrue("a relative path layout writes", Settings.TrySetGraphLayout(relative,
+                    new Dictionary<string, Settings.LayoutPoint> { ["relative"] = new(7, -8) }, out _));
+                var normalized = Settings.GetGraphLayout(first);
+                Check("relative and absolute paths use one layout", new Point(7, -8),
+                    new Point(normalized["relative"].X, normalized["relative"].Y));
+
+                string malformed = System.IO.Path.Combine(folder, "malformed.hkx");
+                System.IO.File.WriteAllText(settingsPath,
+                    $"graph-layout.{GraphLayoutHashForTest(malformed)}=good,1,2|broken|duplicate,3,4|duplicate,9,10|non-finite,NaN,0|infinite,Infinity,5|bad-number,x,4|escaped%20id,-4.5,6.25\n");
+                var decoded = Settings.GetGraphLayout(malformed);
+                Check("malformed layout records leave valid records", 3, decoded.Count);
+                Check("duplicate layout records keep the first value", new Point(3, 4),
+                    new Point(decoded["duplicate"].X, decoded["duplicate"].Y));
+                Check("non-finite layout records are ignored", false, decoded.ContainsKey("non-finite") || decoded.ContainsKey("infinite"));
+                Check("escaped layout IDs decode safely", new Point(-4.5, 6.25),
+                    new Point(decoded["escaped id"].X, decoded["escaped id"].Y));
+            }
+            finally
+            {
+                System.IO.Directory.Delete(folder, recursive: true);
+            }
+        });
+    }
+
+    private static void PreferencesReadFailureDoesNotBlockGraphOpen()
+    {
+        Console.WriteLine("\nan unavailable preferences read does not block graph opening");
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-layout-preferences-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        try
+        {
+            WithTemporarySettings(settingsPath =>
+            {
+                const string existing = "keep=this-preferences-file\n";
+                System.IO.File.WriteAllText(settingsPath, existing);
+                Settings.ReadAllLinesForTest = _ => throw new UnauthorizedAccessException("preferences denied");
+                MainWindow? window = null;
+                bool opened;
+                try
+                {
+                    window = new MainWindow(); window.Show();
+                    window.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    opened = window.LoadedXml.Length > 0 && window.Canvas.PositionOf("90") == new Point(0, 0);
+                    window.Canvas.DragForTest("90", 5, 6); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    opened = false;
+                }
+                CheckTrue("a valid graph opens with automatic positions", opened);
+                Check("an unreadable existing preferences file is not replaced by preferences or layout saves", existing,
+                    System.IO.File.ReadAllText(settingsPath));
+                window?.Close();
+            });
+        }
+        finally
+        {
+            Settings.ReadAllLinesForTest = File.ReadAllLines;
+            System.IO.File.Delete(path);
+        }
+    }
+
+    private static void StructuredFlowDragStaysTransient()
+    {
+        Console.WriteLine("\na Structured Flow drag stays transient");
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-layout-structured-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        try
+        {
+            WithTemporarySettings(settingsPath =>
+            {
+                var window = new MainWindow(); window.Show(); window.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                window.SetGraphLayoutModeForTest(GraphLayoutMode.StructuredFlow);
+                var before = window.Canvas.PositionOf("90")!.Value;
+                int changes = 0;
+                window.Canvas.LayoutChanged += () => changes++;
+                string settingsBefore = System.IO.File.ReadAllText(settingsPath);
+
+                window.Canvas.DragForTest("90", 31, -17); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                var after = window.Canvas.PositionOf("90")!.Value;
+                Check("Structured Flow keeps transient drag movement", new Point(31, -17), after - before);
+                Check("Structured Flow drag does not emit layout persistence", 0, changes);
+                Check("Structured Flow drag does not save layout state", settingsBefore,
+                    System.IO.File.ReadAllText(settingsPath));
+                window.Close();
+            });
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    private static void WithTemporarySettings(Action<string> test)
+    {
+        string settingsPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-settings-{Guid.NewGuid():N}.cfg");
+        string? previous = Settings.SettingsPathForTest;
+        try
+        {
+            Settings.SettingsPathForTest = settingsPath;
+            System.IO.File.WriteAllText(settingsPath, "");
+            test(settingsPath);
+        }
+        finally
+        {
+            Settings.SettingsPathForTest = previous;
+            Settings.ReadAllLinesForTest = File.ReadAllLines;
+            System.IO.File.Delete(settingsPath);
+        }
+    }
+
+    private static string GraphLayoutHashForTest(string path)
+    {
+        string fullPath = System.IO.Path.GetFullPath(path);
+        if (OperatingSystem.IsWindows()) fullPath = fullPath.ToUpperInvariant();
+        string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fullPath)));
+        return OperatingSystem.IsWindows() ? hash : hash.ToLowerInvariant();
+    }
+
+    private static void DirtyAnimationSurvivesARejectedOpen()
+    {
+        Console.WriteLine("\na dirty animation survives opening a rejected file");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string good = WriteOneClip("bgs-smoke-lifecycle-anim");
+        window.Open(good);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.MarkAnimationEditedForTest();
+        CheckTrue("the animation is dirty", window.AnimationEdited);
+
+        window.DiscardDecision = () => DiscardChoice.Cancel;
+        window.Open(good + ".missing");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("a missing file leaves the animation dirty", window.AnimationEdited);
+
+        window.DiscardDecision = () => DiscardChoice.Cancel;
+        window.Open(good);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("a cancelled valid open leaves the animation dirty", window.AnimationEdited);
+
+        window.DiscardDecision = () => DiscardChoice.Discard;
+        window.Open(good);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("an allowed discard clears the animation edits", !window.AnimationEdited);
+        window.Close();
+    }
+
+    private static void CloseCancelsWhileDirty()
+    {
+        Console.WriteLine("\na cancelled close keeps the dirty window open");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string good = WriteOneClip("bgs-smoke-close-cancel");
+        window.Open(good);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.9"));
+
+        window.DiscardDecision = () => DiscardChoice.Cancel;
+        window.Close();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("a cancelled close keeps the window open", window.IsVisible);
+        CheckTrue("and keeps the document dirty", window.IsDirty);
+        window.Close();
+        window.DiscardDecision = () => DiscardChoice.Discard;
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+    }
+
+    private static void CloseDiscardsAfterExplicitChoice()
+    {
+        Console.WriteLine("\nan explicit discard closes the window");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string good = WriteOneClip("bgs-smoke-close-discard");
+        window.Open(good);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.9"));
+
+        window.Close();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        var dialog = window.OwnedWindows.OfType<DiscardDialog>().Single();
+        Click(Find<Button>(dialog).Single(button => button.Content?.ToString() == "Discard changes"));
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("an explicit discard closes the window", !window.IsVisible);
+    }
+
+    private static void CloseSaveCommitsThenCloses()
+    {
+        Console.WriteLine("\na Save choice on close commits then closes");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string good = WriteOneClip("bgs-smoke-close-save");
+        byte[] before = System.IO.File.ReadAllBytes(good);
+        window.Open(good);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.9"));
+
+        window.Close();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        var dialog = window.OwnedWindows.OfType<DiscardDialog>().Single();
+        Click(Find<Button>(dialog).Single(button => button.Content?.ToString() == "Save and continue"));
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("a Save choice commits and closes the window", !window.IsVisible);
+        CheckTrue("and the file was written", !System.IO.File.ReadAllBytes(good).SequenceEqual(before));
+    }
+
+    private static void CloseSaveRefusalStaysOpen()
+    {
+        Console.WriteLine("\na refused Save on close keeps the window open");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string good = WriteOneClip("bgs-smoke-close-save-blocked");
+        byte[] before = System.IO.File.ReadAllBytes(good);
+        window.Open(good);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.9"));
+
+        System.IO.File.SetAttributes(good, System.IO.FileAttributes.ReadOnly);
+        try
+        {
+            window.DiscardDecision = () => DiscardChoice.Save;
+            window.Close();
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("a refused Save keeps the window open", window.IsVisible);
+            CheckTrue("and keeps the document dirty", window.IsDirty);
+            CheckTrue("and the status says why",
+                      window.StatusForTest.Contains("Cannot save", StringComparison.Ordinal));
+            CheckTrue("and nothing was written", System.IO.File.ReadAllBytes(good).SequenceEqual(before));
+        }
+        finally
+        {
+            System.IO.File.SetAttributes(good, System.IO.FileAttributes.Normal);
+        }
+        window.Close();
+        window.DiscardDecision = () => DiscardChoice.Discard;
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+    }
+
+    private static byte[] OneClipBytes()
+    {
+        var classes = OpenCommonwealth.Services.Hkx.HavokClasses.Shipped;
+        int size = classes["hkbClipGenerator"]!.Size;
+        int speed = classes.Field("hkbClipGenerator", "playbackSpeed")!.Offset;
+
+        var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        BitConverter.GetBytes(OpenCommonwealth.Services.Hkx.HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature)
+                    .CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
+
+        var data = new byte[size];
+        BitConverter.GetBytes(2.5f).CopyTo(data, speed);
+
+        var image = new OpenCommonwealth.Services.Hkx.PackfileImage();
+        image.Sections.Add(new OpenCommonwealth.Services.Hkx.PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"),
+            Data = names,
+        });
+        image.Sections.Add(new OpenCommonwealth.Services.Hkx.PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            VirtualFixups = Triple(0, 0, 5),
+        });
+        return image.Rebuild();
+    }
+
+    private static byte[] MakeTag(string name)
+    {
+        var tag = new byte[20];
+        Array.Fill(tag, (byte)0xFF);
+        var ascii = System.Text.Encoding.ASCII.GetBytes(name);
+        Array.Copy(ascii, tag, ascii.Length);
+        tag[ascii.Length] = 0;
+        return tag;
+    }
+
+    private static byte[] Triple(int source, int section, int destination) =>
+        BitConverter.GetBytes(source).Concat(BitConverter.GetBytes(section))
+                    .Concat(BitConverter.GetBytes(destination)).ToArray();
+
+    private static void SaveCurrentOnlySucceedsWhenCommitted()
+    {
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-savecurrent-ok.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        byte[] before = System.IO.File.ReadAllBytes(path);
+
+        var window = new MainWindow();
+        window.Show();
+        window.Open(path);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string edited = OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.9");
+        window.SetXmlForTest(edited);
+        CheckTrue("editing the graph makes the document dirty", window.IsDirty);
+
+        bool saved = window.SaveCurrentForTest();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("SaveCurrent returns true when the file was committed", saved);
+        CheckTrue("and the document is no longer dirty", !window.IsDirty);
+        CheckTrue("and the bytes on disk changed", !System.IO.File.ReadAllBytes(path).SequenceEqual(before));
+
+        var paramsAfter = OpenCommonwealth.Services.Hkx.HkxTextEdit.ReadParams(window.LoadedXml, "90");
+        var landed = paramsAfter.FirstOrDefault(p => p.Name == "playbackSpeed");
+        float speed = landed != null && float.TryParse(landed.Value,
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float parsed) ? parsed : float.NaN;
+        CheckTrue("and the reloaded document holds the edit",
+                  Math.Abs(speed - 0.9f) < 1e-4f);
+    }
+
+    private static void SaveCurrentReturnsFalseWhenBlocked()
+    {
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-savecurrent-blocked.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        byte[] before = System.IO.File.ReadAllBytes(path);
+
+        var window = new MainWindow();
+        window.Show();
+        window.Open(path);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string edited = OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.5");
+        window.SetXmlForTest(edited);
+
+        System.IO.File.SetAttributes(path, System.IO.FileAttributes.ReadOnly);
+        try
+        {
+            bool saved = window.SaveCurrentForTest();
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("SaveCurrent returns false when the file cannot be written", !saved);
+            CheckTrue("the document stays dirty", window.IsDirty);
+            CheckTrue("the status explains the block",
+                      window.StatusForTest.Contains("Cannot save", StringComparison.Ordinal));
+            CheckTrue("and nothing was written", System.IO.File.ReadAllBytes(path).SequenceEqual(before));
+        }
+        finally
+        {
+            System.IO.File.SetAttributes(path, System.IO.FileAttributes.Normal);
+        }
+    }
+
+    private static void ReloadFailureAfterCommitSaysSaved()
+    {
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-savecurrent-reload.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        byte[] before = System.IO.File.ReadAllBytes(path);
+
+        var window = new MainWindow();
+        window.Show();
+        window.Open(path);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string edited = OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.3");
+        window.SetXmlForTest(edited);
+        window.ReloadFaultForTest = () => new InvalidOperationException("injected reload fault");
+
+        bool saved = window.SaveCurrentForTest();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("SaveCurrent reports the commit even when the reload fails", !saved);
+        CheckTrue("the file on disk was still written",
+                  !System.IO.File.ReadAllBytes(path).SequenceEqual(before));
+        CheckTrue("the status says the file was saved",
+                  window.StatusForTest.Contains("was saved", StringComparison.Ordinal));
+        CheckTrue("and never claims the original is untouched",
+                  !window.StatusForTest.Contains("untouched", StringComparison.Ordinal));
+        window.ReloadFaultForTest = null;
+    }
+
+    private static void VerificationFailureLeavesTheSourceUntouched()
+    {
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-verifyfail.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        byte[] before = System.IO.File.ReadAllBytes(path);
+
+        var window = new MainWindow();
+        window.Show();
+        window.Open(path);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        string edited = OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.3");
+        window.SetXmlForTest(edited);
+        window.VerifyFaultForTest = () => new InvalidDataException("injected verification fault");
+
+        bool saved = window.SaveCurrentForTest();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("a failed verification reports nothing was written", !saved);
+        CheckTrue("and leaves the file on disk untouched",
+                  System.IO.File.ReadAllBytes(path).SequenceEqual(before));
+        CheckTrue("the status names verification",
+                  window.StatusForTest.Contains("failed verification", StringComparison.Ordinal));
+        CheckTrue("and never claims the original is untouched",
+                  !window.StatusForTest.Contains("untouched", StringComparison.Ordinal));
+        window.VerifyFaultForTest = null;
     }
 }
 

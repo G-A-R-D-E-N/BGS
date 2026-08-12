@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>BehaviourGraph.Core</AssemblyName>
+    <RootNamespace>OpenCommonwealth.Services</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Archive/*.cs" />
+    <Compile Include="Hkx/*.cs" />
+    <Compile Include="Nif/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Hkx/HavokClassLayouts.json" />
+    <EmbeddedResource Include="Hkx/HavokClassTypes.json" Condition="Exists('Hkx/HavokClassTypes.json')" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="symrm" />
+    <InternalsVisibleTo Include="BehaviourGraphStudio" />
+    <InternalsVisibleTo Include="uismoke" />
+  </ItemGroup>
+</Project>

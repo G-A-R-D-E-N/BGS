@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build app
+        run: dotnet build app/BehaviourStudio.csproj --configuration Release
+
+      - name: Run native regression harness
+        run: dotnet run --project tools/symrm/symrm.csproj --configuration Release -- test
+
+      - name: Run xUnit suite
+        run: dotnet test tools/tests/BehaviourGraph.Tests.csproj --configuration Release --logger "console;verbosity=normal"
+
+      - name: Run UI smoke harness
+        run: dotnet run --project tools/uismoke/uismoke.csproj --configuration Release

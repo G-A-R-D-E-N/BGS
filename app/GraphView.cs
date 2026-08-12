@@ -36,7 +36,7 @@ public class GraphView : Control
     private const double PortRadius = 5;
 
 
-    private const int MaxNodes = 4000;
+    public const int MaxNodes = 4000;
 
     private sealed class Node
     {
@@ -80,6 +80,7 @@ public class GraphView : Control
 
 
     private int _placedCount;
+    private bool _truncated;
 
 
 
@@ -130,6 +131,7 @@ public class GraphView : Control
     private double _zoom = 0.9;
     private Point _pan = new(40, 40);
     private Point _lastPointer;
+    private bool _dragChanged;
     private bool _panning;
     private Node? _dragNode;
     private Point? _marqueeFrom;
@@ -175,6 +177,7 @@ public class GraphView : Control
     public Action<string, string, string>? LinkRequested;
     public Action<string, string, string>? UnlinkRequested;
     public Action<string>? DeleteRequested;
+    public event Action? LayoutChanged;
 
 
     public Action<string, string, Point>? AddRequested;
@@ -399,7 +402,8 @@ public class GraphView : Control
 
 
 
-        var placed = GraphAuthor.Layout(model, MaxNodes);
+        var placed = GraphAuthor.Layout(model, MaxNodes, out bool truncated);
+        _truncated = truncated;
         _own = GraphOwnership.Of(placed);
         _structuredPlan = StructuredFlowLayout.Of(placed);
         _structuredContainers.Clear();
@@ -751,9 +755,23 @@ public class GraphView : Control
 
     public void DragForTest(string id, double byX, double byY)
     {
-        if (_nodes.TryGetValue(id, out var from)) Move(from, byX, byY);
+        if (_nodes.TryGetValue(id, out var from) && Move(from, byX, byY)
+            && _layoutMode == GraphLayoutMode.Freeform) LayoutChanged?.Invoke();
         InvalidateVisual();
     }
+
+    public void RestoreFreeformPositions(IReadOnlyDictionary<string, Settings.LayoutPoint> positions)
+    {
+        _placed.Clear();
+        foreach (var (id, at) in positions)
+            if (double.IsFinite(at.X) && double.IsFinite(at.Y))
+                _placed[id] = new Point(at.X, at.Y);
+    }
+
+    public IReadOnlyDictionary<string, Settings.LayoutPoint> SnapshotFreeformPositions() =>
+        _placed.Where(pair => double.IsFinite(pair.Value.X) && double.IsFinite(pair.Value.Y))
+               .ToDictionary(pair => pair.Key,
+                   pair => new Settings.LayoutPoint(pair.Value.X, pair.Value.Y), StringComparer.Ordinal);
 
 
     public IReadOnlyCollection<string> MovementSet(string id)
@@ -797,6 +815,7 @@ public class GraphView : Control
     private bool HasFamily(Node node) => _own.Children(node.Id).Count > 0;
 
     public int DrawnCount => _nodes.Count;
+    public bool DrawingTruncated => _truncated;
     public IReadOnlyCollection<string> DrawnIds => _nodes.Keys;
 
 
@@ -1324,16 +1343,20 @@ public class GraphView : Control
 
 
 
-    private void Move(Node from, double byX, double byY)
+    private bool Move(Node from, double byX, double byY)
     {
+        if (byX == 0 && byY == 0) return false;
         var picked = _selected.Contains(from.Id) ? (IEnumerable<string>)_selected : new[] { from.Id };
+        bool moved = false;
 
         foreach (string id in _own.Moving(picked))
         {
             if (!_nodes.TryGetValue(id, out var node)) continue;
             node.Bounds = node.Bounds.WithX(node.Bounds.X + byX).WithY(node.Bounds.Y + byY);
             _placed[id] = node.Bounds.TopLeft;
+            moved = true;
         }
+        return moved;
     }
 
 
@@ -1394,6 +1417,7 @@ public class GraphView : Control
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
+        _dragChanged = false;
         Focus();
         var screen = e.GetPosition(this);
         var world = ToWorld(screen);
@@ -1472,7 +1496,7 @@ public class GraphView : Control
 
         if (_dragNode != null)
         {
-            Move(_dragNode, delta.X / _zoom, delta.Y / _zoom);
+            if (Move(_dragNode, delta.X / _zoom, delta.Y / _zoom)) _dragChanged = true;
             InvalidateVisual();
             return;
         }
@@ -1522,6 +1546,8 @@ public class GraphView : Control
 
         _wiring = null;
         _dragNode = null;
+        if (_dragChanged && _layoutMode == GraphLayoutMode.Freeform) LayoutChanged?.Invoke();
+        _dragChanged = false;
         _panning = false;
         InvalidateVisual();
     }

@@ -34,7 +34,7 @@ public static class GeneratorEditor
                 "            <hkparam name=\"playbackSpeed\">1.0</hkparam>\n" +
                 "            <hkparam name=\"enforcedDuration\">0.0</hkparam>\n" +
                 "            <hkparam name=\"userControlledTimeFraction\">0.0</hkparam>\n" +
-                "            <hkparam name=\"animationBindingIndex\">65535</hkparam>\n" +
+                "            <hkparam name=\"animationBindingIndex\">-1</hkparam>\n" +
                 "            <hkparam name=\"mode\">MODE_LOOPING</hkparam>\n" +
                 "            <hkparam name=\"flags\">0</hkparam>",
         },
@@ -49,7 +49,7 @@ public static class GeneratorEditor
                 "            <hkparam name=\"blendParameter\">1.0</hkparam>\n" +
                 "            <hkparam name=\"minCyclicBlendParameter\">0.0</hkparam>\n" +
                 "            <hkparam name=\"maxCyclicBlendParameter\">1.0</hkparam>\n" +
-                "            <hkparam name=\"indexOfSyncMasterChild\">65535</hkparam>\n" +
+                "            <hkparam name=\"indexOfSyncMasterChild\">-1</hkparam>\n" +
                 "            <hkparam name=\"flags\">8</hkparam>\n" +
                 "            <hkparam name=\"subtractLastChild\">false</hkparam>\n" +
                 "            <hkparam name=\"children\" numelements=\"0\">\n</hkparam>",
@@ -105,8 +105,8 @@ public static class GeneratorEditor
             throw new ArgumentException($"unknown generator kind '{kind}'; try {string.Join(", ", Kinds.Keys)}");
 
         string body = spec.Body
-            .Replace("{name}", name)
-            .Replace("{animation}", animation)
+            .Replace("{name}", HkxTextEdit.EscapeXml(name))
+            .Replace("{animation}", HkxTextEdit.EscapeXml(animation))
             .Replace("{child}", string.IsNullOrEmpty(childRef) ? "null" : childRef);
 
         return HkxTextEdit.AddObject(xml, spec.Class, HkxSignatures.Of(spec.Class), body, out newId);

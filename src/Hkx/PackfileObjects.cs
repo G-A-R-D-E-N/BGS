@@ -135,6 +135,9 @@ public sealed class PackfileObjects
     public ulong? ReadULongAt(int at) =>
         at < 0 || at + 8 > _data.Data.Length ? null : BitConverter.ToUInt64(_data.Data, at);
 
+    public long? ReadLongAt(int at) =>
+        at < 0 || at + 8 > _data.Data.Length ? null : BitConverter.ToInt64(_data.Data, at);
+
 
 
 

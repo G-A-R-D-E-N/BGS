@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using OpenCommonwealth.Services.Nif;
 
 namespace OpenCommonwealth.Services.Hkx;
 
@@ -46,7 +47,8 @@ public static class MeshLookup
             var found = nifsIn(folder).OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
             if (found.Count == 0) continue;
 
-            if (found.Count == 1) return new Result(found[0], "found beside the file");
+            if (found.Count == 1)
+                return new Result(found[0], $"found under {Path.GetFileName(folder)}");
 
             return new Result(null,
                 $"{found.Count} models sit in {Path.GetFileName(folder)} " +
@@ -57,20 +59,43 @@ public static class MeshLookup
         return new Result(null, "no model found next to this file, so use Mesh... to point at one.");
     }
 
-    public static Result Find(string behaviourPath, string? projectRoot, string? skeletonPath) =>
-        Find(Places(behaviourPath, projectRoot, skeletonPath), OnDisk);
+    public static Result Find(string behaviourPath, string? projectRoot, string? skeletonPath)
+    {
+        string? actorRoot = !string.IsNullOrEmpty(projectRoot)
+            ? projectRoot
+            : skeletonPath == null ? null : Path.GetDirectoryName(skeletonPath);
+        actorRoot ??= Path.GetDirectoryName(behaviourPath);
+
+        return string.IsNullOrEmpty(actorRoot)
+            ? new Result(null, "no model search root is available, so use Mesh... to point at one.")
+            : Find(new[] { actorRoot }, OnDisk);
+    }
 
     private static IReadOnlyList<string> OnDisk(string folder)
     {
         try
         {
             return Directory.Exists(folder)
-                ? Directory.GetFiles(folder, "*.nif", SearchOption.TopDirectoryOnly)
+                ? Directory.GetFiles(folder, "*.nif", SearchOption.AllDirectories)
+                           .Where(IsMesh)
+                           .ToList()
                 : Array.Empty<string>();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return Array.Empty<string>();
+        }
+    }
+
+    private static bool IsMesh(string path)
+    {
+        try
+        {
+            return NifGeometry.Shapes(NifFile.Read(path)).Count > 0;
+        }
+        catch (Exception)
+        {
+            return false;
         }
     }
 }
