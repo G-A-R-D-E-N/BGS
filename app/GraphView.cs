@@ -755,8 +755,8 @@ public class GraphView : Control
 
     public void DragForTest(string id, double byX, double byY)
     {
-        if (_layoutMode == GraphLayoutMode.Freeform && _nodes.TryGetValue(id, out var from)
-            && Move(from, byX, byY)) LayoutChanged?.Invoke();
+        if (_nodes.TryGetValue(id, out var from) && Move(from, byX, byY)
+            && _layoutMode == GraphLayoutMode.Freeform) LayoutChanged?.Invoke();
         InvalidateVisual();
     }
 
@@ -1345,7 +1345,7 @@ public class GraphView : Control
 
     private bool Move(Node from, double byX, double byY)
     {
-        if (_layoutMode != GraphLayoutMode.Freeform || byX == 0 && byY == 0) return false;
+        if (byX == 0 && byY == 0) return false;
         var picked = _selected.Contains(from.Id) ? (IEnumerable<string>)_selected : new[] { from.Id };
         bool moved = false;
 
