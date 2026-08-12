@@ -2728,8 +2728,10 @@ public static class Smoke
         window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
             window.LoadedXml, "90", "playbackSpeed", "0.9"));
 
-        window.DiscardDecision = () => DiscardChoice.Discard;
         window.Close();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        var dialog = window.OwnedWindows.OfType<DiscardDialog>().Single();
+        Click(Find<Button>(dialog).Single(button => button.Content?.ToString() == "Discard changes"));
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         CheckTrue("an explicit discard closes the window", !window.IsVisible);
     }
@@ -2748,8 +2750,10 @@ public static class Smoke
         window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
             window.LoadedXml, "90", "playbackSpeed", "0.9"));
 
-        window.DiscardDecision = () => DiscardChoice.Save;
         window.Close();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        var dialog = window.OwnedWindows.OfType<DiscardDialog>().Single();
+        Click(Find<Button>(dialog).Single(button => button.Content?.ToString() == "Save and continue"));
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         CheckTrue("a Save choice commits and closes the window", !window.IsVisible);
         CheckTrue("and the file was written", !System.IO.File.ReadAllBytes(good).SequenceEqual(before));
