@@ -2094,6 +2094,8 @@ public static class Smoke
               MainWindow.FindSiblingSkeletonFolder(deep) ?? "");
         Check("an unrelated higher CharacterAssets folder is not selected", "",
               MainWindow.FindSiblingSkeletonFolder(outside) ?? "");
+        Check("a behaviour can use the selected animation's sibling skeleton", assets,
+              MainWindow.FindPoseSkeletonFolder(outside, deep) ?? "");
 
         const string sampleAnimation = "dist/examples/Dogmeat/Animations/IdleOutroDogmeatWalkForward.hkx";
         const string sampleSkeleton = "dist/examples/Dogmeat/CharacterAssets/skeleton.hkx";

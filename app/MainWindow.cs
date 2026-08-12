@@ -2378,9 +2378,9 @@ public class MainWindow : Window
 
 
 
-    private static HkxSkeleton? SiblingSkeleton(string animationPath)
+    private static HkxSkeleton? SiblingSkeleton(string primaryPath, string? fallbackPath = null)
     {
-        string? assets = FindSiblingSkeletonFolder(animationPath);
+        string? assets = FindPoseSkeletonFolder(primaryPath, fallbackPath);
         if (assets == null) return null;
 
         foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
@@ -2410,6 +2410,14 @@ public class MainWindow : Window
             dir = dir.Parent;
         }
         return null;
+    }
+
+    internal static string? FindPoseSkeletonFolder(string primaryPath, string? fallbackPath = null)
+    {
+        string? primary = FindSiblingSkeletonFolder(primaryPath);
+        return primary ?? (string.IsNullOrWhiteSpace(fallbackPath)
+            ? null
+            : FindSiblingSkeletonFolder(fallbackPath));
     }
 
     private static string TrackName(HkxAnimationData anim, HkxSkeleton? skeleton, int track)
@@ -2521,12 +2529,12 @@ public class MainWindow : Window
 
 
 
-    private HkxSkeleton? PoseSkeleton()
+    private HkxSkeleton? PoseSkeleton(string? animationPath = null)
     {
         if (_cachedSkeletonFor == _hkxPath && _cachedSkeleton != null) return _cachedSkeleton;
 
         _cachedSkeletonFor = _hkxPath;
-        _cachedSkeleton = _projectChain?.Skeleton ?? SiblingSkeleton(_hkxPath);
+        _cachedSkeleton = _projectChain?.Skeleton ?? SiblingSkeleton(_hkxPath, animationPath);
         return _cachedSkeleton;
     }
 
@@ -2571,7 +2579,7 @@ public class MainWindow : Window
         if (_poseSource == animationPath) return;
 
         Stop();
-        _poseSkeleton = PoseSkeleton();
+        _poseSkeleton = PoseSkeleton(animationPath);
 
         HkxAnimationData animation;
         try
