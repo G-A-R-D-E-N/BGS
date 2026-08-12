@@ -45,9 +45,9 @@ public sealed class DiscardDialog : Window
         var discard = Ux.Secondary("Discard changes");
         var cancel = Ux.Secondary("Cancel");
 
-        save.Click += (_, _) => { Choice = DiscardChoice.Save; Close(); };
-        discard.Click += (_, _) => { Choice = DiscardChoice.Discard; Close(); };
-        cancel.Click += (_, _) => { Choice = DiscardChoice.Cancel; Close(); };
+        save.Click += (_, _) => Complete(DiscardChoice.Save);
+        discard.Click += (_, _) => Complete(DiscardChoice.Discard);
+        cancel.Click += (_, _) => Complete(DiscardChoice.Cancel);
 
         var buttons = new StackPanel
         {
@@ -61,5 +61,11 @@ public sealed class DiscardDialog : Window
             Margin = new Thickness(20),
             Children = { header, hint, buttons },
         };
+    }
+
+    private void Complete(DiscardChoice choice)
+    {
+        Choice = choice;
+        Close(choice);
     }
 }

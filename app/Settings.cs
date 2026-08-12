@@ -15,34 +15,41 @@ public static class Settings
 {
     public readonly record struct LayoutPoint(double X, double Y);
 
-    private static readonly string Path = System.IO.Path.Combine(
+    internal static Func<string, string[]> ReadAllLinesForTest = File.ReadAllLines;
+
+    private static readonly string DefaultPath = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "BehaviourGraphStudio", "settings.cfg");
 
+    internal static string? SettingsPathForTest { get; set; }
+
+    private static string Path => SettingsPathForTest ?? DefaultPath;
+
     public static string Get(string key)
     {
-        foreach (var line in Read())
+        if (!TryRead(out var all, out _)) return "";
+        foreach (var line in all)
             if (line.Key == key) return line.Value;
         return "";
     }
 
     public static void Set(string key, string value)
     {
-        var all = Read();
-        all[key] = value;
-
-        string dir = System.IO.Path.GetDirectoryName(Path)!;
-        Directory.CreateDirectory(dir);
-        WriteAll(System.IO.Path.Combine(dir, System.IO.Path.GetFileName(Path) + ".tmp"), Path, all);
+        if (!TrySet(key, value, out string failure)) throw new IOException(failure);
     }
 
     /// <summary>Attempts to persist one preference without allowing ordinary filesystem failures
     /// to interrupt the feature that merely wanted to remember it.</summary>
     public static bool TrySet(string key, string value, out string failure)
     {
+        if (!TryRead(out var all, out failure)) return false;
+
         try
         {
-            Set(key, value);
+            all[key] = value;
+            string dir = System.IO.Path.GetDirectoryName(Path)!;
+            Directory.CreateDirectory(dir);
+            WriteAll(System.IO.Path.Combine(dir, System.IO.Path.GetFileName(Path) + ".tmp"), Path, all);
             failure = "";
             return true;
         }
@@ -109,22 +116,29 @@ public static class Settings
         File.Move(tempPath, finalPath, overwrite: true);
     }
 
-    private static Dictionary<string, string> Read()
+    private static bool TryRead(out Dictionary<string, string> all, out string failure)
     {
-        var all = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (!File.Exists(Path)) return all;
+        all = new Dictionary<string, string>(StringComparer.Ordinal);
 
         try
         {
-            foreach (string line in File.ReadAllLines(Path))
+            foreach (string line in ReadAllLinesForTest(Path))
             {
                 int split = line.IndexOf('=');
                 if (split > 0) all[line[..split]] = line[(split + 1)..];
             }
+            failure = "";
+            return true;
         }
-        catch (IOException)
+        catch (Exception e) when (e is FileNotFoundException || e is DirectoryNotFoundException)
         {
+            failure = "";
+            return true;
         }
-        return all;
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            failure = e.Message.Split('\n')[0];
+            return false;
+        }
     }
 }

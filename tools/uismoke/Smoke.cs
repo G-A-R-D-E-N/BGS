@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -1632,6 +1635,9 @@ public static class Smoke
 
         DirtyGraphSurvivesARejectedOpen();
         GraphLayoutPersistsAcrossFreshWindow();
+        GraphLayoutCodecKeepsPathsAndSkipsInvalidRecords();
+        PreferencesReadFailureDoesNotBlockGraphOpen();
+        StructuredFlowDragStaysTransient();
         DirtyAnimationSurvivesARejectedOpen();
         CloseCancelsWhileDirty();
         CloseDiscardsAfterExplicitChoice();
@@ -2088,6 +2094,8 @@ public static class Smoke
               MainWindow.FindSiblingSkeletonFolder(deep) ?? "");
         Check("an unrelated higher CharacterAssets folder is not selected", "",
               MainWindow.FindSiblingSkeletonFolder(outside) ?? "");
+        Check("a behaviour can use the selected animation's sibling skeleton", assets,
+              MainWindow.FindPoseSkeletonFolder(outside, deep) ?? "");
 
         const string sampleAnimation = "dist/examples/Dogmeat/Animations/IdleOutroDogmeatWalkForward.hkx";
         const string sampleSkeleton = "dist/examples/Dogmeat/CharacterAssets/skeleton.hkx";
@@ -2503,15 +2511,157 @@ public static class Smoke
         System.IO.File.WriteAllBytes(path, OneClipBytes());
         try
         {
-            var first = new MainWindow(); first.Show(); first.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-            const string id = "90";
-            first.Canvas.DragForTest(id, 73, -29); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-            var moved = first.Canvas.PositionOf(id)!.Value;
-            var second = new MainWindow(); second.Show(); second.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-            Check("graph layout survives fresh-window reload", moved, second.Canvas.PositionOf(id)!.Value);
-            second.Close(); first.Close();
+            WithTemporarySettings(_ =>
+            {
+                var first = new MainWindow(); first.Show(); first.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                const string id = "90";
+                first.Canvas.DragForTest(id, 73, -29); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                var moved = first.Canvas.PositionOf(id)!.Value;
+                var second = new MainWindow(); second.Show(); second.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                Check("graph layout survives fresh-window reload", moved, second.Canvas.PositionOf(id)!.Value);
+                second.Close(); first.Close();
+            });
         }
         finally { System.IO.File.Delete(path); }
+    }
+
+    private static void GraphLayoutCodecKeepsPathsAndSkipsInvalidRecords()
+    {
+        Console.WriteLine("\ngraph layout codec isolates paths and skips invalid records");
+        WithTemporarySettings(settingsPath =>
+        {
+            string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-layout-codec-{Guid.NewGuid():N}");
+            System.IO.Directory.CreateDirectory(folder);
+            try
+            {
+                string first = System.IO.Path.Combine(folder, "first.hkx");
+                string second = System.IO.Path.Combine(folder, "second.hkx");
+                CheckTrue("a first path layout writes", Settings.TrySetGraphLayout(first,
+                    new Dictionary<string, Settings.LayoutPoint> { ["one"] = new(1, 2) }, out _));
+                CheckTrue("a second path layout writes", Settings.TrySetGraphLayout(second,
+                    new Dictionary<string, Settings.LayoutPoint> { ["two"] = new(3, 4) }, out _));
+                Check("different full paths keep separate layouts", new Point(1, 2),
+                    new Point(Settings.GetGraphLayout(first)["one"].X, Settings.GetGraphLayout(first)["one"].Y));
+                Check("different full paths keep their own coordinates", new Point(3, 4),
+                    new Point(Settings.GetGraphLayout(second)["two"].X, Settings.GetGraphLayout(second)["two"].Y));
+                CheckTrue("different full paths do not share node IDs", !Settings.GetGraphLayout(second).ContainsKey("one"));
+
+                string relative = System.IO.Path.GetRelativePath(Environment.CurrentDirectory, first);
+                CheckTrue("a relative path layout writes", Settings.TrySetGraphLayout(relative,
+                    new Dictionary<string, Settings.LayoutPoint> { ["relative"] = new(7, -8) }, out _));
+                var normalized = Settings.GetGraphLayout(first);
+                Check("relative and absolute paths use one layout", new Point(7, -8),
+                    new Point(normalized["relative"].X, normalized["relative"].Y));
+
+                string malformed = System.IO.Path.Combine(folder, "malformed.hkx");
+                System.IO.File.WriteAllText(settingsPath,
+                    $"graph-layout.{GraphLayoutHashForTest(malformed)}=good,1,2|broken|duplicate,3,4|duplicate,9,10|non-finite,NaN,0|infinite,Infinity,5|bad-number,x,4|escaped%20id,-4.5,6.25\n");
+                var decoded = Settings.GetGraphLayout(malformed);
+                Check("malformed layout records leave valid records", 3, decoded.Count);
+                Check("duplicate layout records keep the first value", new Point(3, 4),
+                    new Point(decoded["duplicate"].X, decoded["duplicate"].Y));
+                Check("non-finite layout records are ignored", false, decoded.ContainsKey("non-finite") || decoded.ContainsKey("infinite"));
+                Check("escaped layout IDs decode safely", new Point(-4.5, 6.25),
+                    new Point(decoded["escaped id"].X, decoded["escaped id"].Y));
+            }
+            finally
+            {
+                System.IO.Directory.Delete(folder, recursive: true);
+            }
+        });
+    }
+
+    private static void PreferencesReadFailureDoesNotBlockGraphOpen()
+    {
+        Console.WriteLine("\nan unavailable preferences read does not block graph opening");
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-layout-preferences-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        try
+        {
+            WithTemporarySettings(settingsPath =>
+            {
+                const string existing = "keep=this-preferences-file\n";
+                System.IO.File.WriteAllText(settingsPath, existing);
+                Settings.ReadAllLinesForTest = _ => throw new UnauthorizedAccessException("preferences denied");
+                MainWindow? window = null;
+                bool opened;
+                try
+                {
+                    window = new MainWindow(); window.Show();
+                    window.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    opened = window.LoadedXml.Length > 0 && window.Canvas.PositionOf("90") == new Point(0, 0);
+                    window.Canvas.DragForTest("90", 5, 6); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    opened = false;
+                }
+                CheckTrue("a valid graph opens with automatic positions", opened);
+                Check("an unreadable existing preferences file is not replaced by preferences or layout saves", existing,
+                    System.IO.File.ReadAllText(settingsPath));
+                window?.Close();
+            });
+        }
+        finally
+        {
+            Settings.ReadAllLinesForTest = File.ReadAllLines;
+            System.IO.File.Delete(path);
+        }
+    }
+
+    private static void StructuredFlowDragStaysTransient()
+    {
+        Console.WriteLine("\na Structured Flow drag stays transient");
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-layout-structured-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        try
+        {
+            WithTemporarySettings(settingsPath =>
+            {
+                var window = new MainWindow(); window.Show(); window.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                window.SetGraphLayoutModeForTest(GraphLayoutMode.StructuredFlow);
+                var before = window.Canvas.PositionOf("90")!.Value;
+                int changes = 0;
+                window.Canvas.LayoutChanged += () => changes++;
+                string settingsBefore = System.IO.File.ReadAllText(settingsPath);
+
+                window.Canvas.DragForTest("90", 31, -17); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                var after = window.Canvas.PositionOf("90")!.Value;
+                Check("Structured Flow keeps transient drag movement", new Point(31, -17), after - before);
+                Check("Structured Flow drag does not emit layout persistence", 0, changes);
+                Check("Structured Flow drag does not save layout state", settingsBefore,
+                    System.IO.File.ReadAllText(settingsPath));
+                window.Close();
+            });
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    private static void WithTemporarySettings(Action<string> test)
+    {
+        string settingsPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-settings-{Guid.NewGuid():N}.cfg");
+        string? previous = Settings.SettingsPathForTest;
+        try
+        {
+            Settings.SettingsPathForTest = settingsPath;
+            System.IO.File.WriteAllText(settingsPath, "");
+            test(settingsPath);
+        }
+        finally
+        {
+            Settings.SettingsPathForTest = previous;
+            Settings.ReadAllLinesForTest = File.ReadAllLines;
+            System.IO.File.Delete(settingsPath);
+        }
+    }
+
+    private static string GraphLayoutHashForTest(string path)
+    {
+        string fullPath = System.IO.Path.GetFullPath(path);
+        if (OperatingSystem.IsWindows()) fullPath = fullPath.ToUpperInvariant();
+        string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fullPath)));
+        return OperatingSystem.IsWindows() ? hash : hash.ToLowerInvariant();
     }
 
     private static void DirtyAnimationSurvivesARejectedOpen()
@@ -2580,8 +2730,10 @@ public static class Smoke
         window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
             window.LoadedXml, "90", "playbackSpeed", "0.9"));
 
-        window.DiscardDecision = () => DiscardChoice.Discard;
         window.Close();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        var dialog = window.OwnedWindows.OfType<DiscardDialog>().Single();
+        Click(Find<Button>(dialog).Single(button => button.Content?.ToString() == "Discard changes"));
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         CheckTrue("an explicit discard closes the window", !window.IsVisible);
     }
@@ -2600,8 +2752,10 @@ public static class Smoke
         window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
             window.LoadedXml, "90", "playbackSpeed", "0.9"));
 
-        window.DiscardDecision = () => DiscardChoice.Save;
         window.Close();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        var dialog = window.OwnedWindows.OfType<DiscardDialog>().Single();
+        Click(Find<Button>(dialog).Single(button => button.Content?.ToString() == "Save and continue"));
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         CheckTrue("a Save choice commits and closes the window", !window.IsVisible);
         CheckTrue("and the file was written", !System.IO.File.ReadAllBytes(good).SequenceEqual(before));
