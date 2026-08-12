@@ -141,6 +141,7 @@ public class MainWindow : Window
     private readonly TextBlock _problemBar = new() { Foreground = Ux.MetaBrush, FontSize = 12, Margin = new Thickness(2, 6, 2, 2) };
 
     private long _documentStamp;                 // bumped on every document change
+    private DocumentSourceStamp? _sourceStamp;
     private long CaptureStamp() => _documentStamp;
 
     public Func<ProjectChain, IProgress<string>, Task<ProjectCheck.Result>>? ValidateProjectRunner;
@@ -2086,6 +2087,13 @@ public class MainWindow : Window
             return false;
         }
 
+        if (_sourceStamp is { } sourceStamp && !sourceStamp.Matches(_hkxPath, out string externalChange))
+        {
+            _frameEditAnswer.Text = "Not saved: " + externalChange;
+            _frameEditAnswer.Foreground = Ux.BadBrush;
+            return false;
+        }
+
         string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
         if (blocked != null)
         {
@@ -3411,6 +3419,12 @@ public class MainWindow : Window
         return null;
     }
 
+    private bool SavePendingChanges()
+    {
+        if (_animationEdited && !_dirty) return SaveAnimation();
+        return SaveCurrent();
+    }
+
     private bool ConfirmDiscard(string what)
     {
         CommitPendingFields();
@@ -3419,7 +3433,7 @@ public class MainWindow : Window
         return (DiscardDecision ?? (() => ShowDiscardDialog(what)))() switch
         {
             DiscardChoice.Discard => true,
-            DiscardChoice.Save => SaveCurrent(),
+            DiscardChoice.Save => SavePendingChanges(),
             _ => false,
         };
     }
@@ -3446,6 +3460,13 @@ public class MainWindow : Window
     {
         base.OnClosing(e);
         if (e.Cancel || _closeApproved) return;
+
+        if (!_dirty && !_animationEdited)
+        {
+            _closeApproved = true;
+            return;
+        }
+
         e.Cancel = true;
         _ = CloseAfterDecision();
     }
@@ -3459,7 +3480,7 @@ public class MainWindow : Window
         bool proceed = choice switch
         {
             DiscardChoice.Discard => true,
-            DiscardChoice.Save => SaveCurrent(),
+            DiscardChoice.Save => SavePendingChanges(),
             _ => false,
         };
         if (proceed)
@@ -3494,7 +3515,20 @@ public class MainWindow : Window
             return;
         }
 
+        DocumentSourceStamp sourceStamp;
+        try
+        {
+            sourceStamp = DocumentSourceStamp.Capture(path);
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            SetSummary("Could not read the file consistently enough to open it: " + e.Message.Split('\n')[0],
+                       Ux.BadBrush);
+            return;
+        }
+
         _documentStamp++;
+        _sourceStamp = sourceStamp;
         _tree.Clear();
         _clips.Clear();
         ClearProps();
@@ -5160,6 +5194,12 @@ public class MainWindow : Window
     private bool SaveCurrent()
     {
         if (_readOnly) { SetStatus("Not saved: " + _readOnlyWhy, Ux.BadBrush); return false; }
+
+        if (_sourceStamp is { } sourceStamp && !sourceStamp.Matches(_hkxPath, out string externalChange))
+        {
+            SetStatus("Not saved: " + externalChange, Ux.BadBrush);
+            return false;
+        }
 
         NativeSave.Plan plan;
         try

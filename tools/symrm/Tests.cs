@@ -3903,14 +3903,18 @@ public static class Tests
         var nearest = MeshLookup.Find(new[] { "/project", "/assets" }, In);
         Check("the nearest folder decides", "/project/Dogmeat.nif", nearest.Path);
 
-        var places = MeshLookup.Places("/x/Behaviors/Root.hkx", "/x", "/x/CharacterAssets/skeleton.hkt")
-                               .ToList();
+        string root = Path.GetFullPath("/x");
+        string behaviours = Path.Combine(root, "Behaviors");
+        string characterAssets = Path.Combine(root, "CharacterAssets");
+        var places = MeshLookup.Places(Path.Combine(behaviours, "Root.hkx"), root,
+                                      Path.Combine(characterAssets, "skeleton.hkt")).ToList();
         Check("three places are searched", 3, places.Count);
-        Check("the behaviour's own folder first", "/x/Behaviors", places[0]);
-        Check("then the project root", "/x", places[1]);
-        Check("then wherever the skeleton lives", "/x/CharacterAssets", places[2]);
+        Check("the behaviour's own folder first", behaviours, places[0]);
+        Check("then the project root", root, places[1]);
+        Check("then wherever the skeleton lives", characterAssets, places[2]);
 
-        var deduped = MeshLookup.Places("/x/Root.hkx", "/x", "/x/skeleton.hkt").ToList();
+        var deduped = MeshLookup.Places(Path.Combine(root, "Root.hkx"), root,
+                                       Path.Combine(root, "skeleton.hkt")).ToList();
         Check("one folder is searched once", 1, deduped.Count);
     }
 
@@ -8157,10 +8161,10 @@ public static class Tests
         Console.WriteLine("\nsave blocks newly introduced structural errors and details them");
 
         string clean = SmallGraph();
-        string dupes = clean.Replace("<hkparam name=\"name\">B</hkparam>\n" +
-                                     "            <hkparam name=\"stateId\">1</hkparam>",
-                                     "<hkparam name=\"name\">B</hkparam>\n" +
-                                     "            <hkparam name=\"stateId\">0</hkparam>");
+        string dupes = clean.Replace(
+            "<hkparam name=\"stateId\">1</hkparam>",
+            "<hkparam name=\"stateId\">0</hkparam>",
+            StringComparison.Ordinal);
 
         CheckTrue("the validator finds the duplicate", GraphValidator.Check(dupes)
                   .Any(f => f.What.Contains("stateId", StringComparison.Ordinal) && f.BlocksSave));

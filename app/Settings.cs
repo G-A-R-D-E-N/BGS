@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 
 namespace BehaviourStudio.App;
 
@@ -20,6 +21,9 @@ public static class Settings
     private static readonly string DefaultPath = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "BehaviourGraphStudio", "settings.cfg");
+
+    private static readonly object WriteGate = new();
+    private static readonly TimeSpan WriteLockTimeout = TimeSpan.FromSeconds(5);
 
     internal static string? SettingsPathForTest { get; set; }
 
@@ -42,21 +46,58 @@ public static class Settings
     /// to interrupt the feature that merely wanted to remember it.</summary>
     public static bool TrySet(string key, string value, out string failure)
     {
-        if (!TryRead(out var all, out failure)) return false;
+        lock (WriteGate)
+        {
+            string dir;
+            try
+            {
+                dir = System.IO.Path.GetDirectoryName(Path)!;
+                Directory.CreateDirectory(dir);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                failure = e.Message.Split('\n')[0];
+                return false;
+            }
 
-        try
-        {
-            all[key] = value;
-            string dir = System.IO.Path.GetDirectoryName(Path)!;
-            Directory.CreateDirectory(dir);
-            WriteAll(System.IO.Path.Combine(dir, System.IO.Path.GetFileName(Path) + ".tmp"), Path, all);
-            failure = "";
-            return true;
-        }
-        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
-        {
-            failure = e.Message.Split('\n')[0];
-            return false;
+            using var mutex = new Mutex(false, WriteMutexName(Path));
+            bool acquired = false;
+            try
+            {
+                try
+                {
+                    acquired = mutex.WaitOne(WriteLockTimeout);
+                }
+                catch (AbandonedMutexException)
+                {
+                    acquired = true;
+                }
+
+                if (!acquired)
+                {
+                    failure = "another Behaviour Graph Studio process is updating preferences; try again";
+                    return false;
+                }
+
+                if (!TryRead(out var all, out failure)) return false;
+
+                all[key] = value;
+                string temp = System.IO.Path.Combine(
+                    dir,
+                    System.IO.Path.GetFileName(Path) + "." + Guid.NewGuid().ToString("N") + ".tmp");
+                WriteAll(temp, Path, all);
+                failure = "";
+                return true;
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                failure = e.Message.Split('\n')[0];
+                return false;
+            }
+            finally
+            {
+                if (acquired) mutex.ReleaseMutex();
+            }
         }
     }
 
@@ -103,17 +144,38 @@ public static class Settings
         return OperatingSystem.IsWindows() ? hex : hex.ToLowerInvariant();
     }
 
+    private static string WriteMutexName(string path)
+    {
+        string fullPath = System.IO.Path.GetFullPath(path);
+        if (OperatingSystem.IsWindows()) fullPath = fullPath.ToUpperInvariant();
+        string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fullPath)));
+        return "BehaviourGraphStudio.Settings." + hash;
+    }
+
     /// <summary>Writes the settings to a temp file in the same directory and moves it over the
     /// final path, so a crash mid-write cannot leave a half-written settings file behind. Any
     /// failure to write or replace throws instead of passing silently.</summary>
     internal static void WriteAll(string tempPath, string finalPath, Dictionary<string, string> all)
     {
-        using (var writer = new StreamWriter(tempPath, false))
+        try
         {
-            foreach (var (k, v) in all) writer.WriteLine($"{k}={v}");
-            writer.Flush();
+            using (var writer = new StreamWriter(tempPath, false))
+            {
+                foreach (var (k, v) in all) writer.WriteLine($"{k}={v}");
+                writer.Flush();
+            }
+            File.Move(tempPath, finalPath, overwrite: true);
         }
-        File.Move(tempPath, finalPath, overwrite: true);
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath)) File.Delete(tempPath);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+            }
+        }
     }
 
     private static bool TryRead(out Dictionary<string, string> all, out string failure)
