@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
@@ -99,7 +100,7 @@ public static class RootMotion
     }
 
     public static Motion Read(string path, HavokClassTypes? types = null) =>
-        Read(System.IO.File.ReadAllBytes(path), types);
+        Read(InputFilePolicy.ReadHkx(path), types);
 
 
 

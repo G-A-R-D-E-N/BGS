@@ -31,4 +31,7 @@
   <ItemGroup>
     <ProjectReference Include="../src/BehaviourGraph.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="uismoke" />
+  </ItemGroup>
 </Project>

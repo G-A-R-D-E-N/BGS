@@ -1,40 +1,58 @@
-# Behaviour Graph Studio 1.0.4
+# Changelog
 
-Behaviour Graph Studio is a standalone editor for Fallout 4 behaviour and animation HKX files.
-Open an extracted file, make a supported change, check it, and save it without installing Havok
-tools or putting anything in the game folder.
+This page records changes that affect people using Behaviour Graph Studio. For instructions, read
+the public [getting started guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
 
-## What this release does
+## 1.0.4
 
-### Edit and save safely
+### Saving and reliability
 
-- Edit states, transitions, generators, variables, events, bindings, and supported animation data.
-- Save through the native writer. A successful save creates a `.bak` beside the original file.
-- If a change cannot be written safely, the tool refuses it before it touches the source file and
-  tells you what blocked the save.
-- Run graph and project checks before committing a change.
+- Supported behaviour and animation edits save through the built-in native pipeline.
+- Saves create a `.bak` copy of the original file.
+- An edit that cannot be written safely is refused before the source file changes.
+- A refused save names the exact field and why it cannot be written in place.
+- Growing an empty array keeps the storage-is-not-owned flag, so authoring a `variableBounds` list from nothing does not corrupt the file.
+- Graph validation and supported project checks are available before saving.
+- Closing a changed file gives you a clear save, discard, or cancel choice. A refused save keeps the file open.
 
-### Inspect real behaviour projects
+### Editing and playback
 
-- Browse behaviour files in tree and graph views, inspect symbols, follow project chains, and
-  compare two files.
-- Open files from disk or inspect vanilla files directly from a `.ba2` archive. Archive files are
-  opened read-only.
-- Preview supported animations on a skeleton or supported skinned mesh.
-- Use the playback, animation, and frame tools to inspect timing, root motion, and transforms.
+- Create, edit, and remove states, transitions, generators, variables, events, and bindings.
+- Copy a graph subtree, paste it into another file, and save reusable templates from your own work.
+- Edit animation frames, trim clips, and change clip duration.
+- Compare two behaviour files to identify added, removed, and changed objects.
+- Browse behaviour files in tree and graph views.
+- Opening a large behaviour file no longer freezes the window, and graph checks run off the UI thread.
+- The Symbols tab shows the real minimum and maximum of each variable bound.
+- Files that are not Fallout 4 packfiles are refused before opening, with an explanation of why.
+- Preview animations on skeletons and supported skinned meshes.
+- Playback can use the selected animation's sibling `CharacterAssets` folder when the behaviour file does not provide a project rig.
+- Inspect project chains, symbol usage, playback paths, and graph validation results.
+- Open vanilla files directly from a Bethesda `.ba2` archive for read-only inspection.
 
-### Build and reuse graph work
+## 1.0.3, August 8, 2026
 
-- Copy a graph subtree into another compatible file.
-- Save reusable templates from your own graph work.
-- Add, edit, and remove supported graph objects, then undo or redo before saving.
-- Trim clips, retime animations, and edit supported animation frames.
+- Added graph simulation for event-driven states, transition timing, and blend weights.
+- Added subtree copy and paste, reusable templates, and path highlighting.
+- Added animation trimming, retiming, and improved frame editing.
+- Improved animation playback, root-motion display, and mesh preview.
 
-## Limits to know about
+## 1.0.2, August 7, 2026
 
-This is a Fallout 4 HKX tool, not a general Havok editor. It supports the data the editor can read,
-validate, and write safely. If a file, field, or edit is outside that boundary, the tool leaves the
-source alone and explains why.
+- Added native animation saving for supported frame edits.
+- Added a frame browser with bone filtering and direct frame navigation.
+- Improved animation details, playback controls, and validation feedback.
+
+## 1.0.1, August 6, 2026
+
+- Added archive browsing for inspecting vanilla behaviour files without manual extraction.
+- Added skeleton, mesh, and root-motion views.
+- Improved graph editing, symbol management, field editing, and save safeguards.
+
+## 1.0.0, August 4, 2026
+
+- Added graph editing, filtering, selection, validation markers, undo, and compare support.
+- Added support for animation controls, variables, events, and behaviour authoring workflows.
 
 ## Help and feedback
 
