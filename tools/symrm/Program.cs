@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using OpenCommonwealth.Services;
 using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.Tools;
@@ -931,7 +932,7 @@ public static class Program
             return false;
         }
 
-        byte[] before = File.ReadAllBytes(file);
+        byte[] before = InputFilePolicy.ReadHkx(file);
         byte[] after = NativeSave.Apply(file, plan);
 
         if (before.Length != after.Length)
@@ -1353,7 +1354,7 @@ public static class Program
             BehaviourGraphModel model;
             try
             {
-                model = BehaviourGraphModel.Parse(NativeXml.From(File.ReadAllBytes(file)));
+                model = BehaviourGraphModel.Parse(NativeXml.From(InputFilePolicy.ReadHkx(file)));
             }
             catch
             {
@@ -1492,7 +1493,7 @@ public static class Program
         {
             try
             {
-                var model = BehaviourGraphModel.Parse(NativeXml.From(File.ReadAllBytes(file)));
+                var model = BehaviourGraphModel.Parse(NativeXml.From(InputFilePolicy.ReadHkx(file)));
                 var routes = StateRoutes.Of(model);
                 drawable += routes.Routes.Count;
                 drawableNested += routes.Routes.Count(r => r.IntoId.Length > 0);
@@ -1614,7 +1615,7 @@ public static class Program
             return worst;
         }
 
-        string xml = NativeXml.From(File.ReadAllBytes(target));
+        string xml = NativeXml.From(InputFilePolicy.ReadHkx(target));
         var model = BehaviourGraphModel.Parse(xml);
 
         int arrays = 0, summarised = 0, unnamed = 0;
@@ -1704,7 +1705,7 @@ public static class Program
 
         string file = target;
         var objects = new PackfileObjects(PackfileImage.Read(file));
-        string xml = NativeXml.From(File.ReadAllBytes(file));
+        string xml = NativeXml.From(InputFilePolicy.ReadHkx(file));
         var ids = HkxTextEdit.ObjectIds(xml);
 
         if (ids.Count != objects.Instances.Count)
@@ -2217,7 +2218,7 @@ public static class Program
         foreach (string file in files)
         {
             PackfileObjects objects;
-            try { objects = new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)), HavokClasses.Shipped); }
+            try { objects = new PackfileObjects(PackfileImage.Read(InputFilePolicy.ReadHkx(file)), HavokClasses.Shipped); }
             catch (Exception) { unreadable++; continue; }
 
             var animation = objects.Instances.FirstOrDefault(
@@ -2390,7 +2391,7 @@ public static class Program
             BehaviourGraphModel? model;
             try
             {
-                objects = new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)));
+                objects = new PackfileObjects(PackfileImage.Read(InputFilePolicy.ReadHkx(file)));
                 model = NativeGraphModel.From(objects);
             }
             catch (Exception) { continue; }
@@ -2704,7 +2705,7 @@ public static class Program
         foreach (string file in files)
         {
             BehaviourGraphModel? model;
-            try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)))); }
+            try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(InputFilePolicy.ReadHkx(file)))); }
             catch (Exception) { continue; }
             if (model == null) continue;
 
@@ -2823,7 +2824,7 @@ public static class Program
     private static int WeightsOne(string file)
     {
         BehaviourGraphModel? model;
-        try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)))); }
+        try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(InputFilePolicy.ReadHkx(file)))); }
         catch (Exception e) { Console.WriteLine($"could not read {file}: {e.Message}"); return 1; }
         if (model == null) { Console.WriteLine("nothing to read"); return 1; }
 
@@ -2869,7 +2870,7 @@ public static class Program
         foreach (string file in files)
         {
             BehaviourGraphModel? model;
-            try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)))); }
+            try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(InputFilePolicy.ReadHkx(file)))); }
             catch (Exception) { unreadable++; continue; }
             if (model == null) { unreadable++; continue; }
 
@@ -3070,7 +3071,7 @@ public static class Program
         BehaviourGraphModel? model;
         try
         {
-            objects = new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)));
+            objects = new PackfileObjects(PackfileImage.Read(InputFilePolicy.ReadHkx(file)));
             model = NativeGraphModel.From(objects);
         }
         catch (Exception e) { Console.WriteLine($"could not read {file}: {e.Message}"); return 1; }
@@ -4103,7 +4104,7 @@ public static class Program
     {
         try
         {
-            var image = PackfileImage.Read(File.ReadAllBytes(file));
+            var image = PackfileImage.Read(InputFilePolicy.ReadHkx(file));
             var objects = new PackfileObjects(image);
             foreach (var anim in objects.OfClass("hkaSplineCompressedAnimation"))
             {
@@ -4155,7 +4156,7 @@ public static class Program
             PackfileObjects objects;
             try
             {
-                bytes = File.ReadAllBytes(file);
+                bytes = InputFilePolicy.ReadHkx(file);
                 image = PackfileImage.Read(bytes);
                 objects = new PackfileObjects(image);
             }
@@ -6118,7 +6119,7 @@ public static class Program
         foreach (string file in files)
         {
             BehaviourGraphModel? model;
-            try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(File.ReadAllBytes(file)))); }
+            try { model = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(InputFilePolicy.ReadHkx(file)))); }
             catch (Exception) { continue; }
             if (model == null) continue;
 
@@ -7142,7 +7143,7 @@ public static class Program
             PackfileImage image;
             try
             {
-                original = File.ReadAllBytes(file);
+                original = InputFilePolicy.ReadHkx(file);
                 image = PackfileImage.Read(original);
             }
             catch (Exception e)
@@ -7198,7 +7199,7 @@ public static class Program
         foreach (string file in files)
         {
             byte[] original;
-            try { original = File.ReadAllBytes(file); }
+            try { original = InputFilePolicy.ReadHkx(file); }
             catch (Exception e) { refused++; firstFailures.Add($"{Path.GetFileName(file)}: {e.Message}"); continue; }
 
             PackfileImage image;

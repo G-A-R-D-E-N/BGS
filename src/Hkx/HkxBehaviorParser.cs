@@ -13,134 +13,93 @@ public class HkxBehaviorParser
         public int Offset { get; set; }
         public string ClassName { get; set; } = "";
         public string NodeName { get; set; } = "";
-
-
         public string AnimationName { get; set; } = "";
         public List<BehaviorNode> Children { get; } = new();
         public List<string> StringAttributes { get; } = new();
     }
 
-    private static readonly byte[] HkxMagic = new byte[] { 0x57, 0xE0, 0xE0, 0x57 };
-
-
-
     public static List<BehaviorNode> LastObjects { get; private set; } = new();
-
-
-
-
-
-
-
-
-
-
-
 
     public static BehaviorNode? ParseBehavior(string filepath)
     {
+        // Never expose objects from a previously opened file after this parse fails.
+        LastObjects = new List<BehaviorNode>();
         if (!File.Exists(filepath)) return null;
-        byte[] data = File.ReadAllBytes(filepath);
-        if (data.Length < 64) return null;
 
-        if (data[0] != HkxMagic[0] || data[1] != HkxMagic[1] ||
-            data[2] != HkxMagic[2] || data[3] != HkxMagic[3])
+        PackfileImage image;
+        try
+        {
+            image = PackfileImage.Read(filepath);
+        }
+        catch (Exception e) when (e is InvalidDataException or IOException or UnauthorizedAccessException
+                                  or ArgumentException or OverflowException)
+        {
             return null;
-
-        int version = BitConverter.ToInt32(data, 0x0C);
-        if (version != 11) return null;
-
-        int SecHdrBase = -1;
-        for (int probe = 0x40; probe <= 0x60 && SecHdrBase < 0; probe += 0x10)
-        {
-            if (probe + 14 <= data.Length && Encoding.ASCII.GetString(data, probe, 14) == "__classnames__")
-                SecHdrBase = probe;
-        }
-        if (SecHdrBase < 0) return null;
-
-        const int SecHdrStride = 0x40;
-
-        int cnStart = 0;
-        int dataAbs = 0;
-        int vfAbs = 0;
-        int expAbs = 0;
-        int lfAbs = 0;
-        int gfAbs = 0;
-
-        for (int i = 0; i < 3; i++)
-        {
-            int b = SecHdrBase + i * SecHdrStride;
-            if (b + 0x30 > data.Length) break;
-            string name = ReadNullTermString(data, b, 16);
-            int ds = BitConverter.ToInt32(data, b + 0x14);
-            int lf = BitConverter.ToInt32(data, b + 0x18);
-            int gf = BitConverter.ToInt32(data, b + 0x1C);
-            int vf = BitConverter.ToInt32(data, b + 0x20);
-            int exp = BitConverter.ToInt32(data, b + 0x24);
-
-            if (name == "__classnames__") cnStart = ds;
-            if (name == "__data__")
-            {
-                dataAbs = ds;
-                lfAbs = ds + lf;
-                gfAbs = ds + gf;
-                vfAbs = ds + vf;
-                expAbs = ds + exp;
-            }
         }
 
-        if (dataAbs == 0 || cnStart == 0) return null;
+        if (image.FileVersion != 11) return null;
 
+        var classNames = image.Section("__classnames__");
+        var data = image.Section("__data__");
+        if (classNames == null || data == null) return null;
+
+        int classNamesSection = image.Sections.IndexOf(classNames);
+        int dataSection = image.Sections.IndexOf(data);
+        if (classNamesSection < 0 || dataSection < 0) return null;
 
         var fixups = new Dictionary<int, int>();
-        int pos = lfAbs;
-        while (pos + 8 <= gfAbs && pos + 8 <= data.Length)
+        foreach (var local in data.Locals())
         {
-            int src = BitConverter.ToInt32(data, pos);
-            int dst = BitConverter.ToInt32(data, pos + 4);
-            if (src == unchecked((int)0xFFFFFFFF)) break;
-            fixups[src] = dst;
-            pos += 8;
-        }
+            if (!ValidField(local.Source, data.Data.Length, sizeof(long)) ||
+                !ValidOffset(local.Destination, data.Data.Length))
+                continue;
 
+            // One stored pointer field can only have one local destination. Treat duplicate
+            // sources as malformed instead of letting ToDictionary throw or choosing one.
+            if (!fixups.TryAdd(local.Source, local.Destination)) return null;
+        }
 
         var objects = new List<BehaviorNode>();
         var objectMap = new Dictionary<int, BehaviorNode>();
 
-        pos = vfAbs;
-        while (pos + 12 <= expAbs && pos + 12 <= data.Length)
+        foreach (var virtualFixup in data.Virtuals())
         {
-            int src = BitConverter.ToInt32(data, pos);
-            int nameOff = BitConverter.ToInt32(data, pos + 8);
-            if (src == unchecked((int)0xFFFFFFFF)) break;
+            if (virtualFixup.Section != classNamesSection ||
+                !ValidOffset(virtualFixup.Source, data.Data.Length) ||
+                !ValidOffset(virtualFixup.Destination, classNames.Data.Length))
+                continue;
 
-            string cls = ReadNullTermString(data, cnStart + nameOff, 256);
-            if (!string.IsNullOrEmpty(cls))
-            {
-                var node = new BehaviorNode { Offset = src, ClassName = cls };
-                objects.Add(node);
-                objectMap[src] = node;
-            }
-            pos += 12;
+            string cls = ReadNullTermString(classNames.Data, virtualFixup.Destination, 256);
+            if (string.IsNullOrEmpty(cls)) continue;
+
+            // An object offset cannot name two different runtime classes.
+            if (objectMap.ContainsKey(virtualFixup.Source)) return null;
+
+            var node = new BehaviorNode { Offset = virtualFixup.Source, ClassName = cls };
+            objects.Add(node);
+            objectMap[virtualFixup.Source] = node;
         }
 
         var globalEdges = new List<KeyValuePair<int, int>>();
-        pos = gfAbs;
-        while (pos + 12 <= vfAbs && pos + 12 <= data.Length)
+        var globalSources = new HashSet<int>();
+        foreach (var global in data.Globals())
         {
-            int src = BitConverter.ToInt32(data, pos);
-            int dst = BitConverter.ToInt32(data, pos + 8);
-            if (src == unchecked((int)0xFFFFFFFF)) break;
-            globalEdges.Add(new KeyValuePair<int, int>(src, dst));
-            pos += 12;
+            if (global.Section != dataSection ||
+                !ValidField(global.Source, data.Data.Length, sizeof(long)) ||
+                !ValidOffset(global.Destination, data.Data.Length))
+                continue;
+
+            // As with local fixups, a pointer field cannot target two objects.
+            if (!globalSources.Add(global.Source)) return null;
+            globalEdges.Add(new KeyValuePair<int, int>(global.Source, global.Destination));
         }
 
         var regionOwner = new Dictionary<int, BehaviorNode?>();
         foreach (var node in objects) regionOwner[node.Offset] = node;
-        foreach (var fx in fixups) if (!regionOwner.ContainsKey(fx.Value)) regionOwner[fx.Value] = null;
-        var regionStarts = regionOwner.Keys.ToList();
-        regionStarts.Sort();
+        foreach (var fx in fixups)
+            if (!regionOwner.ContainsKey(fx.Value)) regionOwner[fx.Value] = null;
 
+        var regionStarts = regionOwner.Keys.OrderBy(x => x).ToList();
         for (int pass = 0; pass < 8; pass++)
         {
             bool changed = false;
@@ -148,7 +107,11 @@ public class HkxBehaviorParser
             {
                 if (regionOwner[fx.Value] != null) continue;
                 var owner = OwnerOf(regionStarts, regionOwner, fx.Key);
-                if (owner != null) { regionOwner[fx.Value] = owner; changed = true; }
+                if (owner != null)
+                {
+                    regionOwner[fx.Value] = owner;
+                    changed = true;
+                }
             }
             if (!changed) break;
         }
@@ -157,7 +120,8 @@ public class HkxBehaviorParser
         {
             var owner = OwnerOf(regionStarts, regionOwner, edge.Key);
             if (owner == null) continue;
-            if (objectMap.TryGetValue(edge.Value, out var childNode) && childNode != owner && !owner.Children.Contains(childNode))
+            if (objectMap.TryGetValue(edge.Value, out var childNode) &&
+                childNode != owner && !owner.Children.Contains(childNode))
                 owner.Children.Add(childNode);
         }
 
@@ -165,7 +129,8 @@ public class HkxBehaviorParser
         {
             var owner = OwnerOf(regionStarts, regionOwner, fx.Key);
             if (owner == null || objectMap.ContainsKey(fx.Value)) continue;
-            string str = ReadNullTermString(data, dataAbs + fx.Value, 128);
+
+            string str = ReadNullTermString(data.Data, fx.Value, 128);
             if (!IsValidAsciiString(str)) continue;
             owner.StringAttributes.Add(str);
         }
@@ -175,32 +140,21 @@ public class HkxBehaviorParser
             if (node.StringAttributes.Count > 0 && string.IsNullOrEmpty(node.NodeName))
                 node.NodeName = node.StringAttributes[0];
 
-
             if (node.ClassName == "hkbClipGenerator" && node.StringAttributes.Count > 1)
                 node.AnimationName = node.StringAttributes[1];
         }
 
         LastObjects = objects;
 
-
-        var rootNode = objects.FirstOrDefault(o => o.ClassName == "hkbBehaviorGraph") ??
-                       objects.FirstOrDefault(o => o.ClassName == "hkbStateMachine");
-
-
-
-
-
-
-
-
-
-        if (rootNode == null && objects.Count > 0)
-        {
-            rootNode = objects[0];
-        }
-
-        return rootNode;
+        return objects.FirstOrDefault(o => o.ClassName == "hkbBehaviorGraph") ??
+               objects.FirstOrDefault(o => o.ClassName == "hkbStateMachine") ??
+               objects.FirstOrDefault();
     }
+
+    private static bool ValidOffset(int offset, int length) => offset >= 0 && offset < length;
+
+    private static bool ValidField(int offset, int length, int width) =>
+        offset >= 0 && width >= 0 && offset <= length - width;
 
     private static BehaviorNode? OwnerOf(List<int> starts, Dictionary<int, BehaviorNode?> owners, int offset)
     {
@@ -208,16 +162,21 @@ public class HkxBehaviorParser
         while (lo <= hi)
         {
             int mid = (lo + hi) / 2;
-            if (starts[mid] <= offset) { found = mid; lo = mid + 1; } else hi = mid - 1;
+            if (starts[mid] <= offset)
+            {
+                found = mid;
+                lo = mid + 1;
+            }
+            else hi = mid - 1;
         }
         return found < 0 ? null : owners[starts[found]];
     }
 
     private static string ReadNullTermString(byte[] data, int off, int maxLen)
     {
-        if (off < 0 || off >= data.Length) return "";
+        if (off < 0 || off >= data.Length || maxLen <= 0) return "";
         int end = off;
-        int limit = Math.Min(off + maxLen, data.Length);
+        int limit = (int)Math.Min((long)off + maxLen, data.Length);
         while (end < limit && data[end] != 0) end++;
         return Encoding.ASCII.GetString(data, off, end - off);
     }

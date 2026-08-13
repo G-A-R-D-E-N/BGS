@@ -8,6 +8,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="InputFilePolicy.cs" />
     <Compile Include="Archive/*.cs" />
     <Compile Include="Hkx/*.cs" />
     <Compile Include="Nif/*.cs" />
@@ -19,6 +20,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="symrm" />
     <InternalsVisibleTo Include="BehaviourGraphStudio" />
+    <InternalsVisibleTo Include="BehaviourGraph.Tests" />
     <InternalsVisibleTo Include="uismoke" />
   </ItemGroup>
 </Project>

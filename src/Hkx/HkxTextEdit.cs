@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
@@ -96,7 +97,7 @@ public static class HkxTextEdit
     {
         try
         {
-            var bytes = File.ReadAllBytes(hkxPath);
+            var bytes = InputFilePolicy.ReadHkx(hkxPath);
             string ours = NativeXml.From(bytes);
             int objects = new PackfileObjects(PackfileImage.Read(bytes)).Instances.Count;
 

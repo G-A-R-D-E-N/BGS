@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using System.Linq;
 using System.Xml.Linq;
+using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
@@ -604,7 +605,7 @@ public static class NativeSave
     }
 
     public static byte[] Apply(string hkxPath, Plan plan, HavokClasses? classes = null)
-        => Apply(File.ReadAllBytes(hkxPath), plan, classes);
+        => Apply(InputFilePolicy.ReadHkx(hkxPath), plan, classes);
 
     public static byte[] Apply(byte[] source, Plan plan, HavokClasses? classes = null)
     {

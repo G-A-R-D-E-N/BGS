@@ -193,7 +193,7 @@ public static class Smoke
         Check("there is one tab control", 1, tabs.Count);
 
         var headers = tabs[0].Items.OfType<TabItem>().Select(t => t.Header?.ToString()).ToList();
-        Check("tabs", "Tree, Graph, Symbols, Chain, Animation, Playback, Compare", string.Join(", ", headers));
+        Check("tabs", "Tree, Graph, Symbols, Chain, Project search, Animation, Playback, Compare", string.Join(", ", headers));
 
 
 
@@ -213,8 +213,8 @@ public static class Smoke
 
         Check("the node canvas exists", 1, canvases);
         Check("the skeleton viewport exists", 1, viewports);
-        Check("the tree, symbol, chain, animation, clip and compare grids build without opening tools",
-              6, grids.Count);
+        Check("the tree, symbol, chain, project search, animation, clip and compare grids build without opening tools",
+              7, grids.Count);
 
 
 
@@ -222,7 +222,7 @@ public static class Smoke
         Check("collapsed details leave no hidden grids under the canvas", 0, grids.Count(g => !g.IsVisible));
         foreach (string expected in new[]
                  { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
-                   "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
+                   "Undo", "Redo", "Compare with...", "Search project", "Open result", "Check project", "Scripts folder...",
                    "Play", "From selected node", "Fit", "View ▾", "Fit all", "Fit selection", "Create template" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
 
@@ -1634,6 +1634,7 @@ public static class Smoke
         VerificationFailureLeavesTheSourceUntouched();
 
         DirtyGraphSurvivesARejectedOpen();
+        CleanWindowClosesWithoutPrompt();
         GraphLayoutPersistsAcrossFreshWindow();
         GraphLayoutCodecKeepsPathsAndSkipsInvalidRecords();
         PreferencesReadFailureDoesNotBlockGraphOpen();
@@ -1652,6 +1653,8 @@ public static class Smoke
         StaleResultsDoNotPaintAnotherDocument();
         SaveBlocksWithTheDetail();
         SettingsWriteFailureLeavesExistingFileUntouched();
+        ConcurrentSettingsWritesPreserveAllValues();
+        ExternalSourceChangeBlocksSave();
         TempDirectoryKeysIncludeTheFullSourcePath();
         NonFiniteFrameInputIsRefused();
 
@@ -1662,6 +1665,85 @@ public static class Smoke
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
+    }
+
+    private static void CloseForTest(MainWindow window)
+    {
+        window.DiscardDecision = () => DiscardChoice.Discard;
+        window.Close();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+    }
+
+    private static void CleanWindowClosesWithoutPrompt()
+    {
+        Console.WriteLine("\na clean window closes without opening a discard decision");
+        var window = new MainWindow();
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        bool asked = false;
+        window.DiscardDecision = () =>
+        {
+            asked = true;
+            return DiscardChoice.Cancel;
+        };
+        window.Close();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        CheckTrue("a clean window closes immediately", !window.IsVisible);
+        CheckTrue("a clean close never asks for save, discard or cancel", !asked);
+    }
+
+    private static void ConcurrentSettingsWritesPreserveAllValues()
+    {
+        Console.WriteLine("\nconcurrent settings writes preserve every preference");
+        string root = Directory.CreateTempSubdirectory("bgs-settings-concurrent").FullName;
+        string path = Path.Combine(root, "settings.cfg");
+        try
+        {
+            Settings.SettingsPathForTest = path;
+            Settings.ReadAllLinesForTest = File.ReadAllLines;
+            System.Threading.Tasks.Parallel.For(0, 16, i => Settings.Set("key" + i, i.ToString()));
+
+            var lines = File.ReadAllLines(path);
+            Check("all concurrent settings writes survive", 16, lines.Length);
+            CheckTrue("every concurrent key is present",
+                      Enumerable.Range(0, 16).All(i => lines.Contains($"key{i}={i}")));
+            Check("unique staging leaves no temp files", 0,
+                  Directory.EnumerateFiles(root, "*.tmp").Count());
+        }
+        finally
+        {
+            Settings.SettingsPathForTest = null;
+            Settings.ReadAllLinesForTest = File.ReadAllLines;
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static void ExternalSourceChangeBlocksSave()
+    {
+        Console.WriteLine("\nan external source change blocks a stale save");
+        string path = WriteOneClip("bgs-smoke-external-change");
+        var window = new MainWindow();
+        window.Show();
+        window.Open(path);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        window.SetXmlForTest(OpenCommonwealth.Services.Hkx.HkxTextEdit.SetParam(
+            window.LoadedXml, "90", "playbackSpeed", "0.375"));
+        CheckTrue("the stale document is dirty before the external edit", window.IsDirty);
+
+        byte[] external = File.ReadAllBytes(path);
+        external[^1] ^= 0x01;
+        File.WriteAllBytes(path, external);
+
+        CheckTrue("SaveCurrent refuses after another process changes the source",
+                  !window.SaveCurrentForTest());
+        CheckTrue("the external bytes are left untouched", File.ReadAllBytes(path).SequenceEqual(external));
+        CheckTrue("the refusal explains that the file changed on disk",
+                  window.StatusForTest.Contains("changed on disk", StringComparison.OrdinalIgnoreCase));
+        CheckTrue("the stale document remains dirty", window.IsDirty);
+        CloseForTest(window);
     }
 
     private static void SettingsWriteFailureLeavesExistingFileUntouched()
@@ -1748,7 +1830,7 @@ public static class Smoke
         CheckTrue("Infinity refusal explains that values must be finite",
                   window.FrameEditAnswer.Contains("finite", StringComparison.OrdinalIgnoreCase));
 
-        window.Close();
+        CloseForTest(window);
     }
 
 
@@ -1839,7 +1921,7 @@ public static class Smoke
                   window.StatusForTest.Contains("stateId", StringComparison.Ordinal) ||
                   window.StatusForTest.Contains("ambiguous", StringComparison.Ordinal));
         CheckTrue("and the document stays dirty", window.IsDirty);
-        window.Close();
+        CloseForTest(window);
     }
 
     private static OpenCommonwealth.Services.Hkx.ProjectCheck.Result ProjectResultWithAnError()
@@ -1877,7 +1959,7 @@ public static class Smoke
         CheckTrue("the Papyrus scan task does not leak its exception", !started.IsFaulted);
         CheckTrue("the active document receives a concise scan failure status",
                   window.StatusForTest.Contains("Scripts scan failed", StringComparison.Ordinal));
-        window.Close();
+        CloseForTest(window);
     }
 
     private static void StalePapyrusScanFailureIsDiscarded()
@@ -1902,7 +1984,7 @@ public static class Smoke
         CheckTrue("the stale Papyrus task does not leak its exception", !started.IsFaulted);
         Check("the stale scan failure does not replace the current status", currentStatus,
               window.StatusForTest);
-        window.Close();
+        CloseForTest(window);
     }
 
     private static void ProjectValidationFailureIsContained()
@@ -1923,7 +2005,7 @@ public static class Smoke
         CheckTrue("the validation task does not leak its exception", !started.IsFaulted);
         CheckTrue("the active document receives a concise failure status",
                   window.StatusForTest.Contains("Project check failed", StringComparison.Ordinal));
-        window.Close();
+        CloseForTest(window);
     }
 
     private static void StaleProjectValidationFailureIsDiscarded()
@@ -1949,7 +2031,7 @@ public static class Smoke
         CheckTrue("the stale validation task does not leak its exception", !started.IsFaulted);
         Check("the stale failure does not replace the current status", currentStatus,
               window.StatusForTest);
-        window.Close();
+        CloseForTest(window);
     }
 
     private static void StaleResultsDoNotPaintAnotherRevision()
@@ -1977,7 +2059,7 @@ public static class Smoke
         gate.SetResult(ProjectResultWithAnError());
         PumpUntil(started);
         CheckTrue("the stale finding is discarded, not painted", window.ProblemCount == 0);
-        window.Close();
+        CloseForTest(window);
     }
 
     private static void StaleResultsDoNotPaintAnotherDocument()
@@ -2007,7 +2089,7 @@ public static class Smoke
         gate.SetResult(ProjectResultWithAnError());
         PumpUntil(started);
         CheckTrue("the stale finding is discarded, not painted", window.ProblemCount == 0);
-        window.Close();
+        CloseForTest(window);
     }
 
     private static void PumpUntil(System.Threading.Tasks.Task task)
@@ -2333,7 +2415,8 @@ public static class Smoke
             "Meshes/Actors/Character/CharacterAssets/skeleton.nif",
         });
 
-        using var archive = OpenCommonwealth.Services.Archive.Ba2.Open(path);
+        using (var archive = OpenCommonwealth.Services.Archive.Ba2.Open(path))
+        {
         var browser = new ArchiveBrowser(archive, ".hkx");
         browser.Show();
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -2357,6 +2440,8 @@ public static class Smoke
         CheckTrue("with nothing chosen while the list is empty", browser.Chosen == null);
 
         browser.Close();
+        }
+
         System.IO.File.Delete(path);
     }
 
@@ -2501,7 +2586,7 @@ public static class Smoke
         CheckTrue("and it is the new file's XML",
                   window.LoadedXml.Contains("playbackSpeed", StringComparison.Ordinal));
         CheckTrue("and the document is no longer dirty", !window.IsDirty);
-        window.Close();
+        CloseForTest(window);
     }
 
     private static void GraphLayoutPersistsAcrossFreshWindow()
@@ -2517,9 +2602,11 @@ public static class Smoke
                 const string id = "90";
                 first.Canvas.DragForTest(id, 73, -29); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 var moved = first.Canvas.PositionOf(id)!.Value;
+                CloseForTest(first);
+
                 var second = new MainWindow(); second.Show(); second.Open(path); Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 Check("graph layout survives fresh-window reload", moved, second.Canvas.PositionOf(id)!.Value);
-                second.Close(); first.Close();
+                CloseForTest(second);
             });
         }
         finally { System.IO.File.Delete(path); }
@@ -2599,7 +2686,7 @@ public static class Smoke
                 CheckTrue("a valid graph opens with automatic positions", opened);
                 Check("an unreadable existing preferences file is not replaced by preferences or layout saves", existing,
                     System.IO.File.ReadAllText(settingsPath));
-                window?.Close();
+                if (window != null) CloseForTest(window);
             });
         }
         finally
@@ -2632,7 +2719,7 @@ public static class Smoke
                 Check("Structured Flow drag does not emit layout persistence", 0, changes);
                 Check("Structured Flow drag does not save layout state", settingsBefore,
                     System.IO.File.ReadAllText(settingsPath));
-                window.Close();
+                CloseForTest(window);
             });
         }
         finally { System.IO.File.Delete(path); }
@@ -2691,7 +2778,7 @@ public static class Smoke
         window.Open(good);
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         CheckTrue("an allowed discard clears the animation edits", !window.AnimationEdited);
-        window.Close();
+        CloseForTest(window);
     }
 
     private static void CloseCancelsWhileDirty()
