@@ -6,16 +6,6 @@ using OpenCommonwealth.Services.Nif;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
 public static class MeshLookup
 {
     public sealed record Result(string? Path, string Reason)
@@ -23,21 +13,33 @@ public static class MeshLookup
         public bool Found => Path != null;
     }
 
-
-
-
     public static IEnumerable<string> Places(string behaviourPath, string? projectRoot,
                                              string? skeletonPath)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal);
         foreach (string? folder in new[]
                  {
                      Path.GetDirectoryName(behaviourPath),
                      projectRoot,
                      skeletonPath == null ? null : Path.GetDirectoryName(skeletonPath),
                  })
-            if (!string.IsNullOrEmpty(folder) && seen.Add(folder))
-                yield return folder;
+        {
+            if (string.IsNullOrWhiteSpace(folder)) continue;
+
+            string canonical;
+            try
+            {
+                canonical = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+            }
+            catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                continue;
+            }
+
+            if (seen.Add(canonical)) yield return canonical;
+        }
     }
 
     public static Result Find(IEnumerable<string> folders, Func<string, IReadOnlyList<string>> nifsIn)

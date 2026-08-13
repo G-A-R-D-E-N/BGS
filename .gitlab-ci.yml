@@ -23,7 +23,10 @@ workflow:
     - if: '$CI_COMMIT_TAG'
 
 variables:
-  DOTNET: mcr.microsoft.com/dotnet/sdk:8.0
+  # Pinned to the exact SDK global.json names. The floating 8.0 tag resolves to whatever the
+  # newest 8.0.x is, and global.json sets rollForward: disable, so the next patch release would
+  # fail every job with "compatible SDK version not found". GitHub Actions pins the same version.
+  DOTNET: mcr.microsoft.com/dotnet/sdk:8.0.424
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
   NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"

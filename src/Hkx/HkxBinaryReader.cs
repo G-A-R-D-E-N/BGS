@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Text;
+using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
@@ -113,7 +114,7 @@ public class HkxBinaryReader
 
     public HkxAnimationData ReadAnimation(string filepath)
     {
-        byte[] data = File.ReadAllBytes(filepath);
+        byte[] data = InputFilePolicy.ReadHkx(filepath);
         var parsed = ParseHkx(data);
 
         if (parsed.HasUnsupportedAnimation)
@@ -130,13 +131,13 @@ public class HkxBinaryReader
 
     public bool TryReadAnimation(string filepath, out HkxAnimationData data)
     {
-        data = ParseHkx(File.ReadAllBytes(filepath));
+        data = ParseHkx(InputFilePolicy.ReadHkx(filepath));
         return !data.HasUnsupportedAnimation;
     }
 
     public HkxSkeleton ReadSkeleton(string filepath)
     {
-        byte[] data = File.ReadAllBytes(filepath);
+        byte[] data = InputFilePolicy.ReadHkx(filepath);
         var anim = ParseHkx(data);
         if (anim.Skeleton != null) return anim.Skeleton;
         throw new InvalidDataException($"No skeleton (hkaSkeleton) found in: {filepath}");
@@ -158,6 +159,7 @@ public class HkxBinaryReader
 
     internal HkxAnimationData ParseHkx(byte[] data)
     {
+        InputFilePolicy.EnsureHkx(data.LongLength);
         if (data.Length < 64)
             throw new InvalidDataException("HKX file too small.");
         if (data[0] != HkxMagic[0] || data[1] != HkxMagic[1] ||
