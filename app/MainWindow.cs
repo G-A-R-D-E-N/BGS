@@ -11,6 +11,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using OpenCommonwealth.Services.Hkx;
 using OpenCommonwealth.Services.Nif;
+using OpenCommonwealth.Services;
 
 namespace BehaviourStudio.App;
 
@@ -118,7 +119,7 @@ public class MainWindow : Window
 
     private RootMotion.Motion _poseMotion = new();
     private bool _followTravel;
-    private int _poseFrame;
+    private readonly PlaybackSession _playback = new();
     private bool _scrubbing;
     private DispatcherTimer? _clock;
     private HkxSkeleton? _cachedSkeleton;
@@ -131,6 +132,15 @@ public class MainWindow : Window
         _meshShapes = new();
     private string _meshPath = "";
 
+    private readonly TextBox _projectSearchText =
+        Ux.Field("name, class, event, variable, animation or field", 360);
+    private readonly TextBlock _projectSearchSummary =
+        new() { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap };
+    private readonly HkGrid _projectSearchResults =
+        new(("File", -3), ("Kind", 80), ("Object", -3), ("Field", -3), ("Value", -6));
+    private readonly List<ProjectSearch.Hit> _projectSearchHits = new();
+    private long _projectSearchGeneration;
+
     private readonly HkGrid _diff =
         new(("Change", 80), ("Havok class", -3), ("Field or name", -3), ("In the open file", -4),
             ("In the other file", -4));
@@ -142,13 +152,15 @@ public class MainWindow : Window
 
     private long _documentStamp;                 // bumped on every document change
     private DocumentSourceStamp? _sourceStamp;
+    private readonly ProjectAnalysisController _analysis;
+    private readonly BehaviourCompareSession _compare;
     private long CaptureStamp() => _documentStamp;
 
     public Func<ProjectChain, IProgress<string>, Task<ProjectCheck.Result>>? ValidateProjectRunner;
     public Func<string, Task<PapyrusEvents.Index>>? PapyrusScanRunner;
 
 
-    private GraphRun? _run;
+    private readonly GraphRunSession _runSession = new();
     private readonly ComboBox _runEvents = new()
         { MinWidth = 190, MaxWidth = 260, Foreground = Ux.CodeBrush, FontSize = 12 };
     private readonly TextBlock _runSummary = new()
@@ -167,10 +179,6 @@ public class MainWindow : Window
         Background = Ux.CardBrush, Foreground = Ux.MetaBrush, BorderBrush = Ux.BorderBrush,
         BorderThickness = new Thickness(1), Padding = new Thickness(8), FontSize = 12,
     };
-    private readonly List<string> _runOutputLines = new();
-    private readonly TextBlock _runStops = new()
-        { Foreground = Ux.WarnBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
-          Margin = new Thickness(2, 4, 2, 2) };
     private Button _step = Ux.Secondary("Step 0.1s");
 
 
@@ -255,6 +263,8 @@ public class MainWindow : Window
 
     public MainWindow()
     {
+        _analysis = new ProjectAnalysisController(() => _documentStamp);
+        _compare = new BehaviourCompareSession(() => _documentStamp);
         Title = "Behaviour Graph Studio";
         Width = 1500;
         Height = 940;
@@ -313,6 +323,7 @@ public class MainWindow : Window
         tabs.Items.Add(Tab("Graph", BuildGraphTab()));
         tabs.Items.Add(Tab("Symbols", BuildSymbolsTab()));
         tabs.Items.Add(Tab("Chain", _chain));
+        tabs.Items.Add(Tab("Project search", BuildProjectSearchTab()));
         tabs.Items.Add(Tab("Animation", BuildAnimationTab()));
         tabs.Items.Add(Tab("Playback", BuildPlaybackTab()));
         tabs.Items.Add(Tab("Compare", BuildDiffTab()));
@@ -674,32 +685,9 @@ public class MainWindow : Window
         ToolTip.SetTip(restart, "Put the graph back in the state it starts in.");
         restart.Click += (_, _) => StartRun("Back at the start.");
 
-
-
-
         _step = Ux.Secondary("Step 0.1s");
         ToolTip.SetTip(_step, "Advance time so a transition in progress blends further.");
-        _step.Click += (_, _) =>
-        {
-            if (_run == null) return;
-
-
-
-
-
-            var byTime = _run.Advance(0.1f);
-            if (byTime.Count > 0)
-            {
-                RefreshRun($"Stepped 0.1s. {byTime.Count} transition(s) fired because a clip reached " +
-                           $"a point in itself: {string.Join(", ", byTime.Select(f => f.Event).Distinct())}.");
-                return;
-            }
-
-            RefreshRun(_run.Blending ? "Stepped 0.1s, still blending." : "Stepped 0.1s, blend finished.");
-        };
-
-
-
+        _step.Click += (_, _) => RenderRun(_runSession.Advance(0.1f));
 
         _running.SelectionChanged += () =>
         {
@@ -710,8 +698,6 @@ public class MainWindow : Window
         var label = Ux.Label("Event");
         label.FontSize = 11;
         label.Margin = new Thickness(2, 0, 0, 0);
-
-
 
         _runValue.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) SetRunVariable(); };
         _runVariables.SelectionChanged += (_, _) => ShowRunVariable();
@@ -726,15 +712,6 @@ public class MainWindow : Window
             Ux.MutedBrush);
         return left;
     }
-
-
-
-
-
-
-
-
-
 
 
     private Control BuildPasteControls()
@@ -892,8 +869,6 @@ public class MainWindow : Window
         if (_clip == null) { SetPasteSummary("Nothing has been copied yet.", Ux.MutedBrush); return; }
         if (_readOnly) { SetPasteSummary("Not pasted: " + _readOnlyWhy, Ux.BadBrush); return; }
 
-
-
         if (_dirty)
         {
             SetPasteSummary("Save your other changes first. Pasting writes the file and reads it " +
@@ -913,22 +888,24 @@ public class MainWindow : Window
             field = slot[(dot + 1)..].TrimEnd('[', ']');
         }
 
-        NativePaste.Result written;
-        try
+        NativePaste.Clip clip = _clip;
+        var committed = GraphMutationTransaction.Commit(
+            _hkxPath,
+            _sourceStamp,
+            source =>
+            {
+                var written = NativePaste.Paste(source, _hkxPath, clip, attachTo, field);
+                return new GraphMutationTransaction.Mutation(
+                    written.Bytes, written.RootId, written.Objects, clip.Tree.RootClass, written.Note);
+            });
+        if (!committed.Committed)
         {
-            written = NativePaste.Paste(_hkxPath, _clip, attachTo, field);
-
-            FileSafety.Backup(_hkxPath);
-            FileSafety.Replace(_hkxPath, written.Bytes);
-        }
-        catch (Exception e)
-        {
-            SetPasteSummary("Nothing pasted, and the file is untouched: " + e.Message, Ux.BadBrush);
+            SetPasteSummary("Nothing pasted, and the file is untouched: " + committed.Message,
+                            Ux.BadBrush);
             return;
         }
 
-        string said = written.Note + $" The file before this is kept as {Path.GetFileName(_hkxPath + ".bak")}.";
-
+        string said = committed.Message;
         try
         {
             Load();
@@ -939,15 +916,10 @@ public class MainWindow : Window
                             e.Message, Ux.BadBrush);
             return;
         }
-        SelectObjectId(written.RootId.ToString());
+        SelectObjectId(committed.Change!.RootId.ToString());
         SetPasteSummary(said, Ux.MetaBrush);
         SetStatus(said, Ux.MetaBrush);
     }
-
-
-
-
-
 
 
     private void SaveTemplate()
@@ -1003,10 +975,7 @@ public class MainWindow : Window
 
         var template = TemplateStore.Get(slug);
         if (template == null) { SetPasteSummary("That template is no longer there.", Ux.BadBrush); return; }
-
         if (_readOnly) { SetPasteSummary("Not applied: " + _readOnlyWhy, Ux.BadBrush); return; }
-
-
 
         if (_dirty)
         {
@@ -1027,23 +996,24 @@ public class MainWindow : Window
             field = slot[(dot + 1)..].TrimEnd('[', ']');
         }
 
-        NativePaste.Result written;
-        try
+        var committed = GraphMutationTransaction.Commit(
+            _hkxPath,
+            _sourceStamp,
+            source =>
+            {
+                var written = TemplateStore.Apply(template, source, _hkxPath, attachTo, field);
+                return new GraphMutationTransaction.Mutation(
+                    written.Bytes, written.RootId, written.Objects, template.RootClass,
+                    $"Applied '{template.Name}'. {written.Note}");
+            });
+        if (!committed.Committed)
         {
-            written = TemplateStore.Apply(template, _hkxPath, attachTo, field);
-
-            FileSafety.Backup(_hkxPath);
-            FileSafety.Replace(_hkxPath, written.Bytes);
-        }
-        catch (Exception e)
-        {
-            SetPasteSummary("Nothing applied, and the file is untouched: " + e.Message, Ux.BadBrush);
+            SetPasteSummary("Nothing applied, and the file is untouched: " + committed.Message,
+                            Ux.BadBrush);
             return;
         }
 
-        string said = $"Applied '{template.Name}'. {written.Note} " +
-                      $"The file before this is kept as {Path.GetFileName(_hkxPath + ".bak")}.";
-
+        string said = committed.Message;
         try
         {
             Load();
@@ -1054,7 +1024,7 @@ public class MainWindow : Window
                             e.Message, Ux.BadBrush);
             return;
         }
-        SelectObjectId(written.RootId.ToString());
+        SelectObjectId(committed.Change!.RootId.ToString());
         SetPasteSummary(said, Ux.MetaBrush);
         SetStatus(said, Ux.MetaBrush);
     }
@@ -1138,6 +1108,8 @@ public class MainWindow : Window
     private void ApplyPredefinedTemplate()
     {
         if (_predefinedTemplates.SelectedItem as string is not { } id) return;
+        var definition = PredefinedTemplates.Get(id);
+        if (definition == null) { SetPasteSummary("That predefined template is no longer there.", Ux.BadBrush); return; }
         if (_readOnly) { SetPasteSummary("Not created: " + _readOnlyWhy, Ux.BadBrush); return; }
         if (_dirty) { SetPasteSummary("Save your other changes first.", Ux.BadBrush); return; }
         string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
@@ -1147,24 +1119,25 @@ public class MainWindow : Window
         foreach (var (key, control) in _predefinedValues)
             raw[key] = control is ComboBox choice ? choice.SelectedItem as string ?? "" : ((TextBox)control).Text ?? "";
 
-        var result = PredefinedTemplates.Instantiate(_hkxPath, id, raw);
-        if (!result.Possible || result.Bytes == null)
+        var committed = GraphMutationTransaction.Commit(
+            _hkxPath,
+            _sourceStamp,
+            source =>
+            {
+                var made = PredefinedTemplates.Instantiate(source, id, raw);
+                if (!made.Possible || made.Bytes == null)
+                    throw new InvalidOperationException(made.Refusal ?? "the predefined template could not be created");
+
+                return new GraphMutationTransaction.Mutation(
+                    made.Bytes, made.RootId, made.CreatedIds.Count, definition.RootClass, made.Summary);
+            });
+        if (!committed.Committed)
         {
-            SetPasteSummary("Nothing created: " + result.Refusal, Ux.BadBrush);
+            SetPasteSummary("Nothing created: " + committed.Message, Ux.BadBrush);
             return;
         }
 
-        try
-        {
-            FileSafety.Backup(_hkxPath);
-            FileSafety.Replace(_hkxPath, result.Bytes);
-        }
-        catch (Exception e)
-        {
-            SetPasteSummary("Nothing was created: the file could not be replaced. " + e.Message, Ux.BadBrush);
-            return;
-        }
-
+        string said = committed.Message;
         try
         {
             Load();
@@ -1175,10 +1148,11 @@ public class MainWindow : Window
                             e.Message, Ux.BadBrush);
             return;
         }
-        SelectObjectId(result.RootId.ToString());
-        SetPasteSummary(result.Summary + $" The file before this is kept as {Path.GetFileName(_hkxPath + ".bak")}.",
-                        Ux.MetaBrush);
+        SelectObjectId(committed.Change!.RootId.ToString());
+        SetPasteSummary(said, Ux.MetaBrush);
+        SetStatus(said, Ux.MetaBrush);
     }
+
 
     private void SetPasteSummary(string text, IBrush brush)
     {
@@ -1224,182 +1198,100 @@ public class MainWindow : Window
 
     private void StartRun(string note = "Started at the graph's root.")
     {
-        _graph.ClearActive();
-        _running.Clear();
-        _runStopsGrid.Clear();
-        _runHeldBackGrid.Clear();
-        _runLog.Clear();
-        _runOutputLines.Clear();
-        _runOutput.Text = "";
-        _running.IsVisible = false;
-        _step.IsEnabled = false;
-        SetMachineNavigatorActive(Array.Empty<string>());
-
         var model = Model();
-        if (model.Objects.Count == 0)
-        {
-            _run = null;
-            _runEvents.ItemsSource = null;
-            _runVariables.ItemsSource = null;
-            SetRunSummary("Open a behaviour to run it.", Ux.MutedBrush);
-            return;
-        }
+        IReadOnlyDictionary<string, ClipTiming.Clip>? timings = null;
 
-        _run = GraphRun.Start(model);
-        if (_run.RootId.Length == 0)
-        {
-            _run = null;
-            _runEvents.ItemsSource = null;
-            _runVariables.ItemsSource = null;
-            SetRunSummary("This is a project or character file rather than a graph, so there is " +
-                          "nothing in it to run.", Ux.MutedBrush);
-            return;
-        }
-
-
-
-
-        if (_bytes != null && _hkxPath.Length > 0)
+        if (model.Objects.Count > 0 && _bytes != null && _hkxPath.Length > 0)
         {
             try
             {
-                _run.Time(ClipTiming.All(_bytes, SymbolEditor.EventNames(model),
-                                         ClipTiming.FromDisk(_hkxPath)));
+                timings = ClipTiming.All(_bytes, SymbolEditor.EventNames(model),
+                                         ClipTiming.FromDisk(_hkxPath));
             }
             catch (Exception)
             {
-
-
+                // Timing is optional. The graph can still be stepped without clip metadata.
             }
         }
 
-        _runEvents.ItemsSource = _run.Events;
-        _runVariables.ItemsSource = _run.Variables;
-        if (_run.Variables.Count > 0) _runVariables.SelectedIndex = 0;
-        ShowRunVariable();
-        if (_run.Events.Count > 0) _runEvents.SelectedIndex = 0;
-        RefreshRun(note);
+        var view = _runSession.Start(model, timings, note);
+        _runEvents.ItemsSource = view.Ready ? view.Events : null;
+        _runVariables.ItemsSource = view.Ready ? view.Variables : null;
+
+        _runEvents.SelectedIndex = view.Events.Count > 0 ? 0 : -1;
+        _runVariables.SelectedIndex = view.Variables.Count > 0 ? 0 : -1;
+        if (view.Variables.Count > 0) ShowRunVariable();
+        else _runValue.Text = "";
+
+        RenderRun(view);
     }
 
     private void SendRunEvent()
     {
-        if (_run == null)
-        {
-            SetRunSummary("Open a behaviour first.", Ux.MutedBrush);
-            return;
-        }
-
-        if (_runEvents.SelectedItem is not string name || name.Length == 0)
-        {
-            SetRunSummary("Choose an event to send.", Ux.MutedBrush);
-            return;
-        }
-
-        var fired = _run.Send(name);
-        int held = _run.HeldBack.Count;
-
-        _runLog.Add(null, "Event: " + name);
-        foreach (var move in fired)
-            _runLog.Add(null, $"Transition: {move.Event} to {move.ToStateName}").Tag(move.ToStateId);
-
-
-
-
-        string said = fired.Count == 0
-            ? held == 0
-              ? $"Sent {name}. Nothing in a running state was listening for it."
-              : $"Sent {name}. Something was listening, but {held} transition(s) are held back by a condition."
-            : $"Sent {name}. {fired.Count} transition(s) fired." +
-              (held > 0 ? $" {held} other(s) held back by a condition." : "");
-
-        RefreshRun(said);
+        RenderRun(_runSession.Send(_runEvents.SelectedItem as string));
     }
-
 
     private void ShowRunVariable()
     {
-        if (_run == null || _runVariables.SelectedItem is not string name) return;
-        _runValue.Text = _run.ValueOf(name) is double value
-            ? value.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            : "";
+        _runValue.Text = _runSession.ValueText(_runVariables.SelectedItem as string);
     }
 
     private void SetRunVariable()
     {
-        if (_run == null) { SetRunSummary("Open a behaviour first.", Ux.MutedBrush); return; }
-
-        if (_runVariables.SelectedItem is not string name || name.Length == 0)
-        {
-            SetRunSummary("Choose a variable to set.", Ux.MutedBrush);
-            return;
-        }
-
-        if (!double.TryParse(_runValue.Text ?? "", System.Globalization.NumberStyles.Float,
-                             System.Globalization.CultureInfo.InvariantCulture, out double value))
-        {
-            SetRunSummary($"'{_runValue.Text}' is not a number, so {name} was not changed.", Ux.BadBrush);
-            return;
-        }
-
-        try
-        {
-            _run.Set(name, value);
-            RefreshRun($"{name} is now {value.ToString(System.Globalization.CultureInfo.InvariantCulture)}. " +
-                       "Send an event to see what that changes.");
-        }
-        catch (ArgumentException e)
-        {
-            SetRunSummary(e.Message, Ux.BadBrush);
-        }
+        RenderRun(_runSession.SetVariable(_runVariables.SelectedItem as string, _runValue.Text));
     }
 
-
-    private void RefreshRun(string note)
+    private void RenderRun(GraphRunSession.View view)
     {
-        if (_run == null) return;
-
-        var here = _run.Where();
-        _graph.ShowActive(here.Select(a => a.StateId));
-        SetMachineNavigatorActive(here.Where(a => !a.Fading).Select(a => a.MachineId));
-        AddRunOutput(note);
+        _graph.ShowActive(view.Active.Select(active => active.StateId));
+        SetMachineNavigatorActive(view.Active.Where(active => !active.Fading)
+                                             .Select(active => active.MachineId));
 
         _running.Clear();
-        foreach (var active in here)
+        foreach (var active in view.Active)
         {
             string machine = active.MachineName.Length > 0 ? active.MachineName : "#" + active.MachineId;
             if (active.Fading) machine = "leaving " + machine;
+
             var row = _running.Add(null,
                 machine,
                 active.StateName.Length > 0 ? active.StateName : "#" + active.StateId,
                 $"{active.Weight * 100:F0}%")
                 .Tag(active.StateId);
 
-
-
-            if (active.Fading) row.Colour(0, Ux.MutedBrush).Colour(1, Ux.MutedBrush).Colour(2, Ux.MutedBrush);
+            if (active.Fading)
+                row.Colour(0, Ux.MutedBrush).Colour(1, Ux.MutedBrush).Colour(2, Ux.MutedBrush);
         }
-        _running.IsVisible = true;
-
-
-
-        _step.IsEnabled = _run.Blending;
+        _running.IsVisible = view.Ready;
+        _step.IsEnabled = view.Blending;
 
         _runStopsGrid.Clear();
-        foreach (var stop in _run.Stops)
+        foreach (var stop in view.Stops)
             _runStopsGrid.Add(null, stop.ClassName, stop.Why).Tag(stop.ObjectId);
 
-
-
         _runHeldBackGrid.Clear();
-        foreach (var held in _run.HeldBack)
+        foreach (var held in view.HeldBack)
             _runHeldBackGrid.Add(null, held.Event + " to " +
-                                   (held.ToStateName.Length > 0 ? held.ToStateName : "#" + held.ToStateId),
-                                   held.Condition).Tag(held.ToStateId);
+                                      (held.ToStateName.Length > 0 ? held.ToStateName : "#" + held.ToStateId),
+                                      held.Condition).Tag(held.ToStateId);
 
-        int machines = here.Count(a => !a.Fading);
-        string blending = _run.Blending ? "  A transition is blending; Step to move it along." : "";
-        SetRunSummary($"{machines} machine(s) running.  {note}{blending}", Ux.MetaBrush);
+        _runLog.Clear();
+        foreach (var entry in view.Log)
+        {
+            var row = _runLog.Add(null, entry.Text);
+            if (entry.TargetStateId.Length > 0) row.Tag(entry.TargetStateId);
+        }
+
+        _runOutput.Text = string.Join(Environment.NewLine, view.Output);
+        SetRunSummary(view.Summary, RunBrush(view.Kind));
     }
+
+    private static IBrush RunBrush(GraphRunSession.MessageKind kind) => kind switch
+    {
+        GraphRunSession.MessageKind.Status => Ux.MetaBrush,
+        GraphRunSession.MessageKind.Error => Ux.BadBrush,
+        _ => Ux.MutedBrush,
+    };
 
     private void SetRunSummary(string text, IBrush brush)
     {
@@ -1408,18 +1300,6 @@ public class MainWindow : Window
         _runtimeStatus.Text = text;
         _runtimeStatus.Foreground = brush;
     }
-
-    private void AddRunOutput(string text)
-    {
-        if (text.Length == 0) return;
-        _runOutputLines.Add(text);
-        if (_runOutputLines.Count > 120) _runOutputLines.RemoveRange(0, _runOutputLines.Count - 120);
-        _runOutput.Text = string.Join(Environment.NewLine, _runOutputLines);
-    }
-
-
-
-
 
 
     private Control BuildLegend()
@@ -1729,11 +1609,9 @@ public class MainWindow : Window
 
     public void ClearRunForTest()
     {
-        _run = null;
-        _graph.ClearActive();
-        _running.Clear();
-        _running.IsVisible = false;
-        SetMachineNavigatorActive(Array.Empty<string>());
+        _runEvents.ItemsSource = null;
+        _runVariables.ItemsSource = null;
+        RenderRun(_runSession.Clear());
     }
 
     public void StartRunForTest() => StartRun();
@@ -1765,20 +1643,17 @@ public class MainWindow : Window
     public void OpenLegendForTest() => OpenLegendWindow();
 
 
-    public bool RunReady => _run != null;
-    public bool RunBlending => _run?.Blending ?? false;
-    public int RunEventCount => _run?.Events.Count ?? 0;
-    public IReadOnlyList<string> RunEvents => _run?.Events ?? Array.Empty<string>();
+    public bool RunReady => _runSession.Current.Ready;
+    public bool RunBlending => _runSession.Current.Blending;
+    public int RunEventCount => _runSession.Current.Events.Count;
+    public IReadOnlyList<string> RunEvents => _runSession.Current.Events;
 
+    public void StepForTest(float seconds) =>
+        RenderRun(_runSession.Advance(seconds, "stepped"));
 
-    public void StepForTest(float seconds) { _run?.Advance(seconds); RefreshRun("stepped"); }
-
-
-
-    public int TimedClipCount => _run?.Playing().Count(p => p.Clip.Known) ?? 0;
+    public int TimedClipCount => _runSession.Current.TimedClipCount;
     public int RunningCount => _running.RowCount;
     public bool RunningVisible => _running.IsVisible;
-
 
     public void SendEventForTest(string name)
     {
@@ -1786,14 +1661,12 @@ public class MainWindow : Window
         SendRunEvent();
     }
 
-    public IReadOnlyList<string> RunVariables =>
-        (_runVariables.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
-    public int RunHeldBack => _run?.HeldBack.Count ?? 0;
+    public IReadOnlyList<string> RunVariables => _runSession.Current.Variables;
+    public int RunHeldBack => _runSession.Current.HeldBack.Count;
     public bool RunHeldBackVisible => _runHeldBackGrid.RowCount > 0;
     public string RunHeldBackText => _runHeldBack.Text ?? "";
     public string RunSummary => _runSummary.Text ?? "";
-    public double? RunValueOf(string name) => _run?.ValueOf(name);
-
+    public double? RunValueOf(string name) => _runSession.ValueOf(name);
 
     public void SetVariableForTest(string name, string value)
     {
@@ -1801,7 +1674,6 @@ public class MainWindow : Window
         _runValue.Text = value;
         SetRunVariable();
     }
-
 
 
     public void SelectNode(string objectId) => SelectObjectId(objectId);
@@ -2087,67 +1959,18 @@ public class MainWindow : Window
             return false;
         }
 
-        if (_sourceStamp is { } sourceStamp && !sourceStamp.Matches(_hkxPath, out string externalChange))
+        var result = AnimationSaveTransaction.Commit(
+            _hkxPath, anim, _sourceStamp, _editTrack, _editFrame,
+            verificationFault: VerifyFaultForTest);
+        if (!result.Committed)
         {
-            _frameEditAnswer.Text = "Not saved: " + externalChange;
-            _frameEditAnswer.Foreground = Ux.BadBrush;
-            return false;
-        }
-
-        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
-        if (blocked != null)
-        {
-            _frameEditAnswer.Text = "Cannot save: " + blocked;
-            _frameEditAnswer.Foreground = Ux.BadBrush;
-            return false;
-        }
-
-        bool asSpline;
-        NativeAnimation.Result written;
-        try
-        {
-            asSpline = anim.AnimationClass == NativeAnimation.SplineClass;
-            written = asSpline
-                ? NativeAnimation.Recompress(_hkxPath, anim)
-                : NativeAnimation.Interleave(_hkxPath, anim);
-        }
-        catch (Exception e)
-        {
-            _frameEditAnswer.Text = "Not saved, and the original is untouched: " + e.Message;
-            _frameEditAnswer.Foreground = Ux.BadBrush;
-            return false;
-        }
-
-        try
-        {
-            VerifyAnimation(written, asSpline);
-        }
-        catch (Exception e)
-        {
-            _frameEditAnswer.Text = "The rebuilt animation failed verification, so nothing was written: " + e.Message;
-            _frameEditAnswer.Foreground = Ux.BadBrush;
-            return false;
-        }
-
-        try
-        {
-            FileSafety.Backup(_hkxPath);
-            FileSafety.Replace(_hkxPath, written.Bytes);
-        }
-        catch (Exception e)
-        {
-            _frameEditAnswer.Text = "Not saved: the file could not be written: " + e.Message;
+            _frameEditAnswer.Text = result.Message;
             _frameEditAnswer.Foreground = Ux.BadBrush;
             return false;
         }
 
         _animationEdited = false;
-
-        string size = written.Grew >= 0 ? $"{written.Grew} bytes larger" : $"{-written.Grew} bytes smaller";
-        string said =
-            $"Saved {written.Frames} frame(s) of {written.Tracks} track(s) " +
-            (asSpline ? "spline compressed" : "uncompressed") +
-            $", {size}. The original is kept as {Path.GetFileName(_hkxPath + ".bak")}.";
+        string said = result.Message;
 
         try
         {
@@ -2165,50 +1988,6 @@ public class MainWindow : Window
         SetStatus(said, Ux.MetaBrush);
         return true;
     }
-
-    private void VerifyAnimation(NativeAnimation.Result written, bool asSpline)
-    {
-        var rebuilt = new HkxBinaryReader().ParseHkx(written.Bytes);
-        if (rebuilt.HasUnsupportedAnimation)
-            throw new InvalidDataException(
-                $"the rebuilt file decodes as {rebuilt.AnimationClass}, which is not supported");
-
-        var objects = new PackfileObjects(PackfileImage.Read(written.Bytes));
-        var mismatched = HavokClassTypes.Shipped.SignatureProblems(objects.ClassNames());
-        if (mismatched.Count > 0)
-            throw new InvalidDataException("rebuilt class signatures do not match: " + mismatched[0]);
-
-        string expectedClass = asSpline ? NativeAnimation.SplineClass : NativeAnimation.InterleavedClass;
-        if (rebuilt.AnimationClass != expectedClass)
-            throw new InvalidDataException(
-                $"rebuilt decodes as {rebuilt.AnimationClass}, expected {expectedClass}");
-        if (rebuilt.NumTracks != written.Tracks)
-            throw new InvalidDataException(
-                $"rebuilt decodes to {rebuilt.NumTracks} track(s), expected {written.Tracks}");
-        if (rebuilt.NumFrames != written.Frames)
-            throw new InvalidDataException(
-                $"rebuilt decodes to {rebuilt.NumFrames} frame(s), expected {written.Frames}");
-
-        var anim = _animationData;
-        if (anim == null) return;
-        if (Math.Abs(rebuilt.Duration - anim.Duration) > 1e-3f)
-            throw new InvalidDataException(
-                $"rebuilt duration {rebuilt.Duration} differs from the edited {anim.Duration}");
-
-        if (_editTrack >= 0 && _editFrame >= 0 && _editTrack < rebuilt.Tracks.Count &&
-            _editFrame < rebuilt.Tracks[_editTrack].Translations.Count)
-        {
-            var wanted = anim.Tracks[_editTrack].Translations[_editFrame];
-            var landed = rebuilt.Tracks[_editTrack].Translations[_editFrame];
-            float drift = (landed - wanted).Length();
-            float limit = asSpline ? 0.05f : 0.001f;
-            if (drift > limit)
-                throw new InvalidDataException(
-                    $"the edited frame did not survive re-encoding (drift {drift})");
-        }
-    }
-
-
 
     private void AimAtFraction()
     {
@@ -2450,9 +2229,9 @@ public class MainWindow : Window
         var first = Ux.Secondary("|<");
         first.Click += (_, _) => ShowFrame(0, stop: true);
         var back = Ux.Secondary("<");
-        back.Click += (_, _) => ShowFrame(_poseFrame - 1, stop: true);
+        back.Click += (_, _) => ShowFrame(_playback.Frame - 1, stop: true);
         var forward = Ux.Secondary(">");
-        forward.Click += (_, _) => ShowFrame(_poseFrame + 1, stop: true);
+        forward.Click += (_, _) => ShowFrame(_playback.Frame + 1, stop: true);
         var last = Ux.Secondary(">|");
         last.Click += (_, _) => ShowFrame(int.MaxValue, stop: true);
 
@@ -2484,7 +2263,7 @@ public class MainWindow : Window
         travel.IsCheckedChanged += (_, _) =>
         {
             _followTravel = travel.IsChecked == true;
-            ShowFrame(_poseFrame, stop: false);
+            ShowFrame(_playback.Frame, stop: false);
         };
 
         var reload = Ux.Secondary("From selected node");
@@ -2494,7 +2273,7 @@ public class MainWindow : Window
         mesh.Click += async (_, _) => await PickMesh();
         ToolTip.SetTip(mesh, "A .nif to draw on this skeleton");
         var clearMesh = Ux.Secondary("No mesh");
-        clearMesh.Click += (_, _) => { ClearMesh(); ShowFrame(_poseFrame, stop: false); };
+        clearMesh.Click += (_, _) => { ClearMesh(); ShowFrame(_playback.Frame, stop: false); };
 
         _scrub.PropertyChanged += (_, e) =>
         {
@@ -2616,13 +2395,14 @@ public class MainWindow : Window
             if (_poseSkeleton != null) _skeleton.Show(AnimationPose.ReferencePose(_poseSkeleton));
             _poseAnimation = null;
             _poseSource = "";
+            _playback.Clear();
             _scrub.Maximum = 0;
             return;
         }
 
         _poseAnimation = animation;
         _poseSource = animationPath;
-        _poseFrame = 0;
+        _playback.Load(animation.NumFrames, animation.FrameDuration);
 
 
 
@@ -2811,7 +2591,7 @@ public class MainWindow : Window
 
         SetPlaybackSummary(settingsWarning ?? report,
                            settingsWarning == null && missing.Count == 0 ? Ux.MetaBrush : Ux.WarnBrush);
-        ShowFrame(_poseFrame, stop: false);
+        ShowFrame(_playback.Frame, stop: false);
         _skeleton.Frame();
         return true;
     }
@@ -2848,7 +2628,7 @@ public class MainWindow : Window
         Stop();
         _poseAnimation = null;
         _poseSource = "";
-        _poseFrame = 0;
+        _playback.Clear();
 
 
         _poseMotion = new RootMotion.Motion();
@@ -2968,30 +2748,20 @@ public class MainWindow : Window
 
     private void TogglePlay()
     {
-        if (_poseAnimation == null || _poseAnimation.NumFrames <= 1)
+        if (_poseAnimation == null || !_playback.CanPlay)
         {
             SetPlaybackSummary("Nothing loaded to play. Select a clip, or press From selected node.", Ux.MutedBrush);
             return;
         }
 
-        if (_clock != null) { Stop(); return; }
+        if (_playback.IsPlaying || _clock != null) { Stop(); return; }
+        if (!_playback.Start(SelectedPlaybackSpeed())) return;
 
-
-
-
-        _clock = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromSeconds(
-                Math.Clamp(_poseAnimation.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4)),
-        };
-
-
-        _clock.Tick += (_, _) => ShowFrame(_poseFrame + 1 > _scrub.Maximum ? 0 : _poseFrame + 1, stop: false);
+        _clock = new DispatcherTimer { Interval = _playback.Interval };
+        _clock.Tick += (_, _) => ShowFrame(_playback.Tick(), stop: false);
         _clock.Start();
         _playButton.Content = "Pause";
     }
-
-
 
 
     private float SelectedPlaybackSpeed()
@@ -3009,6 +2779,7 @@ public class MainWindow : Window
     {
         _clock?.Stop();
         _clock = null;
+        _playback.Stop();
         _playButton.Content = "Play";
     }
 
@@ -3017,35 +2788,25 @@ public class MainWindow : Window
         if (stop) Stop();
         if (_poseAnimation == null || _poseSkeleton == null) return;
 
-        _poseFrame = Math.Clamp(frame, 0, Math.Max(0, _poseAnimation.NumFrames - 1));
-
-
-
-        var posed = AnimationPose.At(_poseSkeleton, _poseAnimation, _poseFrame);
+        _playback.Show(frame);
+        var posed = AnimationPose.At(_poseSkeleton, _poseAnimation, _playback.Frame);
         if (_followTravel) posed = WithTravel(posed);
 
         _skeleton.Update(posed);
         UpdateMesh(posed, _poseSkeleton);
 
         _scrubbing = true;
-        _scrub.Value = _poseFrame;
+        _scrub.Value = _playback.Frame;
         _scrubbing = false;
         UpdateFrameLabel();
     }
-
-
-
-
-
 
 
     private AnimationPose.Pose WithTravel(AnimationPose.Pose pose)
     {
         if (!_poseMotion.Any || _poseAnimation == null) return pose;
 
-        float fraction = _poseAnimation.NumFrames > 1
-            ? (float)_poseFrame / (_poseAnimation.NumFrames - 1)
-            : 0f;
+        float fraction = _playback.Fraction;
 
         var at = RootMotion.At(_poseMotion, fraction);
         var turn = System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.Normalize(_poseMotion.Up), at.TurnRadians);
@@ -3066,12 +2827,10 @@ public class MainWindow : Window
 
     private void UpdateFrameLabel()
     {
-        var animation = _poseAnimation;
-        _frameLabel.Text = animation == null
+        _frameLabel.Text = _poseAnimation == null
             ? ""
-            : $"frame {_poseFrame} of {Math.Max(animation.NumFrames - 1, 0)}   " +
-              $"{_poseFrame * animation.FrameDuration:F3}s   " +
-              $"fraction {(animation.NumFrames > 1 ? (float)_poseFrame / (animation.NumFrames - 1) : 0f):0.###}";
+            : $"frame {_playback.Frame} of {_playback.LastFrame}   " +
+              $"{_playback.Time:F3}s   fraction {_playback.Fraction:0.###}";
     }
 
     private void SetPlaybackSummary(string text, IBrush brush)
@@ -3082,18 +2841,178 @@ public class MainWindow : Window
 
 
     public SkeletonView Viewport => _skeleton;
-    public int PoseFrame => _poseFrame;
-    public int PoseFrameCount => _poseAnimation?.NumFrames ?? 0;
+    public int PoseFrame => _playback.Frame;
+    public int PoseFrameCount => _playback.FrameCount;
     public string PlaybackSummary => _playbackSummary.Text ?? "";
-    public bool IsPlaying => _clock != null;
+    public bool IsPlaying => _playback.IsPlaying;
 
 
     public void ScrubTo(int frame) => ShowFrame(frame, stop: true);
     public void LoadPoseFrom(string animationPath) => LoadPose(animationPath, Path.GetFileName(animationPath));
     public AnimationPose.Pose? PoseNow =>
-        _poseSkeleton == null ? null : AnimationPose.At(_poseSkeleton, _poseAnimation, _poseFrame);
+        _poseSkeleton == null ? null : AnimationPose.At(_poseSkeleton, _poseAnimation, _playback.Frame);
 
 
+
+
+    private Control BuildProjectSearchTab()
+    {
+        _projectSearchResults.SelectionChanged += OnProjectSearchSelected;
+        _projectSearchText.KeyDown += async (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter) await SearchProject();
+        };
+
+        var search = Ux.Primary("Search project");
+        search.Click += async (_, _) => await SearchProject();
+        var open = Ux.Secondary("Open result");
+        open.Click += (_, _) => OpenProjectSearchResult();
+
+        var bar = Bar(_projectSearchText, search, open, Ux.Pill(_projectSearchSummary));
+        bar.Margin = new Thickness(0, 0, 0, 8);
+
+        var panel = new DockPanel();
+        DockPanel.SetDock(bar, Dock.Top);
+        panel.Children.Add(bar);
+        panel.Children.Add(_projectSearchResults);
+
+        _projectSearchSummary.Text =
+            "Search every behaviour in the resolved project by file, object, class, name, field, " +
+            "event, variable or asset reference.";
+        _projectSearchSummary.Foreground = Ux.MutedBrush;
+        return panel;
+    }
+
+    private async Task SearchProject()
+    {
+        string query = (_projectSearchText.Text ?? "").Trim();
+        if (query.Length == 0)
+        {
+            SetProjectSearchSummary("Type something to search for first.", Ux.MutedBrush);
+            return;
+        }
+
+        var chain = _projectChain;
+        if (chain == null || chain.Root.Length == 0)
+        {
+            SetProjectSearchSummary(
+                "No project is resolved for this file. Open a behaviour that belongs to a character project.",
+                Ux.MutedBrush);
+            return;
+        }
+
+        long generation = ++_projectSearchGeneration;
+        long stamp = CaptureStamp();
+        _projectSearchResults.Clear();
+        _projectSearchHits.Clear();
+        SetProjectSearchSummary($"Searching {Path.GetFileName(chain.Root)} for '{query}'...", Ux.MutedBrush);
+
+        ProjectSearch.Result result;
+        try
+        {
+            result = await Task.Run(() => ProjectSearch.Run(chain, query));
+        }
+        catch (Exception error)
+        {
+            if (generation != _projectSearchGeneration || stamp != _documentStamp) return;
+            SetProjectSearchSummary("Project search failed: " + error.Message.Split('\n')[0], Ux.BadBrush);
+            return;
+        }
+
+        if (generation != _projectSearchGeneration || stamp != _documentStamp
+            || !string.Equals(query, (_projectSearchText.Text ?? "").Trim(), StringComparison.Ordinal))
+            return;
+
+        _projectSearchHits.AddRange(result.Hits);
+        for (int i = 0; i < _projectSearchHits.Count; i++)
+        {
+            var hit = _projectSearchHits[i];
+            string obj = hit.ObjectId.Length > 0 ? $"#{hit.ObjectId} {hit.ClassName}" : "";
+            var row = _projectSearchResults.Add(null, hit.File, hit.Kind, obj, hit.Field, hit.Value).Tag(i);
+            row.Colour(0, Ux.TitleBrush)
+               .Colour(1, hit.Kind is "event" or "variable" ? Ux.CodeBrush : Ux.MutedBrush)
+               .Colour(2, Ux.CodeBrush)
+               .Colour(3, Ux.MetaBrush)
+               .Colour(4, Ux.MetaBrush);
+        }
+
+        foreach (var problem in result.Problems)
+            _projectSearchResults.Add(null, problem.File, "unreadable", "", "", problem.Error)
+                                 .Colour(0, Ux.TitleBrush).Colour(1, Ux.BadBrush).Colour(4, Ux.BadBrush);
+
+        if (result.Hits.Count == 0 && result.Problems.Count == 0)
+            _projectSearchResults.Add(null, "", "", "", "", $"nothing matched '{query}'")
+                                 .Colour(4, Ux.MutedBrush);
+
+        SetProjectSearchSummary(
+            result + $" in {Path.GetFileName(chain.Root)}.",
+            result.Problems.Count > 0 ? Ux.WarnBrush : result.Hits.Count > 0 ? Ux.MetaBrush : Ux.MutedBrush);
+    }
+
+    private void OnProjectSearchSelected()
+    {
+        if (_projectSearchResults.SelectedTag is not int index
+            || index < 0 || index >= _projectSearchHits.Count) return;
+
+        var hit = _projectSearchHits[index];
+        if (SameProjectSearchPath(hit.Path, _hkxPath) && hit.ObjectId.Length > 0)
+        {
+            SelectObjectId(hit.ObjectId);
+            _graph.FocusOn(hit.ObjectId);
+            SetStatus($"{hit.File}: #{hit.ObjectId} {hit.ClassName}.{hit.Field} = {hit.Value}", Ux.MetaBrush);
+            return;
+        }
+
+        SetStatus($"{hit.File}: {(hit.ObjectId.Length > 0 ? "#" + hit.ObjectId + " " : "")}" +
+                  $"{hit.Field} = {hit.Value}. Use Open result to jump to that file.", Ux.MetaBrush);
+    }
+
+    private void OpenProjectSearchResult()
+    {
+        if (_projectSearchResults.SelectedTag is not int index
+            || index < 0 || index >= _projectSearchHits.Count)
+        {
+            SetProjectSearchSummary("Select a search result first.", Ux.MutedBrush);
+            return;
+        }
+
+        var hit = _projectSearchHits[index];
+        Open(hit.Path);
+        if (!SameProjectSearchPath(_hkxPath, hit.Path)) return;
+
+        if (hit.ObjectId.Length > 0)
+        {
+            SelectObjectId(hit.ObjectId);
+            _graph.FocusOn(hit.ObjectId);
+        }
+    }
+
+    private void ClearProjectSearch()
+    {
+        _projectSearchGeneration++;
+        _projectSearchResults.Clear();
+        _projectSearchHits.Clear();
+        _projectSearchSummary.Text =
+            "Search every behaviour in the resolved project by file, object, class, name, field, " +
+            "event, variable or asset reference.";
+        _projectSearchSummary.Foreground = Ux.MutedBrush;
+    }
+
+    private static bool SameProjectSearchPath(string left, string right)
+    {
+        if (left.Length == 0 || right.Length == 0) return false;
+        return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
+
+    private void SetProjectSearchSummary(string text, IBrush brush)
+    {
+        _projectSearchSummary.Text = text;
+        _projectSearchSummary.Foreground = brush;
+    }
+
+    public int ProjectSearchRows => _projectSearchResults.RowCount;
+    public string ProjectSearchAnswer => _projectSearchSummary.Text ?? "";
 
 
     private Control BuildDiffTab()
@@ -3146,58 +3065,24 @@ public class MainWindow : Window
         _diff.Clear();
         SetDiffSummary($"Reading {Path.GetFileName(other)}...", Ux.MutedBrush);
 
-        BehaviourDiff.Result result;
-        try
+        long stamp = CaptureStamp();
+        string mine = _xmlText;
+        var outcome = await _compare.Compare(mine, other, stamp);
+        if (outcome.Stale) return;
+        if (outcome.Failed)
         {
-            long stamp = CaptureStamp();
-            string mine = _xmlText;
-            result = await Task.Run(() => ComputeDiff(mine, other));
-            if (stamp != _documentStamp) return;  // document or revision moved on; discard
-        }
-        catch (Exception ex)
-        {
-            SetDiffSummary($"Could not read {Path.GetFileName(other)}: {ex.Message.Split('\n')[0]}", Ux.BadBrush);
+            SetDiffSummary($"Could not read {Path.GetFileName(other)}: {outcome.Error}", Ux.BadBrush);
             return;
         }
 
-        ShowDiff(Path.GetFileName(other), result);
+        ShowDiff(Path.GetFileName(other), outcome.Value!);
     }
-
-
-
-
-    private static string TextOf(string path)
-    {
-        try
-        {
-            var bytes = File.ReadAllBytes(path);
-            var objects = new PackfileObjects(PackfileImage.Read(bytes));
-
-            if (HavokClassTypes.Shipped.SignatureProblems(objects.ClassNames()).Count == 0)
-                return NativeXml.From(bytes);
-        }
-        catch (Exception) { }
-
-        return "";
-    }
-
-    private static BehaviourDiff.Result ComputeDiff(string mine, string other)
-    {
-        string theirs = TextOf(other);
-        if (theirs.Length == 0)
-            throw new InvalidOperationException(
-                "this file's classes are not ones this build describes");
-
-        return BehaviourDiff.Compare(RepackCheck.Take(mine), RepackCheck.Take(theirs));
-    }
-
-
 
     public string CompareLoadedWith(string other)
     {
         if (_xmlText.Length == 0) return "";
 
-        ShowDiff(Path.GetFileName(other), ComputeDiff(_xmlText, other));
+        ShowDiff(Path.GetFileName(other), BehaviourCompareSession.CompareNow(_xmlText, other));
         return _diffSummary.Text ?? "";
     }
 
@@ -3317,20 +3202,16 @@ public class MainWindow : Window
     {
         _papyrusScanned = true;
         long stamp = CaptureStamp();
-        try
+        var outcome = await _analysis.ScanPapyrus(folder, stamp, PapyrusScanRunner);
+        if (outcome.Stale) return;
+        if (outcome.Failed)
         {
-            _papyrus = PapyrusScanRunner != null
-                ? await PapyrusScanRunner(folder)
-                : await Task.Run(() => PapyrusEvents.Scan(folder));
-        }
-        catch (Exception e)
-        {
-            if (stamp != _documentStamp) return;
-            Console.Error.WriteLine($"Scripts scan failed: {e}");
+            Console.Error.WriteLine($"Scripts scan failed: {outcome.Error}");
             SetStatus("Scripts scan failed. The Papyrus sources could not be read.", Ux.BadBrush);
             return;
         }
-        if (stamp != _documentStamp) return;      // document or revision moved on; discard
+
+        _papyrus = outcome.Value!;
         SetStatus(settingsWarning ?? _papyrus.ToString(),
                   settingsWarning == null && _papyrus.ScriptsRead > 0 ? Ux.MetaBrush : Ux.MutedBrush);
 
@@ -3520,7 +3401,7 @@ public class MainWindow : Window
         {
             sourceStamp = DocumentSourceStamp.Capture(path);
         }
-        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is InvalidDataException)
         {
             SetSummary("Could not read the file consistently enough to open it: " + e.Message.Split('\n')[0],
                        Ux.BadBrush);
@@ -3550,6 +3431,7 @@ public class MainWindow : Window
         BuildMachineNavigator(new BehaviourGraphModel());
         SetMachineNavigatorActive(Array.Empty<string>());
         ClearPose();
+        ClearProjectSearch();
         ResetHistory();
         _readOnly = false;
         _readOnlyWhy = "";
@@ -3697,7 +3579,7 @@ public class MainWindow : Window
 
 
 
-                _xmlText = NativeXml.From(File.ReadAllBytes(_hkxPath));
+                _xmlText = NativeXml.From(InputFilePolicy.ReadHkx(_hkxPath));
                 File.WriteAllText(_xmlPath, _xmlText);
 
                 _objectIds = HkxTextEdit.ObjectIds(_xmlText);
@@ -4450,10 +4332,15 @@ public class MainWindow : Window
     private void EnsurePapyrus()
     {
         if (_papyrusScanned) return;
-        _papyrusScanned = true;
 
         string folder = Settings.Get("scripts");
-        if (folder.Length > 0) _papyrus = PapyrusEvents.Scan(folder);
+        if (folder.Length == 0)
+        {
+            _papyrusScanned = true;
+            return;
+        }
+
+        _ = ScanPapyrusFolder(folder, null);
     }
 
     private void BuildSymbols(BehaviourGraphModel model)
@@ -5051,8 +4938,10 @@ public class MainWindow : Window
 
 
             if (address == "playbackSpeed" && objectId == _selectedId && _clock != null)
-                _clock.Interval = TimeSpan.FromSeconds(
-                    Math.Clamp(_poseAnimation!.FrameDuration / SelectedPlaybackSpeed(), 1 / 120f, 4));
+            {
+                _playback.SetSpeed(SelectedPlaybackSpeed());
+                _clock.Interval = _playback.Interval;
+            }
 
             return true;
         }
@@ -5139,29 +5028,20 @@ public class MainWindow : Window
         _problemBar.Text = "Reading the project...";
 
         long stamp = CaptureStamp();
-        var progress = new Progress<string>(s =>
+        var outcome = await _analysis.ValidateProject(
+            chain, stamp,
+            s => SetStatus("Checking " + s, Ux.MutedBrush),
+            ValidateProjectRunner);
+        if (outcome.Stale) return;
+        if (outcome.Failed)
         {
-            if (stamp == _documentStamp) SetStatus("Checking " + s, Ux.MutedBrush);
-        });
-
-        ProjectCheck.Result result;
-        try
-        {
-            result = ValidateProjectRunner != null
-                ? await ValidateProjectRunner(chain, progress)
-                : await Task.Run(() => ProjectCheck.Run(
-                    chain, s => ((IProgress<string>)progress).Report(s)));
-        }
-        catch (Exception e)
-        {
-            if (stamp != _documentStamp) return;
-            Console.Error.WriteLine($"Project check failed: {e}");
+            Console.Error.WriteLine($"Project check failed: {outcome.Error}");
             _problemBar.Text = "Project check failed.";
             SetStatus("Project check failed. The project files could not be read.", Ux.BadBrush);
             return;
         }
 
-        if (stamp != _documentStamp) return;      // document or revision moved on; discard
+        ProjectCheck.Result result = outcome.Value!;
 
         foreach (var file in result.Files.Where(f => f.Error.Length > 0 || f.Findings.Count > 0))
         {
@@ -5195,80 +5075,16 @@ public class MainWindow : Window
     {
         if (_readOnly) { SetStatus("Not saved: " + _readOnlyWhy, Ux.BadBrush); return false; }
 
-        if (_sourceStamp is { } sourceStamp && !sourceStamp.Matches(_hkxPath, out string externalChange))
+        var result = DocumentSaveTransaction.Commit(
+            _hkxPath, _savedXml, _xmlText, _sourceStamp, VerifyFaultForTest);
+        if (!result.Committed)
         {
-            SetStatus("Not saved: " + externalChange, Ux.BadBrush);
-            return false;
-        }
-
-        NativeSave.Plan plan;
-        try
-        {
-            plan = NativeSave.Compare(_savedXml, _xmlText);
-        }
-        catch (Exception e)
-        {
-            SetStatus("Could not work out what changed, so nothing was written: " + e.Message, Ux.BadBrush);
-            return false;
-        }
-
-        if (!plan.Possible)
-        {
-            SetStatus(plan.Refusal ?? "native save does not support this edit yet", Ux.BadBrush);
-            return false;
-        }
-        if (plan.Empty) { SetStatus("Nothing to save.", Ux.MutedBrush); return false; }
-
-        string? blocked = HkxTextEdit.WhyNotWritable(_hkxPath);
-        if (blocked != null) { SetStatus("Cannot save: " + blocked, Ux.BadBrush); return false; }
-
-        byte[] bytes;
-        try
-        {
-            bytes = NativeSave.Apply(_hkxPath, plan);
-        }
-        catch (Exception e)
-        {
-            SetStatus("Not saved, and the original is untouched: " + e.Message, Ux.BadBrush);
-            return false;
-        }
-
-        try
-        {
-            SaveVerifier.Verify(File.ReadAllBytes(_hkxPath), bytes, plan);
-            if (VerifyFaultForTest is { } verifyFault) throw verifyFault();
-        }
-        catch (Exception e)
-        {
-            SetStatus("The rebuilt file failed verification, so nothing was written: " + e.Message,
-                      Ux.BadBrush);
-            return false;
-        }
-
-        try
-        {
-            FileSafety.Backup(_hkxPath);
-            FileSafety.Replace(_hkxPath, bytes);
-        }
-        catch (Exception e)
-        {
-            SetStatus("Not saved: the file could not be written: " + e.Message, Ux.BadBrush);
+            SetStatus(result.Message, result.Unchanged ? Ux.MutedBrush : Ux.BadBrush);
             return false;
         }
 
         ResetHistory();
-
-        string how = plan.Gone.Count > 0
-            ? $"and took out {plan.Gone.Count} object{(plan.Gone.Count == 1 ? "" : "s")}, " +
-              "so the file was laid out again and everything after them has moved. Object " +
-              "numbers above the ones deleted have changed. "
-            : plan.Grows
-                ? "with anything that grew added on the end so nothing already in it moved. "
-                : "leaving every other byte as it was. ";
-
-        SetStatus($"Saved {plan.Changes.Count} " +
-                  $"change{(plan.Changes.Count == 1 ? "" : "s")} straight into the file, " + how +
-                  $"The original is kept as {Path.GetFileName(_hkxPath + ".bak")}.", Ux.MetaBrush);
+        SetStatus(result.Message, Ux.MetaBrush);
 
         try
         {

@@ -193,7 +193,7 @@ public static class Smoke
         Check("there is one tab control", 1, tabs.Count);
 
         var headers = tabs[0].Items.OfType<TabItem>().Select(t => t.Header?.ToString()).ToList();
-        Check("tabs", "Tree, Graph, Symbols, Chain, Animation, Playback, Compare", string.Join(", ", headers));
+        Check("tabs", "Tree, Graph, Symbols, Chain, Project search, Animation, Playback, Compare", string.Join(", ", headers));
 
 
 
@@ -213,8 +213,8 @@ public static class Smoke
 
         Check("the node canvas exists", 1, canvases);
         Check("the skeleton viewport exists", 1, viewports);
-        Check("the tree, symbol, chain, animation, clip and compare grids build without opening tools",
-              6, grids.Count);
+        Check("the tree, symbol, chain, project search, animation, clip and compare grids build without opening tools",
+              7, grids.Count);
 
 
 
@@ -222,7 +222,7 @@ public static class Smoke
         Check("collapsed details leave no hidden grids under the canvas", 0, grids.Count(g => !g.IsVisible));
         foreach (string expected in new[]
                  { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
-                   "Undo", "Redo", "Compare with...", "Check project", "Scripts folder...",
+                   "Undo", "Redo", "Compare with...", "Search project", "Open result", "Check project", "Scripts folder...",
                    "Play", "From selected node", "Fit", "View ▾", "Fit all", "Fit selection", "Create template" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
 

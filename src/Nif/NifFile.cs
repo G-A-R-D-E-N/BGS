@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Nif;
 
@@ -29,10 +30,12 @@ public sealed class NifFile
 
     public int BlockCount => BlockType.Count;
 
-    public static NifFile Read(string path) => Parse(File.ReadAllBytes(path), Path.GetFileName(path));
+    public static NifFile Read(string path) =>
+        Parse(InputFilePolicy.ReadNif(path), Path.GetFileName(path));
 
     public static NifFile Parse(byte[] data, string name)
     {
+        InputFilePolicy.EnsureNif(data.LongLength, name);
         try
         {
             return ParseCore(data, name);

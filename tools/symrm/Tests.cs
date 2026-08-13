@@ -48,6 +48,9 @@ public static class Tests
         ("NamesWithXmlCharactersSurviveCreation", NamesWithXmlCharactersSurviveCreation),
         ("EnumOfInt8EditsPersistNumerically", EnumOfInt8EditsPersistNumerically),
         ("FirstInstanceOfAClassCanBeAdded", FirstInstanceOfAClassCanBeAdded),
+        ("DocumentSaveTransactionCommitsVerifiedBytes", DocumentSaveTransactionCommitsVerifiedBytes),
+        ("DocumentSaveTransactionRejectsMidCommitSourceChange", DocumentSaveTransactionRejectsMidCommitSourceChange),
+        ("DocumentSaveTransactionRejectsVerificationFailure", DocumentSaveTransactionRejectsVerificationFailure),
         ("BackupsRotateAndReplacementIsStaged", BackupsRotateAndReplacementIsStaged),
         ("Ba2ExtractionStaysInsideTheOutputRoot", Ba2ExtractionStaysInsideTheOutputRoot),
         ("Ba2ExtractionRefusesSymlinkEscape", Ba2ExtractionRefusesSymlinkEscape),
@@ -7481,6 +7484,97 @@ public static class Tests
         }
     }
 
+    private static void DocumentSaveTransactionCommitsVerifiedBytes()
+    {
+        Console.WriteLine("\ndocument save transaction commits only verified bytes");
+        var image = TwoClips(out int firstId, out _);
+        byte[] source = image.Rebuild();
+        string folder = Path.Combine(Path.GetTempPath(), "bgs-save-transaction-" + Guid.NewGuid().ToString("N"));
+        string path = Path.Combine(folder, "graph.hkx");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllBytes(path, source);
+            string saved = NativeXml.From(source);
+            string edited = HkxTextEdit.SetParam(saved, firstId.ToString(), "playbackSpeed", "0.25");
+
+            var result = DocumentSaveTransaction.Commit(
+                path, saved, edited, DocumentSourceStamp.Capture(path));
+
+            CheckTrue("the verified transaction commits", result.Committed);
+            CheckTrue("the committed file changed", !File.ReadAllBytes(path).SequenceEqual(source));
+            CheckTrue("the backup is the exact original", File.ReadAllBytes(path + ".bak").SequenceEqual(source));
+            var reopened = new PackfileObjects(PackfileImage.Read(path));
+            var clip = reopened.Instances[firstId - NativeGraphModel.FirstId];
+            Check("the intended value landed", 0.25f, reopened.ReadFloat(clip, "playbackSpeed") ?? float.NaN);
+            CheckTrue("the result describes a committed save", result.Message.StartsWith("Saved 1 change", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try { Directory.Delete(folder, true); } catch (IOException) { }
+        }
+    }
+
+    private static void DocumentSaveTransactionRejectsMidCommitSourceChange()
+    {
+        Console.WriteLine("\ndocument save transaction rechecks the source before replacement");
+        var image = TwoClips(out int firstId, out _);
+        byte[] source = image.Rebuild();
+        byte[] external = source.ToArray();
+        external[^1] ^= 0x01;
+        string folder = Path.Combine(Path.GetTempPath(), "bgs-save-race-" + Guid.NewGuid().ToString("N"));
+        string path = Path.Combine(folder, "graph.hkx");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllBytes(path, source);
+            string saved = NativeXml.From(source);
+            string edited = HkxTextEdit.SetParam(saved, firstId.ToString(), "playbackSpeed", "0.25");
+            var opened = DocumentSourceStamp.Capture(path);
+
+            var result = DocumentSaveTransaction.Commit(
+                path, saved, edited, opened,
+                beforeSourceRecheck: () => File.WriteAllBytes(path, external));
+
+            CheckTrue("a mid-commit source change is refused", !result.Committed);
+            CheckTrue("the external bytes are not overwritten", File.ReadAllBytes(path).SequenceEqual(external));
+            CheckTrue("no backup is rotated for a refused commit", !File.Exists(path + ".bak"));
+            CheckTrue("the refusal names the source change", result.Message.Contains("changed on disk", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            try { Directory.Delete(folder, true); } catch (IOException) { }
+        }
+    }
+
+    private static void DocumentSaveTransactionRejectsVerificationFailure()
+    {
+        Console.WriteLine("\ndocument save transaction never publishes unverified bytes");
+        var image = TwoClips(out int firstId, out _);
+        byte[] source = image.Rebuild();
+        string folder = Path.Combine(Path.GetTempPath(), "bgs-save-verify-" + Guid.NewGuid().ToString("N"));
+        string path = Path.Combine(folder, "graph.hkx");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllBytes(path, source);
+            string saved = NativeXml.From(source);
+            string edited = HkxTextEdit.SetParam(saved, firstId.ToString(), "playbackSpeed", "0.25");
+
+            var result = DocumentSaveTransaction.Commit(
+                path, saved, edited, DocumentSourceStamp.Capture(path),
+                verificationFault: () => new InvalidDataException("injected verification fault"));
+
+            CheckTrue("a verification failure is refused", !result.Committed);
+            CheckTrue("the source remains byte exact", File.ReadAllBytes(path).SequenceEqual(source));
+            CheckTrue("no backup is made for unverified bytes", !File.Exists(path + ".bak"));
+            CheckTrue("the refusal names verification", result.Message.Contains("failed verification", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try { Directory.Delete(folder, true); } catch (IOException) { }
+        }
+    }
     private static void BackupsRotateAndReplacementIsStaged()
     {
         Console.WriteLine("\nbackups rotate so .bak is always the previous version");

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
@@ -51,10 +52,11 @@ public sealed class PackfileImage
     public PackfileSection? Section(string tag) =>
         Sections.Find(s => s.Tag == tag);
 
-    public static PackfileImage Read(string path) => Read(File.ReadAllBytes(path));
+    public static PackfileImage Read(string path) => Read(InputFilePolicy.ReadHkx(path));
 
     public static PackfileImage Read(byte[] bytes)
     {
+        InputFilePolicy.EnsureHkx(bytes.LongLength);
         if (bytes.Length < HeaderSize) throw new InvalidDataException("Too small to be a packfile.");
         if (U32(bytes, 0) != Magic0 || U32(bytes, 4) != Magic1)
             throw new InvalidDataException("Not a Havok packfile: the magic does not match.");

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
@@ -9,6 +10,7 @@ public static class PredefinedTemplates
 {
     public const int MinimumBlendChildren = 1;
     public const int MaximumBlendChildren = 16;
+
     public enum SlotKind
     {
         Text,
@@ -134,7 +136,21 @@ public static class PredefinedTemplates
         return new Resolution(texts, counts, choices, references, null);
     }
 
-    public static Result Instantiate(string path, string templateId, IReadOnlyDictionary<string, string> raw)
+    public static Result Instantiate(string path, string templateId,
+                                     IReadOnlyDictionary<string, string> raw)
+    {
+        try
+        {
+            return Instantiate(InputFilePolicy.ReadHkx(path), templateId, raw);
+        }
+        catch (Exception e)
+        {
+            return Failed(e.Message);
+        }
+    }
+
+    public static Result Instantiate(byte[] source, string templateId,
+                                     IReadOnlyDictionary<string, string> raw)
     {
         var definition = Get(templateId);
         if (definition == null) return Failed($"Unknown predefined template '{templateId}'.");
@@ -142,11 +158,9 @@ public static class PredefinedTemplates
         var resolved = Resolve(definition, raw);
         if (!resolved.Possible) return Failed(resolved.Refusal!);
 
-        byte[] source;
         PackfileObjects objects;
         try
         {
-            source = File.ReadAllBytes(path);
             objects = new PackfileObjects(PackfileImage.Read(source), HavokClasses.Shipped);
         }
         catch (Exception e) { return Failed(e.Message); }

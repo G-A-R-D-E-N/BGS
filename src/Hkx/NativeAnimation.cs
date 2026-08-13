@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
@@ -58,10 +59,16 @@ public static class NativeAnimation
 
 
 
-    public static Result Interleave(string hkxPath, HkxAnimationData decoded)
+    public static Result Interleave(string hkxPath, HkxAnimationData decoded) =>
+        Interleave(InputFilePolicy.ReadHkx(hkxPath), decoded);
+
+    public static Result Interleave(byte[] hkx, HkxAnimationData decoded)
     {
-        var image = PackfileImage.Read(hkxPath);
-        long was = new System.IO.FileInfo(hkxPath).Length;
+        ArgumentNullException.ThrowIfNull(hkx);
+        ArgumentNullException.ThrowIfNull(decoded);
+        InputFilePolicy.EnsureHkx(hkx.LongLength);
+        var image = PackfileImage.Read(hkx);
+        long was = hkx.LongLength;
 
         var data = image.Section("__data__")
             ?? throw new InvalidOperationException("this file has no data section");
@@ -260,10 +267,17 @@ public static class NativeAnimation
 
 
     public static Result Recompress(string hkxPath, HkxAnimationData decoded,
+        SplineEncoder.Options? options = null, bool dropReplaced = true, Timeline? cut = null) =>
+        Recompress(InputFilePolicy.ReadHkx(hkxPath), decoded, options, dropReplaced, cut);
+
+    public static Result Recompress(byte[] hkx, HkxAnimationData decoded,
         SplineEncoder.Options? options = null, bool dropReplaced = true, Timeline? cut = null)
     {
-        var image = PackfileImage.Read(hkxPath);
-        long was = new System.IO.FileInfo(hkxPath).Length;
+        ArgumentNullException.ThrowIfNull(hkx);
+        ArgumentNullException.ThrowIfNull(decoded);
+        InputFilePolicy.EnsureHkx(hkx.LongLength);
+        var image = PackfileImage.Read(hkx);
+        long was = hkx.LongLength;
 
         var data = image.Section("__data__")
             ?? throw new InvalidOperationException("this file has no data section");

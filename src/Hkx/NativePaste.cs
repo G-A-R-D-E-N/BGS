@@ -65,8 +65,11 @@ public static class NativePaste
         public override string ToString() => Note;
     }
 
-    public static Clip Copy(string path, int rootId, HavokClassTypes? types = null) =>
-        new(path, Of(PackfileImage.Read(path), rootId, types));
+    public static Clip Copy(string path, int rootId, HavokClassTypes? types = null)
+    {
+        byte[] source = InputFilePolicy.ReadHkx(path);
+        return new Clip(path, Of(PackfileImage.Read(source), rootId, types));
+    }
 
 
 
@@ -175,25 +178,40 @@ public static class NativePaste
 
 
     public static Result Paste(string targetPath, Clip clip, int attachToId = -1,
+                               string attachField = "", HavokClassTypes? types = null) =>
+        Paste(InputFilePolicy.ReadHkx(targetPath), targetPath, clip, attachToId, attachField, types);
+
+    public static Result Paste(byte[] targetBytes, string targetPath, Clip clip, int attachToId = -1,
                                string attachField = "", HavokClassTypes? types = null)
+    {
+        bool sameFile = SamePath(targetPath, clip.Path);
+        byte[]? sourceBytes = sameFile ? null : InputFilePolicy.ReadHkx(clip.Path);
+        return Paste(targetBytes, targetPath, sourceBytes, clip, attachToId, attachField, types);
+    }
+
+    internal static Result Paste(byte[] targetBytes, string targetPath, byte[]? sourceBytes,
+                                 Clip clip, int attachToId = -1, string attachField = "",
+                                 HavokClassTypes? types = null)
     {
         types ??= HavokClassTypes.Shipped;
 
-        var target = PackfileImage.Read(targetPath);
-        var source = System.IO.Path.GetFullPath(targetPath) == System.IO.Path.GetFullPath(clip.Path)
-                     ? target
-                     : PackfileImage.Read(clip.Path);
-
-        bool sameFile = ReferenceEquals(source, target);
-
-
-
+        var target = PackfileImage.Read(targetBytes);
+        bool sameFile = SamePath(targetPath, clip.Path);
+        var source = sameFile
+            ? target
+            : PackfileImage.Read(sourceBytes
+                ?? throw new InvalidOperationException("The copied source bytes were not supplied."));
 
         var tree = Of(source, clip.Tree.RootId, types);
-
         var result = Into(target, source, tree, sameFile, attachToId, attachField, types);
         return result with { Bytes = target.Rebuild() };
     }
+
+    private static bool SamePath(string left, string right) =>
+        string.Equals(System.IO.Path.GetFullPath(left), System.IO.Path.GetFullPath(right),
+                      OperatingSystem.IsWindows()
+                          ? StringComparison.OrdinalIgnoreCase
+                          : StringComparison.Ordinal);
 
 
     public static Result Into(PackfileImage target, PackfileImage source, Subtree tree, bool sameFile,

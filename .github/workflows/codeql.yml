@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - nomad
   pull_request:
     branches:
       - main
+      - nomad
   schedule:
     - cron: "23 5 * * 1"
 
