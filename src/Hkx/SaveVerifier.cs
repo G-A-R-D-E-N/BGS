@@ -104,10 +104,7 @@ public static class SaveVerifier
         }
 
         if (change.InElement)
-        {
-            var array = rebuilt.ArrayAt(offset);
-            return array != null && change.Element < array.Count;
-        }
+            return StructElementLanded(rebuilt, offset, change, rebuiltIndex);
 
         if (change.Array && change.Text)
             return TextArrayLanded(rebuilt, offset, change);
@@ -143,6 +140,123 @@ public static class SaveVerifier
 
         return NarrowLanded(rebuilt, offset, change, type);
     }
+
+    private static bool StructElementLanded(PackfileObjects rebuilt, int fieldOffset,
+                                            NativeSave.Change change, Func<int, int> rebuiltIndex)
+    {
+        var types = HavokClassTypes.Shipped;
+        var field = types.Members(change.ClassName).FirstOrDefault(member => member.Name == change.Field);
+        if (field?.CType == null) return false;
+
+        int start;
+        if (field.VType == "TYPE_STRUCT")
+        {
+            if (change.Element != 0) return false;
+            start = fieldOffset;
+        }
+        else if (field.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY" &&
+                 field.VSub == "TYPE_STRUCT")
+        {
+            int stride = types[field.CType]?.Size ?? 0;
+            if (stride <= 0) return false;
+            var array = rebuilt.ArrayAt(fieldOffset, stride);
+            if (array == null || change.Element < 0 || change.Element >= array.Count) return false;
+            start = array.At + change.Element * stride;
+        }
+        else
+        {
+            return false;
+        }
+
+        var nested = StructMember(types, field.CType, change.Member);
+        if (nested == null) return false;
+        int offset = start + nested.Value.Offset;
+
+        if (nested.Value.VType == "TYPE_POINTER")
+        {
+            var read = rebuilt.ReadRefAt(offset, out bool wasNull);
+            if (change.Value == "null") return wasNull;
+            if (read == null) return false;
+            return TargetLanded(rebuilt, read, change.Value, rebuiltIndex) == true;
+        }
+
+        string spelled = Spelled(nested.Value.VType);
+        if (NativeSave.WideFloats(spelled) is int floats and > 0)
+            return WideFloatsLanded(rebuilt, offset, change, floats);
+        if (NativeSave.IsWideInteger(spelled))
+            return WideIntLanded(rebuilt, offset, change, spelled);
+        if (nested.Value.VType == "TYPE_REAL")
+        {
+            return rebuilt.ReadFloatAt(offset) is float read &&
+                   float.TryParse(change.Value, NumberStyles.Float, CultureInfo.InvariantCulture,
+                                  out float wanted) &&
+                   Math.Abs(read - wanted) <= 1e-4f;
+        }
+
+        string scalar = Narrow(nested.Value.VType, nested.Value.VSub);
+        return scalar.Length > 0 && NarrowLanded(rebuilt, offset, change, scalar);
+    }
+
+    private static (int Offset, string VType, string VSub)? StructMember(
+        HavokClassTypes types, string elementClass, string path)
+    {
+        int offset = 0;
+        string owner = elementClass;
+        string[] steps = path.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (steps.Length == 0) return null;
+
+        for (int i = 0; i < steps.Length; i++)
+        {
+            var member = types.Members(owner).FirstOrDefault(value => value.Name == steps[i]);
+            if (member == null) return null;
+            offset += member.Offset;
+
+            if (i == steps.Length - 1)
+                return (offset, member.VType, member.VSub);
+
+            if (member.VType != "TYPE_STRUCT" || member.CType == null) return null;
+            owner = member.CType;
+        }
+
+        return null;
+    }
+
+    private static string Spelled(string vtype) => vtype switch
+    {
+        "TYPE_VECTOR4" => "vector4",
+        "TYPE_QUATERNION" => "quaternion",
+        "TYPE_QSTRANSFORM" => "qstransform",
+        "TYPE_MATRIX3" => "matrix3",
+        "TYPE_ROTATION" => "rotation",
+        "TYPE_TRANSFORM" => "transform",
+        "TYPE_MATRIX4" => "matrix4",
+        "TYPE_UINT64" => "uint64",
+        "TYPE_INT64" => "int64",
+        "TYPE_ULONG" => "ulong",
+        _ => "",
+    };
+
+    private static string Narrow(string vtype, string vsub) => vtype switch
+    {
+        "TYPE_INT32" => "int32",
+        "TYPE_UINT32" => "uint32",
+        "TYPE_INT16" => "int16",
+        "TYPE_UINT16" => "uint16",
+        "TYPE_INT8" or "TYPE_CHAR" => "int8",
+        "TYPE_UINT8" => "uint8",
+        "TYPE_BOOL" => "bool",
+        "TYPE_ENUM" or "TYPE_FLAGS" => vsub switch
+        {
+            "TYPE_INT8" => "int8",
+            "TYPE_UINT8" => "uint8",
+            "TYPE_INT16" => "int16",
+            "TYPE_UINT16" => "uint16",
+            "TYPE_INT32" => "int32",
+            "TYPE_UINT32" => "uint32",
+            _ => "",
+        },
+        _ => "",
+    };
 
     private static bool WideFloatsLanded(PackfileObjects rebuilt, int offset,
                                          NativeSave.Change change, int floats)
