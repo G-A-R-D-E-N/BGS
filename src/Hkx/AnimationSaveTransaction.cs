@@ -32,6 +32,8 @@ internal static class AnimationSaveTransaction
     {
         ArgumentNullException.ThrowIfNull(animation);
 
+        FileSafety.RecoverInterrupted(path);
+
         byte[] source;
         try
         {

@@ -44,8 +44,8 @@ public sealed class SaveRecoveryRegressionTests
     {
         using var root = new TempDirectory("bgs-missing-target");
         string path = Path.Combine(root.Path, "graph.hkx");
-        string older = path + ".aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.old.previous";
-        string newer = path + ".bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.new.previous";
+        string older = path + "." + new string('a', 64) + "." + new string('3', 32) + ".previous";
+        string newer = path + "." + new string('b', 64) + "." + new string('2', 32) + ".previous";
         File.WriteAllBytes(older, new byte[] { 1, 2, 3, 4 });
         File.WriteAllBytes(newer, new byte[] { 5, 6, 7, 8 });
         File.SetLastWriteTimeUtc(older, DateTime.UtcNow - TimeSpan.FromMinutes(30));
@@ -78,6 +78,65 @@ public sealed class SaveRecoveryRegressionTests
         Assert.Null(error);
         Assert.Equal(replacement, File.ReadAllBytes(path));
         Assert.Single(Directory.EnumerateFiles(root.Path, "*.previous"));
+    }
+
+    [Fact]
+    public void RecoveryLeavesSiblingsThatAreNotGeneratedArtifactsAlone()
+    {
+        using var root = new TempDirectory("bgs-foreign-siblings");
+        string path = Path.Combine(root.Path, "graph.hkx");
+        File.WriteAllBytes(path, new byte[] { 1, 2, 3, 4 });
+
+        var foreign = new[]
+        {
+            path + ".manual.previous",
+            path + ".manual.writing",
+            path + ".manual.saving",
+            path + "." + new string('z', 64) + "." + new string('z', 32) + ".previous",
+            path + "." + new string('a', 63) + "." + new string('b', 32) + ".previous",
+        };
+        foreach (string file in foreign)
+        {
+            File.WriteAllBytes(file, new byte[] { 42 });
+            File.SetLastWriteTimeUtc(file, DateTime.UtcNow - TimeSpan.FromDays(1));
+        }
+
+        FileSafety.RecoverInterrupted(path);
+
+        foreach (string file in foreign)
+            Assert.True(File.Exists(file), $"{Path.GetFileName(file)} was consumed by save recovery");
+        Assert.False(File.Exists(path + ".bak"));
+    }
+
+    [Fact]
+    public void RecoveryLeavesAForeignSiblingWhenTheTargetIsMissing()
+    {
+        using var root = new TempDirectory("bgs-foreign-missing-target");
+        string path = Path.Combine(root.Path, "graph.hkx");
+        string foreign = path + ".manual.previous";
+        File.WriteAllBytes(foreign, new byte[] { 42 });
+        File.SetLastWriteTimeUtc(foreign, DateTime.UtcNow - TimeSpan.FromDays(1));
+
+        FileSafety.RecoverInterrupted(path);
+
+        Assert.True(File.Exists(foreign));
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void SavingAFileWhoseTargetVanishedRecoversItFirst()
+    {
+        using var root = new TempDirectory("bgs-missing-target-save");
+        string path = Path.Combine(root.Path, "graph.hkx");
+        string previous = path + "." + new string('c', 64) + "." + new string('d', 32) + ".previous";
+        byte[] abandoned = { 1, 2, 3, 4 };
+        File.WriteAllBytes(previous, abandoned);
+        File.SetLastWriteTimeUtc(previous, DateTime.UtcNow - TimeSpan.FromMinutes(30));
+
+        var result = DocumentSaveTransaction.Commit(path, "<hkpackfile/>", "<hkpackfile/>", null);
+
+        Assert.False(result.Committed);
+        Assert.Equal(abandoned, File.ReadAllBytes(path));
     }
 
     private sealed class TempDirectory : IDisposable

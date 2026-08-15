@@ -26,6 +26,8 @@ internal static class DocumentSaveTransaction
         Func<Exception>? verificationFault = null,
         Action? beforeSourceRecheck = null)
     {
+        FileSafety.RecoverInterrupted(path);
+
         byte[] source;
         try
         {

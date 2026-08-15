@@ -7,6 +7,8 @@ namespace OpenCommonwealth.Services.Hkx;
 public static class FileSafety
 {
     private static readonly TimeSpan InterruptedArtifactAge = TimeSpan.FromMinutes(10);
+    private const int TokenLength = 64;
+    private const int IdLength = 32;
 
     // Invariant: .bak is the immediately previous version, .bak.1 one version
     // older, .bak.2 two versions older; with keep = 3 there is never a .bak.3.
@@ -133,12 +135,15 @@ public static class FileSafety
         DateTime cutoff = DateTime.UtcNow - InterruptedArtifactAge;
 
         foreach (string writing in Artifacts(directory, name + ".*.writing"))
-            if (IsStale(writing, cutoff)) TryDelete(writing);
+            if (IsGeneratedArtifact(name, writing, ".writing", IdLength) && IsStale(writing, cutoff))
+                TryDelete(writing);
 
         foreach (string saving in Artifacts(directory, name + ".*.saving"))
-            if (IsStale(saving, cutoff)) TryDelete(saving);
+            if (IsGeneratedArtifact(name, saving, ".saving", IdLength) && IsStale(saving, cutoff))
+                TryDelete(saving);
 
         var previous = Artifacts(directory, name + ".*.previous")
+            .Where(file => IsGeneratedArtifact(name, file, ".previous", TokenLength, IdLength))
             .Select(file => (File: file, Written: LastWriteUtc(file)))
             .Where(item => item.Written is DateTime written && written <= cutoff)
             .Where(item => !HasFreshSavingMarker(full, item.File, cutoff))
@@ -175,6 +180,25 @@ public static class FileSafety
             if (string.Equals(stale, newestMatching, StringComparison.Ordinal)) continue;
             TryDelete(stale);
         }
+    }
+
+    private static bool IsGeneratedArtifact(string name, string candidate, string suffix,
+                                            params int[] segmentLengths)
+    {
+        string fileName = Path.GetFileName(candidate);
+        if (!fileName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return false;
+
+        string stem = fileName[..^suffix.Length];
+        string prefix = name + ".";
+        if (!stem.StartsWith(prefix, StringComparison.Ordinal)) return false;
+
+        string[] segments = stem[prefix.Length..].Split('.');
+        if (segments.Length != segmentLengths.Length) return false;
+
+        for (int i = 0; i < segments.Length; i++)
+            if (segments[i].Length != segmentLengths[i] || !segments[i].All(Uri.IsHexDigit))
+                return false;
+        return true;
     }
 
     private static bool HasFreshSavingMarker(string path, string previous, DateTime cutoff)
