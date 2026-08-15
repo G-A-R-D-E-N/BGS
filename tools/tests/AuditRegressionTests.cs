@@ -228,8 +228,8 @@ public sealed class AuditRegressionTests
         byte[] current = { 5, 6, 7, 8 };
         File.WriteAllBytes(path, current);
         string token = DocumentSourceStamp.Capture(current).Token;
-        string previous = path + "." + token + ".read.previous";
-        string writing = path + ".read.writing";
+        string previous = path + "." + token + "." + Id("read") + ".previous";
+        string writing = path + "." + Id("read") + ".writing";
         File.WriteAllBytes(previous, new byte[] { 1, 2, 3, 4 });
         File.WriteAllBytes(writing, new byte[] { 9, 9, 9, 9 });
         MakeStale(previous);
@@ -255,9 +255,9 @@ public sealed class AuditRegressionTests
         File.WriteAllBytes(path + ".bak.2", new byte[] { 3 });
 
         string token = DocumentSourceStamp.Capture(current).Token;
-        string newest = path + "." + token + ".new.previous";
-        string older = path + "." + token + ".old.previous";
-        string unrelated = path + ".0000000000000000000000000000000000000000000000000000000000000000.other.previous";
+        string newest = path + "." + token + "." + Id("new") + ".previous";
+        string older = path + "." + token + "." + Id("old") + ".previous";
+        string unrelated = path + "." + new string('0', 64) + "." + Id("other") + ".previous";
         File.WriteAllBytes(newest, new byte[] { 11 });
         File.WriteAllBytes(older, new byte[] { 12 });
         File.WriteAllBytes(unrelated, new byte[] { 13 });
@@ -279,8 +279,8 @@ public sealed class AuditRegressionTests
         using var root = new TempDirectory("bgs-recovery-writing");
         string path = Path.Combine(root.Path, "graph.hkx");
         File.WriteAllBytes(path, new byte[] { 5, 6, 7, 8 });
-        string stale = path + ".stale.writing";
-        string fresh = path + ".fresh.writing";
+        string stale = path + "." + Id("stale") + ".writing";
+        string fresh = path + "." + Id("fresh") + ".writing";
         File.WriteAllBytes(stale, new byte[] { 1 });
         File.WriteAllBytes(fresh, new byte[] { 2 });
         MakeStale(stale);
@@ -299,7 +299,7 @@ public sealed class AuditRegressionTests
         byte[] current = { 5, 6, 7, 8 };
         File.WriteAllBytes(path, current);
         string token = DocumentSourceStamp.Capture(current).Token;
-        string previous = path + "." + token + ".fresh.previous";
+        string previous = path + "." + token + "." + Id("fresh") + ".previous";
         File.WriteAllBytes(previous, new byte[] { 1, 2, 3, 4 });
 
         FileSafety.RecoverInterrupted(path);
@@ -307,6 +307,16 @@ public sealed class AuditRegressionTests
         Assert.True(File.Exists(previous));
         Assert.False(File.Exists(path + ".bak"));
     }
+
+    private static string Id(string seed) => seed switch
+    {
+        "read" => new string('1', 32),
+        "new" => new string('2', 32),
+        "old" => new string('3', 32),
+        "other" => new string('4', 32),
+        "stale" => new string('5', 32),
+        _ => new string('6', 32),
+    };
 
     private static PackfileImage NewPackfile()
     {
