@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 
@@ -143,7 +144,7 @@ public sealed class PackfileObjects
 
     public float[]? ReadFloatsAt(int at, int count)
     {
-        if (at < 0 || count < 0 || at + 4 * count > _data.Data.Length) return null;
+        if (at < 0 || count < 0 || (long)at + 4L * count > _data.Data.Length) return null;
 
         var values = new float[count];
         for (int i = 0; i < count; i++) values[i] = BitConverter.ToSingle(_data.Data, at + i * 4);
@@ -170,14 +171,13 @@ public sealed class PackfileObjects
 
     public IReadOnlyList<string?>? ReadStringArrayAt(int at)
     {
-        var array = ArrayAt(at);
+        var array = ArrayAt(at, 8);
         if (array == null) return null;
 
         var values = new List<string?>(array.Count);
         for (int i = 0; i < array.Count; i++)
         {
             int slot = array.At + i * 8;
-            if (slot + 8 > _data.Data.Length) return null;
             values.Add(TextAt(Aim(slot)));
         }
         return values;
@@ -185,16 +185,13 @@ public sealed class PackfileObjects
 
     public IReadOnlyList<Instance?>? ReadRefArrayAt(int at)
     {
-        var array = ArrayAt(at);
+        var array = ArrayAt(at, 8);
         if (array == null) return null;
 
         var values = new List<Instance?>(array.Count);
         for (int i = 0; i < array.Count; i++)
         {
-            int slot = array.At + i * 8;
-            if (slot + 8 > _data.Data.Length) return null;
-
-            int? destination = Aim(slot);
+            int? destination = Aim(array.At + i * 8);
             values.Add(destination != null && _startsAt.TryGetValue(destination.Value, out var target)
                            ? target
                            : null);
@@ -206,8 +203,9 @@ public sealed class PackfileObjects
 
     public IReadOnlyList<T>? ReadValueArrayAt<T>(int at, int width, Func<byte[], int, T> read)
     {
-        var array = ArrayAt(at);
-        if (array == null || array.At + array.Count * width > _data.Data.Length) return null;
+        if (width <= 0) return null;
+        var array = ArrayAt(at, width);
+        if (array == null) return null;
 
         var values = new List<T>(array.Count);
         for (int i = 0; i < array.Count; i++) values.Add(read(_data.Data, array.At + i * width));
@@ -270,8 +268,21 @@ public sealed class PackfileObjects
 
         int? destination = Aim(at);
         if (destination == null) return count == 0 ? new Elements(0, 0) : null;
+        if (destination.Value < 0 || destination.Value > _data.Data.Length) return null;
+        if (count > _data.Data.Length - destination.Value) return null;
 
         return new Elements(destination.Value, count);
+    }
+
+    public Elements? ArrayAt(int at, int elementWidth)
+    {
+        if (elementWidth <= 0) return null;
+        var array = ArrayAt(at);
+        if (array == null || array.Count == 0) return array;
+
+        long bytes = (long)array.Count * elementWidth;
+        if (bytes > _data.Data.Length - array.At) return null;
+        return array;
     }
 
 

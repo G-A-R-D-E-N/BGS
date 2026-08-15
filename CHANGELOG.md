@@ -57,4 +57,4 @@ the public [getting started guide](https://prisma-user-interface-framework.githu
 ## Help and feedback
 
 - Read the [getting started guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
-- Report a reproducible problem through [GitHub Issues](https://github.com/NomadsReach/BehaviorGraphStudio/issues).
+- Report a reproducible problem through [GitHub Issues](https://github.com/G-A-R-D-E-N/BGS/issues).

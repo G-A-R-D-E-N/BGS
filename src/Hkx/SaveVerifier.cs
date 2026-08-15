@@ -70,7 +70,7 @@ public static class SaveVerifier
             int at = survivorIds.IndexOf(originalId);
             if (at >= 0) return at;
             int addedAt = added.FindIndex(c => c.Id == originalId);
-            return addedAt >= 0 ? source.Instances.Count + addedAt : -1;
+            return addedAt >= 0 ? survivorIds.Count + addedAt : -1;
         }
 
         foreach (var change in plan.Changes.Where(c => !c.Added))

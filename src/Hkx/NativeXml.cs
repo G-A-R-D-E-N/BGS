@@ -174,8 +174,12 @@ public static class NativeXml
                               FieldRender.Reference reference, int depth)
     {
         string pad = new(' ', depth * 4);
-        var array = objects.ArrayAt(at);
-        int count = array?.Count ?? 0;
+        int width = member.VSub == "TYPE_STRUCT"
+            ? member.CType != null ? types[member.CType]?.Size ?? 0 : 0
+            : NativeGraphModel.ElementWidth(member.VSub);
+        var declared = objects.ArrayAt(at);
+        var array = width > 0 ? objects.ArrayAt(at, width) : declared;
+        int count = width > 0 ? array?.Count ?? 0 : declared?.Count ?? 0;
 
 
 
@@ -234,11 +238,11 @@ public static class NativeXml
         if (member.VSub == "TYPE_STRUCT" && member.CType != null && types.Knows(member.CType))
         {
             int stride = types[member.CType]?.Size ?? 0;
-            if (stride > 0)
+            if (stride > 0 && array != null)
                 for (int e = 0; e < count; e++)
                 {
                     text.Append($"{pad}    <hkobject>\n");
-                    Members(text, objects, types, member.CType, array!.At + e * stride, reference,
+                    Members(text, objects, types, member.CType, array.At + e * stride, reference,
                             depth + 2);
                     text.Append($"{pad}    </hkobject>\n");
                 }

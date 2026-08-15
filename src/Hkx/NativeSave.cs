@@ -175,6 +175,16 @@ public static class NativeSave
 
 
     private const string IdKey = "#id";
+    private const uint EmbeddedArrayStorage = 0x80000000u;
+
+    private static void WriteArrayCount(PackfileSection data, int at, int count)
+    {
+        BitConverter.GetBytes(count).CopyTo(data.Data, at + 8);
+        uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
+        uint flags = capacity & 0xC0000000u;
+        if (count > 0) flags |= EmbeddedArrayStorage;
+        BitConverter.GetBytes(flags | (uint)count).CopyTo(data.Data, at + 12);
+    }
 
 
     private static bool IsReferenceValue(string value) =>
@@ -840,9 +850,7 @@ public static class NativeSave
         entries.InsertRange(Math.Min(first, entries.Count), replacements);
         data.SetGlobals(entries);
 
-        BitConverter.GetBytes(elements.Length).CopyTo(data.Data, at + 8);
-        uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)elements.Length).CopyTo(data.Data, at + 12);
+        WriteArrayCount(data, at, elements.Length);
 
         return true;
     }
@@ -905,18 +913,14 @@ public static class NativeSave
         if (count == 0)
         {
             data.SetLocal(at, -1);
-            BitConverter.GetBytes(0).CopyTo(data.Data, at + 8);
-            uint none = BitConverter.ToUInt32(data.Data, at + 12);
-            BitConverter.GetBytes(none & 0xC0000000u).CopyTo(data.Data, at + 12);
+            WriteArrayCount(data, at, 0);
             return true;
         }
 
         data.AlignData(NativeAppend.Alignment);
         data.SetLocal(at, data.AppendData(run));
 
-        BitConverter.GetBytes(count).CopyTo(data.Data, at + 8);
-        uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)count).CopyTo(data.Data, at + 12);
+        WriteArrayCount(data, at, count);
         return true;
     }
 
@@ -965,9 +969,7 @@ public static class NativeSave
         if (names.Count == 0)
         {
             data.SetLocal(at, -1);
-            BitConverter.GetBytes(0).CopyTo(data.Data, at + 8);
-            uint was = BitConverter.ToUInt32(data.Data, at + 12);
-            BitConverter.GetBytes(was & 0xC0000000u).CopyTo(data.Data, at + 12);
+            WriteArrayCount(data, at, 0);
             return true;
         }
 
@@ -988,9 +990,7 @@ public static class NativeSave
         data.SetLocal(at, run);
         for (int e = 0; e < names.Count; e++) data.SetLocal(run + e * 8, wrote[e]);
 
-        BitConverter.GetBytes(names.Count).CopyTo(data.Data, at + 8);
-        uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)names.Count).CopyTo(data.Data, at + 12);
+        WriteArrayCount(data, at, names.Count);
         return true;
     }
 
@@ -1050,9 +1050,7 @@ public static class NativeSave
         Move(data.Locals().ToList(), data.SetLocals, l => l.Source, (l, s) => (s, l.Destination));
         Move(data.Globals().ToList(), data.SetGlobals, g => g.Source, (g, s) => (s, g.Section, g.Destination));
 
-        BitConverter.GetBytes(count).CopyTo(data.Data, at + 8);
-        uint capacity = BitConverter.ToUInt32(data.Data, at + 12);
-        BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)count).CopyTo(data.Data, at + 12);
+        WriteArrayCount(data, at, count);
 
 
 
@@ -1196,7 +1194,6 @@ public static class NativeSave
             ? f
             : throw new InvalidOperationException(
                 $"'{value}' is not a number, so it cannot be written into a real field.");
-
 
 
     private static long AsLong(string value, string type)
