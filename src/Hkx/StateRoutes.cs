@@ -4,30 +4,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public sealed class StateRoutes
 {
-
-
-
-
-
 
     public sealed record Route(string MachineId, string FromId, string ToId, string Event,
                                int EventId, bool Wildcard, string IntoId, bool Global = false)
@@ -37,30 +15,16 @@ public sealed class StateRoutes
             (IntoId.Length > 0 ? $" then #{IntoId}" : "");
     }
 
-
     public readonly HashSet<string> StartStates = new(StringComparer.Ordinal);
 
     public readonly List<Route> Routes = new();
 
-
     public readonly Dictionary<string, List<Route>> Out = new(StringComparer.Ordinal);
     public readonly Dictionary<string, List<Route>> In = new(StringComparer.Ordinal);
 
-
-
-
-
-
     public readonly Dictionary<string, string> MachineOfState = new(StringComparer.Ordinal);
 
-
     public readonly Dictionary<string, List<string>> StatesOf = new(StringComparer.Ordinal);
-
-
-
-
-
-
 
     public IEnumerable<Route> LeavingState(string stateId)
     {
@@ -73,14 +37,10 @@ public sealed class StateRoutes
         foreach (var route in wildcards.Where(r => r.Wildcard))
         {
 
-
-
             if (route.ToId == stateId) continue;
             yield return route with { FromId = stateId };
         }
     }
-
-
 
     public IEnumerable<string> Touching(string id)
     {
@@ -93,8 +53,6 @@ public sealed class StateRoutes
 
         if (In.TryGetValue(id, out var arriving))
             foreach (var route in arriving) yield return route.FromId;
-
-
 
         foreach (var route in LeavingState(id))
         {
@@ -112,8 +70,6 @@ public sealed class StateRoutes
         {
             var states = StateEditor.States(model, machine.Id);
             if (states.Count == 0) continue;
-
-
 
             var byStateId = new Dictionary<int, string>();
             foreach (var state in states) byStateId.TryAdd(state.StateId, state.Id);
@@ -149,19 +105,10 @@ public sealed class StateRoutes
         arriving.Add(route);
     }
 
-
-
-
     private static string NameOf(IReadOnlyList<string> events, int id) =>
         id < 0 ? "no event"
         : id < events.Count && events[id].Length > 0 ? events[id]
         : id.ToString();
-
-
-
-
-
-
 
     private static string NestedTarget(BehaviourGraphModel model, string enteredId, int nestedStateId)
     {
@@ -174,9 +121,6 @@ public sealed class StateRoutes
         return StateEditor.States(model, machine.Id)
                           .FirstOrDefault(s => s.StateId == nestedStateId)?.Id ?? "";
     }
-
-
-
 
     public static HkObject? MachineUnder(BehaviourGraphModel model, HkObject? generator, int depth)
     {

@@ -4,36 +4,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class FixupOrder
 {
-
-
-
-
-
-
-
-
 
     public static void Reorder(PackfileImage image, HavokClassTypes? types = null)
     {
@@ -41,10 +13,6 @@ public static class FixupOrder
 
         var data = image.Section("__data__");
         if (data == null) return;
-
-
-
-
 
         var objects = new PackfileObjects(image);
         if (objects.Instances.Any(i => !types.Knows(i.ClassName))) return;
@@ -61,12 +29,10 @@ public static class FixupOrder
         var rank = new Dictionary<int, int>();
         for (int i = 0; i < order.Count; i++) rank.TryAdd(order[i], i);
 
-
         return entries.Select((e, at) => (e, key: rank.TryGetValue(sourceOf(e), out int r) ? r : int.MaxValue, at))
                       .OrderBy(x => x.key).ThenBy(x => x.at)
                       .Select(x => x.e).ToList();
     }
-
 
     public static List<int> Sources(PackfileObjects objects, HavokClassTypes types,
                                     PackfileSection data, bool global)
@@ -81,13 +47,10 @@ public static class FixupOrder
         return found;
     }
 
-
-
     private static void Walk(PackfileObjects objects, HavokClassTypes types, int offset,
                              string className, HashSet<int> present, List<int> into,
                              bool global, int depth)
     {
-
 
         if (depth > 8) return;
 
@@ -116,8 +79,6 @@ public static class FixupOrder
             }
 
             if (member.VType is not ("TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")) continue;
-
-
 
             if (!global && present.Contains(at)) into.Add(at);
 

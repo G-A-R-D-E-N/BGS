@@ -4,35 +4,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class PackfileLayout
 {
-
 
     public sealed record Item(string Kind, int At, int Length)
     {
@@ -40,12 +13,6 @@ public static class PackfileLayout
 
         public override string ToString() => $"{Kind} at 0x{At:x} for {Length}";
     }
-
-
-
-
-
-
 
     public static List<Item>? Of(PackfileImage image, HavokClassTypes? types = null)
     {
@@ -68,7 +35,6 @@ public static class PackfileLayout
 
         void Walk(int offset, string className, int depth)
         {
-
 
             if (depth > 8) return;
 
@@ -141,8 +107,6 @@ public static class PackfileLayout
         return items;
     }
 
-
-
     public static List<int> Where(IReadOnlyList<Item> items)
     {
         var at = new List<int>(items.Count);
@@ -160,18 +124,6 @@ public static class PackfileLayout
         return at;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
     public static bool Rewrite(PackfileImage image, HavokClassTypes? types = null)
     {
         var data = image.Section("__data__");
@@ -185,26 +137,12 @@ public static class PackfileLayout
         return RewriteAs(image, items);
     }
 
-
-
-
-
-
-
-
-
-
-
-
     public static bool RewriteAs(PackfileImage image, IReadOnlyList<Item> items)
     {
         var data = image.Section("__data__");
         if (data == null) return false;
 
         var at = Where(items);
-
-
-
 
         var byOldOffset = items.Select((item, k) => (item, To: at[k]))
                                .OrderBy(x => x.item.At).ToList();
@@ -233,9 +171,6 @@ public static class PackfileLayout
             Array.Copy(data.Data, items[k].At, written, at[k], items[k].Length);
         }
 
-
-
-
         var locals = new List<(int Source, int Destination)>();
         foreach (var (source, destination) in data.Locals())
         {
@@ -247,8 +182,6 @@ public static class PackfileLayout
         foreach (var (source, section, destination) in data.Globals())
         {
             if (Moved(source) is not int from) return false;
-
-
 
             int to = section == image.Sections.IndexOf(data)
                      ? Moved(destination) ?? -1
@@ -272,15 +205,6 @@ public static class PackfileLayout
         return true;
     }
 
-
-
-
-
-
-
-
-
-
     public static List<List<Item>> ByObject(IReadOnlyList<Item> items)
     {
         var runs = new List<List<Item>>();
@@ -293,18 +217,6 @@ public static class PackfileLayout
 
         return runs;
     }
-
-
-
-
-
-
-
-
-
-
-
-
 
     public static bool Reaches(IReadOnlyList<Item> items, PackfileSection data, int section)
     {
@@ -335,13 +247,6 @@ public static class PackfileLayout
         return true;
     }
 
-
-
-
-
-
-
-
     public static bool Accounted(IReadOnlyList<Item> items, int length)
     {
         int covered = 0;
@@ -354,19 +259,14 @@ public static class PackfileLayout
         return length - covered < NativeAppend.Alignment;
     }
 
-
     private static int Boundary(string kind, string previous) => kind switch
     {
         "element string" => 2,
-
-
-
 
         "string" when previous.EndsWith("array", StringComparison.Ordinal) => 1,
 
         _ => NativeAppend.Alignment,
     };
-
 
     private static int Zeroed(byte[] data, int at)
     {

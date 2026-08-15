@@ -5,15 +5,6 @@ using System.Text.RegularExpressions;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
 public static class RepackCheck
 {
     private static readonly Regex ObjectHead =
@@ -70,9 +61,6 @@ public static class RepackCheck
             int start = marks[i].Index + marks[i].Length;
             int end = i + 1 < marks.Count ? marks[i + 1].Index : xml.Length;
 
-
-
-
             census.InOrder.Add(new Entry(marks[i].Groups["id"].Value, cls, Normalise(xml[start..end])));
         }
         return census;
@@ -96,9 +84,6 @@ public static class RepackCheck
             else if (now > was) drift.Gained.Add($"{now - was} {cls}");
         }
 
-
-
-
         if (before.Objects != after.Objects) return drift;
 
         for (int i = 0; i < before.InOrder.Count; i++)
@@ -114,8 +99,6 @@ public static class RepackCheck
 
         return drift;
     }
-
-
 
     private static string FirstDifference(string was, string now)
     {

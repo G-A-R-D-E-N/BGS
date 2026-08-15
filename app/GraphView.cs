@@ -23,9 +23,6 @@ public enum StructuredFlowDetail
     Close,
 }
 
-
-
-
 public class GraphView : Control
 {
     private const double NodeWidth = 250;
@@ -35,14 +32,12 @@ public class GraphView : Control
     private const double RowGap = 26;
     private const double PortRadius = 5;
 
-
     public const int MaxNodes = 4000;
 
     private sealed class Node
     {
         public string Id = "";
         public string Class = "";
-
 
         public string OwnerId = "";
         public string Name = "";
@@ -53,7 +48,6 @@ public class GraphView : Control
         public bool Empty;
         public bool Start;
         public bool Active;
-
 
         public List<string> Wildcards = new();
         public GraphValidator.Level? Problem;
@@ -69,27 +63,10 @@ public class GraphView : Control
     private StructuredFlowLayout.Plan? _structuredPlan;
     private GraphLayoutMode _layoutMode;
 
-
-
-
-
-
-
     private readonly HashSet<string> _collapsed = new(StringComparer.Ordinal);
-
-
 
     private int _placedCount;
     private bool _truncated;
-
-
-
-
-
-
-
-
-
 
     private readonly Dictionary<string, List<string>> _sharedBy = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _nameOf = new(StringComparer.Ordinal);
@@ -99,32 +76,18 @@ public class GraphView : Control
 
     public string OwnerOf(string id) => _own.Owner.TryGetValue(id, out string? owner) ? owner : "";
 
-
     public string NameOf(string id) => _nameOf.GetValueOrDefault(id, "#" + id);
 
     private BehaviourGraphModel? _model;
 
-
-
-
     private GraphOwnership.Tree _own = GraphOwnership.Of(Array.Empty<(string, string)>());
-
-
-
 
     private StateRoutes _routes = new();
     private GraphTrace.GraphTraceMap? _trace;
 
-
-
     public bool ShowRoutes { get; set; } = true;
 
-
-
     private const double LabelZoom = 0.55;
-
-
-
 
     private const int WildcardRows = 4;
 
@@ -143,7 +106,6 @@ public class GraphView : Control
     private string _focusTreeRootId = "";
     private readonly HashSet<string> _traceIds = new(StringComparer.Ordinal);
 
-
     public IReadOnlyList<string> SelectedIds => _selected;
 
     public GraphLayoutMode LayoutMode => _layoutMode;
@@ -157,14 +119,7 @@ public class GraphView : Control
     public Rect? StructuredContainerBounds(string machineId) =>
         _structuredContainers.TryGetValue(machineId, out var bounds) ? bounds : null;
 
-
-
-
-
-
-
     public string SelectedId => _selected.Count > 0 ? _selected[0] : "";
-
 
     private void Select(string id)
     {
@@ -179,7 +134,6 @@ public class GraphView : Control
     public Action<string>? DeleteRequested;
     public event Action? LayoutChanged;
 
-
     public Action<string, string, Point>? AddRequested;
 
     public GraphView()
@@ -187,8 +141,6 @@ public class GraphView : Control
         Focusable = true;
         ClipToBounds = true;
     }
-
-
 
     private Dictionary<string, GraphValidator.Level> _problems = new();
 
@@ -199,12 +151,6 @@ public class GraphView : Control
             node.Problem = problems.TryGetValue(node.Id, out var level) ? level : null;
         InvalidateVisual();
     }
-
-
-
-
-
-
 
     private readonly HashSet<string> _active = new(StringComparer.Ordinal);
 
@@ -224,9 +170,6 @@ public class GraphView : Control
         foreach (var node in _nodes.Values) node.Active = false;
         InvalidateVisual();
     }
-
-
-
 
     private string _highlight = "";
     private readonly HashSet<string> _related = new();
@@ -261,14 +204,8 @@ public class GraphView : Control
                     else if (target == _highlight) _related.Add(node.Id);
                 }
 
-
-
-
         foreach (string id in _routes.Touching(_highlight)) _related.Add(id);
     }
-
-
-
 
     private string _needle = "";
     private readonly HashSet<string> _matched = new();
@@ -295,7 +232,6 @@ public class GraphView : Control
                 _matched.Add(node.Id);
     }
 
-
     public bool IsDimmed(string id) => Dimmed(id);
 
     private bool Dimmed(string id) =>
@@ -306,7 +242,6 @@ public class GraphView : Control
     public bool IsTraceDimmed(string id) =>
         _traceIds.Count > 0 && !_traceIds.Contains(id);
 
-
     private bool Lit(string fromId, string toId)
     {
         if (_traceIds.Count > 0 && (!_traceIds.Contains(fromId) || !_traceIds.Contains(toId))) return false;
@@ -314,8 +249,6 @@ public class GraphView : Control
         if (_needle.Length > 0 && !_matched.Contains(fromId) && !_matched.Contains(toId)) return false;
         return true;
     }
-
-
 
     public bool FocusOn(string id)
     {
@@ -328,12 +261,8 @@ public class GraphView : Control
         return true;
     }
 
-
-
-
     public void Reset()
     {
-
 
         _model = null;
         _routes = new StateRoutes();
@@ -378,18 +307,7 @@ public class GraphView : Control
         _nodes.Clear();
         _order.Clear();
 
-
-
-
         var empty = GraphValidator.StatesWithNoGenerator(model);
-
-
-
-
-
-
-
-
 
         var wildcardsInto = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         foreach (var route in _routes.Routes.Where(r => r.Wildcard))
@@ -398,9 +316,6 @@ public class GraphView : Control
                 wildcardsInto[route.ToId] = events = new List<string>();
             if (!events.Contains(route.Event)) events.Add(route.Event);
         }
-
-
-
 
         var placed = GraphAuthor.Layout(model, MaxNodes, out bool truncated);
         _truncated = truncated;
@@ -435,11 +350,6 @@ public class GraphView : Control
             _nameOf[obj.Id] = name.Length > 0 ? name : "#" + obj.Id;
         }
 
-
-
-
-
-
         foreach (var (obj, _, _) in placed)
             foreach (string target in GraphAuthor.PointsAt(model, obj))
             {
@@ -450,8 +360,6 @@ public class GraphView : Control
                     _sharedBy[target] = by = new List<string>();
                 if (!by.Contains(obj.Id)) by.Add(obj.Id);
             }
-
-
 
         var showing = placed
             .Where(p => !_own.Hidden(_collapsed, p.Node.Id)
@@ -466,8 +374,6 @@ public class GraphView : Control
         foreach (var (obj, column, ownerId) in showing)
         {
 
-
-
             var slots = GraphLinks.OutSlots(model, obj);
             var wildcards = wildcardsInto.GetValueOrDefault(obj.Id) ?? new List<string>();
             double height = HeaderHeight + Math.Max(1, slots.Count) * RowHeight
@@ -478,8 +384,6 @@ public class GraphView : Control
             heightOf[obj.Id] = height;
             measured.Add(new GraphLayout.Item(obj.Id, column, ownerId, height));
         }
-
-
 
         var pinned = new Dictionary<string, double>(StringComparer.Ordinal);
         foreach (var (id, at) in _placed)
@@ -519,8 +423,6 @@ public class GraphView : Control
 
         if (_layoutMode == GraphLayoutMode.StructuredFlow) BuildStructuredContainers();
 
-
-
         _selected.RemoveAll(id => !_nodes.ContainsKey(id));
         if (_highlight.Length > 0 && !_nodes.ContainsKey(_highlight)) _highlight = "";
         if (_traceIds.Count > 0)
@@ -540,9 +442,6 @@ public class GraphView : Control
         var showingIds = showing.Select(p => p.Node.Id).ToHashSet(StringComparer.Ordinal);
         var at = new Dictionary<string, Point>(StringComparer.Ordinal);
         if (_structuredPlan == null) return at;
-
-
-
 
         var structural = showing.Where(p => IsDrawnAtCurrentDetail(p.Node.Id)
                                             && _structuredPlan.Item(p.Node.Id).Kind
@@ -565,9 +464,6 @@ public class GraphView : Control
             nextY += ((row.Count + Columns - 1) / Columns) * (height + 36) + 86;
         }
 
-
-
-
         foreach (var (node, _, _) in showing.Where(p => !at.ContainsKey(p.Node.Id)
                                                         && _structuredPlan.Item(p.Node.Id).Kind
                                                            is not StructuredFlowLayout.NodeKind.Helper))
@@ -576,8 +472,6 @@ public class GraphView : Control
                 .LastOrDefault(id => at.ContainsKey(id)) ?? at.Keys.FirstOrDefault() ?? "";
             at[node.Id] = anchor.Length > 0 ? at[anchor] : default;
         }
-
-
 
         var helperNumber = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var (node, _, _) in showing.Where(p => !at.ContainsKey(p.Node.Id)))
@@ -711,12 +605,6 @@ public class GraphView : Control
         return title + " #" + node.Id;
     }
 
-
-
-
-
-
-
     public IEnumerable<double> OwnershipWireDrops()
     {
         foreach (var node in _nodes.Values)
@@ -731,20 +619,13 @@ public class GraphView : Control
 
     public IReadOnlyCollection<string> Collapsed => _collapsed;
 
-
     public int OwnedCount(string id) => _own.Under(id).Count(_nodes.ContainsKey);
 
     public IReadOnlyList<string> OwnedIds(string id) => _own.Under(id).Where(_nodes.ContainsKey).ToList();
 
-
-
-
     public int HiddenCount => Math.Max(0, _placedCount - _nodes.Count);
 
     public bool IsCollapsed(string id) => _collapsed.Contains(id);
-
-
-
 
     public void SelectForTest(IEnumerable<string> ids)
     {
@@ -773,17 +654,11 @@ public class GraphView : Control
                .ToDictionary(pair => pair.Key,
                    pair => new Settings.LayoutPoint(pair.Value.X, pair.Value.Y), StringComparer.Ordinal);
 
-
     public IReadOnlyCollection<string> MovementSet(string id)
     {
         var picked = _selected.Contains(id) ? (IEnumerable<string>)_selected : new[] { id };
         return _own.Moving(picked).Where(_nodes.ContainsKey).ToList();
     }
-
-
-
-
-
 
     public void ToggleCollapse(string id, bool deep)
     {
@@ -805,7 +680,6 @@ public class GraphView : Control
         if (_model != null) Show(_model);
     }
 
-
     private Rect ChevronRect(Node node)
     {
         var at = ToScreen(node.Bounds.TopLeft);
@@ -818,17 +692,10 @@ public class GraphView : Control
     public bool DrawingTruncated => _truncated;
     public IReadOnlyCollection<string> DrawnIds => _nodes.Keys;
 
-
-
     public int RouteCount => _routes.Routes.Count;
     public int DrawableRouteCount =>
         _routes.Routes.Count(r => _nodes.ContainsKey(r.FromId) && _nodes.ContainsKey(r.ToId));
     public int NestedRouteCount => _routes.Routes.Count(r => r.IntoId.Length > 0);
-
-
-
-
-
 
     public Rect VisibleWorld() =>
         new(ToWorld(new Point(0, 0)), ToWorld(new Point(Bounds.Width, Bounds.Height)));
@@ -849,20 +716,14 @@ public class GraphView : Control
                 list.Max(n => n.Bounds.Bottom) - list.Min(n => n.Bounds.Y));
     }
 
-
     public IReadOnlyList<string> WildcardsInto(string id) =>
         _nodes.TryGetValue(id, out var node) ? node.Wildcards : Array.Empty<string>();
-
-
 
     public int LineCount => RoutesToDraw().Count(r => _nodes.ContainsKey(r.FromId) && _nodes.ContainsKey(r.ToId));
     public IReadOnlyCollection<string> StartStateIds => _routes.StartStates;
     public bool IsStart(string id) => _nodes.TryGetValue(id, out var node) && node.Start;
 
     public Point? PositionOf(string id) => _nodes.TryGetValue(id, out var node) ? node.Bounds.TopLeft : null;
-
-
-
 
     public void Place(string id, Point at)
     {
@@ -888,10 +749,6 @@ public class GraphView : Control
         if (_model == null) return;
 
         if (_layoutMode == GraphLayoutMode.StructuredFlow) DrawStructuredContainers(ctx);
-
-
-
-
 
         bool focused = _highlight.Length > 0 || _needle.Length > 0 || _traceIds.Count > 0;
         for (int pass = focused ? 0 : 1; pass < 2; pass++)
@@ -947,48 +804,16 @@ public class GraphView : Control
         }
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private IEnumerable<StateRoutes.Route> RoutesToDraw()
     {
-
-
-
-
 
         var direct = _routes.Routes.Where(r => !r.Wildcard);
 
         if (_highlight.Length == 0 || !_routes.MachineOfState.ContainsKey(_highlight))
             return direct;
 
-
-
         return direct.Concat(_routes.LeavingState(_highlight).Where(r => r.Wildcard));
     }
-
-
-
-
-
-
-
-
-
 
     private void DrawRoutes(DrawingContext ctx)
     {
@@ -1003,14 +828,6 @@ public class GraphView : Control
 
             bool lit = Lit(route.FromId, route.ToId);
 
-
-
-
-
-
-
-
-
             double weight = route.Wildcard && !lit ? 0.9 : 1.4;
             double alpha = route.Wildcard ? (lit ? 0.95 : 0.10) : lit ? 1.0 : 0.28;
             bool cased = lit && focused;
@@ -1023,9 +840,6 @@ public class GraphView : Control
             DrawLink(ctx, a, colour, weight, alpha, b, dashed: true, cased: cased);
             DrawArrowHead(ctx, a, b, colour, alpha);
 
-
-
-
             if (route.IntoId.Length > 0 && _nodes.TryGetValue(route.IntoId, out var into))
             {
                 var c = ToScreen(RouteExit(to, into));
@@ -1036,8 +850,6 @@ public class GraphView : Control
 
             if (!lit || _zoom < LabelZoom) continue;
 
-
-
             if (route.Wildcard && !focused) continue;
 
             wanted.Add((route.Wildcard ? "any: " + route.Event : route.Event,
@@ -1046,15 +858,6 @@ public class GraphView : Control
 
         DrawLabels(ctx, wanted);
     }
-
-
-
-
-
-
-
-
-
 
     private void DrawLabels(DrawingContext ctx,
                             List<(string Text, Point At, Color Colour, bool Lit, bool Wildcard)> wanted)
@@ -1078,9 +881,6 @@ public class GraphView : Control
             ctx.DrawText(formatted, new Point(box.X + 3, box.Y + 1));
         }
     }
-
-
-
 
     private static Point RouteExit(Node from, Node to) =>
         to.Bounds.Center.Y < from.Bounds.Y ? new Point(from.Bounds.Center.X, from.Bounds.Y)
@@ -1106,8 +906,6 @@ public class GraphView : Control
         ctx.DrawGeometry(new SolidColorBrush(colour, alpha), null, geometry);
     }
 
-
-
     private bool OffScreen(Point from, Point to)
     {
         double margin = Math.Max(40, Math.Abs(to.X - from.X) * 0.45) + 10;
@@ -1116,12 +914,6 @@ public class GraphView : Control
             || Math.Max(from.Y, to.Y) < 0
             || Math.Min(from.Y, to.Y) > Bounds.Height;
     }
-
-
-
-
-
-
 
     private void DrawLink(DrawingContext ctx, Point from, Color colour, double width, double alpha,
                           Point to, bool dashed = false, bool cased = false)
@@ -1134,7 +926,6 @@ public class GraphView : Control
             if (dashed)
             {
 
-
                 var lift = new Vector((to.X - from.X) * 0.3, (to.Y - from.Y) * 0.15);
                 g.CubicBezierTo(from + lift, to - lift, to);
             }
@@ -1144,13 +935,6 @@ public class GraphView : Control
             }
             g.EndFigure(false);
         }
-
-
-
-
-
-
-
 
         if (cased)
         {
@@ -1165,8 +949,6 @@ public class GraphView : Control
         if (dashed) pen.DashStyle = new DashStyle(new double[] { 4, 3 }, 0);
         ctx.DrawGeometry(null, pen, geometry);
     }
-
-
 
     private void DrawMarquee(DrawingContext ctx)
     {
@@ -1187,9 +969,6 @@ public class GraphView : Control
         bool selected = _selected.Contains(node.Id);
         var body = new SolidColorBrush(selected ? Ux.CardHover : Ux.Card);
 
-
-
-
         Color? fault = node.Problem switch
         {
             GraphValidator.Level.Error => Ux.Bad,
@@ -1202,9 +981,6 @@ public class GraphView : Control
                 ctx.DrawRectangle(null, new Pen(new SolidColorBrush(colour, 0.10 * ring), ring * 2 + 1),
                                   r.Inflate(ring * 1.5), 5, 5);
 
-
-
-
         if (node.Active)
             for (int ring = 4; ring >= 1; ring--)
                 ctx.DrawRectangle(null, new Pen(new SolidColorBrush(Ux.RouteColour, 0.16 * ring), ring * 2 + 2),
@@ -1213,12 +989,6 @@ public class GraphView : Control
         var borderColour = node.Active ? Ux.RouteColour : fault ?? node.Accent;
         var edge = new Pen(new SolidColorBrush(borderColour), node.Active ? 3 : fault != null ? 2.5 : selected ? 2 : 1);
         ctx.DrawRectangle(body, edge, r, 4, 4);
-
-
-
-
-
-
 
         if (_sharedBy.ContainsKey(node.Id))
             ctx.DrawRectangle(null,
@@ -1231,8 +1001,6 @@ public class GraphView : Control
         var faultBrush = fault is { } f ? new SolidColorBrush(f) : null;
         string title = node.Name.Length > 0 ? node.Name : node.Class;
         string chipText = "#" + node.Id;
-
-
 
         bool family = HasFamily(node);
         double titleAt = family ? 18 : 6;
@@ -1253,9 +1021,6 @@ public class GraphView : Control
             Draw(ctx, shut ? ">" : "v", chevron.X + 2 * scale, chevron.Y - 1 * scale, 11 * scale,
                  shut ? new SolidColorBrush(node.Accent) : Ux.MutedBrush, chevron.Width);
 
-
-
-
             if (shut)
             {
                 int held = _own.HiddenBy(_collapsed, node.Id);
@@ -1268,9 +1033,6 @@ public class GraphView : Control
         Draw(ctx, node.Empty ? node.Class + "  nothing to play" : node.Class,
              r.X + 6 * scale, r.Y + (HeaderHeight + 1) * scale, 9 * scale,
              faultBrush ?? new SolidColorBrush(node.Accent), r.Width - 12 * scale);
-
-
-
 
         if (node.Start)
         {
@@ -1300,14 +1062,6 @@ public class GraphView : Control
         DrawWildcards(ctx, node, r, scale);
     }
 
-
-
-
-
-
-
-
-
     private void DrawWildcards(DrawingContext ctx, Node node, Rect r, double scale)
     {
         if (node.Wildcards.Count == 0) return;
@@ -1317,7 +1071,6 @@ public class GraphView : Control
 
         for (int i = 0; i < shown; i++)
         {
-
 
             bool last = i == shown - 1 && node.Wildcards.Count > shown;
             string text = last
@@ -1338,11 +1091,6 @@ public class GraphView : Control
         ctx.DrawText(formatted, new Point(rightAlign ? x + maxWidth - formatted.Width : x, y));
     }
 
-
-
-
-
-
     private bool Move(Node from, double byX, double byY)
     {
         if (byX == 0 && byY == 0) return false;
@@ -1359,14 +1107,6 @@ public class GraphView : Control
         return moved;
     }
 
-
-
-
-
-
-
-
-
     private void Hovering(Node? node)
     {
         string over = node?.Id ?? "";
@@ -1376,12 +1116,6 @@ public class GraphView : Control
         string tip = SharedTip(over);
         ToolTip.SetTip(this, tip.Length > 0 ? tip : null);
     }
-
-
-
-
-
-
 
     public string SharedTip(string id)
     {
@@ -1436,8 +1170,6 @@ public class GraphView : Control
 
         if (props.IsMiddleButtonPressed) { _panning = true; return; }
 
-
-
         foreach (var candidate in _nodes.Values)
         {
             if (!HasFamily(candidate) || !ChevronRect(candidate).Contains(screen)) continue;
@@ -1456,18 +1188,15 @@ public class GraphView : Control
                 if (!_selected.Remove(node.Id)) _selected.Add(node.Id);
             }
 
-
             else if (!_selected.Contains(node.Id)) Select(node.Id);
 
             Selected?.Invoke(SelectedId);
-
 
             if (e.ClickCount >= 2) Activated?.Invoke(node.Id);
             else _dragNode = node;
         }
         else
         {
-
 
             _selected.Clear();
             _marqueeFrom = world;
@@ -1509,8 +1238,6 @@ public class GraphView : Control
         if (_marqueeFrom != null)
         {
             _marqueeFrom = null;
-
-
 
             foreach (string id in _order)
                 if (_nodes.TryGetValue(id, out var node) && IsDrawnAtCurrentDetail(id)
@@ -1570,12 +1297,6 @@ public class GraphView : Control
         if (e.Key == Key.Delete && SelectedId.Length > 0)
         {
 
-
-
-
-
-
-
             if (_selected.Count > 1)
                 Refused?.Invoke($"{_selected.Count} nodes are selected. Deleting is one at a time, " +
                                 "because taking an object out renumbers the ones above it. " +
@@ -1593,8 +1314,6 @@ public class GraphView : Control
         }
     }
 
-
-
     public void SetZoom(double zoom)
     {
         var detail = CurrentDetail();
@@ -1603,12 +1322,6 @@ public class GraphView : Control
         InvalidateVisual();
     }
 
-
-
-
-
-
-
     public void FrameAll()
     {
         var detail = CurrentDetail();
@@ -1616,8 +1329,6 @@ public class GraphView : Control
         if (_layoutMode == GraphLayoutMode.StructuredFlow && detail != CurrentDetail())
             Frame(_nodes.Values.Where(n => IsDrawnAtCurrentDetail(n.Id)).Select(n => n.Bounds));
     }
-
-
 
     public void FrameRelated()
     {
@@ -1639,15 +1350,9 @@ public class GraphView : Control
         const double Margin = 40;
         double wide = Math.Max(1, maxX - minX), tall = Math.Max(1, maxY - minY);
 
-
-
-
-
         _zoom = Math.Clamp(Math.Min((Bounds.Width - Margin * 2) / wide,
                                     (Bounds.Height - Margin * 2) / tall), 0.005, 1.5);
         ReflowForDetail(detail);
-
-
 
         _pan = new Point(Bounds.Width / 2 - (minX + wide / 2) * _zoom,
                          Bounds.Height / 2 - (minY + tall / 2) * _zoom);

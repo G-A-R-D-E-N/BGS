@@ -4,29 +4,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class NativeRemove
 {
     public sealed record Orphaned(int Id, int PointersCleared, int ElementsDropped)
@@ -37,30 +14,13 @@ public static class NativeRemove
             $"#{Id}: {PointersCleared} pointer(s) cleared, {ElementsDropped} array element(s) dropped";
     }
 
-
     private readonly record struct Run(int FieldAt, int At, int Count);
-
 
     public sealed record Deleted(int Objects, int Bytes, int FixupsDropped)
     {
         public override string ToString() =>
             $"{Objects} object(s) taken out, {Bytes} byte(s) shorter, {FixupsDropped} pointer(s) dropped";
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     public static Deleted Delete(PackfileImage image, IReadOnlyCollection<int> ids,
                                  HavokClassTypes? types = null)
@@ -78,12 +38,6 @@ public static class NativeRemove
                         "working out where the rest would go needs every object accounted for.");
 
         int section = image.Sections.IndexOf(data);
-
-
-
-
-
-
 
         if (!PackfileLayout.Reaches(items, data, section))
             throw new InvalidOperationException(
@@ -109,17 +63,12 @@ public static class NativeRemove
 
         if (going.Count == 0) return new Deleted(0, 0, 0);
 
-
-
         var leaving = new List<(int At, int End)>();
         foreach (int index in going)
             foreach (var item in runs[index])
                 leaving.Add((item.At, item.At + item.Length));
 
         bool Inside(int offset) => leaving.Exists(r => offset >= r.At && offset < r.End);
-
-
-
 
         foreach (var (source, whichSection, destination) in data.Globals())
         {
@@ -134,8 +83,6 @@ public static class NativeRemove
         int before = data.Data.Length;
         int dropped = 0;
 
-
-
         var locals = new List<(int Source, int Destination)>();
         foreach (var entry in data.Locals())
         {
@@ -149,7 +96,6 @@ public static class NativeRemove
             if (Inside(entry.Source)) { dropped++; continue; }
             globals.Add(entry);
         }
-
 
         var virtuals = new List<(int Source, int Section, int Destination)>();
         foreach (var entry in data.Virtuals())
@@ -190,9 +136,6 @@ public static class NativeRemove
         int target = objects.Instances[index].Offset;
         int section = image.Sections.IndexOf(data);
 
-
-
-
         var incoming = data.Globals().Where(g => g.Section == section && g.Destination == target)
                            .Select(g => g.Source).ToList();
 
@@ -224,8 +167,6 @@ public static class NativeRemove
             {
                 if (hits.Contains(e)) { dropped++; continue; }
 
-
-
                 var held = data.Globals().FirstOrDefault(g => g.Source == run.At + e * 8);
                 keep.Add(held.Destination == 0 && held.Source == 0 ? -1 : held.Destination);
             }
@@ -236,12 +177,6 @@ public static class NativeRemove
         FixupOrder.Reorder(image, types);
         return new Orphaned(id, plain.Count, dropped);
     }
-
-
-
-
-
-
 
     private static void Shrink(PackfileImage image, PackfileSection data, int section, int fieldAt,
                                Run run, List<int> keep)
@@ -267,9 +202,6 @@ public static class NativeRemove
         BitConverter.GetBytes((capacity & 0xC0000000u) | (uint)keep.Count).CopyTo(data.Data, fieldAt + 12);
     }
 
-
-
-
     private static List<Run> PointerRuns(PackfileObjects objects, HavokClassTypes types)
     {
         var runs = new List<Run>();
@@ -281,7 +213,6 @@ public static class NativeRemove
     private static void Collect(PackfileObjects objects, HavokClassTypes types, int offset,
                                 string className, List<Run> runs, int depth)
     {
-
 
         if (depth > 8 || !types.Knows(className)) return;
 

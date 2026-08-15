@@ -11,33 +11,13 @@ using BehaviourStudio.App;
 
 namespace BehaviourStudio.UiSmoke;
 
-
-
-
 public static class Smoke
 {
     private static int _failed;
     private static int _ran;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static int Png(string[] args)
     {
-
 
         AppBuilder.Configure<HeadlessApp>()
             .UseSkia()
@@ -57,8 +37,6 @@ public static class Smoke
             window.SetGraphLayoutModeForTest(GraphLayoutMode.StructuredFlow);
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
-
-
         var tabs = Find<TabControl>(window).First();
         tabs.SelectedIndex = tabs.Items.OfType<TabItem>().ToList()
                                  .FindIndex(t => t.Header?.ToString() == "Graph");
@@ -75,8 +53,6 @@ public static class Smoke
             window.SendEventForTest(window.RunEvents[0]);
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         }
-
-
 
         bool whole = args.Contains("--window");
         if (args.Contains("--legend")) { window.OpenLegendForTest(); Avalonia.Threading.Dispatcher.UIThread.RunJobs(); }
@@ -102,8 +78,6 @@ public static class Smoke
         if (focus.Length > 0)
         {
 
-
-
             if (!focus.All(char.IsDigit))
             {
                 var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
@@ -122,21 +96,15 @@ public static class Smoke
             canvas.FocusOn(focus);
             canvas.Highlight(focus);
 
-
-
-
             window.SelectNode(focus);
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         }
-
-
 
         if (args.Contains("--expand"))
         {
             foreach (var block in Find<Expander>(window)) block.IsExpanded = true;
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         }
-
 
         if (args.Contains("--fit"))
         {
@@ -147,8 +115,6 @@ public static class Smoke
             canvas.SetZoom(zoom);
         }
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-
-
 
         drawn.Measure(size);
         drawn.Arrange(new Rect(size));
@@ -165,9 +131,6 @@ public static class Smoke
                           $"{canvas.StartStateIds.Count} start state(s), zoom {zoom}" +
                           $", layout {canvas.LayoutMode}" +
                           (focus.Length > 0 ? $", focused on #{focus}" : ""));
-
-
-
 
         var drops = canvas.OwnershipWireDrops().OrderBy(d => d).ToList();
         if (drops.Count > 0)
@@ -195,8 +158,6 @@ public static class Smoke
         var headers = tabs[0].Items.OfType<TabItem>().Select(t => t.Header?.ToString()).ToList();
         Check("tabs", "Tree, Graph, Symbols, Chain, Project search, Animation, Playback, Compare", string.Join(", ", headers));
 
-
-
         var canvases = 0;
         var viewports = 0;
         var grids = new System.Collections.Generic.List<HkGrid>();
@@ -216,18 +177,12 @@ public static class Smoke
         Check("the tree, symbol, chain, project search, animation, clip and compare grids build without opening tools",
               7, grids.Count);
 
-
-
-
         Check("collapsed details leave no hidden grids under the canvas", 0, grids.Count(g => !g.IsVisible));
         foreach (string expected in new[]
                  { "Open", "Browse...", "From archive...", "Expand all", "Collapse all", "Check graph", "Save to .hkx", "+ real", "+ event", "Remove", "Set bounds",
                    "Undo", "Redo", "Compare with...", "Search project", "Open result", "Check project", "Scripts folder...",
                    "Play", "From selected node", "Fit", "View ▾", "Fit all", "Fit selection", "Create template" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
-
-
-
 
         {
             tabs[0].SelectedIndex = headers.IndexOf("Graph");
@@ -249,14 +204,10 @@ public static class Smoke
             tabs[0].SelectedIndex = 0;
         }
 
-
         tabs[0].SelectedIndex = headers.IndexOf("Playback");
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         Check("the viewport draws nothing before a clip is picked", 0, window.Viewport.DrawnBones);
         CheckTrue("and is not playing", !window.IsPlaying);
-
-
-
 
         var ticks = Find<CheckBox>(window).Select(c => c.Content?.ToString()).ToList();
         CheckTrue("the reference pose tick is there", ticks.Contains("Reference pose"));
@@ -277,18 +228,12 @@ public static class Smoke
             CheckTrue($"{idle} is disabled with nothing loaded",
                 Find<Button>(window).First(b => b.Content?.ToString() == idle).IsEnabled == false);
 
-
-
         CheckTrue("the window has no Java setup control",
             !Find<Button>(window).Any(b => b.Content?.ToString() == "Find Java..."));
-
-
-
 
         foreach (string path in args.Where(System.IO.File.Exists))
         {
             window.Open(path);
-
 
             tabs[0].SelectedIndex = headers.IndexOf("Animation");
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -305,8 +250,6 @@ public static class Smoke
             CheckTrue($"{name}: the animation panel says something", shown.Length > 0);
             Console.WriteLine($"        {shown}");
 
-
-
             if (shown.StartsWith("This is a behaviour file", StringComparison.Ordinal))
             {
                 tabs[0].SelectedIndex = 2;
@@ -315,13 +258,6 @@ public static class Smoke
                 var roles = new[] { "raised here", "listened for here", "referenced here" };
                 var said = Find<TextBlock>(window).Select(t => t.Text ?? "")
                     .Where(t => roles.Any(r => t.Contains(r, StringComparison.Ordinal))).ToList();
-
-
-
-
-
-
-
 
                 CheckTrue($"{name}: the symbols are built from the file itself",
                           window.SymbolGrid.RowCount > 0);
@@ -335,9 +271,6 @@ public static class Smoke
                                   (window.LoadedXml.Length == 0 ? "  (native text unavailable)" : ""));
             }
 
-
-
-
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -346,10 +279,6 @@ public static class Smoke
                 Console.WriteLine($"        canvas: {drawn} node(s) drawn");
                 CheckTrue($"{name}: the canvas draws the graph", drawn > 0);
             }
-
-
-
-
 
             {
                 tabs[0].SelectedIndex = 1;
@@ -487,24 +416,16 @@ public static class Smoke
                 CheckTrue($"{name}: closing details hides their contents again", !window.GraphDrawerContentsVisible);
             }
 
-
-
             {
                 tabs[0].SelectedIndex = 5;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 CheckTrue($"{name}: playback viewport clips mesh drawing", window.PlaybackViewportClips);
             }
 
-
-
-
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 var canvas = Find<GraphView>(window).First();
-
-
-
 
                 string parent = canvas.DrawnIds
                     .Where(id => canvas.OwnedCount(id) >= 3 && canvas.OwnedCount(id) <= canvas.DrawnCount / 4)
@@ -540,8 +461,6 @@ public static class Smoke
                 }
             }
 
-
-
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -561,12 +480,9 @@ public static class Smoke
                               !canvas.SharedBy(each).Contains(each));
                 }
 
-
                 var only = canvas.DrawnIds.FirstOrDefault(id => canvas.SharedBy(id).Count == 0
                                                              && canvas.OwnerOf(id).Length > 0);
                 CheckTrue($"{name}: a node with one parent carries no mark", only != null);
-
-
 
                 string one = shared[0];
                 string tip = canvas.SharedTip(one);
@@ -577,8 +493,6 @@ public static class Smoke
                           tip.Contains($": {ownerName} (owner)"));
                 Check($"{name}: it names every home once", canvas.SharedBy(one).Count + 1,
                       tip.Split(", ").Length);
-
-
 
                 string borrower = canvas.SharedBy(one).FirstOrDefault(b => canvas.DrawnIds.Contains(b)) ?? "";
                 string branch = borrower.Length > 0 ? canvas.OwnerOf(borrower) : "";
@@ -599,9 +513,6 @@ public static class Smoke
                 }
             }
 
-
-
-
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -617,7 +528,6 @@ public static class Smoke
                     canvas.SelectForTest(new[] { parent, child });
                     Check($"{name}: both are selected", 2, canvas.SelectedIds.Count);
                     Check($"{name}: the primary is the first of them", parent, canvas.SelectedId);
-
 
                     var moving = canvas.MovementSet(parent);
                     Check($"{name}: the movement set holds the child once",
@@ -638,10 +548,6 @@ public static class Smoke
                 }
             }
 
-
-
-
-
             {
                 tabs[0].SelectedIndex = 1;
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -656,10 +562,6 @@ public static class Smoke
                     Console.WriteLine($"        run: {window.RunningCount} machine(s) running, " +
                                       $"{canvas.ActiveIds.Count} state(s) lit, {window.RunEventCount} event(s) to send");
 
-
-
-
-
                     if (window.RunEventCount > 0)
                     {
                         var before = canvas.ActiveIds.ToHashSet();
@@ -673,14 +575,6 @@ public static class Smoke
                         CheckTrue($"{name}: the canvas stays lit after sending events", canvas.ActiveIds.Count > 0);
                         Console.WriteLine($"        run: sending events {(moved ? "moved a state" : "moved nothing, which some graphs do")}");
 
-
-
-
-
-
-
-
-
                         string root = System.IO.Path.GetDirectoryName(
                                           System.IO.Path.GetDirectoryName(path) ?? "") ?? "";
                         bool hasAnimations = root.Length > 0 &&
@@ -693,9 +587,6 @@ public static class Smoke
                         Console.WriteLine($"        run: {window.TimedClipCount} clip(s) playing with a " +
                                           "length read from the animation beside the behaviour");
 
-
-
-
                         if (window.RunBlending)
                         {
                             int steps = 0;
@@ -705,11 +596,6 @@ public static class Smoke
                             Console.WriteLine($"        run: a blend settled after {steps} step(s)");
                         }
                     }
-
-
-
-
-
 
                     Console.WriteLine($"        run: {window.RunVariables.Count} variable(s) to set");
                     if (window.RunVariables.Count > 0)
@@ -721,8 +607,6 @@ public static class Smoke
                         CheckTrue($"{name}: setting a variable through the box changes what the run holds",
                                   window.RunValueOf(variable) == 7);
 
-
-
                         window.SetVariableForTest(variable, "not a number");
                         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                         CheckTrue($"{name}: nonsense is refused rather than read as zero",
@@ -731,20 +615,14 @@ public static class Smoke
                                   window.RunSummary.Contains(variable, StringComparison.Ordinal) &&
                                   window.RunSummary.Contains("not a number", StringComparison.Ordinal));
 
-
-
                         window.SetVariableForTest("noSuchVariableAnywhere", "1");
                         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                         CheckTrue($"{name}: a variable the graph does not declare is not offered",
                                   !window.RunVariables.Contains("noSuchVariableAnywhere"));
                     }
 
-
-
                     CheckTrue($"{name}: transitions held back by a condition are reported, or the line is hidden",
                               window.RunHeldBack > 0 == window.RunHeldBackVisible);
-
-
 
                     var blenderId = OpenCommonwealth.Services.Hkx.BehaviourGraphModel
                         .Parse(window.LoadedXml.Length > 0 ? window.LoadedXml : "")
@@ -770,13 +648,6 @@ public static class Smoke
                 }
             }
 
-
-
-
-
-
-
-
             bool isBehaviour = window.LoadedXml.Length > 0 &&
                 OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml)
                     .Objects.Any(o => o.Class == "hkbStateMachine");
@@ -801,8 +672,6 @@ public static class Smoke
                               boxes.Count >= fields.Count && fields.Count > 0);
                     Console.WriteLine($"        #{node}: {fields.Count} fields, {boxes.Count} boxes beside the canvas");
 
-
-
                     canvas.Activated?.Invoke(node);
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                     CheckTrue($"{name}: double click still leaves the fields there",
@@ -813,8 +682,6 @@ public static class Smoke
                     canvas.ClearHighlight();
                     Check($"{name}: and clearing it releases the canvas", "", canvas.HighlightId);
                 }
-
-
 
                 {
                     var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
@@ -901,9 +768,6 @@ public static class Smoke
                     }
                 }
 
-
-
-
                 {
                     var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
                     string machineId = model.Objects
@@ -967,9 +831,6 @@ public static class Smoke
                     }
                 }
 
-
-
-
                 {
                     var model = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
                     var routes = OpenCommonwealth.Services.Hkx.StateRoutes.Of(model);
@@ -983,26 +844,16 @@ public static class Smoke
                           routes.Routes.Count, canvas.RouteCount);
                     CheckTrue($"{name}: and there are some to draw", canvas.RouteCount > 0);
 
-
-
                     Check($"{name}: every route has both ends on the canvas",
                           canvas.RouteCount, canvas.DrawableRouteCount);
-
-
 
                     CheckTrue($"{name}: a start state is marked", canvas.StartStateIds.Count > 0);
                     CheckTrue($"{name}: and the node itself knows it is one",
                               canvas.StartStateIds.All(id => !canvas.DrawnIds.Contains(id) || canvas.IsStart(id)));
 
-
-
-
-
                     var withWildcards = routes.MachineOfState.Keys
                         .Where(s => canvas.DrawnIds.Contains(s))
                         .FirstOrDefault(s => routes.LeavingState(s).Any(r => r.Wildcard)) ?? "";
-
-
 
                     {
                         canvas.ClearHighlight();
@@ -1019,8 +870,6 @@ public static class Smoke
                               direct, canvas.LineCount);
                         CheckTrue($"{name}: and the states a wildcard enters say so on themselves",
                                   marked > 0);
-
-
 
                         var targets = routes.Routes.Where(r => r.Wildcard && canvas.DrawnIds.Contains(r.ToId))
                                                    .Select(r => r.ToId).ToHashSet();
@@ -1040,12 +889,8 @@ public static class Smoke
                         CheckTrue($"{name}: and every one of them leaves that state, not the machine",
                                   leaving.All(r => r.FromId == withWildcards));
 
-
-
                         CheckTrue($"{name}: none of them points back at the state itself",
                                   leaving.All(r => r.ToId != withWildcards));
-
-
 
                         string machineId = routes.MachineOfState[withWildcards];
                         int onMachine = routes.Out.TryGetValue(machineId, out var fromMachine)
@@ -1053,9 +898,6 @@ public static class Smoke
                         CheckTrue($"{name}: rewriting them adds none and drops none",
                                   wild == onMachine || wild == onMachine - 1);
                     }
-
-
-
 
                     {
                         var extent = canvas.Extent();
@@ -1072,8 +914,6 @@ public static class Smoke
                         CheckTrue($"{name}: and the whole of it down",
                                   seen.Height >= extent.Tall - 1);
 
-
-
                         canvas.Highlight(node);
                         canvas.FrameRelated();
                         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -1083,8 +923,6 @@ public static class Smoke
                                   near.Width < seen.Width);
                         canvas.ClearHighlight();
                     }
-
-
 
                     var routed = routes.Routes.FirstOrDefault(r => canvas.DrawnIds.Contains(r.FromId) &&
                                                                    canvas.DrawnIds.Contains(r.ToId));
@@ -1096,13 +934,6 @@ public static class Smoke
                         canvas.ClearHighlight();
                     }
                 }
-
-
-
-
-
-
-
 
                 var full = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
                 string array = OpenCommonwealth.Services.Hkx.HkxTextEdit
@@ -1124,12 +955,6 @@ public static class Smoke
                     var blocks = Find<Expander>(window.GraphProperties);
                     int collapsed = Find<TextBox>(window.GraphProperties).Count;
 
-
-
-
-
-
-
                     foreach (var block in blocks) block.IsExpanded = true;
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
@@ -1149,8 +974,6 @@ public static class Smoke
                     if (explained != null)
                         Console.WriteLine("        a tip reads: " + explained.Replace("\n", " | "));
 
-
-
                     foreach (var block in blocks) block.IsExpanded = false;
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
@@ -1164,11 +987,8 @@ public static class Smoke
                               collapsed < flat);
                     CheckTrue($"{name}: every block starts closed", blocks.All(b => !b.IsExpanded));
 
-
                     CheckTrue($"{name}: each block says which event it fires on",
                               blocks.Count == 0 || summaries.Values.All(s => s.Contains("->")));
-
-
 
                     if (blocks.Count > 0)
                     {
@@ -1178,9 +998,6 @@ public static class Smoke
                                   Find<TextBox>(window.GraphProperties).Count > collapsed);
                     }
                 }
-
-
-
 
                 string boneWeights = OpenCommonwealth.Services.Hkx.HkxTextEdit
                     .IdsOfClass(window.LoadedXml, "hkbBoneWeightArray")
@@ -1258,13 +1075,9 @@ public static class Smoke
                     CheckTrue($"{name}: the full bone array scrolls to its final row",
                               scroll.Offset.Y > 0 && boxes[^1].Bounds.Width > 0 && boxes[^1].Bounds.Height > 0);
 
-
-
                     window.Open(path);
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 }
-
-
 
                 int drawn = canvas.DrawnCount;
                 string needle = OpenCommonwealth.Services.Hkx.BehaviourGraphModel
@@ -1285,9 +1098,6 @@ public static class Smoke
                     Check($"{name}: clearing it releases the canvas", 0, canvas.MatchCount);
                     Check($"{name}: and nothing was dropped from the canvas", drawn, canvas.DrawnCount);
                 }
-
-
-
 
                 string host = OpenCommonwealth.Services.Hkx.HkxTextEdit
                     .IdsOfClass(window.LoadedXml, "hkbStateMachineStateInfo")
@@ -1314,8 +1124,6 @@ public static class Smoke
                         .Parse(window.LoadedXml).Get(host);
                     Check($"{name}: wired into the slot the drag came from", added, owner?.Ref("generator") ?? "");
 
-
-
                     string afterAdd = window.LoadedXml;
                     var save = Find<Button>(window).First(b => b.Content?.ToString() == "Save to .hkx");
                     var undo = Find<Button>(window).First(b => b.Content?.ToString() == "Undo");
@@ -1339,11 +1147,8 @@ public static class Smoke
 
                     PasteOnACopy(window, path, name);
 
-
                     window.Open(path);
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-
-
 
                     string said = window.CompareLoadedWith(path);
                     if (said.Length == 0)
@@ -1351,8 +1156,6 @@ public static class Smoke
                     else
                         CheckTrue($"{name}: a file compared with itself reports no difference",
                                   said.Contains("same objects", StringComparison.Ordinal));
-
-
 
                     canvas.Highlight(added);
                     window.Filter("clip");
@@ -1365,12 +1168,8 @@ public static class Smoke
                 }
             }
 
-
-
-
             if (window.AnimationFrameCount > 0)
             {
-
 
                 tabs[0].SelectedIndex = headers.IndexOf("Animation");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
@@ -1406,9 +1205,6 @@ public static class Smoke
                 CheckTrue($"{name}: the last page ends on frame {frames - 1}",
                           window.FramePageLabel.Contains($"to {frames - 1} ") || frames <= 300);
 
-
-
-
                 window.LookUpFraction("0");
                 Check($"{name}: fraction 0 is the first frame", 0, window.AimedFrame);
                 window.LookUpFraction("1");
@@ -1421,9 +1217,6 @@ public static class Smoke
                 Check($"{name}: nonsense is refused rather than aimed at", -1, window.AimedFrame);
                 CheckTrue($"{name}: and it says so", window.FractionAnswer.Contains("not a number"));
 
-
-
-
                 int unfiltered = window.AnimationGrid.RowCount;
                 window.FilterBones("no-such-bone-xyzzy");
                 int filtered = window.AnimationGrid.RowCount;
@@ -1431,11 +1224,6 @@ public static class Smoke
                           filtered < unfiltered && filtered <= window.AnimationAnnotationCount + 1);
                 window.FilterBones("");
                 Check($"{name}: clearing the filter brings the tracks back", unfiltered, window.AnimationGrid.RowCount);
-
-
-
-
-
 
                 CheckTrue($"{name}: nothing is picked before a row is", !window.AnimationEdited);
 
@@ -1454,8 +1242,6 @@ public static class Smoke
                               Math.Abs(moved.Z - 33.75f) < 0.001f);
                     CheckTrue($"{name}: and the file counts as changed", window.AnimationEdited);
 
-
-
                     window.TypeFramePosition("1, 2");
                     var still = window.FramePosition(0, 0);
                     CheckTrue($"{name}: a position short of three numbers is refused",
@@ -1465,21 +1251,13 @@ public static class Smoke
 
                     SaveOnACopy(window, path, name);
 
-
-
                     window.Open(path);
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 }
             }
 
-
-
-
             tabs[0].SelectedIndex = headers.IndexOf("Playback");
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-
-
-
 
             if (window.LoadedXml.Length > 0)
             {
@@ -1503,9 +1281,6 @@ public static class Smoke
                 tabs[0].SelectedIndex = headers.IndexOf("Playback");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
             }
-
-
-
 
             if (window.PoseFrameCount == 0 && window.LoadedXml.Length > 0)
                 foreach (string clip in OpenCommonwealth.Services.Hkx.HkxTextEdit
@@ -1538,10 +1313,6 @@ public static class Smoke
 
                 Check($"{name}: scrubbing to the last frame lands on it", frames - 1, window.PoseFrame);
 
-
-
-
-
                 CheckTrue($"{name}: and the pose moves as the clip runs",
                           frames < 2 ||
                           OpenCommonwealth.Services.Hkx.AnimationPose.Distance(atStart, atEnd) > 0.01f ||
@@ -1555,34 +1326,21 @@ public static class Smoke
                 window.ScrubTo(frames + 500);
                 Check($"{name}: and past the end clamps", frames - 1, window.PoseFrame);
 
-
                 var play = Find<Button>(window).First(b => b.Content?.ToString() is "Play" or "Pause");
                 window.ScrubTo(0);
-
-
-
 
                 ClickOnly(play);
                 CheckTrue($"{name}: play starts a clock", window.IsPlaying || frames <= 1);
                 ClickOnly(play);
                 CheckTrue($"{name}: and pressing it again stops it", !window.IsPlaying);
 
-
-
                 CheckTrue($"{name}: scrubbing leaves the document alone",
                           !Find<Button>(window).First(b => b.Content?.ToString() == "Save to .hkx").IsEnabled);
             }
         }
 
-
-
-
-
-
         foreach (string path in args.Where(System.IO.File.Exists))
         {
-
-
 
             if (window.LoadedXml.Length == 0)
             {
@@ -1592,10 +1350,6 @@ public static class Smoke
 
             string clip = OpenCommonwealth.Services.Hkx.HkxTextEdit
                 .IdsOfClass(window.LoadedXml, "hkbClipGenerator").FirstOrDefault() ?? "";
-
-
-
-
 
             bool graph = OpenCommonwealth.Services.Hkx.HkxTextEdit
                 .IdsOfClass(window.LoadedXml, "hkbBehaviorGraph").Count > 0;
@@ -1610,9 +1364,6 @@ public static class Smoke
 
             window.SelectNode(clip);
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-
-
-
 
             var box = FieldNamed(window.GraphProperties, "playbackSpeed");
             CheckTrue("and a field to type in", box != null);
@@ -1833,15 +1584,8 @@ public static class Smoke
         CloseForTest(window);
     }
 
-
-
-
-
-
-
     private static byte[] OneMachineBytes()
     {
-        // A one-state state machine whose loaded XML can be edited into a duplicate stateId.
         var names = new byte[5 + "hkbStateMachine".Length + 1];
         BitConverter.GetBytes(OpenCommonwealth.Services.Hkx.HavokClassTypes.Shipped["hkbStateMachine"]!.Signature)
                     .CopyTo(names, 0);
@@ -1878,7 +1622,6 @@ public static class Smoke
         window.Open(path);
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
-        // Add a second state sharing stateId 0 by appending to the machine's states array.
         string xml = window.LoadedXml;
         string dupes = xml.Replace("<hkparam name=\"states\" numelements=\"0\">\n</hkparam>",
                                    "<hkparam name=\"states\" numelements=\"2\">#91 #92</hkparam>")
@@ -2124,12 +1867,8 @@ public static class Smoke
 
         Check("a standalone animation puts itself in the clip list", 1, window.ClipGrid.RowCount);
 
-
-
         CheckTrue("and the row is picked, so Playback behaves as if a clip had been chosen",
                   window.ClipGrid.HasSelection);
-
-
 
         var said = Find<TextBlock>(window.ClipGrid).Select(t => t.Text ?? "").ToList();
         CheckTrue("and it names the animation that is loaded",
@@ -2193,27 +1932,6 @@ public static class Smoke
         CheckTrue("the extra nested animation has a pose to render", window.PoseNow != null);
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static void PasteOnACopy(MainWindow window, string path, string name)
     {
         string copy = System.IO.Path.Combine(
@@ -2268,22 +1986,12 @@ public static class Smoke
         TemplatesOnACopy(window, copy, name);
     }
 
-
-
-
-
-
     private static void TemplatesOnACopy(MainWindow window, string copy, string name)
     {
-
 
         string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "uismoke-templates");
         if (System.IO.Directory.Exists(folder)) System.IO.Directory.Delete(folder, true);
         OpenCommonwealth.Services.Hkx.TemplateStore.Folder = folder;
-
-
-
-
 
         string clip = OpenCommonwealth.Services.Hkx.HkxTextEdit
             .IdsOfClass(window.LoadedXml, "hkbClipGenerator").FirstOrDefault() ?? "";
@@ -2295,9 +2003,6 @@ public static class Smoke
         window.SaveTemplateForTest("Smoke Shape");
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         Console.WriteLine("        " + window.PasteAnswer);
-
-
-
 
         if (window.TemplateNames.Count == 0)
         {
@@ -2314,9 +2019,6 @@ public static class Smoke
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         Console.WriteLine("        " + window.PasteAnswer);
 
-
-
-
         CheckTrue($"{name}: choosing one says whether it fits this file before anything is applied",
                   window.PasteAnswer.Contains("already declared here", StringComparison.Ordinal) ||
                   window.PasteAnswer.Contains("Before this can go in", StringComparison.Ordinal));
@@ -2330,8 +2032,6 @@ public static class Smoke
 
         int now = new OpenCommonwealth.Services.Hkx.PackfileObjects(
             OpenCommonwealth.Services.Hkx.PackfileImage.Read(copy)).Instances.Count;
-
-
 
         if (window.PasteAnswer.StartsWith("Applied", StringComparison.Ordinal))
             CheckTrue($"{name}: applying a template adds objects to the file ({was} to {now})", now > was);
@@ -2368,15 +2068,8 @@ public static class Smoke
                   window.FrameEditAnswer.StartsWith("Saved ", StringComparison.Ordinal));
         CheckTrue($"{name}: and nothing is left unsaved afterwards", !window.AnimationEdited);
 
-
-
         var before = new OpenCommonwealth.Services.Hkx.HkxBinaryReader().ReadAnimation(path);
         var written = new OpenCommonwealth.Services.Hkx.HkxBinaryReader().ReadAnimation(copy);
-
-
-
-
-
 
         bool wasSpline = before.AnimationClass == "hkaSplineCompressedAnimation";
         Check($"{name}: the saved file keeps its kind where it can be re-encoded",
@@ -2389,8 +2082,6 @@ public static class Smoke
         var landed = written.Tracks[0].Translations[0];
         float editDrift = (landed - new System.Numerics.Vector3(7.25f, -8.5f, 9.75f)).Length();
         CheckTrue($"{name}: and holds the frame that was typed ({editDrift:F4})", editDrift < editLimit);
-
-
 
         float worst = 0;
         for (int t = 0; t < before.NumTracks; t++)
@@ -2426,8 +2117,6 @@ public static class Smoke
         Check("the browser has a list", 1, lists.Count);
         Check("and a filter box", 1, boxes.Count);
 
-
-
         Check("only the two behaviours are offered", 2, lists[0].ItemCount);
 
         boxes[0].Text = "canine behaviors";
@@ -2444,8 +2133,6 @@ public static class Smoke
 
         System.IO.File.Delete(path);
     }
-
-
 
     private static void WriteArchive(string path, string[] names)
     {
@@ -2481,7 +2168,6 @@ public static class Smoke
         }
     }
 
-
     private static TextBox? FieldNamed(Visual panel, string name)
     {
         foreach (var row in Find<Grid>(panel))
@@ -2492,8 +2178,6 @@ public static class Smoke
         }
         return null;
     }
-
-
 
     private static void ClickOnly(Button button)
     {

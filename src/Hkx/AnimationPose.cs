@@ -4,26 +4,8 @@ using System.Numerics;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class AnimationPose
 {
-
 
     public readonly record struct Bone(int Index, string Name, int Parent, Vector3 Position, Quaternion Rotation);
 
@@ -32,8 +14,6 @@ public static class AnimationPose
         public int Frame;
         public float Time;
         public readonly List<Bone> Bones = new();
-
-
 
         public readonly List<(int From, int To)> Links = new();
 
@@ -51,8 +31,6 @@ public static class AnimationPose
             }
         }
     }
-
-
 
     public static Pose ReferencePose(HkxSkeleton skeleton) => At(skeleton, null, 0);
 
@@ -82,9 +60,6 @@ public static class AnimationPose
 
             int parent = i < skeleton.ParentIndices.Count ? skeleton.ParentIndices[i] : -1;
 
-
-
-
             bool composed = parent >= 0 && parent < i;
             world[i] = composed ? matrix * world[parent] : matrix;
             rotation[i] = composed ? Quaternion.Normalize(rotation[parent] * local.Rotation) : local.Rotation;
@@ -100,19 +75,8 @@ public static class AnimationPose
         return pose;
     }
 
-
-
-
-
-
-
-
-
-
     private static bool UndrivenIsIdentity(HkxAnimationData animation) =>
         animation.AnimationClass == "hkaSplineCompressedAnimation";
-
-
 
     public static HkxBonePose Local(HkxSkeleton skeleton, HkxAnimationData? animation,
                                     int track, int bone, int frame)
@@ -126,9 +90,6 @@ public static class AnimationPose
             : reference;
         var pose = reference;
 
-
-
-
         var t = frame < data.Translations.Count ? data.Translations[frame] : undriven.Translation;
         pose.Translation = new Vector3(
             data.TranslationAnimated[0] ? t.X : undriven.Translation.X,
@@ -138,7 +99,6 @@ public static class AnimationPose
         if (data.RotationAnimated && frame < data.Rotations.Count)
         {
             var q = data.Rotations[frame];
-
 
             pose.Rotation = q.LengthSquared() > 1e-8f ? Quaternion.Normalize(q) : reference.Rotation;
         }
@@ -156,9 +116,6 @@ public static class AnimationPose
         return pose;
     }
 
-
-
-
     public static int[] TracksByBone(HkxSkeleton skeleton, HkxAnimationData? animation)
     {
         var forBone = new int[skeleton.BoneNames.Count];
@@ -175,15 +132,11 @@ public static class AnimationPose
             return forBone;
         }
 
-
-
         if (animation.Tracks.Count == forBone.Length)
             for (int i = 0; i < forBone.Length; i++) forBone[i] = i;
 
         return forBone;
     }
-
-
 
     public static float Distance(Pose a, Pose b)
     {
@@ -192,9 +145,6 @@ public static class AnimationPose
         for (int i = 0; i < count; i++) total += Vector3.Distance(a.Bones[i].Position, b.Bones[i].Position);
         return total;
     }
-
-
-
 
     public static string? WhyNotPosable(HkxSkeleton? skeleton, HkxAnimationData? animation)
     {

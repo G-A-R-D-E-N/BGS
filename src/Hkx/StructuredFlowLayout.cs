@@ -4,8 +4,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
 public static class StructuredFlowLayout
 {
     public enum NodeKind

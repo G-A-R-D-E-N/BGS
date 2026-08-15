@@ -9,28 +9,6 @@ using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class NativeSave
 {
     public sealed record Plan(List<Change> Changes, string? Refusal, List<int>? Removed = null)
@@ -38,12 +16,7 @@ public static class NativeSave
         public bool Possible => Refusal == null;
         public bool Empty => Changes.Count == 0 && Gone.Count == 0;
 
-
-
         public List<int> Gone => Removed ?? new List<int>();
-
-
-
 
         public bool Grows => Changes.Exists(c => c.Text || c.Array || c.Added || c.Grow);
     }
@@ -54,7 +27,6 @@ public static class NativeSave
                                 bool Grow = false, int Id = 0)
     {
 
-
         public bool InElement => Element >= 0 && !Grow;
 
         public override string ToString() =>
@@ -63,55 +35,20 @@ public static class NativeSave
                              : $"{ClassName}[{Index}].{Field} = {Value}";
     }
 
-
-
     private static readonly HashSet<string> Writable = new(StringComparer.Ordinal)
     {
         "real", "int32", "uint32", "int16", "uint16", "int8", "uint8", "bool", "enum",
     };
-
-
-
-
 
     private static readonly HashSet<string> WritableText = new(StringComparer.Ordinal)
     {
         "stringptr", "cstring",
     };
 
-
-
-
-
-
-
-
     internal static bool IsReference(string type) =>
         type.StartsWith("pointer of", StringComparison.Ordinal) || type == "pointer";
 
-
-
-
-
-
-
-
-
-
-
     internal static bool IsPointerArray(string type) => type == "array of pointer";
-
-
-
-
-
-
-
-
-
-
-
-
 
     internal static int WideFloats(string type) => type switch
     {
@@ -121,11 +58,8 @@ public static class NativeSave
         _ => 0,
     };
 
-
     internal static bool IsWideInteger(string type) =>
         type is "uint64" or "int64" or "ulong";
-
-
 
     private static float[]? Bracketed(string value, int wanted)
     {
@@ -145,13 +79,6 @@ public static class NativeSave
     internal static bool IsTextArray(string type) =>
         type == "array of stringptr" || type == "array of cstring";
 
-
-
-
-
-
-
-
     internal static int ValueElement(string type) => type switch
     {
         "array of real" or "array of int32" or "array of uint32" => 4,
@@ -161,18 +88,10 @@ public static class NativeSave
         _ => 0,
     };
 
-
-
     private static byte[]? Numbers(string value, string type, int width) =>
         NumberCodecs.ArrayBytes(value, type[("array of ").Length..], width);
 
-
-
-
-
-
     private const char TextSeparator = '\0';
-
 
     private const string IdKey = "#id";
     private const uint EmbeddedArrayStorage = 0x80000000u;
@@ -186,30 +105,19 @@ public static class NativeSave
         BitConverter.GetBytes(flags | (uint)count).CopyTo(data.Data, at + 12);
     }
 
-
     private static bool IsReferenceValue(string value) =>
         value == "null" ||
         (value.Length > 1 && value[0] == '#' && value[1..].All(char.IsAsciiDigit));
 
-
-
-
-
     public static Plan Compare(string originalXml, string editedXml, HavokClasses? classes = null)
     {
         classes ??= HavokClasses.Shipped;
-
-
-
 
         var deleted = Deleted(originalXml, editedXml);
 
         var before = ByClass(originalXml);
         var after = ByClass(editedXml);
         var changes = new List<Change>();
-
-
-
 
         foreach (var (className, originals) in before)
         {
@@ -239,9 +147,6 @@ public static class NativeSave
 
             var layout = classes.Members(className).ToDictionary(m => m.Name, m => m.Type,
                                                                  StringComparer.Ordinal);
-
-
-
 
             for (int i = 0; i < survivors.Count; i++)
             {
@@ -287,8 +192,6 @@ public static class NativeSave
                 if (Counted(edited[i], resized) != Counted(original, resized))
                     return new Plan(changes, $"a {className} gained or lost a field");
             }
-
-
 
             for (int k = survivors.Count; k < edited.Count; k++)
                 foreach (var (field, value) in edited[k])
@@ -449,7 +352,6 @@ public static class NativeSave
         return null;
     }
 
-
     private static (List<int> Ids, HashSet<string> Text) Deleted(string originalXml, string editedXml)
     {
         var ids = new List<int>();
@@ -478,8 +380,6 @@ public static class NativeSave
                  .Select(e => e.Attribute("name")?.Value ?? "")
                  .Where(id => id.Length > 1 && id[0] == '#' && id[1..].All(char.IsAsciiDigit));
 
-
-
     private static string ArrayOf(string field)
     {
         if (field.EndsWith(CountKey, StringComparison.Ordinal))
@@ -489,22 +389,11 @@ public static class NativeSave
         return bracket > 0 ? field[..bracket] : "";
     }
 
-
-
-
     private static bool Belongs(string field, HashSet<string> arrays) =>
         arrays.Contains(field) || arrays.Contains(ArrayOf(field));
 
     private static int Counted(Dictionary<string, string> fields, HashSet<string> skip) =>
         skip.Count == 0 ? fields.Count : fields.Count(f => !Belongs(f.Key, skip));
-
-
-
-
-
-
-
-
 
     private static string? Resized(HavokClasses classes, List<Change> changes, string className,
                                    Dictionary<string, string> layout, int id, int index,
@@ -512,9 +401,6 @@ public static class NativeSave
                                    string arrayField)
     {
         layout.TryGetValue(arrayField, out string? arrayType);
-
-
-
 
         if (arrayType != null && IsTextArray(arrayType))
         {
@@ -553,9 +439,6 @@ public static class NativeSave
 
             string member = field[(close + 2)..];
 
-
-
-
             bool carried = element < had && element < now;
             if (carried && before.TryGetValue(field, out string? was) &&
                 string.Equals(was, value, StringComparison.Ordinal))
@@ -564,7 +447,6 @@ public static class NativeSave
             string? why = StructElementWritable(classes, className, arrayField, member, value);
             if (why != null)
             {
-
 
                 if (!carried && MeansNothing(value)) continue;
                 return why;
@@ -580,13 +462,9 @@ public static class NativeSave
         return null;
     }
 
-
-
     private static int Length(Dictionary<string, string> fields, string arrayField) =>
         !fields.TryGetValue(arrayField + CountKey, out string? text) ? 0
             : int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) ? n : -1;
-
-
 
     private static bool MeansNothing(string value)
     {
@@ -596,8 +474,6 @@ public static class NativeSave
         return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double n) &&
                n == 0;
     }
-
-
 
     private static PackfileObjects.Instance Resolve(PackfileObjects objects, Change change)
     {
@@ -625,19 +501,12 @@ public static class NativeSave
         var image = PackfileImage.Read(source);
         var objects = new PackfileObjects(image, classes);
 
-
-
-
-
-
-
         var mismatched = HavokClassTypes.Shipped.SignatureProblems(objects.ClassNames());
         if (mismatched.Count > 0)
             throw new InvalidOperationException(
                 "This file's classes are not the ones this build describes, so nothing was written " +
                 $"into its bytes: {mismatched[0]}" +
                 (mismatched.Count > 1 ? $", and {mismatched.Count - 1} more like it." : "."));
-
 
         int adding = 0;
         foreach (var add in plan.Changes.Where(c => c.Added))
@@ -653,15 +522,7 @@ public static class NativeSave
             var names = image.Section("__classnames__")
                 ?? throw new InvalidOperationException("this file has no class name section");
 
-
-
-
-
             int nameAt = NativeAppend.NameOffset(names, add.ClassName, layout.Signature);
-
-
-
-
 
             string expected = "#" + (NativeGraphModel.FirstId + objects.Instances.Count + adding);
             if (add.Value != expected)
@@ -672,8 +533,6 @@ public static class NativeSave
             data.AddVirtual(data.AppendObject(new byte[size]), image.Sections.IndexOf(names), nameAt);
             adding++;
         }
-
-
 
         if (adding > 0) objects = new PackfileObjects(image, classes);
 
@@ -730,27 +589,12 @@ public static class NativeSave
                 throw new InvalidOperationException($"{change} could not be written, so nothing was.");
         }
 
-
-
-
-
-
         FixupOrder.Reorder(image);
-
-
-
 
         if (plan.Gone.Count > 0) NativeRemove.Delete(image, plan.Gone);
 
         return image.Rebuild();
     }
-
-
-
-
-
-
-
 
     private static bool Repoint(PackfileImage image, PackfileObjects objects,
                                 PackfileObjects.Instance instance, Change change)
@@ -771,9 +615,6 @@ public static class NativeSave
         return RepointAt(image, objects, data, at, change.Value);
     }
 
-
-
-
     private static bool RepointAt(PackfileImage image, PackfileObjects objects,
                                   PackfileSection data, int at, string value)
     {
@@ -792,15 +633,6 @@ public static class NativeSave
         return true;
     }
 
-
-
-
-
-
-
-
-
-
     private static bool Resize(PackfileImage image, PackfileObjects objects,
                                PackfileObjects.Instance instance, Change change)
     {
@@ -816,11 +648,6 @@ public static class NativeSave
 
         int run = elements.Length == 0 ? -1 : data.AppendData(new byte[elements.Length * 8]);
         data.SetLocal(at, run);
-
-
-
-
-
 
         var old = objects.ArrayAt(at);
         var entries = data.Globals().ToList();
@@ -855,11 +682,6 @@ public static class NativeSave
         return true;
     }
 
-
-
-
-
-
     private static bool WriteWide(PackfileObjects objects, PackfileObjects.Instance instance,
                                   Change change, int floats, PackfileImage image)
     {
@@ -876,7 +698,6 @@ public static class NativeSave
         return true;
     }
 
-
     private static bool WriteWideInteger(PackfileObjects objects, PackfileObjects.Instance instance,
                                          Change change, string type, PackfileImage image)
     {
@@ -890,11 +711,6 @@ public static class NativeSave
         catch (InvalidOperationException) { return false; }
         return true;
     }
-
-
-
-
-
 
     private static bool ResizeValues(PackfileImage image, PackfileObjects objects,
                                      PackfileObjects.Instance instance, Change change, string type)
@@ -924,20 +740,6 @@ public static class NativeSave
         return true;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static bool ResizeText(PackfileImage image, PackfileObjects objects,
                                    PackfileObjects.Instance instance, Change change)
     {
@@ -950,11 +752,6 @@ public static class NativeSave
                     ? new List<string>()
                     : change.Value.Split(TextSeparator).ToList();
 
-
-
-
-
-
         var old = objects.ArrayAt(at);
         if (old != null && old.Count > 0)
         {
@@ -964,16 +761,12 @@ public static class NativeSave
             data.SetLocals(keep);
         }
 
-
-
         if (names.Count == 0)
         {
             data.SetLocal(at, -1);
             WriteArrayCount(data, at, 0);
             return true;
         }
-
-
 
         var wrote = new List<int>(names.Count);
         foreach (string name in names)
@@ -993,23 +786,6 @@ public static class NativeSave
         WriteArrayCount(data, at, names.Count);
         return true;
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static void Regrow(PackfileImage image, PackfileObjects objects,
                                PackfileObjects.Instance instance, Change change)
@@ -1039,8 +815,6 @@ public static class NativeSave
         if (count > 0)
         {
 
-
-
             data.AlignData(16);
             run = data.AppendData(new byte[count * stride]);
             if (carried > 0) Array.Copy(data.Data, wasAt, data.Data, run, carried * stride);
@@ -1051,8 +825,6 @@ public static class NativeSave
         Move(data.Globals().ToList(), data.SetGlobals, g => g.Source, (g, s) => (s, g.Section, g.Destination));
 
         WriteArrayCount(data, at, count);
-
-
 
         void Move<T>(List<T> entries, Action<IEnumerable<T>> write, Func<T, int> sourceOf,
                      Func<T, int, T> moved)
@@ -1072,12 +844,6 @@ public static class NativeSave
         }
     }
 
-
-
-
-
-
-
     private static bool WriteInElement(PackfileImage image, PackfileObjects objects,
                                        PackfileObjects.Instance instance, Change change)
     {
@@ -1091,8 +857,6 @@ public static class NativeSave
 
         var found = StructMember(elementClass, change.Member);
         if (found == null) return false;
-
-
 
         bool inline = HavokClasses.Shipped.Field(change.ClassName, change.Field)?.Type == "struct";
         int start;
@@ -1182,11 +946,6 @@ public static class NativeSave
         return true;
     }
 
-
-
-
-
-
     private static bool Parses(string value, string type) => NumberCodecs.Parses(value, type);
 
     private static float AsFloat(string value) =>
@@ -1194,7 +953,6 @@ public static class NativeSave
             ? f
             : throw new InvalidOperationException(
                 $"'{value}' is not a number, so it cannot be written into a real field.");
-
 
     private static long AsLong(string value, string type)
     {
@@ -1210,12 +968,6 @@ public static class NativeSave
             $"'{value}' is not a number, so it cannot be written into a {type} field. " +
             "Named values are not resolved here on purpose: guessing one writes the wrong number.");
     }
-
-
-
-
-
-
 
     private static (int Offset, string VType, string VSub, string Owner)? StructMember(string elementClass,
                                                                                         string path)
@@ -1246,11 +998,8 @@ public static class NativeSave
         return null;
     }
 
-
     private static string? ElementClass(string className, string arrayField) =>
         HavokClassTypes.Shipped.Members(className).FirstOrDefault(m => m.Name == arrayField)?.CType;
-
-
 
     private static string? StructElementWritable(HavokClasses classes, string className,
                                                  string arrayField, string member, string value)
@@ -1263,17 +1012,10 @@ public static class NativeSave
         if (found == null)
             return $"{elementClass}.{member} is not a member this build can place";
 
-
-
-
-
         if (found.Value.VType == "TYPE_POINTER")
             return IsReferenceValue(value)
                 ? null
                 : $"{elementClass}.{member} was set to '{value}', which is neither an object id nor null";
-
-
-
 
         int wide = WideFloats(Spelled(found.Value.VType));
         if (wide > 0)
@@ -1299,8 +1041,6 @@ public static class NativeSave
         return null;
     }
 
-
-
     private static string Spelled(string vtype) => vtype switch
     {
         "TYPE_VECTOR4" => "vector4",
@@ -1315,8 +1055,6 @@ public static class NativeSave
         "TYPE_ULONG" => "ulong",
         _ => "",
     };
-
-
 
     private static string EnumStorage(string vsub) => vsub switch
     {
@@ -1343,12 +1081,7 @@ public static class NativeSave
         _ => "",
     };
 
-
     private const string CountKey = "#count";
-
-
-
-
 
     private static void Flatten(Dictionary<string, string> fields, string path, XElement element)
     {
@@ -1360,22 +1093,9 @@ public static class NativeSave
             var inner = p.Elements("hkobject").ToList();
             if (inner.Count == 1) { Flatten(fields, $"{path}.{name}", inner[0]); continue; }
 
-
-
             fields[$"{path}.{name}"] = (p.Value ?? "").Trim();
         }
     }
-
-
-
-
-
-
-
-
-
-
-
 
     private static Dictionary<string, List<Dictionary<string, string>>> ByClass(
         string xml, ISet<string>? skipping = null)
@@ -1392,15 +1112,9 @@ public static class NativeSave
             if (id == null || id.Length < 2 || id[0] != '#' || !id[1..].All(char.IsAsciiDigit))
                 continue;
 
-
-
-
             if (skipping != null && skipping.Contains(id)) continue;
 
             var fields = new Dictionary<string, string>(StringComparer.Ordinal);
-
-
-
 
             fields[IdKey] = element.Attribute("name")?.Value ?? "";
 
@@ -1408,12 +1122,6 @@ public static class NativeSave
             {
                 string? name = p.Attribute("name")?.Value;
                 if (name == null) continue;
-
-
-
-
-
-
 
                 var elements = p.Elements("hkobject").ToList();
                 if (elements.Count > 0)
@@ -1423,18 +1131,6 @@ public static class NativeSave
                         Flatten(fields, $"{name}[{e}]", elements[e]);
                     continue;
                 }
-
-
-
-
-
-
-
-
-
-
-
-
 
                 var strings = p.Elements("hkcstring").ToList();
                 if (strings.Count > 0)

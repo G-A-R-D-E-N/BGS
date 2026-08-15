@@ -6,20 +6,12 @@ using OpenCommonwealth.Services.Hkx;
 
 namespace OpenCommonwealth.Services.Nif;
 
-
-
-
-
-
-
-
 public static class SkinnedMesh
 {
     public sealed class Binding
     {
 
         public int[] ToSkeleton = Array.Empty<int>();
-
 
         public readonly List<string> Unmatched = new();
 
@@ -35,9 +27,6 @@ public static class SkinnedMesh
               (Unmatched.Count > 6 ? $", and {Unmatched.Count - 6} more" : "");
     }
 
-
-
-
     public static Binding Bind(NifShape shape, HkxSkeleton skeleton)
     {
         var byName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -52,14 +41,6 @@ public static class SkinnedMesh
         return binding;
     }
 
-
-
-
-
-
-
-
-
     private static Matrix4x4 Bind(Matrix4x4 stored)
     {
         var m = Matrix4x4.Transpose(stored);
@@ -72,13 +53,6 @@ public static class SkinnedMesh
         m.M44 = 1;
         return m;
     }
-
-
-
-
-
-
-
 
     public static Matrix4x4? BoneMatrix(NifShape shape, Binding binding, AnimationPose.Pose pose,
                                         int bone)
@@ -98,10 +72,6 @@ public static class SkinnedMesh
         return Bind(shape.SkinToBone[bone]) * world;
     }
 
-
-
-
-
     public static Vector3[] Pose(NifShape shape, Binding binding, AnimationPose.Pose pose,
                                  HkxSkeleton skeleton)
     {
@@ -111,8 +81,6 @@ public static class SkinnedMesh
             shape.Vertices.CopyTo(moved);
             return moved;
         }
-
-
 
         var boneMatrix = new Matrix4x4[shape.BoneNames.Count];
         var usable = new bool[shape.BoneNames.Count];
@@ -130,14 +98,6 @@ public static class SkinnedMesh
             boneMatrix[b] = Bind(shape.SkinToBone[b]) * world;
             usable[b] = true;
         }
-
-
-
-
-
-
-
-
 
         var placement = Placement(shape, binding, AnimationPose.ReferencePose(skeleton))
                         ?? Matrix4x4.Identity;
@@ -166,13 +126,6 @@ public static class SkinnedMesh
         return moved;
     }
 
-
-
-
-
-
-
-
     public static Matrix4x4? Placement(NifShape shape, Binding binding, AnimationPose.Pose pose)
     {
         for (int b = 0; b < shape.BoneNames.Count; b++)
@@ -180,25 +133,6 @@ public static class SkinnedMesh
 
         return null;
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     public static float BindError(NifShape shape, Binding binding, HkxSkeleton skeleton) =>
         BindError(shape, binding, skeleton, out _);
@@ -221,9 +155,6 @@ public static class SkinnedMesh
         return worst;
     }
 
-
-
-
     public static float Disagreement(Matrix4x4 a, Matrix4x4 b)
     {
         float worst = 0;
@@ -238,7 +169,6 @@ public static class SkinnedMesh
         return worst;
     }
 
-
     public static bool FullyBound(NifShape shape, Binding binding, int vertex)
     {
         for (int s = 0; s < 4; s++)
@@ -250,9 +180,6 @@ public static class SkinnedMesh
         }
         return true;
     }
-
-
-
 
     public static List<(int From, int To)> Edges(NifShape shape)
     {

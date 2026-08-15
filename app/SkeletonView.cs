@@ -10,15 +10,6 @@ using Vector3 = System.Numerics.Vector3;
 
 namespace BehaviourStudio.App;
 
-
-
-
-
-
-
-
-
-
 public class SkeletonView : Control
 {
     private AnimationPose.Pose? _pose;
@@ -38,16 +29,10 @@ public class SkeletonView : Control
     public string HoveredBone { get; private set; } = "";
     public Action<string>? BoneHovered;
 
-
-
     public bool ShowReference { get; set; }
 
     public int DrawnBones => _pose?.Bones.Count ?? 0;
     public int DrawnEdges => _mesh?.Length ?? 0;
-
-
-
-
 
     private (Vector3 A, Vector3 B)[]? _mesh;
 
@@ -68,8 +53,6 @@ public class SkeletonView : Control
         }
         InvalidateVisual();
     }
-
-
 
     public void Update(AnimationPose.Pose? pose)
     {
@@ -100,9 +83,6 @@ public class SkeletonView : Control
         }
         InvalidateVisual();
     }
-
-
-
 
     private Point Project(Vector3 world)
     {
@@ -143,7 +123,6 @@ public class SkeletonView : Control
                                     Project(_reference.Bones[to].Position));
         }
 
-
         if (_mesh is { Length: > 0 })
         {
             var skin = new StreamGeometry();
@@ -160,8 +139,6 @@ public class SkeletonView : Control
         var bone = new Pen(Ux.MetaBrush, 1.6);
         foreach (var (from, to) in pose.Links)
             ctx.DrawLine(bone, Project(pose.Bones[from].Position), Project(pose.Bones[to].Position));
-
-
 
         foreach (var b in pose.Bones)
         {
@@ -180,8 +157,6 @@ public class SkeletonView : Control
             ctx.DrawText(label, new Point(14, Bounds.Height - 26));
         }
     }
-
-
 
     private void DrawGround(DrawingContext ctx)
     {
@@ -216,7 +191,6 @@ public class SkeletonView : Control
         if (_orbiting)
         {
             _yaw += delta.X * 0.01;
-
 
             _pitch = Math.Clamp(_pitch + delta.Y * 0.01, -1.5, 1.5);
             InvalidateVisual();

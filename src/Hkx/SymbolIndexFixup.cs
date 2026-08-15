@@ -4,16 +4,6 @@ using System.Text.RegularExpressions;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
 public static class SymbolIndexFixup
 {
     public static readonly HashSet<string> EventIdParams = new(StringComparer.Ordinal)
@@ -31,18 +21,10 @@ public static class SymbolIndexFixup
         "variableIndex", "syncVariableIndex", "assignmentVariableIndex",
     };
 
-
-
-
-
-
-
     private static readonly HashSet<string> EventCarriers = new(StringComparer.Ordinal)
     {
         "hkbEventProperty", "hkbEvent", "hkbStateMachineEventPropertyArray",
     };
-
-
 
     private static readonly HashSet<string> NotAnIndex = new(StringComparer.Ordinal)
     {
@@ -69,9 +51,6 @@ public static class SymbolIndexFixup
         public int Start;
         public int Length;
 
-
-
-
         public int ByteAt = -1;
         public int ByteWidth;
 
@@ -83,14 +62,10 @@ public static class SymbolIndexFixup
         public string HolderParam = "";
     }
 
-
-
-
     public readonly record struct EventReference(int Index, string Owner, string Member)
     {
         public override string ToString() => $"{Owner}.{Member}";
     }
-
 
     private static List<Site> Sites(string xml, bool events, out List<string> unrecognised)
     {
@@ -147,7 +122,6 @@ public static class SymbolIndexFixup
             if (isEvent != events) continue;
             if (!int.TryParse(m.Groups["value"].Value, out int value)) continue;
 
-
             string holderClass = owner, holderParam = name;
             if (EventCarriers.Contains(owner))
             {
@@ -182,21 +156,6 @@ public static class SymbolIndexFixup
         return found;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static List<Site> Sites(PackfileObjects objects, HavokClassTypes types, bool events,
                                     out List<string> unrecognised)
     {
@@ -215,11 +174,6 @@ public static class SymbolIndexFixup
         return found;
     }
 
-
-
-
-
-
     private static void Walk(PackfileObjects objects, HavokClassTypes types, int offset,
                              string walking, string owner, string ownerId,
                              string outerClass, string outerParam,
@@ -229,8 +183,6 @@ public static class SymbolIndexFixup
         {
             if (!member.Written) continue;
             int at = offset + member.Offset;
-
-
 
             if (member.VType == "TYPE_STRUCT")
             {
@@ -242,8 +194,6 @@ public static class SymbolIndexFixup
 
             if (member.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")
             {
-
-
 
                 if (member.VSub != "TYPE_STRUCT" || member.CType == null || !types.Knows(member.CType))
                     continue;
@@ -301,7 +251,6 @@ public static class SymbolIndexFixup
         }
     }
 
-
     private static readonly FieldRender.Reference Nothing = (_, _) => "";
 
     public static List<string> UnknownIndexFields(PackfileObjects objects, HavokClassTypes? types = null)
@@ -320,21 +269,10 @@ public static class SymbolIndexFixup
         return found;
     }
 
-
-
-
-
-
-
     public readonly record struct IndexSite(int At, int Width, int Value, string Owner, string Member)
     {
         public override string ToString() => $"{Owner}.{Member} = {Value} at 0x{At:x}";
     }
-
-
-
-
-
 
     public static List<IndexSite> IndexSites(PackfileObjects objects, bool events,
                                              HavokClassTypes? types = null)
@@ -391,7 +329,6 @@ public static class SymbolIndexFixup
         return unknown;
     }
 
-
     public static List<string> ReferencesTo(string xml, bool events, int index)
     {
         var users = new List<string>();
@@ -400,9 +337,6 @@ public static class SymbolIndexFixup
                 users.Add($"{site.HolderClass}.{site.HolderParam}");
         return users;
     }
-
-
-
 
     public static List<EventReference> References(string xml, bool events)
     {
@@ -414,8 +348,6 @@ public static class SymbolIndexFixup
     }
 
     public static List<EventReference> EventReferences(string xml) => References(xml, events: true);
-
-
 
     public readonly record struct Usage(int Index, string Owner, string Member, string ObjectId, string OwnerClass)
     {
@@ -431,9 +363,6 @@ public static class SymbolIndexFixup
         return found;
     }
 
-
-
-
     public static List<Usage> UsagesOf(string xml, bool events, string objectId)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -446,8 +375,6 @@ public static class SymbolIndexFixup
         return found;
     }
 
-
-
     public static List<string> ReferencesAtOrAbove(string xml, bool events, int limit)
     {
         var users = new List<string>();
@@ -457,9 +384,6 @@ public static class SymbolIndexFixup
                           + $"{site.OwnerClass}.{site.Param} uses index {site.Value}");
         return users;
     }
-
-
-
 
     public static string ShiftDown(string xml, bool events, int removedIndex, out int rewritten)
     {
@@ -473,7 +397,6 @@ public static class SymbolIndexFixup
         var edits = new List<Site>();
         foreach (var site in sites)
             if (site.Value > removedIndex) edits.Add(site);
-
 
         edits.Sort((a, b) => b.Start.CompareTo(a.Start));
         foreach (var site in edits)

@@ -4,34 +4,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public sealed class GraphRun
 {
-
-
-
-
-
 
     private static readonly HashSet<string> Opaque = new(StringComparer.Ordinal)
     {
@@ -47,15 +21,11 @@ public sealed class GraphRun
             (Weight < 0.999f ? $" at {Weight * 100:F0}%" : "");
     }
 
-
-
-
     private sealed record Blend(string MachineId, string FromStateId, string ToStateId,
                                 float Duration, float Elapsed)
     {
         public float Fraction => Duration <= 0 ? 1f : Math.Clamp(Elapsed / Duration, 0f, 1f);
     }
-
 
     public sealed record Stop(string ObjectId, string ClassName, string Why)
     {
@@ -69,11 +39,6 @@ public sealed class GraphRun
             $"#{FromStateId} -{Event}-> #{ToStateId} '{ToStateName}'" +
             (Conditional ? $" if {Condition}" : "");
     }
-
-
-
-
-
 
     public sealed record Blocked(string MachineId, string FromStateId, string ToStateId,
                                  string ToStateName, string Event, string Condition)
@@ -93,16 +58,9 @@ public sealed class GraphRun
     private readonly StateRoutes _routes;
     private readonly List<string> _events;
 
-
-
-
-
-
     private readonly Dictionary<string, double> _variables = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SymbolEditor.VariableType> _variableTypes =
         new(StringComparer.Ordinal);
-
-
 
     private readonly Dictionary<string, Expression.Parsed> _parsed = new(StringComparer.Ordinal);
 
@@ -110,35 +68,16 @@ public sealed class GraphRun
     private readonly List<ActiveExpression> _activeExpressions = new();
     private readonly List<ExpressionFailure> _expressionFailures = new();
 
-
-
     public int ConditionsWeighed { get; private set; }
-
 
     private readonly Dictionary<string, string> _in = new(StringComparer.Ordinal);
     private readonly List<Stop> _stops = new();
 
-
-
-
     private readonly Dictionary<string, Blend> _blending = new(StringComparer.Ordinal);
-
-
-
-
-
 
     private readonly Dictionary<string, float> _playing = new(StringComparer.Ordinal);
 
-
-
-
     private Dictionary<string, float>? _wasPlaying;
-
-
-
-
-
 
     private IReadOnlyDictionary<string, ClipTiming.Clip> _clips =
         new Dictionary<string, ClipTiming.Clip>(StringComparer.Ordinal);
@@ -146,15 +85,7 @@ public sealed class GraphRun
     public IReadOnlyList<Stop> Stops => _stops;
     public string RootId { get; private set; } = "";
 
-
-
     public bool Blending => _blending.Count > 0;
-
-
-
-
-
-
 
     public IReadOnlyList<Active> Where()
     {
@@ -202,20 +133,13 @@ public sealed class GraphRun
         }
     }
 
-
     public IReadOnlyList<string> Variables => _variables.Keys.ToList();
-
-
-
 
     public double? ValueOf(string name) =>
         _variables.TryGetValue(name, out double value) ? value : null;
 
     public SymbolEditor.VariableType TypeOf(string name) =>
         _variableTypes.TryGetValue(name, out var type) ? type : SymbolEditor.VariableType.Int32;
-
-
-
 
     public void Set(string name, double value)
     {
@@ -227,20 +151,13 @@ public sealed class GraphRun
 
         _variables[name] = value;
 
-
-
-
         _blocked.Clear();
     }
-
 
     public IReadOnlyList<Blocked> HeldBack => _blocked;
     public IReadOnlyList<ExpressionFailure> ExpressionFailures => _expressionFailures;
     public int ActiveExpressionCount => _activeExpressions.Count;
     public IReadOnlyList<string> ActiveExpressionSources => _activeExpressions.Select(e => e.Source).ToList();
-
-
-
 
     public IReadOnlyList<(StateRoutes.Route Route, string Condition, Expression.Verdict Verdict)> Conditions()
     {
@@ -255,12 +172,6 @@ public sealed class GraphRun
         return found;
     }
 
-
-
-
-
-
-
     public Expression.Verdict Test(string condition)
     {
         if (condition.Length == 0) return Expression.Verdict.True;
@@ -271,11 +182,6 @@ public sealed class GraphRun
         return Expression.Evaluate(parsed, name => ValueOf(name));
     }
 
-
-
-
-
-
     public static GraphRun Start(BehaviourGraphModel model)
     {
         var run = new GraphRun(model);
@@ -285,8 +191,6 @@ public sealed class GraphRun
 
         if (root.Length == 0)
         {
-
-
 
             var pointedAt = model.Objects
                 .SelectMany(o => GraphAuthor.PointsAt(model, o))
@@ -306,17 +210,9 @@ public sealed class GraphRun
         return run;
     }
 
-
-
-
-
-
-
     private void Enter(string generatorId, int depth, HashSet<string> onPath)
     {
         if (generatorId.Length == 0 || depth > 32) return;
-
-
 
         if (!onPath.Add(generatorId)) return;
 
@@ -341,8 +237,6 @@ public sealed class GraphRun
             int start = node.Int("startStateId");
             var into = states.FirstOrDefault(s => s.StateId == start);
 
-
-
             if (_resume != null && _resume.TryGetValue(node.Id, out var was) &&
                 states.Any(s => s.Id == was))
                 into = states.First(s => s.Id == was);
@@ -350,14 +244,11 @@ public sealed class GraphRun
             if (into == null)
             {
 
-
                 _stops.Add(new Stop(node.Id, node.Class,
                     $"its start state {start} is not one of its {states.Count} state(s), so it cannot be entered"));
                 onPath.Remove(generatorId);
                 return;
             }
-
-
 
             if ((node.Ref("startStateIdSelector") ?? "").Length > 0)
                 _stops.Add(new Stop(node.Id, node.Class,
@@ -368,9 +259,6 @@ public sealed class GraphRun
             onPath.Remove(generatorId);
             return;
         }
-
-
-
 
         if (node.Class == "hkbClipGenerator")
         {
@@ -383,25 +271,12 @@ public sealed class GraphRun
         onPath.Remove(generatorId);
     }
 
-
     private void Switch(string machineId, string stateId, int depth, HashSet<string> onPath)
     {
         _in[machineId] = stateId;
         string generator = _model.Get(stateId)?.Ref("generator") ?? "";
         if (generator.Length > 0) Enter(generator, depth + 1, onPath);
     }
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static readonly Dictionary<string, HashSet<string>> Carries = BuildCarriers();
 
@@ -417,10 +292,6 @@ public sealed class GraphRun
                 if (member.CType != "hkbGenerator") continue;
                 if (member.VType is not ("TYPE_POINTER" or "TYPE_ARRAY")) continue;
 
-
-
-
-
                 if (className is "hkbGeneratorTransitionEffect" or "hkbSetBehaviorCommand") continue;
 
                 if (!carriers.TryGetValue(className, out var fields))
@@ -429,32 +300,17 @@ public sealed class GraphRun
             }
         }
 
-
-
         carriers["BSIStateManagerModifierBSiStateData"] = new HashSet<string>(StringComparer.Ordinal) { "pStateMachine" };
         return carriers;
     }
-
-
-
-
-
 
     private static readonly HashSet<string> Wrappers = Carries.Keys
         .Where(c => !c.EndsWith("Generator", StringComparison.Ordinal) && c != "hkbBehaviorGraph" &&
                     c != "hkbStateMachineStateInfo")
         .ToHashSet(StringComparer.Ordinal);
 
-
-
-
-
-
     private IEnumerable<string> Below(HkObject node)
     {
-
-
-
 
         Carries.TryGetValue(node.Class, out var fields);
 
@@ -508,12 +364,6 @@ public sealed class GraphRun
         return new Active(machineId, machine.Str("name"), stateId, state.Int("stateId"), state.Str("name"));
     }
 
-
-
-
-
-
-
     public IReadOnlyList<Fired> Send(string name)
     {
         int id = _events.IndexOf(name);
@@ -523,8 +373,6 @@ public sealed class GraphRun
                 "An event nothing listens for and an event that does not exist are different answers.");
         return Send(id);
     }
-
-
 
     public bool Declares(string name) => _events.Contains(name);
 
@@ -536,8 +384,6 @@ public sealed class GraphRun
         var moved = new Dictionary<string, string>(StringComparer.Ordinal);
         _blocked.Clear();
 
-
-
         foreach (var (machineId, stateId) in _in.ToList())
         {
             var candidates = _routes.LeavingState(stateId)
@@ -547,14 +393,6 @@ public sealed class GraphRun
                 .ThenBy(x => x.Detail.Order)
                 .ToList();
 
-
-
-
-
-
-
-
-
             (StateRoutes.Route Route, (int Priority, int Order, string Condition, float Duration) Detail)? pick = null;
             foreach (var held in candidates)
             {
@@ -563,13 +401,13 @@ public sealed class GraphRun
                 if (verdict == Expression.Verdict.True)
                 {
                     pick = held;
-                    break;                                  // highest-priority True wins
+                    break;
                 }
                 var to = _model.Get(held.Route.ToId);
                 _blocked.Add(new Blocked(machineId, stateId, held.Route.ToId, to?.Str("name") ?? "",
                                          held.Route.Event, held.Detail.Condition));
                 if (verdict == Expression.Verdict.Unknown)
-                    break;                                  // cannot decide past an Unknown
+                    break;
             }
 
             if (pick is not { } selected) continue;
@@ -580,16 +418,10 @@ public sealed class GraphRun
 
             moved[machineId] = selected.Route.ToId;
 
-
-
-
-
             if (selected.Detail.Duration > 0 && selected.Route.ToId != stateId)
                 _blending[machineId] = new Blend(machineId, stateId, selected.Route.ToId, selected.Detail.Duration, 0);
             else
                 _blending.Remove(machineId);
-
-
 
             if (selected.Route.IntoId.Length > 0)
             {
@@ -601,17 +433,6 @@ public sealed class GraphRun
         if (moved.Count > 0) Rebuild(moved);
         return fired;
     }
-
-
-
-
-
-
-
-
-
-
-
 
     public IReadOnlyList<Fired> Advance(float seconds)
     {
@@ -630,10 +451,6 @@ public sealed class GraphRun
 
         if (_clips.Count == 0 || _playing.Count == 0) return fired;
 
-
-
-
-
         var raised = new List<string>();
 
         foreach (string clipId in _playing.Keys.ToList())
@@ -646,15 +463,9 @@ public sealed class GraphRun
             foreach (var trigger in clip.Triggers)
             {
 
-
-
                 if (trigger.At > from && trigger.At <= to && !raised.Contains(trigger.Event))
                     raised.Add(trigger.Event);
             }
-
-
-
-
 
             _playing[clipId] = clip.Looping && to >= clip.Seconds
                 ? to % clip.Seconds
@@ -698,22 +509,13 @@ public sealed class GraphRun
         _expressionFailures.Add(new ExpressionFailure(expression.ModifierId, expression.Index, expression.Source, refusal));
     }
 
-
     public float? PlayingAt(string clipId) => _playing.TryGetValue(clipId, out float at) ? at : null;
-
 
     public IReadOnlyList<(ClipTiming.Clip Clip, float At)> Playing() =>
         _playing.Where(p => _clips.ContainsKey(p.Key))
                 .Select(p => (_clips[p.Key], p.Value))
                 .OrderBy(p => p.Item1.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-
-
-
-
-
-
-
 
     public void Time(IReadOnlyDictionary<string, ClipTiming.Clip> clips)
     {
@@ -728,20 +530,7 @@ public sealed class GraphRun
         }
     }
 
-
-
     public void Settle() => _blending.Clear();
-
-
-
-
-
-
-
-
-
-
-
 
     private void Rebuild(Dictionary<string, string> moved)
     {
@@ -759,12 +548,7 @@ public sealed class GraphRun
         _wasPlaying = null;
     }
 
-
     private Dictionary<string, string>? _resume;
-
-
-
-
 
     private (int Priority, int Order, string Condition, float Duration) Detail(StateRoutes.Route route)
     {
@@ -806,11 +590,6 @@ public sealed class GraphRun
         return (0, 0, "", 0);
     }
 
-
-
-
-
-
     private float TransitionDuration(string? effectRef)
     {
         if (string.IsNullOrEmpty(effectRef) || effectRef == "null") return 0;
@@ -830,7 +609,6 @@ public sealed class GraphRun
             System.Globalization.CultureInfo.InvariantCulture, out float d) && d > 0 ? d : 0;
     }
 
-
     public sealed record Reach(
         IReadOnlyDictionary<string, SortedSet<string>> EventsInto,
         IReadOnlyCollection<string> Reachable,
@@ -838,36 +616,11 @@ public sealed class GraphRun
         IReadOnlyCollection<StateRoutes.Route> Dead,
         int Conditional);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     public Reach Reachable()
     {
         var reached = new HashSet<string>(StringComparer.Ordinal);
         var into = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
         int conditional = 0;
-
-
-
-
-
-
-
-
-
-
 
         var pending = new Queue<string>();
         var descended = new HashSet<string>(StringComparer.Ordinal);
@@ -883,8 +636,6 @@ public sealed class GraphRun
         while (pending.Count > 0)
         {
             string stateId = pending.Dequeue();
-
-
 
             if (descended.Add(stateId))
             {

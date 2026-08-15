@@ -5,14 +5,6 @@ using System.Text.RegularExpressions;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
 public static class BehaviourDiff
 {
     public enum Kind
@@ -45,10 +37,6 @@ public static class BehaviourDiff
             : $"{Added} added, {Removed} removed, {Changed} value{(Changed == 1 ? "" : "s")} changed";
     }
 
-
-
-
-
     private const int Window = 400;
 
     public static Result Compare(RepackCheck.Census left, RepackCheck.Census right)
@@ -66,7 +54,6 @@ public static class BehaviourDiff
             if (skipA < 0)
             {
 
-
                 break;
             }
 
@@ -81,8 +68,6 @@ public static class BehaviourDiff
 
     private static bool Same(RepackCheck.Entry x, RepackCheck.Entry y) =>
         x.Class == y.Class && x.Body == y.Body;
-
-
 
     private static (int SkipA, int SkipB) NextSync(
         IReadOnlyList<RepackCheck.Entry> a, IReadOnlyList<RepackCheck.Entry> b, int i, int j)
@@ -100,9 +85,6 @@ public static class BehaviourDiff
 
         return (-1, -1);
     }
-
-
-
 
     private static void Emit(Result result, List<RepackCheck.Entry> gone, List<RepackCheck.Entry> came)
     {
@@ -151,14 +133,11 @@ public static class BehaviourDiff
         foreach (Match m in NamedParam.Matches(body))
         {
 
-
             string name = m.Groups["name"].Value;
             if (!fields.ContainsKey(name)) fields[name] = m.Groups["value"].Value.Trim();
         }
         return fields;
     }
-
-
 
     private static string Name(string body)
     {

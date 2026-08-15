@@ -76,7 +76,6 @@ public static class PapyrusEvents
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
         {
-            // A tree can change while it is being scanned. Keep the useful results collected so far.
         }
 
         foreach (var list in index.ByEvent.Values) list.Sort(StringComparer.OrdinalIgnoreCase);

@@ -77,7 +77,6 @@ public sealed class ProjectReportTests
     {
         string csv = CsvForFormula(value);
 
-        // The quotes matter: without them the blank the formula hides behind is lost on re-import.
         Assert.Contains("\"'" + value + "\"", csv, StringComparison.Ordinal);
     }
 
@@ -135,7 +134,6 @@ public sealed class ProjectReportTests
     {
         var chain = new ProjectChain { Root = "project" };
         var result = new ProjectCheck.Result();
-        // Deliberately untrimmed: the leading blank is the thing under test.
         var file = new ProjectCheck.FileResult { Name = value, Path = value };
         result.Files.Add(file);
         return ProjectReport.Render(chain, result, ProjectReport.Format.Csv);

@@ -42,8 +42,6 @@ public static class TemplateStore
     private static readonly object WriteGate = new();
     private static readonly TimeSpan WriteLockTimeout = TimeSpan.FromSeconds(5);
 
-    // Runs after the staged HKX is published but before the descriptor becomes visible.
-    // Tests use this to prove rollback; production leaves it null.
     internal static Action? BeforeDescriptionPublishForTest { get; set; }
     internal static Action? BeforeSourceStageForTest { get; set; }
 
@@ -151,8 +149,6 @@ public static class TemplateStore
             StageBytes(sourceBytes, stagedSource);
             WriteDescription(template, stagedDescription);
 
-            // The descriptor is the visibility marker. Publish the complete HKX first and the
-            // complete descriptor last, so All() can never observe a half-created template.
             File.Move(stagedSource, source, overwrite: true);
             sourcePublished = true;
 

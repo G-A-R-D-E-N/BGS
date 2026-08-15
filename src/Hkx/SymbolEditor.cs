@@ -5,18 +5,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
 public static class SymbolEditor
 {
     public enum VariableType { Int32, Real, Bool }
@@ -80,8 +68,6 @@ public static class SymbolEditor
         return rows.Select(r => r.TryGetValue("value", out var v) ? v : "").ToList();
     }
 
-
-
     public static string EncodeValue(VariableType type, string text)
     {
         switch (type)
@@ -135,14 +121,12 @@ public static class SymbolEditor
         var values = VariableValues(BehaviourGraphModel.Parse(xml));
         if (index < 0 || index >= values.Count) throw new ArgumentOutOfRangeException(nameof(index));
 
-
         xml = HkxTextEdit.ArrayRemoveAt(xml, ids[0], "wordVariableValues", index);
         return HkxTextEdit.ArrayInsertAt(xml, ids[0], "wordVariableValues", index,
             "                <hkobject>\n" +
             $"                    <hkparam name=\"value\">{encodedValue}</hkparam>\n" +
             "                </hkobject>");
     }
-
 
     public static string AddVariable(string xml, string name, VariableType type, out int index)
     {
@@ -180,8 +164,6 @@ public static class SymbolEditor
         return xml;
     }
 
-
-
     public static List<(string Min, string Max)> VariableBounds(BehaviourGraphModel model)
     {
         var data = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraphData");
@@ -194,16 +176,6 @@ public static class SymbolEditor
 
         return bounds;
     }
-
-
-
-
-
-
-
-
-
-
 
     public static string SetVariableBounds(string xml, int index, string encodedMin, string encodedMax)
     {
@@ -219,8 +191,6 @@ public static class SymbolEditor
         int have = Audit(BehaviourGraphModel.Parse(xml)).Bounds;
         for (int i = have; i <= index; i++)
             xml = HkxTextEdit.ArrayAppend(xml, dataIds[0], "variableBounds", BoundsElement());
-
-
 
         xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], "variableBounds", index);
         return HkxTextEdit.ArrayInsertAt(xml, dataIds[0], "variableBounds", index,
@@ -262,10 +232,6 @@ public static class SymbolEditor
         return xml;
     }
 
-
-
-
-
     public static string RemoveVariable(string xml, int index, bool force, out List<string> blockers) =>
         Remove(xml, variable: true, index, force, out blockers);
 
@@ -291,8 +257,6 @@ public static class SymbolEditor
             var before = Audit(BehaviourGraphModel.Parse(xml));
             xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], variable ? "variableInfos" : "eventInfos", index);
 
-
-
             if (variable && index < before.Bounds)
                 xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], "variableBounds", index);
         }
@@ -306,8 +270,6 @@ public static class SymbolEditor
 
         return SymbolIndexFixup.ShiftDown(xml, events: !variable, index, out _);
     }
-
-
 
     public static string Rename(string xml, bool variable, int index, string newName)
     {

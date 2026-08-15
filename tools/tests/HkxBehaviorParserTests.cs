@@ -15,7 +15,6 @@ public class HkxBehaviorParserTests
         try
         {
             byte[] bytes = MinimalBehaviorPackfile();
-            // First section begins at 0x40 with no predicates. Corrupt its absolute data start.
             BitConverter.GetBytes(int.MaxValue).CopyTo(bytes, 0x40 + 0x14);
             File.WriteAllBytes(path, bytes);
 

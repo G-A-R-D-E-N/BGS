@@ -4,38 +4,10 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class ClassFields
 {
 
-
     private const int Deepest = 8;
-
-
-
-
-
-
-
-
-
-
-
 
     public sealed record Field(string Name, string Owner, int At, HavokClassTypes.Member Member,
                                int Element = 0, string Path = "", string Group = "")
@@ -43,21 +15,13 @@ public static class ClassFields
         public override string ToString() => $"{Owner}.{Name} at 0x{At:x}";
     }
 
-
-
     public static List<Field>? Of(PackfileObjects objects, PackfileObjects.Instance instance,
                                   HavokClassTypes? types = null) =>
         Walk(objects, types ?? HavokClassTypes.Shipped, instance.ClassName, instance.Offset, 0, "", "");
 
-
     public static List<string>? NamesOf(PackfileObjects objects, PackfileObjects.Instance instance,
                                         HavokClassTypes? types = null) =>
         Of(objects, instance, types)?.Select(f => f.Name).ToList();
-
-
-
-
-
 
     private static List<Field>? Walk(PackfileObjects objects, HavokClassTypes types,
                                      string className, int at, int depth, string under, string group)
@@ -74,8 +38,6 @@ public static class ClassFields
 
             if (member.VType == "TYPE_STRUCT")
             {
-
-
 
                 if (member.CType == null) return null;
 
@@ -105,12 +67,7 @@ public static class ClassFields
                 continue;
             }
 
-
-
             if (member.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY") continue;
-
-
-
 
             if (member.ArrSize > 0)
             {

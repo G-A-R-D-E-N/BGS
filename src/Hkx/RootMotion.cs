@@ -6,25 +6,8 @@ using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class RootMotion
 {
-
-
-
-
 
     public sealed record Sample(Vector3 Position, float TurnRadians)
     {
@@ -35,7 +18,6 @@ public static class RootMotion
     public sealed class Motion
     {
 
-
         public Vector3 Up = Vector3.UnitZ;
         public Vector3 Forward = Vector3.UnitY;
 
@@ -43,9 +25,6 @@ public static class RootMotion
         public readonly List<Sample> Samples = new();
 
         public bool Any => Samples.Count > 0;
-
-
-
 
         public Vector3 Travel => Samples.Count > 1 ? Samples[^1].Position - Samples[0].Position
                                                    : Vector3.Zero;
@@ -57,10 +36,6 @@ public static class RootMotion
                  : $"{Samples.Count} samples over {Duration:F2}s, travelling {Travel.Length():F1} units " +
                    $"and turning {Turn * 180 / MathF.PI:F0} degrees";
     }
-
-
-
-
 
     public static Motion Read(byte[] hkx, HavokClassTypes? types = null)
     {
@@ -87,7 +62,6 @@ public static class RootMotion
 
         motion.Duration = objects.ReadFloat(frame, "duration") ?? 0;
 
-
         var samples = objects.ReadValueArray(frame, "referenceFrameSamples", 16,
             (bytes, at) => new Sample(
                 new Vector3(BitConverter.ToSingle(bytes, at),
@@ -101,12 +75,6 @@ public static class RootMotion
 
     public static Motion Read(string path, HavokClassTypes? types = null) =>
         Read(InputFilePolicy.ReadHkx(path), types);
-
-
-
-
-
-
 
     public static Sample At(Motion motion, float fraction)
     {

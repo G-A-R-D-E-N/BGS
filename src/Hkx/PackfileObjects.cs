@@ -6,18 +6,6 @@ using System.Text;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
 public sealed class PackfileObjects
 {
     public sealed record Instance(int Offset, string ClassName)
@@ -30,11 +18,7 @@ public sealed class PackfileObjects
     private readonly HavokClasses _classes;
     private readonly List<Instance> _instances = new();
 
-
-
-
     private readonly Dictionary<int, int> _pointsAt = new();
-
 
     private readonly Dictionary<int, Instance> _startsAt = new();
 
@@ -57,16 +41,10 @@ public sealed class PackfileObjects
         foreach (var instance in _instances) _startsAt[instance.Offset] = instance;
         foreach (var (source, destination) in _data.Locals()) _pointsAt[source] = destination;
 
-
-
-
-
         int self = image.Sections.IndexOf(_data);
         foreach (var (source, section, destination) in _data.Globals())
             if (section == self) _pointsAt[source] = destination;
     }
-
-
 
     private string? NameAt(int at)
     {
@@ -77,8 +55,6 @@ public sealed class PackfileObjects
         return Encoding.ASCII.GetString(_classNames.Data, at, end - at);
     }
 
-
-
     public int IndexOf(Instance instance)
     {
         for (int i = 0; i < _instances.Count; i++)
@@ -88,9 +64,6 @@ public sealed class PackfileObjects
 
     public IEnumerable<Instance> OfClass(string className) =>
         _instances.Where(i => i.ClassName == className);
-
-
-
 
     public int? FieldAt(Instance instance, string field)
     {
@@ -103,24 +76,11 @@ public sealed class PackfileObjects
         return at >= 0 && at < _data.Data.Length ? at : null;
     }
 
-
-
-
-
-
-
     public float? ReadFloatAt(int at) =>
         at < 0 || at + 4 > _data.Data.Length ? null : BitConverter.ToSingle(_data.Data, at);
 
     public int? ReadIntAt(int at) =>
         at < 0 || at + 4 > _data.Data.Length ? null : BitConverter.ToInt32(_data.Data, at);
-
-
-
-
-
-
-
 
     public int? ReadNarrowAt(int at, int width)
     {
@@ -131,16 +91,11 @@ public sealed class PackfileObjects
         return value;
     }
 
-
-
     public ulong? ReadULongAt(int at) =>
         at < 0 || at + 8 > _data.Data.Length ? null : BitConverter.ToUInt64(_data.Data, at);
 
     public long? ReadLongAt(int at) =>
         at < 0 || at + 8 > _data.Data.Length ? null : BitConverter.ToInt64(_data.Data, at);
-
-
-
 
     public float[]? ReadFloatsAt(int at, int count)
     {
@@ -151,13 +106,7 @@ public sealed class PackfileObjects
         return values;
     }
 
-
-
-
     public string? ReadStringAt(int at) => TextAt(Aim(at));
-
-
-
 
     public Instance? ReadRefAt(int at, out bool wasNull)
     {
@@ -199,8 +148,6 @@ public sealed class PackfileObjects
         return values;
     }
 
-
-
     public IReadOnlyList<T>? ReadValueArrayAt<T>(int at, int width, Func<byte[], int, T> read)
     {
         if (width <= 0) return null;
@@ -241,12 +188,7 @@ public sealed class PackfileObjects
         return end < 0 ? null : Encoding.UTF8.GetString(_data.Data, destination.Value, end - destination.Value);
     }
 
-
-
     private int? Aim(int at) => _pointsAt.TryGetValue(at, out int destination) ? destination : null;
-
-
-
 
     public sealed record Elements(int At, int Count);
 
@@ -255,9 +197,6 @@ public sealed class PackfileObjects
         int? at = FieldAt(instance, field);
         return at == null ? null : ArrayAt(at.Value);
     }
-
-
-
 
     public Elements? ArrayAt(int at)
     {
@@ -285,8 +224,6 @@ public sealed class PackfileObjects
         return array;
     }
 
-
-
     public IEnumerable<(uint Signature, string Name)> ClassNames()
     {
         var blob = _classNames.Data;
@@ -310,9 +247,6 @@ public sealed class PackfileObjects
                                                Func<byte[], int, T> read) =>
         FieldAt(instance, field) is { } at ? ReadValueArrayAt(at, width, read) : null;
 
-
-
-
     public bool WriteFloat(Instance instance, string field, float value)
     {
         int? at = FieldAt(instance, field);
@@ -331,12 +265,6 @@ public sealed class PackfileObjects
         return true;
     }
 
-
-
-
-
-
-
     public bool WriteString(Instance instance, string field, string value)
     {
         int? at = FieldAt(instance, field);
@@ -351,12 +279,9 @@ public sealed class PackfileObjects
         int landed = _data.AppendAligned(withTerminator, PackfileSection.StringAlignment);
         _data.SetLocal(at.Value, landed);
 
-
         _pointsAt[at.Value] = landed;
         return true;
     }
-
-
 
     public (int Known, int Unknown) Coverage()
     {

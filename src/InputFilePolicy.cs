@@ -5,9 +5,6 @@ namespace OpenCommonwealth.Services;
 
 internal static class InputFilePolicy
 {
-    // Fallout 4 HKX and NIF assets are expected to be far smaller than this. The deliberately
-    // generous ceiling keeps unusual mod assets compatible while preventing multi-gigabyte or
-    // sparse-file inputs from being allocated wholesale before their structure is validated.
     internal const long MaximumHkxBytes = 512L * 1024 * 1024;
     internal const long MaximumNifBytes = 512L * 1024 * 1024;
 

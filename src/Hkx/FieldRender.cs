@@ -4,49 +4,16 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class FieldRender
 {
 
-
     public delegate string Reference(PackfileObjects.Instance? target, bool wasNull);
-
-
-
-
 
     public delegate string Real(float value);
 
-
     public static readonly Real Shortest = value => value.ToString("R");
 
-
-
     public static readonly Real ReferenceText = HkxNumber.Text;
-
-
-
-
-
-
-
-
-
-
-
 
     public static string? Render(PackfileObjects objects, int at, string owner,
                                  HavokClassTypes.Member member, Reference reference,
@@ -61,23 +28,13 @@ public static class FieldRender
             long? value = Number(objects, at, member.VSub);
             if (value == null) return null;
 
-
-
-
-
             string? name = types.NameOf(owner, member, value.Value);
             long printed = Unsigned(value.Value, member.VSub);
 
-
-
             if (name != null) return $"{printed}:{name}";
-
-
 
             return expected == null || long.TryParse(expected, out _) ? printed.ToString() : null;
         }
-
-
 
         if (member.ArrSize > 0) at += element * Width(member.VType);
 
@@ -92,8 +49,6 @@ public static class FieldRender
             case "TYPE_INT8" or "TYPE_UINT8" or "TYPE_INT16" or "TYPE_UINT16"
                 or "TYPE_INT32" or "TYPE_UINT32":
 
-
-
                 return Narrow(objects.ReadNarrowAt(at, Bytes(member.VType)), member.VType);
 
             case "TYPE_ULONG":
@@ -102,8 +57,6 @@ public static class FieldRender
 
             case "TYPE_VECTOR4":
             case "TYPE_QUATERNION": return Floats(objects.ReadFloatsAt(at, 4), real);
-
-
 
             case "TYPE_ROTATION":
             case "TYPE_MATRIX3": return Floats(objects.ReadFloatsAt(at, 12), real);
@@ -118,8 +71,6 @@ public static class FieldRender
             }
 
             case "TYPE_ARRAY": return Array(objects, at, member, reference, real, types);
-
-
 
             default: return null;
         }
@@ -145,8 +96,6 @@ public static class FieldRender
                 return values == null ? null : List(values.Count, values.Select(v => v ?? "∅"));
             }
 
-
-
             case "TYPE_STRUCT":
             {
                 if (member.CType != null && types[member.CType]?.Size is int stride && stride > 0)
@@ -164,10 +113,6 @@ public static class FieldRender
             case "TYPE_QSTRANSFORM": return Grouped(objects, at, 48, 12, real);
             case "TYPE_TRANSFORM":
             case "TYPE_MATRIX4": return Grouped(objects, at, 64, 16, real);
-
-
-
-
 
             case "TYPE_BOOL":
             case "TYPE_CHAR":
@@ -197,8 +142,6 @@ public static class FieldRender
         }
     }
 
-
-
     public static long? Number(PackfileObjects objects, int at, string width)
     {
         int? whole = objects.ReadIntAt(at);
@@ -215,7 +158,6 @@ public static class FieldRender
         };
     }
 
-
     public static long Unsigned(long value, string width) => width switch
     {
         "TYPE_INT8" or "TYPE_UINT8" or "TYPE_CHAR" => value & 0xFF,
@@ -223,8 +165,6 @@ public static class FieldRender
         "TYPE_INT32" => value & 0xFFFFFFFFL,
         _ => value,
     };
-
-
 
     private static int Bytes(string vtype) => vtype switch
     {
@@ -245,14 +185,11 @@ public static class FieldRender
         _ => 4,
     };
 
-
     public static string Plain(string rendered)
     {
         int colon = rendered.IndexOf(':');
         return colon > 0 && long.TryParse(rendered[..colon], out _) ? rendered[(colon + 1)..] : rendered;
     }
-
-
 
     private static string? Grouped(PackfileObjects objects, int at, int stride, int floats, Real real)
     {
@@ -262,8 +199,6 @@ public static class FieldRender
                                                                .ToArray());
         return all == null ? null : List(all.Count, all.Select(e => Floats(e, real)!));
     }
-
-
 
     private static string? Narrow(int? value, string vtype)
     {
@@ -278,9 +213,6 @@ public static class FieldRender
             _ => raw.ToString(),
         };
     }
-
-
-
 
     public static string? Floats(float[]? values, Real? real = null)
     {
@@ -301,8 +233,6 @@ public static class FieldRender
 
     public static string List(int count, IEnumerable<string> tokens) =>
         $"[{count}: {string.Join("|", tokens)}]";
-
-
 
     public static string List(int count, string what) => count == 0 ? "[0: ]" : $"[{count}: {what}]";
 }

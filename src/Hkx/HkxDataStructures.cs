@@ -42,20 +42,11 @@ public class HkxTrackData
     public List<Quaternion> Rotations { get; set; } = new();
     public List<Vector3> Scales { get; set; } = new();
 
-
-
-
-
-
-
     public bool[] TranslationAnimated { get; } = new bool[3];
     public bool[] ScaleAnimated { get; } = new bool[3];
     public bool RotationAnimated { get; set; }
 
     public bool AnyTranslationAnimated => TranslationAnimated[0] || TranslationAnimated[1] || TranslationAnimated[2];
-
-
-
 
     public static bool IsScaled(HkxTrackData track)
     {
@@ -92,9 +83,6 @@ public class HkxAnimationData
     public string OriginalSkeletonName { get; set; } = "";
     public int BlendHint { get; set; }
 
-
-
-
     public string AnimationClass { get; set; } = "";
 
     public static readonly string[] DecodedAnimationClasses =
@@ -110,9 +98,6 @@ public class HkxAnimationData
         AnimationClass.Length > 0 && Array.IndexOf(DecodedAnimationClasses, AnimationClass) < 0;
 
     public HkxSkeleton? Skeleton { get; set; }
-
-
-
 
     public int FrameAt(float fraction)
     {

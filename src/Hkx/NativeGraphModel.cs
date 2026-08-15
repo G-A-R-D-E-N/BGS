@@ -4,35 +4,10 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class NativeGraphModel
 {
 
-
-
     public const int FirstId = 90;
-
-
-
 
     public static BehaviourGraphModel? From(PackfileObjects objects, HavokClassTypes? types = null)
     {
@@ -63,7 +38,6 @@ public static class NativeGraphModel
         return model;
     }
 
-
     private static void Fill(PackfileObjects objects, HavokClassTypes types, HkObject obj,
                             int offset, string className, FieldRender.Reference reference)
     {
@@ -74,7 +48,6 @@ public static class NativeGraphModel
 
             if (member.VType == "TYPE_STRUCT")
             {
-
 
                 if (member.CType != null && types.Knows(member.CType))
                 {
@@ -93,8 +66,6 @@ public static class NativeGraphModel
             if (member.ArrSize > 0)
             {
 
-
-
                 for (int e = 0; e < member.ArrSize; e++)
                     obj.Scalars[member.Name + (e + 1)] =
                         Text(objects, at, className, member, reference, e, types);
@@ -104,11 +75,6 @@ public static class NativeGraphModel
             obj.Scalars[member.Name] = Text(objects, at, className, member, reference, 0, types);
         }
     }
-
-
-
-
-
 
     private static Dictionary<string, string> Flatten(PackfileObjects objects, HavokClassTypes types,
                                                       int offset, string className,
@@ -149,15 +115,6 @@ public static class NativeGraphModel
         return fields;
     }
 
-
-
-
-
-
-
-
-
-
     private static void Leak(PackfileObjects objects, HavokClassTypes types, HkObject obj,
                              int offset, string className, string under)
     {
@@ -174,12 +131,6 @@ public static class NativeGraphModel
             foreach (string? value in values) list.Add(Trimmed(Escaped(value ?? "")));
         }
     }
-
-
-
-
-
-
 
     private static void Array(PackfileObjects objects, HavokClassTypes types, HkObject obj, int at,
                               HavokClassTypes.Member member, FieldRender.Reference reference)
@@ -210,8 +161,6 @@ public static class NativeGraphModel
         if (member.VSub is "TYPE_STRINGPTR" or "TYPE_CSTRING")
         {
 
-
-
             var values = objects.ReadStringArrayAt(at);
             obj.Lists[member.Name] = values == null
                 ? new List<string>()
@@ -219,16 +168,11 @@ public static class NativeGraphModel
             return;
         }
 
-
-
-
-
         string joined = string.Join(" ", Elements(objects, types, at, member, reference));
         obj.Lists[member.Name] = joined
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .ToList();
     }
-
 
     internal static IEnumerable<string> Elements(PackfileObjects objects, HavokClassTypes types, int at,
                                                  HavokClassTypes.Member member,
@@ -243,9 +187,6 @@ public static class NativeGraphModel
             yield break;
         }
 
-
-
-
         int stride = ElementWidth(member.VSub);
         if (stride <= 0) yield break;
 
@@ -258,35 +199,17 @@ public static class NativeGraphModel
                                             null, 0, types, FieldRender.ReferenceText) ?? "";
     }
 
-
-
-
-
-
     internal static string Trimmed(string value) => value.Trim();
-
-
-
-
 
     internal static string Text(PackfileObjects objects, int at, string owner,
                                HavokClassTypes.Member member, FieldRender.Reference reference,
                                int element, HavokClassTypes types, bool trim = true)
     {
 
-
-
-
-
         if (member.VType is "TYPE_ENUM" or "TYPE_FLAGS")
         {
             long? value = FieldRender.Number(objects, at, member.VSub);
             if (value == null) return "";
-
-
-
-
-
 
             long printed = FieldRender.Unsigned(value.Value, member.VSub);
 
@@ -308,17 +231,6 @@ public static class NativeGraphModel
 
     private static readonly IReadOnlyDictionary<string, long> Empty =
         new Dictionary<string, long>(StringComparer.Ordinal);
-
-
-
-
-
-
-
-
-
-
-
 
     internal static string Escaped(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\r", "&#13;");

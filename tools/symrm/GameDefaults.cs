@@ -7,24 +7,6 @@ using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.Tools;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class GameDefaults
 {
     public sealed record Found(string ClassName, int ObjectSize, int Members, int Version,
@@ -38,7 +20,6 @@ public static class GameDefaults
     {
         public override string ToString() => $"{ClassName}: {Why}";
     }
-
 
     private sealed class Image
     {
@@ -94,11 +75,6 @@ public static class GameDefaults
         }
     }
 
-
-
-
-
-
     public static (List<Found> Read, List<Refusal> Refused) Of(string exePath, string symbolDump,
                                                                HavokClassTypes? types = null)
     {
@@ -112,7 +88,6 @@ public static class GameDefaults
         {
             if (!types.Knows(className))
             {
-
 
                 continue;
             }
@@ -155,7 +130,6 @@ public static class GameDefaults
         return (read, refused);
     }
 
-
     private static string? Spell(Image image, int at, HavokClassTypes.Member member,
                                  HavokClassTypes types, string className)
     {
@@ -185,8 +159,6 @@ public static class GameDefaults
 
             case "TYPE_REAL":
 
-
-
                 return BitConverter.ToSingle(image.Bytes, at).ToString("G9", CultureInfo.InvariantCulture);
 
             case "TYPE_VECTOR4":
@@ -194,8 +166,6 @@ public static class GameDefaults
                 return "(" + string.Join(" ", Enumerable.Range(0, 4)
                     .Select(i => BitConverter.ToSingle(image.Bytes, at + i * 4)
                                              .ToString("G9", CultureInfo.InvariantCulture))) + ")";
-
-
 
             case "TYPE_ENUM":
             case "TYPE_FLAGS":
@@ -217,12 +187,6 @@ public static class GameDefaults
     private sealed record Call(ulong Name, ulong Parent, int ObjectSize, ulong Defaults,
                                int Members, int Version);
 
-
-
-
-
-
-
     private static Call? ReadCall(Image image, int at, int length, ulong va)
     {
         var reg = new Dictionary<int, ulong>();
@@ -235,24 +199,17 @@ public static class GameDefaults
             int p = at + i;
             ulong here = va + (ulong)i;
 
-
             if (bytes[p] == 0x48 && bytes[p + 1] == 0x83 && (bytes[p + 2] == 0xEC || bytes[p + 2] == 0xC4))
             { i += 4; continue; }
 
-
             if (bytes[p] == 0xC7 && bytes[p + 1] == 0x44 && bytes[p + 2] == 0x24)
             { stack[bytes[p + 3]] = BitConverter.ToUInt32(bytes, p + 4); i += 8; continue; }
-
 
             if (bytes[p] == 0x33 && bytes[p + 1] == 0xC9) { reg[1] = 0; i += 2; continue; }
             if (bytes[p] == 0x33 && bytes[p + 1] == 0xD2) { reg[2] = 0; i += 2; continue; }
             if (bytes[p] == 0x33 && bytes[p + 1] == 0xC0) { reg[0] = 0; i += 2; continue; }
             if (bytes[p] == 0x45 && bytes[p + 1] == 0x33 && bytes[p + 2] == 0xC0) { reg[8] = 0; i += 3; continue; }
             if (bytes[p] == 0x45 && bytes[p + 1] == 0x33 && bytes[p + 2] == 0xC9) { reg[9] = 0; i += 3; continue; }
-
-
-
-
 
             if (bytes[p] == 0x8D || ((bytes[p] is 0x48 or 0x4C or 0x44) && bytes[p + 1] == 0x8D))
             {
@@ -270,8 +227,6 @@ public static class GameDefaults
                     i += (op - p) + 6;
                     continue;
                 }
-
-
 
                 if (rm == 4) return null;
 
@@ -292,7 +247,6 @@ public static class GameDefaults
                 continue;
             }
 
-
             if (bytes[p] == 0x48 && bytes[p + 1] == 0x89 && bytes[p + 3] == 0x24)
             {
                 int which = bytes[p + 2] switch { 0x44 => 0, 0x4C => 1, 0x54 => 2, _ => -1 };
@@ -301,7 +255,6 @@ public static class GameDefaults
                 i += 5;
                 continue;
             }
-
 
             if (bytes[p] == 0x89 && bytes[p + 2] == 0x24)
             {
@@ -312,12 +265,10 @@ public static class GameDefaults
                 continue;
             }
 
-
             if (bytes[p] == 0x41 && (bytes[p + 1] == 0xB8 || bytes[p + 1] == 0xB9))
             { reg[bytes[p + 1] == 0xB8 ? 8 : 9] = BitConverter.ToUInt32(bytes, p + 2); i += 6; continue; }
             if (bytes[p] is 0xB9 or 0xBA)
             { reg[bytes[p] == 0xB9 ? 1 : 2] = BitConverter.ToUInt32(bytes, p + 1); i += 5; continue; }
-
 
             if (bytes[p] == 0xE8)
             {
@@ -337,7 +288,6 @@ public static class GameDefaults
         }
         return null;
     }
-
 
     private static IEnumerable<(string Name, ulong Rva, int Size)> Registrations(string dump)
     {

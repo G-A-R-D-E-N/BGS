@@ -4,8 +4,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
 public static class BindingEditor
 {
     public sealed class Binding
@@ -52,7 +50,6 @@ public static class BindingEditor
         "                    <hkparam name=\"bindingType\">BINDING_TYPE_VARIABLE</hkparam>\n" +
         "                </hkobject>";
 
-
     public static string AddBinding(string xml, string ownerId, string memberPath, int variableIndex)
     {
         if (string.IsNullOrWhiteSpace(memberPath)) throw new ArgumentException("member path is empty");
@@ -76,18 +73,12 @@ public static class BindingEditor
     {
         xml = HkxTextEdit.ArrayRemoveAt(xml, setId, "bindings", index);
 
-
-
         if (CountBindings(xml, setId) == 0)
             foreach (string owner in OwnersOf(xml, setId))
                 xml = HkxTextEdit.SetParam(xml, owner, "variableBindingSet", "null");
 
         return xml;
     }
-
-
-
-
 
     public static string AddVariable(string xml, string name, out int index) =>
         SymbolEditor.AddVariable(xml, name, SymbolEditor.VariableType.Real, out index);

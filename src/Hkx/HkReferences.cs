@@ -3,21 +3,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
 public static class HkReferences
 {
-
 
     public enum Held
     {
@@ -27,11 +14,6 @@ public static class HkReferences
         StructMember,
     }
 
-
-
-
-
-
     public readonly record struct Site(
         string HolderId,
         string Target,
@@ -39,7 +21,6 @@ public static class HkReferences
         int Index,
         string Member,
         Held How);
-
 
     public static IEnumerable<Site> In(HkObject obj)
     {
@@ -59,19 +40,14 @@ public static class HkReferences
                         yield return new Site(obj.Id, value[1..], field, row, member,
                                               Held.StructListMember);
 
-
-
-
         foreach (var (field, members) in obj.Structs)
             foreach (var (member, value) in members)
                 if (IsRef(value))
                     yield return new Site(obj.Id, value[1..], field, -1, member, Held.StructMember);
     }
 
-
     public static IEnumerable<Site> In(BehaviourGraphModel model) =>
         model.Objects.SelectMany(In);
-
 
     public static HashSet<string> Targets(BehaviourGraphModel model)
     {
@@ -79,8 +55,6 @@ public static class HkReferences
         foreach (var site in In(model)) targets.Add(site.Target);
         return targets;
     }
-
-
 
     public static string Path(this Site site) => site.How switch
     {

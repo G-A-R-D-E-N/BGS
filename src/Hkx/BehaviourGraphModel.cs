@@ -48,10 +48,6 @@ public sealed class BehaviourGraphModel
     public HkObject? Get(string? id) => id != null && ById.TryGetValue(id, out var o) ? o : null;
     public HkObject? Follow(HkObject? o, string field) => o == null ? null : Get(o.Ref(field));
 
-    // The model keeps logical (decoded) values: XML is only escaped at the export
-    // boundary (NativeGraphModel.Escaped / HkxTextEdit.EscapeXml) and re-read
-    // entity-aware by XDocument in NativeSave.Compare. Decoding here keeps the
-    // UI and the parser in the same representation.
     internal static string DecodeXml(string value) =>
         value.Replace("&lt;", "<").Replace("&gt;", ">").Replace("&quot;", "\"")
              .Replace("&#13;", "\r").Replace("&amp;", "&");

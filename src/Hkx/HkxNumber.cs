@@ -3,25 +3,8 @@ using System.Globalization;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class HkxNumber
 {
-
 
     public static string Text(float value) => Text((double)value);
 
@@ -30,8 +13,6 @@ public static class HkxNumber
         if (double.IsNaN(value)) return "NaN";
         if (double.IsPositiveInfinity(value)) return "Infinity";
         if (double.IsNegativeInfinity(value)) return "-Infinity";
-
-
 
         bool negative = value < 0 || (value == 0 && double.IsNegative(value));
         double magnitude = Math.Abs(value);
@@ -45,12 +26,6 @@ public static class HkxNumber
 
         return negative ? "-" + body : body;
     }
-
-
-
-
-
-
 
     private static (string Digits, int Point) Shortest(double magnitude)
     {

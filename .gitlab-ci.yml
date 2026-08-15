@@ -1,20 +1,9 @@
-# Builds the tool for Windows and Linux on GitLab runners.
-#
-# Both jobs run on the same plain Linux image. Nothing here needs a game install, a game engine, or
-# a Windows machine: the Windows build is cross compiled, because a self contained .NET publish
-# emits the target's own host binary rather than reusing the build machine's.
 
 stages:
   - test
   - build
   - release
 
-# Merge request pipelines are refused outright rather than half built. The build and test jobs carry
-# no rules, so they default to branches and tags and are absent from a merge request pipeline, while
-# upload's bare manual fallback matches every pipeline source and gets created anyway. upload then
-# needs three jobs that do not exist and GitLab refuses to start anything, which is the error seen
-# on merge request 30. Every source branch lives in this project, so its branch pipeline already
-# builds the same commits and reports onto the merge request.
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -23,17 +12,12 @@ workflow:
     - if: '$CI_COMMIT_TAG'
 
 variables:
-  # Pinned to the exact SDK global.json names. The floating 8.0 tag resolves to whatever the
-  # newest 8.0.x is, and global.json sets rollForward: disable, so the next patch release would
-  # fail every job with "compatible SDK version not found". GitHub Actions pins the same version.
   DOTNET: mcr.microsoft.com/dotnet/sdk:8.0.424
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
   NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"
   PACKAGE_REGISTRY: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/behaviour-graph-studio/${CI_COMMIT_SHORT_SHA}"
 
-# The runner is one machine shared with the other projects, so packages are cached rather than
-# pulled fresh four times per pipeline.
 .dotnet:
   image: $DOTNET
   cache:
@@ -42,8 +26,6 @@ variables:
       - .nuget/packages
     when: always
 
-# The format layer builds graphs in memory, so this needs no game files or external tools. A red
-# gate here stops a broken release being cut.
 format:
   extends: .dotnet
   stage: test
@@ -51,8 +33,6 @@ format:
     - dotnet test tools/tests/BehaviourGraph.Tests.csproj
     - dotnet run --project tools/symrm/symrm.csproj -- test
 
-# Builds the real window on a headless display and walks it, so a window that no longer opens fails
-# the build instead of reaching a release.
 window:
   extends: .dotnet
   stage: test
@@ -88,8 +68,6 @@ windows:
     RID: win-x64
     BINARY: BehaviourGraphStudio.exe
 
-# Proves the Linux build runs on a machine with no .NET and no build tools, which is the whole
-# claim of a standalone binary. The Windows one cannot be run here.
 standalone:
   stage: build
   image: debian:bookworm-slim
@@ -103,10 +81,6 @@ standalone:
     - test -s LICENSE
     - test -s THIRD_PARTY_NOTICES.md
 
-# On main these run on their own, which is how a merge cuts a release. Anywhere else they wait
-# for somebody to press play in the pipeline view, so a branch can be handed to a tester as a real
-# download without merging it first. allow_failure keeps an unpressed button from holding the
-# pipeline open or reading as a failure.
 .publishable:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -124,8 +98,6 @@ upload:
         curl -sf --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$z" "$PACKAGE_REGISTRY/$z"
       done
 
-# Not manual itself: it needs upload, so on a branch it simply follows once upload has been
-# pressed, and stays skipped while upload does. One button, not two.
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest

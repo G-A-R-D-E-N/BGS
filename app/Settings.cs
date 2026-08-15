@@ -76,7 +76,6 @@ public static class Settings
 
         return TryMutate(all =>
         {
-            // Move the touched layout to the newest position in the explicit persisted order.
             all.Set(key, value, moveToEnd: true);
 
             var layouts = all.Keys
@@ -152,7 +151,6 @@ public static class Settings
         return "BehaviourGraphStudio.Settings." + hash;
     }
 
-    // Kept for the existing direct write-failure smoke coverage.
     internal static void WriteAll(string tempPath, string finalPath, Dictionary<string, string> all) =>
         WriteAll(tempPath, finalPath, StoredSettings.From(all));
 

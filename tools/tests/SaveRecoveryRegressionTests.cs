@@ -68,7 +68,6 @@ public sealed class SaveRecoveryRegressionTests
         File.WriteAllBytes(path, original);
         var stamp = DocumentSourceStamp.Capture(path);
 
-        // Rotation moves .bak onto .bak.1; a directory there makes that move fail.
         File.WriteAllBytes(path + ".bak", new byte[] { 9 });
         Directory.CreateDirectory(path + ".bak.1");
 

@@ -7,21 +7,6 @@ using System.Text.Json;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public sealed class HavokClassTypes
 {
     public sealed class Member
@@ -29,25 +14,15 @@ public sealed class HavokClassTypes
         public string Name { get; init; } = "";
         public int Offset { get; init; }
 
-
         public string VType { get; init; } = "";
-
 
         public string VSub { get; init; } = "";
 
-
-
         public string? CType { get; init; }
-
 
         public string? EType { get; init; }
 
-
-
         public int ArrSize { get; init; }
-
-
-
 
         public bool Written { get; init; } = true;
 
@@ -61,12 +36,7 @@ public sealed class HavokClassTypes
         public string Name { get; init; } = "";
         public string? Parent { get; init; }
 
-
-
-
         public uint Signature { get; init; }
-
-
 
         public int? Size { get; init; }
 
@@ -87,12 +57,6 @@ public sealed class HavokClassTypes
     public Layout? this[string className] =>
         _byName.TryGetValue(className, out var layout) ? layout : null;
 
-
-
-
-
-
-
     public IReadOnlyList<Member> Members(string className)
     {
         if (_resolved.TryGetValue(className, out var cached)) return cached;
@@ -111,8 +75,6 @@ public sealed class HavokClassTypes
         return all;
     }
 
-
-
     public IReadOnlyDictionary<string, long>? Enum(string className, string enumName)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -124,8 +86,6 @@ public sealed class HavokClassTypes
         return null;
     }
 
-
-
     public string? NameOf(string className, Member member, long value)
     {
         if (member.EType == null) return null;
@@ -135,8 +95,6 @@ public sealed class HavokClassTypes
 
         foreach (var (name, declared) in values)
             if (declared == value) return name;
-
-
 
         if (member.VType != "TYPE_FLAGS") return null;
 
@@ -154,15 +112,9 @@ public sealed class HavokClassTypes
         return parts.Count > 0 ? string.Join("|", parts) : null;
     }
 
-
-
-
     public IReadOnlyList<string> SignatureProblems(IEnumerable<(uint Signature, string Name)> declared)
     {
         var problems = new List<string>();
-
-
-
 
         if (_byName.Count == 0) return problems;
 
@@ -177,15 +129,6 @@ public sealed class HavokClassTypes
         return problems;
     }
 
-
-
-
-
-
-
-
-
-
     public bool HasTrailingPadding(string className)
     {
         if (this[className]?.Size is not int size) return false;
@@ -197,17 +140,8 @@ public sealed class HavokClassTypes
             end = Math.Max(end, m.Offset + width * Math.Max(1, m.ArrSize));
         }
 
-
-
-
-
-
         return size != (end + 7) / 8 * 8 && size == (end + 15) / 16 * 16;
     }
-
-
-
-
 
     public static int Width(string vtype) => vtype switch
     {
@@ -289,8 +223,6 @@ public sealed class HavokClassTypes
 
         string beside = Path.Combine(AppContext.BaseDirectory, "HavokClassTypes.json");
         if (File.Exists(beside)) using (var stream = File.OpenRead(beside)) return Parse(stream);
-
-
 
         return new HavokClassTypes();
     }

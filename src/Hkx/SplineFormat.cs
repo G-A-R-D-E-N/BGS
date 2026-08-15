@@ -3,17 +3,6 @@ using System.Collections.Generic;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
 public static class SplineFormat
 {
 
@@ -27,8 +16,6 @@ public static class SplineFormat
         Spline,
     }
 
-
-
     public const int QuantByte = 0;
     public const int PosByte   = 1;
     public const int RotByte   = 2;
@@ -40,12 +27,9 @@ public static class SplineFormat
 
     public static Channel ScaleKind(byte flags, int axis) => PosKind(flags, axis);
 
-
-
     public static Channel RotKind(byte flags) =>
         ((flags >> 4) & 0x0F) != 0 ? Channel.Spline :
         (flags & 0x0F) != 0        ? Channel.Static : Channel.Identity;
-
 
     public static int RotWidth(int format) => format switch
     {
@@ -55,7 +39,6 @@ public static class SplineFormat
         5 => 16,
         _ => 5,
     };
-
 
     public static int RotAlign(int format) => format switch
     {
@@ -70,12 +53,6 @@ public static class SplineFormat
         return over == 0 ? value : value + (to - over);
     }
 
-
-
-
-
-
-
     public static byte[] Knots(int controlPoints, int degree, int framesInBlock)
     {
         int count = controlPoints + degree + 1;
@@ -87,17 +64,13 @@ public static class SplineFormat
         for (int i = 1; i <= interior; i++)
         {
 
-
             double at = (double)i * last / (interior + 1);
             knots[degree + i] = (byte)Math.Clamp((int)Math.Round(at), 0, 255);
         }
         for (int i = 0; i < degree + 1; i++) knots[count - 1 - i] = (byte)Math.Clamp(last, 0, 255);
 
-
-
         return knots;
     }
-
 
     public static bool KnotsUsable(byte[] knots, int controlPoints, int degree)
     {
@@ -105,13 +78,6 @@ public static class SplineFormat
             if (knots[i] >= knots[i + 1]) return false;
         return true;
     }
-
-
-
-
-
-
-
 
     public static int FindKnotSpan(int degree, float t, int controlPoints, float[] knots)
     {
@@ -128,10 +94,6 @@ public static class SplineFormat
         }
         return mid;
     }
-
-
-
-
 
     public static void Basis(int span, int degree, float t, float[] knots, float[] into)
     {
@@ -187,13 +149,6 @@ public static class SplineFormat
         }
         return System.Numerics.Quaternion.Normalize(total);
     }
-
-
-
-
-
-
-
 
     public static float Read16(ushort raw, float min, float max) => min + (max - min) * (raw / 65535f);
 

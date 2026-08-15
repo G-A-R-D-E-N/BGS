@@ -4,9 +4,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
 public static class StateEditor
 {
     public sealed class StateRow
@@ -126,8 +123,6 @@ public static class StateEditor
         return used.Count == 0 ? 0 : used.Max() + 1;
     }
 
-
-
     public static string AddState(string xml, string machineId, string name, string generatorRef,
                                   out string newObjectId, out int newStateId)
     {
@@ -155,8 +150,6 @@ public static class StateEditor
         return HkxTextEdit.ArrayAppend(xml, machineId, "states", $"                #{newObjectId}");
     }
 
-
-
     public static string RemoveState(string xml, string machineId, string stateObjectId, out int strippedTransitions)
     {
         var model = BehaviourGraphModel.Parse(xml);
@@ -178,8 +171,6 @@ public static class StateEditor
 
         return HkxTextEdit.ArrayRemoveAt(xml, machineId, "states", position);
     }
-
-
 
     public static string AddTransition(string xml, string machineId, string fromStateObjectId,
                                        int toStateId, int eventId, string effectRef)

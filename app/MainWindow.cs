@@ -85,13 +85,7 @@ public class MainWindow : Window
     private int _frameStart;
     private int _aimedFrame = -1;
 
-
-
-
     private int _editTrack = -1, _editFrame = -1;
-
-
-
 
     private bool _animationEdited;
 
@@ -113,10 +107,6 @@ public class MainWindow : Window
     private HkxAnimationData? _poseAnimation;
     private string _poseSource = "";
 
-
-
-
-
     private RootMotion.Motion _poseMotion = new();
     private bool _followTravel;
     private readonly PlaybackSession _playback = new();
@@ -124,9 +114,6 @@ public class MainWindow : Window
     private DispatcherTimer? _clock;
     private HkxSkeleton? _cachedSkeleton;
     private string _cachedSkeletonFor = "";
-
-
-
 
     private readonly List<(NifShape Shape, SkinnedMesh.Binding Binding, List<(int From, int To)> Edges)>
         _meshShapes = new();
@@ -150,7 +137,7 @@ public class MainWindow : Window
     private readonly HkGrid _problems = new(("", 70), ("Object", -3), ("What is wrong", -7));
     private readonly TextBlock _problemBar = new() { Foreground = Ux.MetaBrush, FontSize = 12, Margin = new Thickness(2, 6, 2, 2) };
 
-    private long _documentStamp;                 // bumped on every document change
+    private long _documentStamp;
     private DocumentSourceStamp? _sourceStamp;
     private readonly ProjectAnalysisController _analysis;
     private readonly BehaviourCompareSession _compare;
@@ -158,7 +145,6 @@ public class MainWindow : Window
 
     public Func<ProjectChain, IProgress<string>, Task<ProjectCheck.Result>>? ValidateProjectRunner;
     public Func<string, Task<PapyrusEvents.Index>>? PapyrusScanRunner;
-
 
     private readonly GraphRunSession _runSession = new();
     private readonly ComboBox _runEvents = new()
@@ -181,12 +167,6 @@ public class MainWindow : Window
     };
     private Button _step = Ux.Secondary("Step 0.1s");
 
-
-
-
-
-
-
     private readonly ComboBox _runVariables = new()
         { MinWidth = 170, MaxWidth = 230, Foreground = Ux.CodeBrush, FontSize = 12 };
     private readonly TextBox _runValue = new()
@@ -195,9 +175,6 @@ public class MainWindow : Window
     private readonly TextBlock _runHeldBack = new()
         { Foreground = Ux.WarnBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap,
           Margin = new Thickness(2, 4, 2, 2) };
-
-
-
 
     private static NativePaste.Clip? _clip;
     private readonly ComboBox _pasteInto = new()
@@ -221,16 +198,9 @@ public class MainWindow : Window
     private HashSet<string> _emptyStates = new();
     private List<string> _objectIds = new();
 
-
-
     private PackfileObjects? _bytes;
 
-
-
-
     private readonly HashSet<string> _editedFields = new(StringComparer.Ordinal);
-
-
 
     private string _classWarning = "";
     private List<HkxBehaviorParser.BehaviorNode> _objects = new();
@@ -240,9 +210,6 @@ public class MainWindow : Window
     private bool _closeApproved;
     private bool _reloading;
 
-
-
-
     private bool _readOnly;
     private string _readOnlyWhy = "";
     private string _xmlPath = "";
@@ -251,10 +218,6 @@ public class MainWindow : Window
     private string _selectedId = "";
     private readonly List<Action> _fieldCommits = new();
     private bool _dirty;
-
-
-
-
 
     private const int UndoDepth = 100;
     private readonly List<string> _undo = new();
@@ -409,8 +372,6 @@ public class MainWindow : Window
         };
     }
 
-
-
     private static Control Bar(params Control[] controls)
     {
         var panel = new DockPanel { LastChildFill = true };
@@ -437,15 +398,9 @@ public class MainWindow : Window
         return grid;
     }
 
-
-
-
     private Control BuildGraphTab()
     {
         _problems.SelectionChanged += OnProblemSelected;
-
-
-
 
         var fitAll = Ux.Secondary("Fit all");
         fitAll.Click += (_, _) =>
@@ -453,9 +408,6 @@ public class MainWindow : Window
             _graph.ClearHighlight();
             _graph.FrameAll();
         };
-
-
-
 
         var fitPicked = Ux.Secondary("Fit selection");
         fitPicked.Click += (_, _) =>
@@ -565,9 +517,6 @@ public class MainWindow : Window
         return graphWorkspace;
     }
 
-
-
-
     private Button BuildViewMenu(Control fitAll, Control fitPicked)
     {
         var button = Ux.Secondary("View ▾");
@@ -669,13 +618,6 @@ public class MainWindow : Window
         grid.Children.Add(control);
     }
 
-
-
-
-
-
-
-
     private Control BuildRunControls()
     {
         var send = Ux.Primary("Send");
@@ -713,7 +655,6 @@ public class MainWindow : Window
         return left;
     }
 
-
     private Control BuildPasteControls()
     {
         var copy = Ux.Secondary("Copy subtree");
@@ -735,10 +676,6 @@ public class MainWindow : Window
             Margin = new Thickness(0, 0, 8, 0),
         };
 
-
-
-
-
         var save = Ux.Secondary("Save as template");
         ToolTip.SetTip(save, "Keep the selected node and everything it owns, so it can be used again " +
                              "in another file later.");
@@ -748,9 +685,6 @@ public class MainWindow : Window
         _applyTemplate.IsEnabled = false;
         ToolTip.SetTip(_applyTemplate,
             "Put a kept shape into this file and save it. The file is kept as .bak first.");
-
-
-
 
         _templates.SelectionChanged += (_, _) => DescribeTemplate();
         _predefinedTemplates.ItemsSource = PredefinedTemplates.All().Select(template => template.Id).ToList();
@@ -786,12 +720,6 @@ public class MainWindow : Window
         RefreshPredefinedTemplateEditors();
         return all;
     }
-
-
-
-
-
-
 
     private void RefreshPasteSlots()
     {
@@ -921,7 +849,6 @@ public class MainWindow : Window
         SetStatus(said, Ux.MetaBrush);
     }
 
-
     private void SaveTemplate()
     {
         if (_bytes == null || _hkxPath.Length == 0)
@@ -963,7 +890,6 @@ public class MainWindow : Window
             SetPasteSummary("Nothing kept: " + e.Message, Ux.BadBrush);
         }
     }
-
 
     private void ApplyStoredTemplate()
     {
@@ -1029,7 +955,6 @@ public class MainWindow : Window
         SetStatus(said, Ux.MetaBrush);
     }
 
-
     private void RefreshTemplates()
     {
         var kept = TemplateStore.All();
@@ -1037,12 +962,6 @@ public class MainWindow : Window
         _applyTemplate.IsEnabled = kept.Count > 0 && _bytes != null;
         if (kept.Count > 0 && _templates.SelectedItem == null) _templates.SelectedIndex = 0;
     }
-
-
-
-
-
-
 
     private void DescribeTemplate()
     {
@@ -1153,13 +1072,11 @@ public class MainWindow : Window
         SetStatus(said, Ux.MetaBrush);
     }
 
-
     private void SetPasteSummary(string text, IBrush brush)
     {
         _pasteSummary.Text = text;
         _pasteSummary.Foreground = brush;
     }
-
 
     public IReadOnlyList<string> TemplateNames =>
         (_templates.ItemsSource as IEnumerable<string>)?.ToList() ?? new List<string>();
@@ -1174,14 +1091,10 @@ public class MainWindow : Window
     {
         if (!TemplateNames.Contains(slug)) return;
 
-
-
-
         _templates.SelectedItem = slug;
         DescribeTemplate();
     }
     public void ApplyTemplateForTest() => ApplyStoredTemplate();
-
 
     public string ClipSummary => _clip == null ? "" : Held(_clip);
     public IReadOnlyList<string> PasteSlots =>
@@ -1194,7 +1107,6 @@ public class MainWindow : Window
         if (PasteSlots.Contains(slot)) _pasteInto.SelectedItem = slot;
         PasteSubtree();
     }
-
 
     private void StartRun(string note = "Started at the graph's root.")
     {
@@ -1210,7 +1122,6 @@ public class MainWindow : Window
             }
             catch (Exception)
             {
-                // Timing is optional. The graph can still be stepped without clip metadata.
             }
         }
 
@@ -1301,10 +1212,8 @@ public class MainWindow : Window
         _runtimeStatus.Foreground = brush;
     }
 
-
     private Control BuildLegend()
     {
-
 
         var body = new StackPanel { Spacing = 4 };
 
@@ -1396,10 +1305,6 @@ public class MainWindow : Window
                             "Written on the state rather than drawn as a line, because a wildcard " +
                             "fires from every state and so has no one place a line could start.");
 
-
-
-
-
         Swatch(new Border
         {
             CornerRadius = new CornerRadius(3),
@@ -1487,8 +1392,6 @@ public class MainWindow : Window
         return split;
     }
 
-
-
     public HkGrid AnimationGrid => _animation;
     public string FramePageLabel => _framePage.Text ?? "";
     public int AnimationFrameCount => _animationData?.NumFrames ?? 0;
@@ -1497,8 +1400,6 @@ public class MainWindow : Window
     public HkGrid SymbolGrid => _symbols;
     public string FractionAnswer => _fractionAnswer.Text ?? "";
     public int AimedFrame => _aimedFrame;
-
-
 
     public string FrameEditAnswer => _frameEditAnswer.Text ?? "";
     public string FramePositionText => _framePosition.Text ?? "";
@@ -1513,9 +1414,6 @@ public class MainWindow : Window
     public Inspector GraphProperties => _graphProps;
     public GraphView Canvas => _graph;
     public GraphLayoutMode GraphLayoutModeForTest => _graph.LayoutMode;
-
-
-
 
     public bool GraphLeftPanePresent => false;
     public bool GraphRightPaneOpen => _graphRightOpen;
@@ -1642,7 +1540,6 @@ public class MainWindow : Window
 
     public void OpenLegendForTest() => OpenLegendWindow();
 
-
     public bool RunReady => _runSession.Current.Ready;
     public bool RunBlending => _runSession.Current.Blending;
     public int RunEventCount => _runSession.Current.Events.Count;
@@ -1675,10 +1572,7 @@ public class MainWindow : Window
         SetRunVariable();
     }
 
-
     public void SelectNode(string objectId) => SelectObjectId(objectId);
-
-
 
     public bool SelectFromTree(string objectId)
     {
@@ -1689,8 +1583,6 @@ public class MainWindow : Window
             if (at == index) return _tree.SelectByTag(offset);
         return false;
     }
-
-
 
     public void LookUpFraction(string typed)
     {
@@ -1704,7 +1596,6 @@ public class MainWindow : Window
         ShowAnimationFrames();
     }
 
-
     public bool PickFrame(int track, int frame)
     {
         bool found = _animation.SelectByTag($"f:{track}:{frame}");
@@ -1712,13 +1603,11 @@ public class MainWindow : Window
         return found;
     }
 
-
     public void TypeFramePosition(string text)
     {
         _framePosition.Text = text;
         SetFrame();
     }
-
 
     public void PressSaveAnimation() => SaveAnimation();
 
@@ -1761,9 +1650,6 @@ public class MainWindow : Window
         DockPanel.SetDock(bar, Dock.Top);
         panel.Children.Add(bar);
 
-
-
-
         var aim = Ux.Secondary("Find frame");
         aim.Click += (_, _) => AimAtFraction();
         _fraction.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) AimAtFraction(); };
@@ -1776,10 +1662,6 @@ public class MainWindow : Window
         tools.Margin = new Thickness(0, 0, 0, 8);
         DockPanel.SetDock(tools, Dock.Top);
         panel.Children.Add(tools);
-
-
-
-
 
         var apply = Ux.Secondary("Set frame");
         apply.Click += (_, _) => SetFrame();
@@ -1800,8 +1682,6 @@ public class MainWindow : Window
         panel.Children.Add(_animation);
         return panel;
     }
-
-
 
     private void ShowSelectedFrame()
     {
@@ -1866,10 +1746,6 @@ public class MainWindow : Window
     private static string F(float value) =>
         value.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
 
-
-
-
-
     private void SetFrame()
     {
         var anim = _animationData;
@@ -1905,8 +1781,6 @@ public class MainWindow : Window
             track.Rotations[_editFrame] =
                 new System.Numerics.Quaternion(rotation[0], rotation[1], rotation[2], rotation[3]);
 
-
-
         if (Numbers(_frameScale.Text, 3, out float[] scale) && _editFrame < track.Scales.Count)
             track.Scales[_editFrame] = new System.Numerics.Vector3(scale[0], scale[1], scale[2]);
 
@@ -1934,13 +1808,6 @@ public class MainWindow : Window
 
         return true;
     }
-
-
-
-
-
-
-
 
     private bool SaveAnimation()
     {
@@ -2018,12 +1885,9 @@ public class MainWindow : Window
             $"of {Math.Max(anim.NumFrames - 1, 0)}, at {_aimedFrame * anim.FrameDuration:F3}s{clamped}";
         _fractionAnswer.Foreground = Ux.MetaBrush;
 
-
         _frameStart = _aimedFrame / FramesPerPage * FramesPerPage;
         ShowAnimationFrames();
     }
-
-
 
     private void PageFrames(int by)
     {
@@ -2040,17 +1904,12 @@ public class MainWindow : Window
         ShowAnimationFrames();
     }
 
-
-
-
-
     private bool BuildAnimation(string path)
     {
         _animation.Clear();
         _animationData = null;
         _animationSkeleton = null;
         _frameStart = 0;
-
 
         _aimedFrame = -1;
         _editTrack = _editFrame = -1;
@@ -2130,8 +1989,6 @@ public class MainWindow : Window
             int frames = Math.Max(Math.Max(track.Translations.Count, track.Rotations.Count), track.Scales.Count);
             bool scaled = HkxTrackData.IsScaled(track);
 
-
-
             var head = _animation.Add(null, name, frames.ToString(), "", "", "", scaled ? "scaled" : "")
                                  .Colour(0, Ux.TitleBrush).Colour(1, Ux.DisabledBrush).Colour(5, Ux.BadBrush);
             if (needle.Length == 0) head.Collapse();
@@ -2143,11 +2000,9 @@ public class MainWindow : Window
                 string rot = f < track.Rotations.Count
                     ? $"{track.Rotations[f].X:F4}, {track.Rotations[f].Y:F4}, {track.Rotations[f].Z:F4}, {track.Rotations[f].W:F4}" : "";
 
-
                 string scl = scaled && f < track.Scales.Count
                     ? $"{track.Scales[f].X:F4}, {track.Scales[f].Y:F4}, {track.Scales[f].Z:F4}" : "";
                 bool aimed = f == _aimedFrame;
-
 
                 _animation.Add(head, aimed ? "->" : "", f.ToString(), $"{f * anim.FrameDuration:F3}s", pos, rot, scl)
                           .Tag($"f:{t}:{f}")
@@ -2162,9 +2017,6 @@ public class MainWindow : Window
                       .Colour(0, Ux.MutedBrush).Colour(1, Ux.DisabledBrush);
     }
 
-
-
-
     private static HkxSkeleton? SiblingSkeleton(string primaryPath, string? fallbackPath = null)
     {
         string? assets = FindPoseSkeletonFolder(primaryPath, fallbackPath);
@@ -2177,9 +2029,6 @@ public class MainWindow : Window
         }
         return null;
     }
-
-
-
 
     internal static string? FindSiblingSkeletonFolder(string animationPath)
     {
@@ -2218,9 +2067,6 @@ public class MainWindow : Window
         string annotation = track < anim.BoneNames.Count ? anim.BoneNames[track] : "";
         return annotation.Length > 0 ? annotation : $"track {track}";
     }
-
-
-
 
     private Control BuildPlaybackTab()
     {
@@ -2278,7 +2124,6 @@ public class MainWindow : Window
         _scrub.PropertyChanged += (_, e) =>
         {
 
-
             if (e.Property != Avalonia.Controls.Primitives.RangeBase.ValueProperty || _scrubbing) return;
             ShowFrame((int)Math.Round(_scrub.Value), stop: true);
         };
@@ -2306,15 +2151,10 @@ public class MainWindow : Window
         _playbackViewportHost.ClipToBounds = true;
         panel.Children.Add(WithClipPicker(_playbackViewportHost));
 
-
-
         SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
                            "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
         return panel;
     }
-
-
-
 
     private HkxSkeleton? PoseSkeleton(string? animationPath = null)
     {
@@ -2324,9 +2164,6 @@ public class MainWindow : Window
         _cachedSkeleton = _projectChain?.Skeleton ?? SiblingSkeleton(_hkxPath, animationPath);
         return _cachedSkeleton;
     }
-
-
-
 
     private void LoadPoseFromSelection(bool announce)
     {
@@ -2391,7 +2228,6 @@ public class MainWindow : Window
         {
             SetPlaybackSummary($"{label}: {refusal}", Ux.WarnBrush);
 
-
             if (_poseSkeleton != null) _skeleton.Show(AnimationPose.ReferencePose(_poseSkeleton));
             _poseAnimation = null;
             _poseSource = "";
@@ -2403,8 +2239,6 @@ public class MainWindow : Window
         _poseAnimation = animation;
         _poseSource = animationPath;
         _playback.Load(animation.NumFrames, animation.FrameDuration);
-
-
 
         try { _poseMotion = RootMotion.Read(animationPath); }
         catch { _poseMotion = new RootMotion.Motion(); }
@@ -2422,9 +2256,6 @@ public class MainWindow : Window
         int driven = 0;
         foreach (int track in AnimationPose.TracksByBone(_poseSkeleton!, animation)) if (track >= 0) driven++;
 
-
-
-
         string travelled = _poseMotion.Any
             ? $"   travels {_poseMotion.Travel.Length():F0} units" +
               (Math.Abs(_poseMotion.Turn) > 0.02f
@@ -2438,16 +2269,6 @@ public class MainWindow : Window
             $"on {_poseSkeleton.Name}{travelled}", Ux.MetaBrush);
         UpdateFrameLabel();
     }
-
-
-
-
-
-
-
-
-
-
 
     private async Task OpenFromArchive()
     {
@@ -2486,8 +2307,6 @@ public class MainWindow : Window
             try
             {
 
-
-
                 string folder = Path.Combine(Path.GetTempPath(), "BehaviourGraphStudio",
                                              TempDirKey(archivePath));
                 Directory.CreateDirectory(folder);
@@ -2512,9 +2331,6 @@ public class MainWindow : Window
         }
     }
 
-
-
-
     private async Task PickMesh()
     {
         var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -2532,8 +2348,6 @@ public class MainWindow : Window
         string? path = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
         if (path != null) LoadMesh(path);
     }
-
-
 
     private bool LoadMesh(string path)
     {
@@ -2576,8 +2390,6 @@ public class MainWindow : Window
         int vertices = _meshShapes.Sum(m => m.Shape.Vertices.Count);
         int edges = _meshShapes.Sum(m => m.Edges.Count);
 
-
-
         var missing = _meshShapes.SelectMany(m => m.Binding.Unmatched).Distinct().ToList();
         float drift = _meshShapes.Max(m => SkinnedMesh.BindError(m.Shape, m.Binding, skeleton));
 
@@ -2602,8 +2414,6 @@ public class MainWindow : Window
         _meshPath = "";
         _skeleton.ShowMesh(null);
     }
-
-
 
     private void UpdateMesh(AnimationPose.Pose pose, HkxSkeleton skeleton)
     {
@@ -2630,7 +2440,6 @@ public class MainWindow : Window
         _poseSource = "";
         _playback.Clear();
 
-
         _poseMotion = new RootMotion.Motion();
         _cachedSkeleton = null;
         _cachedSkeletonFor = "";
@@ -2641,12 +2450,9 @@ public class MainWindow : Window
         _skeleton.Reset();
         _frameLabel.Text = "";
 
-
         SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
                            "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
     }
-
-
 
     private Control WithClipPicker(Control viewport)
     {
@@ -2684,9 +2490,6 @@ public class MainWindow : Window
         return split;
     }
 
-
-
-
     private void FindMeshForFile()
     {
         var found = MeshLookup.Find(_hkxPath, _projectChain?.Root, _projectChain?.SkeletonPath);
@@ -2701,8 +2504,6 @@ public class MainWindow : Window
         SetPlaybackSummary($"Select a clip to see what it plays, on {Path.GetFileName(found.Path!)}.",
                            Ux.MutedBrush);
     }
-
-
 
     private void BuildClipList(BehaviourGraphModel model)
     {
@@ -2719,24 +2520,9 @@ public class MainWindow : Window
         if (_clips.RowCount == 0) ShowLoneAnimation();
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
     private void ShowLoneAnimation()
     {
         if (_animationData is not { NumFrames: > 0 }) return;
-
-
 
         _clips.Add(null, Path.GetFileNameWithoutExtension(_hkxPath),
                    $"{_animationData.Duration:F2}s, {_animationData.NumFrames} frames")
@@ -2762,7 +2548,6 @@ public class MainWindow : Window
         _clock.Start();
         _playButton.Content = "Pause";
     }
-
 
     private float SelectedPlaybackSpeed()
     {
@@ -2801,7 +2586,6 @@ public class MainWindow : Window
         UpdateFrameLabel();
     }
 
-
     private AnimationPose.Pose WithTravel(AnimationPose.Pose pose)
     {
         if (!_poseMotion.Any || _poseAnimation == null) return pose;
@@ -2839,21 +2623,16 @@ public class MainWindow : Window
         _playbackSummary.Foreground = brush;
     }
 
-
     public SkeletonView Viewport => _skeleton;
     public int PoseFrame => _playback.Frame;
     public int PoseFrameCount => _playback.FrameCount;
     public string PlaybackSummary => _playbackSummary.Text ?? "";
     public bool IsPlaying => _playback.IsPlaying;
 
-
     public void ScrubTo(int frame) => ShowFrame(frame, stop: true);
     public void LoadPoseFrom(string animationPath) => LoadPose(animationPath, Path.GetFileName(animationPath));
     public AnimationPose.Pose? PoseNow =>
         _poseSkeleton == null ? null : AnimationPose.At(_poseSkeleton, _poseAnimation, _playback.Frame);
-
-
-
 
     private Control BuildProjectSearchTab()
     {
@@ -3014,7 +2793,6 @@ public class MainWindow : Window
     public int ProjectSearchRows => _projectSearchResults.RowCount;
     public string ProjectSearchAnswer => _projectSearchSummary.Text ?? "";
 
-
     private Control BuildDiffTab()
     {
         var compare = Ux.Secondary("Compare with...");
@@ -3122,10 +2900,7 @@ public class MainWindow : Window
         _diffSummary.Foreground = brush;
     }
 
-
     public HkGrid DiffGrid => _diff;
-
-
 
     public HkGrid ClipGrid => _clips;
 
@@ -3180,9 +2955,6 @@ public class MainWindow : Window
         return panel;
     }
 
-
-
-
     private async Task PickScriptsFolder()
     {
         var picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
@@ -3217,9 +2989,6 @@ public class MainWindow : Window
 
         if (_xmlText.Length > 0) BuildSymbols(Model());
     }
-
-
-
 
     private async Task Browse()
     {
@@ -3280,8 +3049,6 @@ public class MainWindow : Window
         if (!Settings.TrySetGraphLayout(_hkxPath, _graph.SnapshotFreeformPositions(), out string failure))
             SetStatus($"Could not save graph layout: {failure}", Ux.WarnBrush);
     }
-
-
 
     public void OpenMesh(string nifPath) => LoadMesh(nifPath);
 
@@ -3420,12 +3187,10 @@ public class MainWindow : Window
         _xmlText = "";
         _xmlPath = "";
 
-
         _reading = new BehaviourGraphModel();
         _selectedId = "";
         _projectChain = null;
         _emptyStates = new HashSet<string>();
-
 
         _graph.Reset();
         BuildMachineNavigator(new BehaviourGraphModel());
@@ -3435,9 +3200,6 @@ public class MainWindow : Window
         ResetHistory();
         _readOnly = false;
         _readOnlyWhy = "";
-
-
-
 
         bool isAnimation = BuildAnimation(path);
 
@@ -3454,20 +3216,11 @@ public class MainWindow : Window
             SetStatus(rootSettingsWarning ?? _animationSummary.Text ?? "",
                       rootSettingsWarning == null ? _animationSummary.Foreground ?? Ux.MutedBrush : Ux.WarnBrush);
 
-
-
-
-
             BuildClipList(new BehaviourGraphModel());
-
-
 
             if (_animationData != null) LoadPose(path, Path.GetFileName(path));
             return;
         }
-
-
-
 
         if (!isAnimation)
         {
@@ -3482,18 +3235,10 @@ public class MainWindow : Window
         _objects = new List<HkxBehaviorParser.BehaviorNode>(HkxBehaviorParser.LastObjects);
         for (int i = 0; i < _objects.Count; i++) _offsetToIndex[_objects[i].Offset] = i;
 
-
-
         _classWarning = "";
         try
         {
             var bytes = new PackfileObjects(PackfileImage.Read(path));
-
-
-
-
-
-
 
             var problems = HavokClassTypes.Shipped.SignatureProblems(bytes.ClassNames());
             if (problems.Count > 0)
@@ -3507,8 +3252,6 @@ public class MainWindow : Window
         }
         catch (Exception) { _bytes = null; }
 
-
-
         RefreshTemplates();
         _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
 
@@ -3519,9 +3262,6 @@ public class MainWindow : Window
             classes.Add(o.ClassName);
             if (!string.IsNullOrEmpty(o.AnimationName)) clips++;
         }
-
-
-
 
         SetSummary(isAnimation
                        ? $"{Path.GetFileName(path)}   an animation, not a behaviour. See the Animation and Playback tabs."
@@ -3535,18 +3275,9 @@ public class MainWindow : Window
                                   RememberSetting("last_folder", Path.GetDirectoryName(path) ?? "", "The file opened");
         PrepareEditing();
 
-
-
-
         if (_animationData != null) LoadPose(path, Path.GetFileName(path));
         if (settingsWarning != null) SetStatus(settingsWarning, Ux.WarnBrush);
     }
-
-
-
-
-
-
 
     private BehaviourGraphModel Model() =>
         _xmlText.Length > 0 ? BehaviourGraphModel.Parse(_xmlText) : _reading;
@@ -3557,14 +3288,6 @@ public class MainWindow : Window
     {
         var reading = _bytes == null ? null : NativeGraphModel.From(_bytes);
 
-
-
-
-
-
-
-
-
         bool own = false;
         if (_bytes != null && reading != null)
         {
@@ -3573,11 +3296,7 @@ public class MainWindow : Window
                 string work = Path.Combine(Path.GetTempPath(), "bgs_edit", TempDirKey(_hkxPath));
                 HkxTextEdit.ResetDirectory(work);
 
-
-
                 _xmlPath = Path.Combine(work, Path.GetFileNameWithoutExtension(_hkxPath) + ".xml");
-
-
 
                 _xmlText = NativeXml.From(InputFilePolicy.ReadHkx(_hkxPath));
                 File.WriteAllText(_xmlPath, _xmlText);
@@ -3609,12 +3328,8 @@ public class MainWindow : Window
             return;
         }
 
-
-
         if (_objectIds.Count == 0) _objectIds = model.Objects.Select(o => o.Id).ToList();
         _reading = model;
-
-
 
         _emptyStates = GraphValidator.StatesWithNoGenerator(model);
         RebuildTree();
@@ -3740,8 +3455,6 @@ public class MainWindow : Window
         SetStatus("Select a visible graph node before tracing.", Ux.MutedBrush);
     }
 
-
-
     private void RebuildTree()
     {
         _tree.Clear();
@@ -3767,9 +3480,6 @@ public class MainWindow : Window
             if (++hits >= 2000) break;
         }
     }
-
-
-
 
     private void ApplyFilter()
     {
@@ -3805,7 +3515,6 @@ public class MainWindow : Window
         SelectObjectId(first);
     }
 
-
     public void Filter(string needle)
     {
         _filter.Text = needle;
@@ -3827,7 +3536,6 @@ public class MainWindow : Window
         bool repeat = !seen.Add(node.Offset);
         string label = string.IsNullOrEmpty(node.NodeName) ? node.ClassName : node.NodeName;
 
-
         bool empty = IsEmptyState(node.Offset);
 
         var row = _tree.Add(parent, repeat ? label + "  (shown above)" : label,
@@ -3839,9 +3547,6 @@ public class MainWindow : Window
         if (repeat) return;
         foreach (var child in node.Children) AddTreeNode(child, row, seen, ref rows);
     }
-
-
-
 
     private void OnTreeSelected()
     {
@@ -3859,17 +3564,11 @@ public class MainWindow : Window
         _selectedId = "";
         if (objectId.Length == 0 || _xmlText.Length == 0) return;
 
-
-
         var model = Model();
         ShowProps(objectId, model);
         SetStatus(Describe(model, objectId), Ux.MetaBrush);
 
-
-
         LoadPoseFromSelection(announce: false);
-
-
 
         RefreshPasteSlots();
     }
@@ -3892,15 +3591,11 @@ public class MainWindow : Window
         _clipProps.Clear();
     }
 
-
-
-
     private void ShowProps(string objectId) => ShowProps(objectId, Model());
 
     private void ShowProps(string objectId, BehaviourGraphModel model)
     {
         _selectedId = objectId;
-
 
         _fieldCommits.Clear();
         FillProps(_treeProps, objectId, model);
@@ -3908,9 +3603,6 @@ public class MainWindow : Window
         FillProps(_clipProps, objectId, model);
         _clips.SelectByTag(objectId);
     }
-
-
-
 
     private List<PanelFields.Field> PanelValues(string objectId,
                                                 IReadOnlyList<HkxTextEdit.Param> parameters)
@@ -3922,9 +3614,6 @@ public class MainWindow : Window
             return plain.Select(p => new PanelFields.Field(p.Name, p.Value,
                                                           PanelFields.Source.Fallback, p.Value))
                         .ToList();
-
-
-
 
         string Reference(PackfileObjects.Instance? target, bool wasNull)
         {
@@ -3956,11 +3645,6 @@ public class MainWindow : Window
         if (AddBoneArraySection(panel, objectId, className))
             return;
 
-
-
-
-
-
         var summaries = ElementSummary.For(model, objectId);
 
         for (int i = 0; i < parameters.Count;)
@@ -3987,10 +3671,6 @@ public class MainWindow : Window
         AddBindingSection(panel, objectId, model);
         AddBlendSection(panel, objectId, model, className);
     }
-
-
-
-
 
     private bool AddBoneArraySection(Inspector panel, string objectId, string className)
     {
@@ -4070,12 +3750,6 @@ public class MainWindow : Window
         }
     }
 
-
-
-
-
-
-
     private void AddBlendSection(Inspector panel, string objectId, BehaviourGraphModel model, string className)
     {
         if (className != "hkbBlenderGenerator") return;
@@ -4115,11 +3789,6 @@ public class MainWindow : Window
         }
     }
 
-
-
-
-
-
     private static Control ElementBlock(string group, string summary, Control inside)
     {
         var header = new Grid { ClipToBounds = true };
@@ -4157,9 +3826,6 @@ public class MainWindow : Window
     private Control FieldRow(Inspector panel, PanelFields.Field p, string owner)
     {
 
-
-
-
         if (p.Options.Count > 0) return EnumRow(panel, p, owner);
 
         string address = p.Address;
@@ -4167,9 +3833,6 @@ public class MainWindow : Window
 
         var field = Ux.Field();
         field.Text = p.Value;
-
-
-
 
         void Commit()
         {
@@ -4192,23 +3855,6 @@ public class MainWindow : Window
 
         return panel.TwoColumnRow(label, field);
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static string Tip(PanelFields.Field p)
     {
@@ -4314,8 +3960,6 @@ public class MainWindow : Window
             panel.Add(row);
         }
 
-
-
         var member = Ux.Field("member, e.g. userControlledTimeFraction");
         var variable = Ux.Field("variable name");
         var bind = Ux.Secondary("Bind");
@@ -4326,8 +3970,6 @@ public class MainWindow : Window
         panel.Add(variable);
         panel.Add(bind);
     }
-
-
 
     private void EnsurePapyrus()
     {
@@ -4369,8 +4011,6 @@ public class MainWindow : Window
                                          i < values.Count ? SymbolEditor.DecodeValue(type, values[i]) : "",
                                          Users(readers, events: false, i)).Tag($"v:{i}"));
 
-
-
             var sites = variableSites.Where(u => u.Index == i)
                                      .GroupBy(u => (u.ObjectId, u.Owner, u.Member)).ToList();
             if (sites.Count == 0) continue;
@@ -4380,9 +4020,6 @@ public class MainWindow : Window
                 AddUsageRow(row, "reads it", site.Key.ObjectId, site.Key.Owner, site.Key.Member,
                             site.Count(), "");
         }
-
-
-
 
         var usage = _xmlText.Length > 0 ? EventUsage.ByEvent(_xmlText)
                   : _bytes != null ? EventUsage.ByEvent(_bytes)
@@ -4416,8 +4053,6 @@ public class MainWindow : Window
                 }
             }
 
-
-
             if (scripts.Length == 0) continue;
             if (lines == null) row.Collapse();
             _symbols.Add(row, "papyrus", "", scripts, "", "scripts address events by name, not by index")
@@ -4427,9 +4062,6 @@ public class MainWindow : Window
         if (names.Count == 0 && events.Count == 0)
             _symbols.Add(null, "", "", "this graph declares no variables or events").Colour(2, Ux.DisabledBrush);
     }
-
-
-
 
     private void AddUsageRow(HkRow parent, string what, string objectId, string owner, string member,
                              int count, string note)
@@ -4453,20 +4085,6 @@ public class MainWindow : Window
     private static HkRow Paint(HkRow row) => row
         .Colour(0, Ux.MutedBrush).Colour(1, Ux.DisabledBrush).Colour(2, Ux.TitleBrush).Colour(3, Ux.CodeBrush)
         .Colour(4, row.Text(4).StartsWith("nothing") ? Ux.DisabledBrush : Ux.MetaBrush);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private List<SymbolIndexFixup.Usage> Usages(bool events) =>
         _xmlText.Length > 0 ? SymbolIndexFixup.Usages(_xmlText, events)
@@ -4532,11 +4150,8 @@ public class MainWindow : Window
         foreach (string v in values) _chain.Add(head, "", v).Colour(1, colour);
     }
 
-
-
     private void OnSymbolSelected()
     {
-
 
         if (_symbols.SelectedTag is string jump && jump.StartsWith('#'))
         {
@@ -4564,15 +4179,10 @@ public class MainWindow : Window
             ? SymbolEditor.DecodeValue(type, values[index])
             : "";
 
-
-
         var bounds = SymbolEditor.VariableBounds(model);
         _symbolMin.Text = index < bounds.Count ? SymbolEditor.DecodeValue(type, bounds[index].Min) : "";
         _symbolMax.Text = index < bounds.Count ? SymbolEditor.DecodeValue(type, bounds[index].Max) : "";
     }
-
-
-
 
     private void SetSymbolBounds()
     {
@@ -4604,7 +4214,6 @@ public class MainWindow : Window
     {
         variable = false;
         index = -1;
-
 
         if (_symbols.SelectedTag is not string tag || tag.Length < 3 || tag[1] != ':') return false;
         variable = tag[0] == 'v';
@@ -4643,8 +4252,6 @@ public class MainWindow : Window
             string name = (_symbolName.Text ?? "").Trim();
             if (name.Length == 0) throw new ArgumentException("type the new name first");
             xml = SymbolEditor.Rename(xml, variable, index, name);
-
-
 
             SetStatus($"renamed {(variable ? "variable" : "event")} {index} to '{name}'. " +
                       "Game code and scripts address it by name, so anything outside this file that " +
@@ -4708,8 +4315,6 @@ public class MainWindow : Window
             SetStatus(ex.Message.Split('\n')[0], Ux.MutedBrush);
         }
     }
-
-
 
     private void ShowAddMenu(string fromId, string field, Point at)
     {
@@ -4777,8 +4382,6 @@ public class MainWindow : Window
         try
         {
 
-
-
             bool bySlot = field.Length > 0 && parentId.Length > 0;
             string xml = GraphAuthor.AddNode(_xmlText, kind, name, animation, bySlot ? "" : parentId,
                                              out string newId, out string note);
@@ -4796,8 +4399,6 @@ public class MainWindow : Window
                     note = $"created {name} but left it unattached: {ex.Message.Split('\n')[0]}";
                 }
             }
-
-
 
             Commit(xml);
             SetStatus(note + $"   (#{newId}, unsaved)", Ux.CodeBrush);
@@ -4867,8 +4468,6 @@ public class MainWindow : Window
                 declared = $"declared variable '{variableName}' at index {index}, and ";
             }
 
-
-
             Commit(BindingEditor.AddBinding(xml, objectId, memberPath, index));
             SetStatus($"{declared}#{objectId}.{memberPath} driven by {variableName}   (unsaved)", Ux.CodeBrush);
             RefreshAfterEdit(objectId);
@@ -4902,11 +4501,6 @@ public class MainWindow : Window
         ShowProps(objectId);
     }
 
-
-
-
-
-
     public void CommitPendingFields()
     {
         foreach (var commit in _fieldCommits.ToList()) commit();
@@ -4918,13 +4512,6 @@ public class MainWindow : Window
         if (!SetParam(objectId, address, field.Text ?? "")) field.Text = original;
     }
 
-
-
-
-
-
-
-
     private bool SetParam(string objectId, string address, string value)
     {
         if (_xmlText.Length == 0) return false;
@@ -4934,8 +4521,6 @@ public class MainWindow : Window
             Commit(HkxTextEdit.SetParamAt(_xmlText, objectId, address, value));
             _editedFields.Add(objectId + "." + address);
             SetStatus($"#{objectId}.{address} = {value}   (unsaved)", Ux.CodeBrush);
-
-
 
             if (address == "playbackSpeed" && objectId == _selectedId && _clock != null)
             {
@@ -4952,8 +4537,6 @@ public class MainWindow : Window
         }
     }
 
-
-
     private void Validate()
     {
         if (_xmlText.Length == 0 && _reading.Objects.Count == 0)
@@ -4961,9 +4544,6 @@ public class MainWindow : Window
             SetStatus("Nothing loaded to check.", Ux.MutedBrush);
             return;
         }
-
-
-
 
         var findings = _xmlText.Length > 0
             ? GraphValidator.Check(_xmlText, _projectChain)
@@ -5006,9 +4586,6 @@ public class MainWindow : Window
                   errors.Count > 0 ? Ux.BadBrush : Ux.MutedBrush);
     }
 
-
-
-
     private async Task ValidateProject()
     {
         var chain = _projectChain;
@@ -5018,10 +4595,6 @@ public class MainWindow : Window
                       Ux.MutedBrush);
             return;
         }
-
-
-
-
 
         _problems.Clear();
         _problems.IsVisible = _problemBar.IsVisible = true;
@@ -5066,9 +4639,6 @@ public class MainWindow : Window
         SetStatus("Project checked. " + result, result.Errors > 0 ? Ux.BadBrush : Ux.MetaBrush);
     }
 
-
-
-
     private bool SavedInPlace() => SaveCurrent();
 
     private bool SaveCurrent()
@@ -5111,9 +4681,6 @@ public class MainWindow : Window
 
         if (_readOnly) { SetStatus("Not saved: " + _readOnlyWhy, Ux.BadBrush); return; }
 
-
-
-
         string? refusal = GraphValidator.SaveRefusal(_xmlText, _savedXml, includeRepackLosses: false);
         if (refusal != null) { SetStatus(refusal, Ux.BadBrush); return; }
 
@@ -5129,8 +4696,6 @@ public class MainWindow : Window
         if (e.Key == Avalonia.Input.Key.Z && !shift) { Undo(); e.Handled = true; }
         else if (e.Key == Avalonia.Input.Key.Y || (e.Key == Avalonia.Input.Key.Z && shift)) { Redo(); e.Handled = true; }
     }
-
-
 
     private void Commit(string newXml)
     {
@@ -5152,14 +4717,9 @@ public class MainWindow : Window
         RefreshDirty();
     }
 
-
-
     private void RefreshDirty()
     {
         _dirty = _xmlText.Length > 0 && _xmlText != _savedXml;
-
-
-
 
         _saveButton.IsEnabled = _dirty && !_readOnly;
         if (_readOnly) ToolTip.SetTip(_saveButton, _readOnlyWhy);
@@ -5185,8 +4745,6 @@ public class MainWindow : Window
         AfterHistoryMove("Redone");
     }
 
-
-
     private void AfterHistoryMove(string what)
     {
         _documentStamp++;
@@ -5205,8 +4763,6 @@ public class MainWindow : Window
                   $"{_redo.Count} forward." + (_dirty ? "   (unsaved)" : "   this now matches the file on disk"),
                   Ux.MetaBrush);
     }
-
-
 
     private void SetSummary(string text, IBrush brush)
     {

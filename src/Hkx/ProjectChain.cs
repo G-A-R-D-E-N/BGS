@@ -5,9 +5,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
 public sealed class ProjectChain
 {
     public sealed class Link
@@ -25,9 +22,6 @@ public sealed class ProjectChain
     public readonly List<string> Bones = new();
     public readonly List<string> Problems = new();
 
-
-
-
     public HkxSkeleton? Skeleton;
     public string SkeletonPath = "";
 
@@ -38,8 +32,6 @@ public sealed class ProjectChain
         BehaviourGraphModel? ReadModel(string path) =>
             modelReader == null ? Read(path, chain) : Read(path, chain, modelReader);
         string dir = Path.GetDirectoryName(Path.GetFullPath(anyHkxPath)) ?? "";
-
-
 
         string leaf = Path.GetFileName(dir);
         chain.Root = leaf.Equals("Behaviors", StringComparison.OrdinalIgnoreCase)
@@ -95,8 +87,6 @@ public sealed class ProjectChain
             return chain;
         }
 
-
-
         string behaviourRel = strings.Str("behaviorFilename");
         if (behaviourRel.Length > 0)
             chain.Add("behaviour", behaviourRel, ResolvePath(chain.Root, behaviourRel));
@@ -134,10 +124,6 @@ public sealed class ProjectChain
             chain.Animations.Add(anim);
             if (File.Exists(ResolvePath(chain.Root, anim))) continue;
 
-
-
-
-
             string? lender = BorrowedFrom(anim);
             chain.Problems.Add(lender != null
                 ? $"missing animation, borrowed from {lender}: {anim}. Extract {lender} alongside " +
@@ -148,18 +134,12 @@ public sealed class ProjectChain
         return chain;
     }
 
-
-
-
     public static string? BorrowedFrom(string animation)
     {
         var parts = animation.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         int lastUp = Array.LastIndexOf(parts, "..");
         return lastUp >= 0 && lastUp + 1 < parts.Length ? parts[lastUp + 1] : null;
     }
-
-
-
 
     public static List<string> DeclaredAnimations(HkObject characterStringData)
     {
@@ -169,11 +149,8 @@ public sealed class ProjectChain
         return all;
     }
 
-
-
     public static string AnimationKey(string declared)
         => Path.ChangeExtension(declared.Replace('/', '\\'), null).ToLowerInvariant();
-
 
     public static string ResolvePath(string baseDir, string relative)
     {

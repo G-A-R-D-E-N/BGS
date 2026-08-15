@@ -5,9 +5,6 @@ using Avalonia.LogicalTree;
 
 namespace BehaviourStudio.App;
 
-
-
-
 public sealed class Inspector : DockPanel
 {
     private readonly StackPanel _body = new() { Spacing = 6 };
@@ -27,7 +24,6 @@ public sealed class Inspector : DockPanel
         SetDock(_header, Dock.Top);
         Children.Add(_header);
 
-
         _scroll = new ScrollViewer
         {
             Content = _body,
@@ -44,9 +40,6 @@ public sealed class Inspector : DockPanel
     public void Clear() => _body.Children.Clear();
 
     public void Add(Control control) => _body.Children.Add(control);
-
-
-
 
     public Control TwoColumnRow(Control label, Control value, double labelWidth = 128)
     {
@@ -79,8 +72,6 @@ public sealed class Inspector : DockPanel
         Grid.SetColumn(button, 1);
         _header.Children.Add(button);
     }
-
-
 
     public void FocusFirstField()
     {

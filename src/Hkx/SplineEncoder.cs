@@ -4,45 +4,21 @@ using System.Numerics;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class SplineEncoder
 {
-
-
 
     public const int FramesPerBlock = 256;
 
     public sealed record Options
     {
 
-
         public float PositionTolerance { get; init; } = 0.01f;
-
-
 
         public float RotationTolerance { get; init; } = 0.001f;
 
         public float ScaleTolerance { get; init; } = 0.0005f;
 
-
-
         public int RotationFormat { get; init; } = 1;
-
 
         public float StaticTolerance { get; init; } = 1e-6f;
     }
@@ -60,15 +36,7 @@ public static class SplineEncoder
         int MaxFramesPerBlock, int MaskAndQuantizationSize, float Duration, float BlockDuration,
         float BlockInverseDuration, float FrameDuration, Report Report);
 
-
-
-
     public const int AnimationType = 3;
-
-
-
-
-
 
     public static Blob Encode(HkxAnimationData animation, Options? options = null)
     {
@@ -96,8 +64,6 @@ public static class SplineEncoder
         for (int block = 0; block < blocks; block++)
         {
 
-
-
             while (body.Count % 16 != 0) body.Add(0);
             offsets[block] = body.Count;
 
@@ -123,20 +89,11 @@ public static class SplineEncoder
             body.AddRange(masks);
             body.AddRange(channels);
 
-
-
-
-
-
             floatOffsets[block] = body.Count;
         }
 
         float frameDuration = animation.FrameDuration > 0 ? animation.FrameDuration
                             : frames > 1 ? animation.Duration / (frames - 1) : animation.Duration;
-
-
-
-
 
         float blockDuration = frameDuration * (FramesPerBlock - 1);
 
@@ -150,15 +107,10 @@ public static class SplineEncoder
 
     private readonly record struct Masks(byte Quant, byte Pos, byte Rot, byte Scale);
 
-
-
-
     private static Masks WriteTrack(HkxTrackData track, int first, int inBlock, Options opts,
         List<byte> into, ref int identity, ref int statics, ref int splines, ref int exact,
         ref float worstPos, ref float worstRot, ref float worstScale)
     {
-
-
 
         byte pos = WriteVector(Slice(track.Translations, first, inBlock, Vector3.Zero), Vector3.Zero,
             opts.PositionTolerance, opts.StaticTolerance, into, ref identity, ref statics, ref splines,
@@ -170,9 +122,6 @@ public static class SplineEncoder
         byte scale = WriteVector(Slice(track.Scales, first, inBlock, Vector3.One), Vector3.One,
             opts.ScaleTolerance, opts.StaticTolerance, into, ref identity, ref statics, ref splines,
             ref exact, ref worstScale);
-
-
-
 
         byte quant = (byte)(1 | ((opts.RotationFormat & 0x0F) << 2) | (1 << 6));
 
@@ -230,10 +179,6 @@ public static class SplineEncoder
             return flags;
         }
 
-
-
-
-
         var fitted = new SplineFit.Curve?[3];
         int controlPoints = 0, degree = 0;
         for (int a = 0; a < 3; a++)
@@ -247,16 +192,6 @@ public static class SplineEncoder
                 degree = curve.Degree;
             }
         }
-
-
-
-
-
-
-
-
-
-
 
         for (int a = 0; a < 3; a++)
         {
@@ -331,9 +266,6 @@ public static class SplineEncoder
             AddQuat(into, format, samples[0]);
             Pad4(into);
 
-
-
-
             return 0x0F;
         }
 
@@ -345,9 +277,6 @@ public static class SplineEncoder
         AddU16(into, (ushort)(fit.ControlPoints.Length - 1));
         into.Add((byte)fit.Degree);
         into.AddRange(fit.Knots);
-
-
-
 
         AlignTo(into, SplineFormat.RotAlign(format));
         foreach (var q in fit.ControlPoints) AddQuat(into, format, q);
@@ -388,16 +317,6 @@ public static class SplineEncoder
     {
         while (into.Count % to != 0) into.Add(0);
     }
-
-
-
-
-
-
-
-
-
-
 
     public static void Decode(byte[] blob, int[] blockOffsets, int tracks, int frames,
         int maskAndQuantizationSize, int framesPerBlock, HkxAnimationData into)

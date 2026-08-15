@@ -5,31 +5,10 @@ using System.Text;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class NativeXml
 {
 
     private const int Wrap = 64;
-
-
-
-
 
     private const string Header =
         "<?xml version=\"1.0\" encoding=\"ASCII\" standalone=\"no\"?>";
@@ -76,8 +55,6 @@ public static class NativeXml
         return text.ToString();
     }
 
-
-
     private static string ContentsVersion(PackfileImage image)
     {
         int end = System.Array.IndexOf(image.ContentsVersion, (byte)0);
@@ -93,12 +70,6 @@ public static class NativeXml
 
         foreach (var member in types.Members(className))
         {
-
-
-
-
-
-
 
             if (!member.Written)
             {
@@ -119,11 +90,6 @@ public static class NativeXml
                     text.Append($"{pad}<hkparam name=\"{member.Name}\"/>\n");
                     continue;
                 }
-
-
-
-
-
 
                 string inner = types[member.CType] is { } held
                     ? $" class=\"{member.CType}\" name=\"{member.Name}\" signature=\"0x{held.Signature:x}\""
@@ -146,7 +112,6 @@ public static class NativeXml
             if (member.ArrSize > 0)
             {
 
-
                 for (int e = 0; e < member.ArrSize; e++)
                     Scalar(text, pad, member.Name + (e + 1),
                            NativeGraphModel.Text(objects, at, className, member, reference, e, types, trim: false));
@@ -158,12 +123,8 @@ public static class NativeXml
         }
     }
 
-
-
     private static void Scalar(StringBuilder text, string pad, string name, string value)
     {
-
-
 
         if (value.Length == 0) text.Append($"{pad}<hkparam name=\"{name}\"/>\n");
         else text.Append($"{pad}<hkparam name=\"{name}\">{value}</hkparam>\n");
@@ -181,11 +142,6 @@ public static class NativeXml
         var array = width > 0 ? objects.ArrayAt(at, width) : declared;
         int count = width > 0 ? array?.Count ?? 0 : declared?.Count ?? 0;
 
-
-
-
-
-
         bool pointers = member.VSub == "TYPE_POINTER";
 
         if (count == 0 && !pointers)
@@ -194,19 +150,10 @@ public static class NativeXml
             return;
         }
 
-
-
-
         if (!pointers && member.VSub is not ("TYPE_STRUCT" or "TYPE_STRINGPTR" or "TYPE_CSTRING"))
         {
             var values = NativeGraphModel.Elements(objects, types, at, member, reference).ToList();
             string all = string.Join(" ", values);
-
-
-
-
-
-
 
             if (all.Length <= Wrap)
             {
@@ -255,8 +202,6 @@ public static class NativeXml
         }
         else
         {
-
-
 
             foreach (string token in NativeGraphModel.Elements(objects, types, at, member, reference))
                 text.Append(token).Append('\n');

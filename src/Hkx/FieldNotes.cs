@@ -5,32 +5,13 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class FieldNotes
 {
-
 
     public sealed record Note(string Says, string From)
     {
         public override string ToString() => $"{Says}  ({From})";
     }
-
-
 
     private static readonly Dictionary<string, Note> Known = new(StringComparer.Ordinal)
     {
@@ -92,14 +73,8 @@ public static class FieldNotes
             "_dynamic_initializer_for__hkbVariableBoundsClass__, issue #17"),
     };
 
-
-
     public static Note? Meaning(string owningClass, string field) =>
         Known.TryGetValue($"{owningClass}.{field}", out var note) ? note : null;
-
-
-
-
 
     public static string? Structure(string owningClass, string field, HavokClassTypes? types = null)
     {
@@ -107,10 +82,6 @@ public static class FieldNotes
 
         var members = types.Members(owningClass);
         var member = members.FirstOrDefault(m => m.Name == field);
-
-
-
-
 
         int place = 0;
         if (member == null)
@@ -136,8 +107,6 @@ public static class FieldNotes
             ? $"{what}, declared by {declared}"
             : what;
     }
-
-
 
     private static string Declares(string owningClass, string field, HavokClassTypes types)
     {
