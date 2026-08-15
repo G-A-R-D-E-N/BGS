@@ -35,6 +35,8 @@ public sealed class PackfileImage
     public PackfileSection? Section(string tag) =>
         Sections.Find(s => s.Tag == tag);
 
+    public PointerLayout Layout => new(LayoutRules.Length > 0 ? LayoutRules[0] : 8);
+
     public static PackfileImage Read(string path) => Read(InputFilePolicy.ReadHkx(path));
 
     public static PackfileImage Read(byte[] bytes)
@@ -57,6 +59,13 @@ public sealed class PackfileImage
             Flags = I32(bytes, 0x38),
             MaxPredicate = (short)I16(bytes, 0x3C),
         };
+
+        if (image.LayoutRules.Length < 4 || image.LayoutRules[1] != 1)
+            throw new InvalidDataException(
+                "Big-endian packfiles are not supported; only the little-endian layout is handled.");
+        if (image.LayoutRules[0] != 4 && image.LayoutRules[0] != 8)
+            throw new InvalidDataException(
+                $"Unsupported pointer size {image.LayoutRules[0]}; only 4-byte and 8-byte layouts are handled.");
 
         int sectionCount = I32(bytes, 0x14);
         if (sectionCount < 0)

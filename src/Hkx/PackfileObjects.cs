@@ -22,11 +22,14 @@ public sealed class PackfileObjects
 
     private readonly Dictionary<int, Instance> _startsAt = new();
 
+    private readonly int _pointer;
+
     public IReadOnlyList<Instance> Instances => _instances;
 
     public PackfileObjects(PackfileImage image, HavokClasses? classes = null)
     {
         _classes = classes ?? HavokClasses.Shipped;
+        _pointer = image.Layout.PointerSize;
         _data = image.Section("__data__")
                 ?? throw new InvalidOperationException("The file has no __data__ section.");
         _classNames = image.Section("__classnames__")
@@ -67,13 +70,22 @@ public sealed class PackfileObjects
 
     public int? FieldAt(Instance instance, string field)
     {
-        if (!_classes.Knows(instance.ClassName)) return null;
+        int? offset = MemberOffset(instance.ClassName, field);
+        if (offset == null) return null;
 
-        var member = _classes.Field(instance.ClassName, field);
-        if (member == null) return null;
-
-        int at = instance.Offset + member.Offset;
+        int at = instance.Offset + offset.Value;
         return at >= 0 && at < _data.Data.Length ? at : null;
+    }
+
+    private int? MemberOffset(string className, string field)
+    {
+        if (_pointer == 8)
+            return _classes.Knows(className) ? _classes.Field(className, field)?.Offset : null;
+
+        var types = HavokClassTypes.Shipped;
+        return LayoutWalker.CanPlace(types, className)
+            ? LayoutWalker.Of(types, className, new PointerLayout(_pointer)).OffsetOf(field)
+            : null;
     }
 
     public float? ReadFloatAt(int at) =>
@@ -120,13 +132,14 @@ public sealed class PackfileObjects
 
     public IReadOnlyList<string?>? ReadStringArrayAt(int at)
     {
-        var array = ArrayAt(at, 8);
+        var array = ArrayAt(at, _pointer);
         if (array == null) return null;
 
         var values = new List<string?>(array.Count);
         for (int i = 0; i < array.Count; i++)
         {
-            int slot = array.At + i * 8;
+            int slot = array.At + i * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
             values.Add(TextAt(Aim(slot)));
         }
         return values;
@@ -134,13 +147,16 @@ public sealed class PackfileObjects
 
     public IReadOnlyList<Instance?>? ReadRefArrayAt(int at)
     {
-        var array = ArrayAt(at, 8);
+        var array = ArrayAt(at, _pointer);
         if (array == null) return null;
 
         var values = new List<Instance?>(array.Count);
         for (int i = 0; i < array.Count; i++)
         {
-            int? destination = Aim(array.At + i * 8);
+            int slot = array.At + i * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
+
+            int? destination = Aim(slot);
             values.Add(destination != null && _startsAt.TryGetValue(destination.Value, out var target)
                            ? target
                            : null);
@@ -200,9 +216,9 @@ public sealed class PackfileObjects
 
     public Elements? ArrayAt(int at)
     {
-        if (at < 0 || at + 12 > _data.Data.Length) return null;
+        if (at < 0 || at + _pointer + 4 > _data.Data.Length) return null;
 
-        int count = BitConverter.ToInt32(_data.Data, at + 8);
+        int count = BitConverter.ToInt32(_data.Data, at + _pointer);
         if (count < 0) return null;
 
         int? destination = Aim(at);
@@ -222,6 +238,13 @@ public sealed class PackfileObjects
         long bytes = (long)array.Count * elementWidth;
         if (bytes > _data.Data.Length - array.At) return null;
         return array;
+    }
+
+    public int RunToNull(int at)
+    {
+        if (at < 0 || at >= _data.Data.Length) return 0;
+        int end = Array.IndexOf(_data.Data, (byte)0, at);
+        return end < 0 ? _data.Data.Length - at : end - at + 1;
     }
 
     public IEnumerable<(uint Signature, string Name)> ClassNames()
@@ -268,7 +291,7 @@ public sealed class PackfileObjects
     public bool WriteString(Instance instance, string field, string value)
     {
         int? at = FieldAt(instance, field);
-        if (at == null || at + 8 > _data.Data.Length) return false;
+        if (at == null || at + _pointer > _data.Data.Length) return false;
 
         if (ReadString(instance, field) == value) return true;
 
