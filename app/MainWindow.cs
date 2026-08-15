@@ -61,6 +61,31 @@ public class MainWindow : Window
     private readonly Button _undoButton;
     private readonly Button _redoButton;
 
+    private readonly TabControl _tabs = new() { Padding = new Thickness(0, 8, 0, 0) };
+    private readonly TextBlock _bridgeFile = new() { FontSize = 13, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _bridgeLastAction = new() { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
+    private readonly WrapPanel _bridgeRecents = new();
+    private readonly Button _bridgeSave = Ux.Primary("Save to .hkx");
+    private readonly Button _bridgeUndo = Ux.Secondary("Undo");
+    private readonly Button _bridgeRedo = Ux.Secondary("Redo");
+    private const int RecentCount = 6;
+    private readonly TourOverlay _tour = new();
+    private readonly List<(Border Card, string Title, string What, string Where)> _tourStations = new();
+    private bool _tourStarted;
+    private TextBlock? _bridgeTitle;
+    private Border? _bridgeFileCard;
+    private readonly TextBox _bridgeSearch = Ux.Field("Search the deck — stations and the reference table", 340);
+    private readonly TextBlock _bridgeSearchAnswer = new() { Foreground = Ux.MutedBrush, FontSize = 12 };
+    private readonly List<(TextBlock Header, List<Border> Cards)> _bridgeGroups = new();
+    private readonly List<(TextBlock Name, TextBlock Where)> _bridgeRefRows = new();
+    private TextBlock? _bridgeRefHeader;
+    private readonly TextBlock _dropHint = new()
+    {
+        Text = "Drop a .hkx anywhere on the Bridge to open it.",
+        Foreground = Ux.MutedBrush,
+        FontSize = 11,
+    };
+
     private readonly HkGrid _tree = new(("Node", -4), ("Havok class", -3), ("Animation", -4), ("Offset", 90));
     private readonly HkGrid _symbols =
         new(("Kind", 60), ("Index", 55), ("Name", -4), ("Initial value", -2), ("Used by, in this file", -5));
@@ -281,17 +306,32 @@ public class MainWindow : Window
         _graph.AddRequested += ShowAddMenu;
         _graph.LayoutChanged += SaveCurrentGraphLayout;
 
-        var tabs = new TabControl { Padding = new Thickness(0, 8, 0, 0) };
-        tabs.Items.Add(Tab("Tree", BuildTreeTab()));
-        tabs.Items.Add(Tab("Graph", BuildGraphTab()));
-        tabs.Items.Add(Tab("Symbols", BuildSymbolsTab()));
-        tabs.Items.Add(Tab("Chain", _chain));
-        tabs.Items.Add(Tab("Project search", BuildProjectSearchTab()));
-        tabs.Items.Add(Tab("Animation", BuildAnimationTab()));
-        tabs.Items.Add(Tab("Playback", BuildPlaybackTab()));
-        tabs.Items.Add(Tab("Compare", BuildDiffTab()));
+        _tabs.Items.Add(Tab("Bridge", BuildBridgeTab()));
+        _tabs.Items.Add(Tab("Tree", BuildTreeTab()));
+        _tabs.Items.Add(Tab("Graph", BuildGraphTab()));
+        _tabs.Items.Add(Tab("Symbols", BuildSymbolsTab()));
+        _tabs.Items.Add(Tab("Chain", _chain));
+        _tabs.Items.Add(Tab("Project search", BuildProjectSearchTab()));
+        _tabs.Items.Add(Tab("Animation", BuildAnimationTab()));
+        _tabs.Items.Add(Tab("Playback", BuildPlaybackTab()));
+        _tabs.Items.Add(Tab("Compare", BuildDiffTab()));
 
-        Content = new Border
+        _bridgeSave.IsEnabled = false;
+        _bridgeUndo.IsEnabled = false;
+        _bridgeRedo.IsEnabled = false;
+        _bridgeSave.Click += (_, _) => Save();
+        _bridgeUndo.Click += (_, _) => Undo();
+        _bridgeRedo.Click += (_, _) => Redo();
+
+        _tabs.SelectionChanged += (_, _) =>
+        {
+            if (_tabs.SelectedItem is TabItem tab && tab.Header?.ToString() is { } header && header.Length > 0)
+                Settings.TrySet("last_tab", header, out _);
+        };
+        if (Settings.Get("last_tab") is { } lastTab && lastTab.Length > 0)
+            GoToTab(lastTab);
+
+        var deck = new Border
         {
             Padding = new Thickness(14),
             Child = Rows(
@@ -299,8 +339,14 @@ public class MainWindow : Window
                 (Bar(_pathField, browse, archive, open), false),
                 (Ux.Pill(_summary), false),
                 (Bar(_filter, expand, collapse), false),
-                (tabs, true),
+                (_tabs, true),
                 (Bar(Ux.Pill(_status), _undoButton, _redoButton, checkProject, check, _saveButton), false)),
+        };
+        Content = new Grid { Children = { deck, _tour } };
+
+        Opened += (_, _) =>
+        {
+            if (!_tourStarted && Settings.Get("tour_done").Length == 0) StartTour();
         };
 
         SetSummary("No file loaded.", Ux.MutedBrush);
@@ -323,6 +369,515 @@ public class MainWindow : Window
         CornerRadius = new CornerRadius(4),
         Child = content,
     };
+
+    private void GoToTab(string header)
+    {
+        foreach (var item in _tabs.Items)
+            if (item is TabItem tab && tab.Header?.ToString() == header)
+            {
+                _tabs.SelectedItem = tab;
+                break;
+            }
+    }
+
+    private void StartTour()
+    {
+        if (_tourStarted) return;
+        _tourStarted = true;
+        _bridgeSearch.Text = "";
+        GoToTab("Bridge");
+
+        var steps = new List<(Control Target, string Title, string Desc)>();
+        if (_bridgeTitle != null)
+            steps.Add((_bridgeTitle, "The Bridge",
+                "Everything in the studio lives on this one deck. Open a file, jump to any " +
+                "tool, or look up where something is — nothing hides in a menu you have to " +
+                "remember."));
+        if (_bridgeFileCard != null)
+            steps.Add((_bridgeFileCard, "Current file",
+                "Your open file and its state live here — open, check, save, undo and redo " +
+                "without hunting for them."));
+        foreach (var (card, title, what, _) in _tourStations)
+            steps.Add((card, title,
+                what + " Press Next to keep walking the deck, or Skip to jump straight in."));
+
+        _tour.Start(steps, MarkTourDone);
+        SetStatus("The tour is showing you around. Press Next to keep going, Skip to stop.", Ux.MetaBrush);
+    }
+
+    private static void MarkTourDone() => Settings.TrySet("tour_done", "1", out _);
+
+    private void ApplyBridgeSearch()
+    {
+        string needle = (_bridgeSearch.Text ?? "").Trim();
+        bool searching = needle.Length > 0;
+
+        int stationShown = 0;
+        foreach (var (header, cards) in _bridgeGroups)
+        {
+            bool any = false;
+            foreach (var card in cards)
+            {
+                bool match = MatchBridgeCard(card, needle);
+                card.IsVisible = match;
+                if (match)
+                {
+                    any = true;
+                    stationShown++;
+                }
+            }
+            header.IsVisible = !searching || any;
+        }
+
+        int refShown = 0;
+        foreach (var (name, where) in _bridgeRefRows)
+        {
+            bool match = !searching
+                || Contains(name.Text, needle)
+                || Contains(where.Text, needle);
+            name.IsVisible = match;
+            where.IsVisible = match;
+            if (match) refShown++;
+        }
+        if (_bridgeRefHeader != null) _bridgeRefHeader.IsVisible = !searching || refShown > 0;
+
+        if (searching && stationShown == 0 && refShown == 0)
+            _bridgeSearchAnswer.Text = $"Nothing matches \"{needle}\".";
+        else
+            _bridgeSearchAnswer.Text = "";
+        _bridgeSearchAnswer.IsVisible = _bridgeSearchAnswer.Text.Length > 0;
+    }
+
+    private bool MatchBridgeCard(Border card, string needle)
+    {
+        if (needle.Length == 0) return true;
+        foreach (var (candidate, title, what, where) in _tourStations)
+            if (candidate == card)
+                return Contains(title, needle) || Contains(what, needle) || Contains(where, needle);
+        return false;
+    }
+
+    private static bool Contains(string? text, string needle) =>
+        (text ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasDroppedFiles(Avalonia.Input.IDataObject data) =>
+        data.Contains(Avalonia.Input.DataFormats.Files)
+        || data.Contains(Avalonia.Input.DataFormats.FileNames);
+
+    private void BridgeDragOver(object? sender, Avalonia.Input.DragEventArgs e)
+    {
+        bool files = HasDroppedFiles(e.Data);
+        e.DragEffects = files ? Avalonia.Input.DragDropEffects.Copy : Avalonia.Input.DragDropEffects.None;
+        e.Handled = true;
+        if (files) ShowDropHint(FirstDroppedFileName(e.Data));
+        else HideDropHint();
+    }
+
+    private void BridgeDrop(object? sender, Avalonia.Input.DragEventArgs e)
+    {
+        HideDropHint();
+        if (!HasDroppedFiles(e.Data)) return;
+
+        var files = (Avalonia.Input.DataObjectExtensions.GetFileNames(e.Data)
+                     ?? Enumerable.Empty<string>()).ToList();
+        if (files.Count == 0) return;
+        e.Handled = true;
+
+        BridgeOpenPath(files[0]);
+        if (files.Count > 1)
+            SetStatus($"Dropped {files.Count} files — opened the first. Open the rest from the " +
+                      "path bar or the recent row.", Ux.MetaBrush);
+    }
+
+    private static string? FirstDroppedFileName(Avalonia.Input.IDataObject data)
+    {
+        try
+        {
+            return Avalonia.Input.DataObjectExtensions.GetFileNames(data).FirstOrDefault();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private void ShowDropHint(string? fileName)
+    {
+        _dropHint.Text = fileName is { Length: > 0 }
+            ? $"Drop to open {Path.GetFileName(fileName)}"
+            : "Drop to open";
+        _dropHint.Foreground = Ux.AccentBrush;
+        if (_bridgeFileCard != null) _bridgeFileCard.BorderBrush = Ux.AccentBrush;
+    }
+
+    private void HideDropHint()
+    {
+        _dropHint.Text = "Drop a .hkx anywhere on the Bridge to open it.";
+        _dropHint.Foreground = Ux.MutedBrush;
+        if (_bridgeFileCard != null) _bridgeFileCard.BorderBrush = Ux.BorderBrush;
+    }
+
+    public string BridgeDropHintText => _dropHint.Text ?? "";
+    public void ShowDropHintForTest(string fileName) => ShowDropHint(fileName);
+    public void HideDropHintForTest() => HideDropHint();
+    public void DropFileForTest(string path) => BridgeOpenPath(path);
+
+    public bool TourOverlayVisible => _tour.IsActive;
+
+    private static void RememberRecent(string path)
+    {
+        var recents = new List<string>(RecentCount + 1) { path };
+        for (int i = 0; i < RecentCount; i++)
+        {
+            string value = Settings.Get("recent." + i);
+            if (value.Length > 0 && value != path && !recents.Contains(value)) recents.Add(value);
+        }
+        if (recents.Count > RecentCount) recents.RemoveRange(RecentCount, recents.Count - RecentCount);
+        for (int i = 0; i < recents.Count; i++) Settings.TrySet("recent." + i, recents[i], out _);
+    }
+
+    private void RefreshRecents()
+    {
+        _bridgeRecents.Children.Clear();
+        bool any = false;
+        for (int i = 0; i < RecentCount; i++)
+        {
+            string path = Settings.Get("recent." + i);
+            if (path.Length == 0) continue;
+            any = true;
+            var button = Ux.Secondary(Path.GetFileName(path));
+            ToolTip.SetTip(button, path);
+            button.MaxWidth = 280;
+            button.Margin = new Thickness(0, 0, 6, 0);
+            button.Click += (_, _) => BridgeOpenPath(path);
+            _bridgeRecents.Children.Add(button);
+        }
+        if (!any)
+        {
+            var none = Ux.Label("No files opened yet. Your last few will appear here so you can jump " +
+                                "straight back in.");
+            none.Foreground = Ux.MutedBrush;
+            _bridgeRecents.Children.Add(none);
+        }
+    }
+
+    private void BridgeOpenPath(string path)
+    {
+        _pathField.Text = path;
+        Load();
+    }
+
+    private static Border BridgeCard(string title, string what, string where,
+                                     params (string Label, Action Go)[] actions)
+    {
+        var stack = new StackPanel { Spacing = 6 };
+        stack.Children.Add(new TextBlock
+        {
+            Text = title,
+            Foreground = Ux.TitleBrush,
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = what,
+            Foreground = Ux.MetaBrush,
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Where: " + where,
+            Foreground = Ux.MutedBrush,
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        for (int i = 0; i < actions.Length; i++)
+        {
+            var button = i == 0 ? Ux.Primary(actions[i].Label) : Ux.Secondary(actions[i].Label);
+            var go = actions[i].Go;
+            button.Click += (_, _) => go();
+            buttons.Children.Add(button);
+        }
+        stack.Children.Add(buttons);
+
+        return new Border
+        {
+            Background = Ux.CardBrush,
+            BorderBrush = Ux.BorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5),
+            Padding = new Thickness(12),
+            Child = stack,
+        };
+    }
+
+    private Border BuildBridgeFileCard()
+    {
+        var open = Ux.Primary("Open...");
+        open.Click += (_, _) => Load();
+        var browse = Ux.Secondary("Browse...");
+        browse.Click += async (_, _) => await Browse();
+        var archive = Ux.Secondary("From archive...");
+        archive.Click += async (_, _) => await OpenFromArchive();
+        var check = Ux.Secondary("Check graph");
+        check.Click += (_, _) => Validate();
+        var checkProject = Ux.Secondary("Check project");
+        checkProject.Click += async (_, _) => await ValidateProject();
+
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        foreach (var button in new Control[]
+                 { open, browse, archive, check, checkProject, _bridgeUndo, _bridgeRedo, _bridgeSave })
+            actions.Children.Add(button);
+
+        var stack = new StackPanel { Spacing = 8 };
+        stack.Children.Add(Ux.SectionTitle("Current file"));
+        stack.Children.Add(_bridgeFile);
+        stack.Children.Add(_bridgeLastAction);
+        stack.Children.Add(actions);
+        stack.Children.Add(_dropHint);
+
+        return new Border
+        {
+            Background = Ux.CardBrush,
+            BorderBrush = Ux.BorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5),
+            Padding = new Thickness(12),
+            Child = stack,
+        };
+    }
+
+    private Control BuildBridgeReference()
+    {
+        var grid = new Grid { Margin = new Thickness(0, 4, 0, 0) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(210, GridUnitType.Pixel)));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+
+        int row = 0;
+        void RefRow(string name, string where)
+        {
+            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            var left = new TextBlock
+            {
+                Text = name,
+                Foreground = Ux.MetaBrush,
+                FontSize = 12,
+                Margin = new Thickness(2, 3, 12, 3),
+            };
+            var right = new TextBlock
+            {
+                Text = where,
+                Foreground = Ux.MutedBrush,
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(2, 3, 2, 3),
+            };
+            Grid.SetRow(left, row);
+            Grid.SetColumn(left, 0);
+            Grid.SetRow(right, row);
+            Grid.SetColumn(right, 1);
+            grid.Children.Add(left);
+            grid.Children.Add(right);
+            _bridgeRefRows.Add((left, right));
+            row++;
+        }
+
+        RefRow("Open a file", "The path bar at the very top of the window — or the Current file card above.");
+        RefRow("Browse the file", "The Tree tab.");
+        RefRow("See the graph", "The Graph tab.");
+        RefRow("Edit an object's fields", "Pick it in the Tree or Graph; the pane on the right shows its fields.");
+        RefRow("Events and variables", "The Symbols tab.");
+        RefRow("Undo / Redo", "The bottom bar (Ctrl+Z / Ctrl+Y), or the Current file card above.");
+        RefRow("Save", "The bottom bar, or the Current file card above.");
+        RefRow("Check the graph", "The bottom bar, or the Verify section above.");
+        RefRow("Problems and Output", "Graph tab → Show diagnostics, or the Verify section above.");
+        RefRow("Copy, paste and templates", "Graph tab → Edit tools.");
+        RefRow("Run the simulation", "The Graph toolbar, or the Workspace window → Runtime tab.");
+        RefRow("List of machines", "Graph tab → View ▾ → Workspace.");
+        RefRow("Animation keyframes", "The Animation tab.");
+        RefRow("Playback, skeleton, mesh", "The Playback tab.");
+        RefRow("Compare two files", "The Compare tab.");
+        RefRow("What the colours mean", "Graph tab → View ▾ → Legend.");
+        RefRow("Focus one machine, trace dependencies", "Graph tab → View ▾ menu.");
+
+        return new Border
+        {
+            Background = Ux.CardBrush,
+            BorderBrush = Ux.BorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5),
+            Padding = new Thickness(12),
+            Child = grid,
+        };
+    }
+
+    private Control BuildBridgeTab()
+    {
+        var body = new StackPanel { Spacing = 12 };
+
+        _bridgeTitle = new TextBlock
+        {
+            Text = "The Bridge",
+            Foreground = Ux.TitleBrush,
+            FontSize = 20,
+            FontWeight = FontWeight.Bold,
+        };
+        var takeTour = Ux.Secondary("Take the tour");
+        ToolTip.SetTip(takeTour, "Walk the deck one station at a time, with everything else dimmed.");
+        takeTour.Click += (_, _) => StartTour();
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        header.Children.Add(_bridgeTitle);
+        header.Children.Add(takeTour);
+        body.Children.Add(header);
+        body.Children.Add(new TextBlock
+        {
+            Text = "Every part of the studio in one place. Open a file, jump to any tool, or look up " +
+                   "where something lives — nothing is hidden in a menu you have to remember.",
+            Foreground = Ux.MetaBrush,
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        _bridgeFileCard = BuildBridgeFileCard();
+        body.Children.Add(_bridgeFileCard);
+
+        var searchRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        searchRow.Children.Add(_bridgeSearch);
+        searchRow.Children.Add(_bridgeSearchAnswer);
+        _bridgeSearch.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == TextBox.TextProperty) ApplyBridgeSearch();
+        };
+        _bridgeSearch.KeyDown += (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Escape && (_bridgeSearch.Text ?? "").Length > 0)
+            {
+                _bridgeSearch.Text = "";
+                e.Handled = true;
+            }
+        };
+        body.Children.Add(searchRow);
+
+        var currentStations = new WrapPanel();
+        TextBlock Section(string name)
+        {
+            var section = Ux.SectionTitle(name);
+            section.Margin = new Thickness(1, 8, 0, 0);
+            body.Children.Add(section);
+            currentStations = new WrapPanel { ItemWidth = 350 };
+            body.Children.Add(currentStations);
+            _bridgeGroups.Add((section, new List<Border>()));
+            return section;
+        }
+
+        void Station(string title, string what, string where, params (string Label, Action Go)[] actions)
+        {
+            var card = BridgeCard(title, what, where, actions);
+            currentStations.Children.Add(card);
+            _tourStations.Add((card, title, what, where));
+            _bridgeGroups[^1].Cards.Add(card);
+        }
+
+        Section("Open and inspect");
+        Station("Tree", "Browse the whole file as a tree of objects, classes and clips.",
+                "the Tree tab — the first tab after this one.",
+                ("Go to Tree", () => GoToTab("Tree")));
+        Station("Graph", "The state machine drawn as boxes and arrows, with the picked object's " +
+                         "fields editable on the right.",
+                "the Graph tab.",
+                ("Go to Graph", () => GoToTab("Graph")),
+                ("Workspace window", OpenWorkspaceWindow),
+                ("Legend", OpenLegendWindow));
+        Station("Properties", "Inspect and change the fields of the object you picked.",
+                "the pane on the right of the Graph and Tree tabs.",
+                ("Go to Tree", () => GoToTab("Tree")),
+                ("Go to Graph", () => GoToTab("Graph")));
+
+        Section("Edit");
+        Station("Symbols", "The events and variables this file declares — who raises them and who " +
+                           "listens.",
+                "the Symbols tab.",
+                ("Go to Symbols", () => GoToTab("Symbols")));
+        Station("Chain", "Where this file sits in a project chain — what it depends on and what " +
+                         "depends on it.",
+                "the Chain tab.",
+                ("Go to Chain", () => GoToTab("Chain")));
+        Station("Copy, paste & templates", "Move a subtree into another file, or save a shape to " +
+                                          "reuse later.",
+                "the Edit tools shelf on the Graph tab.",
+                ("Open Edit tools", () =>
+                {
+                    GoToTab("Graph");
+                    SetGraphEditShelfOpen(true);
+                }));
+
+        Section("Verify");
+        Station("Check graph", "Find broken references, missing objects and suspicious values in the " +
+                               "open file. Findings land in the Problems list.",
+                "the Check graph button, or this card.",
+                ("Run check now", Validate));
+        Station("Check project", "Check a whole mod folder — every behaviour file, project chain and " +
+                                 "animation reference.",
+                "the Check project button.",
+                ("Run check now", async () => await ValidateProject()));
+        Station("Diagnostics", "The Problems and Output lists that sit under the graph canvas.",
+                "the Show diagnostics button on the Graph tab.",
+                ("Open Problems", () =>
+                {
+                    GoToTab("Graph");
+                    OpenGraphDrawer("Problems");
+                }),
+                ("Open Output", () =>
+                {
+                    GoToTab("Graph");
+                    OpenGraphDrawer("Output");
+                }));
+
+        Section("Preview");
+        Station("Animation", "Read the keyframes of the loaded animation, filter by bone, and edit " +
+                             "a frame.",
+                "the Animation tab.",
+                ("Go to Animation", () => GoToTab("Animation")));
+        Station("Playback", "Pose the skeleton or mesh and scrub through the animation in time.",
+                "the Playback tab.",
+                ("Go to Playback", () => GoToTab("Playback")));
+        Station("Simulation", "Run the graph and send it events to watch which state goes active.",
+                "the Simulation controls on the Graph toolbar, or the Runtime tab of the Workspace " +
+                "window.",
+                ("Open Workspace", OpenWorkspaceWindow));
+
+        Section("Reference");
+        Station("Legend", "What every box, line and mark on the canvas means.",
+                "the View ▾ menu on the Graph tab.",
+                ("Open legend", OpenLegendWindow));
+
+        _bridgeRefHeader = Section("Where everything is");
+        body.Children.Add(BuildBridgeReference());
+
+        Section("Jump back in");
+        body.Children.Add(_bridgeRecents);
+        RefreshRecents();
+
+        var viewer = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            Content = new Border
+            {
+                Padding = new Thickness(2, 0, 10, 16),
+                Child = body,
+            },
+        };
+        Avalonia.Input.DragDrop.SetAllowDrop(viewer, true);
+        viewer.AddHandler(Avalonia.Input.DragDrop.DragEnterEvent, BridgeDragOver);
+        viewer.AddHandler(Avalonia.Input.DragDrop.DragOverEvent, BridgeDragOver);
+        viewer.AddHandler(Avalonia.Input.DragDrop.DragLeaveEvent, (_, _) => HideDropHint());
+        viewer.AddHandler(Avalonia.Input.DragDrop.DropEvent, BridgeDrop);
+        return viewer;
+    }
 
     private Border GraphToolbarGroup(string name, params Control[] controls)
     {
@@ -3207,6 +3762,8 @@ public class MainWindow : Window
         if (root == null)
         {
             _hkxPath = path;
+            RememberRecent(path);
+            RefreshRecents();
             string? rootSettingsWarning = RememberSetting("last_path", path, "The file opened") ??
                                           RememberSetting("last_folder", Path.GetDirectoryName(path) ?? "",
                                                           "The file opened");
@@ -3271,6 +3828,8 @@ public class MainWindow : Window
                    isAnimation ? Ux.MutedBrush : _classWarning.Length > 0 ? Ux.WarnBrush : Ux.TitleBrush);
 
         RebuildTree();
+        RememberRecent(path);
+        RefreshRecents();
         string? settingsWarning = RememberSetting("last_path", path, "The file opened") ??
                                   RememberSetting("last_folder", Path.GetDirectoryName(path) ?? "", "The file opened");
         PrepareEditing();
@@ -4689,6 +5248,13 @@ public class MainWindow : Window
 
     private void OnWindowKey(object? sender, Avalonia.Input.KeyEventArgs e)
     {
+        if (e.Key == Avalonia.Input.Key.Escape && _tour.IsActive)
+        {
+            _tour.Skip();
+            e.Handled = true;
+            return;
+        }
+
         bool control = e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Control);
         if (!control) return;
         bool shift = e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Shift);
@@ -4725,6 +5291,9 @@ public class MainWindow : Window
         if (_readOnly) ToolTip.SetTip(_saveButton, _readOnlyWhy);
         _undoButton.IsEnabled = _undo.Count > 0;
         _redoButton.IsEnabled = _redo.Count > 0;
+        _bridgeSave.IsEnabled = _saveButton.IsEnabled;
+        _bridgeUndo.IsEnabled = _undoButton.IsEnabled;
+        _bridgeRedo.IsEnabled = _redoButton.IsEnabled;
     }
 
     private void Undo()
@@ -4768,11 +5337,15 @@ public class MainWindow : Window
     {
         _summary.Text = text;
         _summary.Foreground = brush;
+        _bridgeFile.Text = text;
+        _bridgeFile.Foreground = brush;
     }
 
     private void SetStatus(string text, IBrush brush)
     {
         _status.Text = text;
         _status.Foreground = brush;
+        _bridgeLastAction.Text = text;
+        _bridgeLastAction.Foreground = brush;
     }
 }

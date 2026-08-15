@@ -144,6 +144,10 @@ public static class Smoke
     {
         if (args.Length >= 2 && args[0] == "--png") return Png(args);
 
+        Settings.SettingsPathForTest =
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-bridge-{Guid.NewGuid():N}.cfg");
+        Settings.TrySet("tour_done", "1", out _);
+
         AppBuilder.Configure<HeadlessApp>().UseHeadless(new AvaloniaHeadlessPlatformOptions())
             .SetupWithoutStarting();
 
@@ -156,7 +160,7 @@ public static class Smoke
         Check("there is one tab control", 1, tabs.Count);
 
         var headers = tabs[0].Items.OfType<TabItem>().Select(t => t.Header?.ToString()).ToList();
-        Check("tabs", "Tree, Graph, Symbols, Chain, Project search, Animation, Playback, Compare", string.Join(", ", headers));
+        Check("tabs", "Bridge, Tree, Graph, Symbols, Chain, Project search, Animation, Playback, Compare", string.Join(", ", headers));
 
         var canvases = 0;
         var viewports = 0;
@@ -183,6 +187,82 @@ public static class Smoke
                    "Undo", "Redo", "Compare with...", "Search project", "Open result", "Check project", "Scripts folder...",
                    "Play", "From selected node", "Fit", "View ▾", "Fit all", "Fit selection", "Create template" })
             CheckTrue($"the {expected} button is there", buttons.Contains(expected));
+
+        Check("the Bridge is the first tab", "Bridge", headers[0]);
+        CheckTrue("the Bridge puts every area one click away",
+            buttons.Contains("Go to Tree") && buttons.Contains("Go to Graph") &&
+            buttons.Contains("Go to Symbols") && buttons.Contains("Go to Chain") &&
+            buttons.Contains("Go to Animation") && buttons.Contains("Go to Playback") &&
+            buttons.Contains("Open Edit tools") && buttons.Contains("Run check now"));
+        tabs[0].SelectedIndex = headers.IndexOf("Bridge");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        CheckTrue("the Bridge has a Jump back in row for recent files",
+            Find<TextBlock>(window).Any(t => t.Text == "JUMP BACK IN"));
+        CheckTrue("the Bridge explains when no file is recent yet",
+            Find<TextBlock>(window).Any(t => (t.Text ?? "").Contains("No files opened yet")));
+
+        {
+            tabs[0].SelectedIndex = headers.IndexOf("Bridge");
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Find<Button>(window).First(b => b.Content?.ToString() == "Go to Tree")
+                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Check("a Bridge station navigates to its tab", "Tree", headers[tabs[0].SelectedIndex]);
+            tabs[0].SelectedIndex = headers.IndexOf("Bridge");
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        }
+
+        {
+            tabs[0].SelectedIndex = headers.IndexOf("Bridge");
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Find<Button>(window).First(b => b.Content?.ToString() == "Take the tour")
+                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("the tour opens a spotlight over the Bridge", window.TourOverlayVisible);
+            CheckTrue("the tour numbers its steps",
+                Find<TextBlock>(window).Any(t => (t.Text ?? "").StartsWith("Step 1 of")));
+            CheckTrue("the first stop is the Bridge itself",
+                Find<TextBlock>(window).Any(t => t.Text == "The Bridge"));
+
+            Find<Button>(window).First(b => b.Content?.ToString() == "Next")
+                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("Next walks to the second stop",
+                Find<TextBlock>(window).Any(t => t.Text == "Current file"));
+
+            Find<Button>(window).First(b => b.Content?.ToString() == "Skip tour")
+                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("skipping the tour closes the spotlight", !window.TourOverlayVisible);
+        }
+
+        {
+            tabs[0].SelectedIndex = headers.IndexOf("Bridge");
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            var search = Find<TextBox>(window).First(
+                t => t.Watermark == "Search the deck — stations and the reference table");
+
+            search.Text = "graph";
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("searching the deck keeps the matching station",
+                Find<Button>(window).First(b => b.Content?.ToString() == "Go to Graph").IsEffectivelyVisible);
+            CheckTrue("and hides the rest",
+                !Find<Button>(window).First(b => b.Content?.ToString() == "Go to Symbols").IsEffectivelyVisible);
+            CheckTrue("the reference table filters too",
+                Find<TextBlock>(window).First(t => t.Text == "See the graph").IsEffectivelyVisible);
+            CheckTrue("and rows that do not match disappear",
+                !Find<TextBlock>(window).First(t => t.Text == "Compare two files").IsEffectivelyVisible);
+
+            search.Text = "zzz-no-such-station";
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("a dead search says nothing matches",
+                Find<TextBlock>(window).Any(t => (t.Text ?? "").StartsWith("Nothing matches")));
+
+            search.Text = "";
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue("clearing the search brings every station back",
+                Find<Button>(window).First(b => b.Content?.ToString() == "Go to Symbols").IsEffectivelyVisible);
+        }
 
         {
             tabs[0].SelectedIndex = headers.IndexOf("Graph");
@@ -235,10 +315,33 @@ public static class Smoke
         {
             window.Open(path);
 
+            string name = System.IO.Path.GetFileName(path);
+
+            tabs[0].SelectedIndex = headers.IndexOf("Bridge");
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue($"{name}: the file joins the recent-files row on the Bridge",
+                Find<Button>(window).Any(b => Avalonia.Controls.ToolTip.GetTip(b) as string == path));
+
+            CheckTrue($"{name}: the Current file card advertises the drop affordance",
+                Find<TextBlock>(window).Any(t => (t.Text ?? "").Contains("Drop a .hkx anywhere on the Bridge")));
+
+            var droppedData = new Avalonia.Input.DataObject();
+            droppedData.Set(Avalonia.Input.DataFormats.FileNames, new[] { path });
+            window.DragDrop(new Point(420, 260), Avalonia.Input.Raw.RawDragEventType.DragEnter, droppedData,
+                            Avalonia.Input.DragDropEffects.Copy);
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue($"{name}: dragging it over the Bridge names it on the card",
+                window.BridgeDropHintText.Contains("Drop to open"));
+            window.DragDrop(new Point(420, 260), Avalonia.Input.Raw.RawDragEventType.Drop, droppedData,
+                            Avalonia.Input.DragDropEffects.Copy);
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            CheckTrue($"{name}: dropping it opens it from the Bridge", window.PathFieldForTest == path);
+            CheckTrue($"{name}: the hint rests once the drop lands",
+                window.BridgeDropHintText.Contains("Drop a .hkx anywhere"));
+
             tabs[0].SelectedIndex = headers.IndexOf("Animation");
             Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
-            string name = System.IO.Path.GetFileName(path);
             var texts = Find<TextBlock>(window).Select(t => t.Text ?? "").ToList();
             string shown = texts.FirstOrDefault(t => t.StartsWith("Unsupported:", StringComparison.Ordinal)
                                                   || OpenCommonwealth.Services.Hkx.HkxAnimationData.DecodedAnimationClasses
@@ -252,7 +355,7 @@ public static class Smoke
 
             if (shown.StartsWith("This is a behaviour file", StringComparison.Ordinal))
             {
-                tabs[0].SelectedIndex = 2;
+                tabs[0].SelectedIndex = headers.IndexOf("Symbols");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
                 var roles = new[] { "raised here", "listened for here", "referenced here" };
@@ -272,7 +375,7 @@ public static class Smoke
             }
 
             {
-                tabs[0].SelectedIndex = 1;
+                tabs[0].SelectedIndex = headers.IndexOf("Graph");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
                 int drawn = Find<GraphView>(window).First().DrawnIds.Count;
@@ -281,7 +384,7 @@ public static class Smoke
             }
 
             {
-                tabs[0].SelectedIndex = 1;
+                tabs[0].SelectedIndex = headers.IndexOf("Graph");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
                 var navigatorModel = OpenCommonwealth.Services.Hkx.BehaviourGraphModel.Parse(window.LoadedXml);
@@ -417,13 +520,13 @@ public static class Smoke
             }
 
             {
-                tabs[0].SelectedIndex = 5;
+                tabs[0].SelectedIndex = headers.IndexOf("Playback");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 CheckTrue($"{name}: playback viewport clips mesh drawing", window.PlaybackViewportClips);
             }
 
             {
-                tabs[0].SelectedIndex = 1;
+                tabs[0].SelectedIndex = headers.IndexOf("Graph");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 var canvas = Find<GraphView>(window).First();
 
@@ -462,7 +565,7 @@ public static class Smoke
             }
 
             {
-                tabs[0].SelectedIndex = 1;
+                tabs[0].SelectedIndex = headers.IndexOf("Graph");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 var canvas = Find<GraphView>(window).First();
 
@@ -514,7 +617,7 @@ public static class Smoke
             }
 
             {
-                tabs[0].SelectedIndex = 1;
+                tabs[0].SelectedIndex = headers.IndexOf("Graph");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 var canvas = Find<GraphView>(window).First();
 
@@ -549,7 +652,7 @@ public static class Smoke
             }
 
             {
-                tabs[0].SelectedIndex = 1;
+                tabs[0].SelectedIndex = headers.IndexOf("Graph");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                 var canvas = Find<GraphView>(window).First();
 
@@ -653,7 +756,7 @@ public static class Smoke
                     .Objects.Any(o => o.Class == "hkbStateMachine");
             if (isBehaviour)
             {
-                tabs[0].SelectedIndex = 1;
+                tabs[0].SelectedIndex = headers.IndexOf("Graph");
                 Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
                 var canvas = Find<GraphView>(window).First();
@@ -1387,6 +1490,7 @@ public static class Smoke
         DirtyGraphSurvivesARejectedOpen();
         CleanWindowClosesWithoutPrompt();
         GraphLayoutPersistsAcrossFreshWindow();
+        LastTabPersistsAcrossFreshWindow();
         GraphLayoutCodecKeepsPathsAndSkipsInvalidRecords();
         PreferencesReadFailureDoesNotBlockGraphOpen();
         StructuredFlowDragStaysTransient();
@@ -1413,6 +1517,12 @@ public static class Smoke
         StandaloneAnimationSkeletonSearchesFromAnimationsRoot();
 
         ArchiveBrowserBuilds();
+
+        if (Settings.SettingsPathForTest != null)
+        {
+            System.IO.File.Delete(Settings.SettingsPathForTest);
+            Settings.SettingsPathForTest = null;
+        }
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -2294,6 +2404,35 @@ public static class Smoke
             });
         }
         finally { System.IO.File.Delete(path); }
+    }
+
+    private static void LastTabPersistsAcrossFreshWindow()
+    {
+        Console.WriteLine("\nthe last-selected tab reopens on a fresh window");
+        WithTemporarySettings(_ =>
+        {
+            Settings.TrySet("tour_done", "1", out _);
+
+            var first = new MainWindow();
+            first.Show();
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            var tabs = Find<TabControl>(first).First();
+            var headers = tabs.Items.OfType<TabItem>().Select(t => t.Header?.ToString()).ToList();
+            tabs.SelectedIndex = headers.IndexOf("Graph");
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+            var second = new MainWindow();
+            second.Show();
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            var tabs2 = Find<TabControl>(second).First();
+            var headers2 = tabs2.Items.OfType<TabItem>().Select(t => t.Header?.ToString()).ToList();
+            Check("a fresh window opens on the last-selected tab", "Graph", headers2[tabs2.SelectedIndex]);
+
+            first.DiscardDecision = () => DiscardChoice.Discard;
+            second.DiscardDecision = () => DiscardChoice.Discard;
+            first.Close();
+            second.Close();
+        });
     }
 
     private static void GraphLayoutCodecKeepsPathsAndSkipsInvalidRecords()
