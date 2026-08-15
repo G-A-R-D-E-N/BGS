@@ -37,6 +37,10 @@ public static class Program
             case "packfile": return Packfile(argv);
             case "layout": return Layout(argv);
             case "relayout": return Relayout(argv);
+            case "ground": return Ground(argv);
+            case "offsets": return Offsets(argv);
+            case "convert": return Convert(argv);
+            case "compare": return Compare(argv);
             case "delete": return DeleteObject(argv);
             case "paste": return Paste(argv);
             case "template": return Template(argv);
@@ -6005,6 +6009,208 @@ public static class Program
 
         var names = objects.ReadStringArray(strings, field);
         return names == null ? new List<string>() : names.Select(n => n ?? "").ToList();
+    }
+
+    private static int Compare(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+        var a = PackfileImage.Read(Path.GetFullPath(argv[1]));
+        var b = PackfileImage.Read(Path.GetFullPath(argv[2]));
+
+        int total = 0;
+        foreach (var tag in new[] { "__classnames__", "__data__" })
+        {
+            var sa = a.Section(tag);
+            var sb = b.Section(tag);
+            if (sa == null || sb == null) { Console.WriteLine($"{tag}: present in only one file"); total++; continue; }
+
+            string detail = "";
+            int diffs = SectionDiff(sa, sb, ref detail);
+            Console.WriteLine($"{tag}: {(diffs == 0 ? "identical" : diffs + " differing regions" + detail)}");
+            total += diffs;
+        }
+        Console.WriteLine(total == 0 ? "identical" : "differs");
+        return total == 0 ? 0 : 1;
+    }
+
+    private static int SectionDiff(PackfileSection a, PackfileSection b, ref string detail)
+    {
+        int diffs = 0;
+        diffs += ByteDiff("data", a.Data, b.Data, ref detail);
+        diffs += ByteDiff("local", a.LocalFixups, b.LocalFixups, ref detail);
+        diffs += ByteDiff("global", a.GlobalFixups, b.GlobalFixups, ref detail);
+        diffs += ByteDiff("virtual", a.VirtualFixups, b.VirtualFixups, ref detail);
+        return diffs;
+    }
+
+    private static int ByteDiff(string what, byte[] a, byte[] b, ref string detail)
+    {
+        if (a.Length != b.Length) { detail += $" [{what}: {a.Length} vs {b.Length} bytes]"; return 1; }
+        int diffs = 0, first = -1;
+        for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) { diffs++; if (first < 0) first = i; }
+        if (diffs > 0) detail += $" [{what}: {diffs} bytes, first at 0x{first:x}]";
+        return diffs > 0 ? 1 : 0;
+    }
+
+    private static int Convert(string[] argv)
+    {
+        if (argv.Length < 4) { Usage(); return 1; }
+        if (!int.TryParse(argv[3], out int bytes) || (bytes != 4 && bytes != 8)) { Usage(); return 1; }
+
+        var image = PackfileImage.Read(Path.GetFullPath(argv[1]));
+        if (!PackfileConverter.ConvertTo(image, new PointerLayout(bytes)))
+        {
+            Console.WriteLine("could not convert: the file holds a class the walker will not vouch for");
+            return 1;
+        }
+        image.Save(Path.GetFullPath(argv[2]));
+        Console.WriteLine($"wrote {bytes}-byte layout to {Path.GetFullPath(argv[2])}");
+        return 0;
+    }
+
+    private static int Ground(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        var image = PackfileImage.Read(Path.GetFullPath(argv[1]));
+        var types = HavokClassTypes.Shipped;
+        var data = image.Section("__data__");
+        if (data == null) { Console.WriteLine("the reference file has no __data__ section"); return 1; }
+
+        var objects = new PackfileObjects(image);
+        var layout = image.Layout;
+
+        var referenceSites = new SortedSet<int>();
+        foreach (var (source, _) in data.Locals()) referenceSites.Add(source);
+        foreach (var (source, _, _) in data.Globals()) referenceSites.Add(source);
+
+        var predicted = new HashSet<int>();
+        int placed = 0, refused = 0;
+        foreach (var instance in objects.Instances)
+        {
+            if (!LayoutWalker.CanPlace(types, instance.ClassName)) { refused++; continue; }
+            placed++;
+            CollectSites(types, objects, layout, instance.Offset, instance.ClassName, predicted, 0);
+        }
+
+        var unexplained = referenceSites.Where(s => !predicted.Contains(s)).ToList();
+
+        Console.WriteLine($"reference layout {layout.PointerSize}-byte, {objects.Instances.Count} objects " +
+                          $"({placed} placed, {refused} the walker will not vouch for)");
+        Console.WriteLine($"reference pointer fixups: {referenceSites.Count}, walker predicted sites: {predicted.Count}");
+        Console.WriteLine($"fixups the walker did not predict: {unexplained.Count}");
+        foreach (int at in unexplained.Take(25))
+            Console.WriteLine($"  0x{at:x}: the reference has a pointer here, the walker placed none");
+
+        return unexplained.Count == 0 ? 0 : 1;
+    }
+
+    private static int Offsets(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.GetFullPath(argv[1])));
+        var reflected = doc.RootElement.GetProperty("reflected");
+        var types = HavokClassTypes.Shipped;
+        string? dumpPath = argv.Length >= 3 ? Path.GetFullPath(argv[2]) : null;
+        var dump = new System.Text.StringBuilder("{\n");
+
+        int checkedClasses = 0, badClasses = 0, badMembers = 0, skipped = 0;
+        foreach (var prop in reflected.EnumerateObject())
+        {
+            string cls = prop.Name;
+            var v = prop.Value;
+            if (v.TryGetProperty("empty", out var e) && e.GetBoolean()) continue;
+            if (!types.Knows(cls) || !LayoutWalker.CanPlace(types, cls)) { skipped++; continue; }
+
+            var laid = LayoutWalker.Of(types, cls, PointerLayout.FourByte);
+            string? parent = types[cls]?.Parent;
+            int parentSize = parent != null && types.Knows(parent)
+                ? LayoutWalker.Of(types, parent, PointerLayout.FourByte).Size : 0;
+
+            checkedClasses++;
+            bool shown = false, bad = false;
+            var rows = new List<string>();
+            foreach (var m in v.GetProperty("members").EnumerateArray())
+            {
+                string name = m.GetProperty("name").GetString()!;
+                int reference = m.GetProperty("offset").GetInt32();
+                int? walk = laid.OffsetOf(name);
+                if (walk == null) continue;
+                rows.Add($"[\"{name}\",{walk},{reference}]");
+                if (walk == reference) continue;
+                bad = true; badMembers++;
+                if (!shown)
+                {
+                    Console.WriteLine($"{cls}: parentSize4={parentSize} size4={laid.Size} " +
+                                      $"first-bad {name} walk={walk} reference={reference}");
+                    shown = true;
+                }
+            }
+            if (bad) badClasses++;
+            if (dumpPath != null)
+                dump.Append($"  \"{cls}\": {{\"parent4\":{parentSize},\"size4\":{laid.Size}," +
+                            $"\"m\":[{string.Join(",", rows)}]}},\n");
+        }
+
+        if (dumpPath != null)
+        {
+            if (dump.Length > 2) dump.Length -= 2;
+            dump.Append("\n}\n");
+            File.WriteAllText(dumpPath, dump.ToString());
+            Console.WriteLine($"wrote walk/reference dump to {dumpPath}");
+        }
+        Console.WriteLine($"checked {checkedClasses} placeable reflected classes ({skipped} skipped); " +
+                          $"{badClasses} classes differ, {badMembers} member offsets differ");
+        return badClasses == 0 ? 0 : 1;
+    }
+
+    private static void CollectSites(HavokClassTypes types, PackfileObjects objects, PointerLayout layout,
+                                     int offset, string className, HashSet<int> sites, int depth)
+    {
+        if (depth > 12) return;
+
+        int p = layout.PointerSize;
+        var laid = LayoutWalker.Of(types, className, layout);
+        var members = types.Members(className);
+
+        for (int i = 0; i < members.Count && i < laid.Offsets.Count; i++)
+        {
+            var member = members[i];
+            if (!member.Written) continue;
+            int at = offset + laid.Offsets[i];
+
+            if (member.VType is "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING")
+            {
+                sites.Add(at);
+                continue;
+            }
+
+            if (member.VType == "TYPE_STRUCT")
+            {
+                if (member.CType != null && types.Knows(member.CType))
+                    CollectSites(types, objects, layout, at, member.CType, sites, depth + 1);
+                continue;
+            }
+
+            if (member.VType is not ("TYPE_ARRAY" or "TYPE_SIMPLEARRAY")) continue;
+
+            sites.Add(at);
+            var array = objects.ArrayAt(at);
+            if (array == null || array.Count == 0) continue;
+
+            if (member.VSub is "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING")
+            {
+                for (int e = 0; e < array.Count; e++) sites.Add(array.At + e * p);
+            }
+            else if (member.VSub == "TYPE_STRUCT" && member.CType != null && types.Knows(member.CType))
+            {
+                int stride = LayoutWalker.Of(types, member.CType, layout).Size;
+                if (stride <= 0) continue;
+                for (int e = 0; e < array.Count; e++)
+                    CollectSites(types, objects, layout, array.At + e * stride, member.CType, sites, depth + 1);
+            }
+        }
     }
 
     private static int Relayout(string[] argv)
