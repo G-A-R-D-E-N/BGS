@@ -15,6 +15,15 @@ public static class Tests
 
     public static readonly (string Name, Action Check)[] Cases =
     {
+        ("PointerLayoutValuesAreWhatTheySay", PointerLayoutValuesAreWhatTheySay),
+        ("TheWalkerReproducesEveryStoredEightByteOffset", TheWalkerReproducesEveryStoredEightByteOffset),
+        ("TheWalkerHalvesPointerOffsetsAtFourBytes", TheWalkerHalvesPointerOffsetsAtFourBytes),
+        ("TheWalkerReportsClassesItCannotPlace", TheWalkerReportsClassesItCannotPlace),
+        ("BigEndianPackfilesAreRefused", BigEndianPackfilesAreRefused),
+        ("PointerSizedIntegersHalveAtFourBytes", PointerSizedIntegersHalveAtFourBytes),
+        ("ConvertingToFourBytesKeepsTheGraph", ConvertingToFourBytesKeepsTheGraph),
+        ("ArraysAreReadAtTheFilesPointerWidth", ArraysAreReadAtTheFilesPointerWidth),
+        ("FieldOffsetsFollowTheFilesPointerWidth", FieldOffsetsFollowTheFilesPointerWidth),
         ("DetachedSubtreeStaysDrawn", DetachedSubtreeStaysDrawn),
         ("EveryDrawnNodeHasOneOwner", EveryDrawnNodeHasOneOwner),
         ("OwnershipAnswersWhatMovesAndWhatHides", OwnershipAnswersWhatMovesAndWhatHides),
@@ -252,6 +261,178 @@ public static class Tests
         _ran++;
         if (!value) _failed++;
         Console.WriteLine($"  {(value ? "ok  " : "FAIL")}  {what}");
+    }
+
+    private static void PointerLayoutValuesAreWhatTheySay()
+    {
+        Check("eight-byte pointer size", 8, PointerLayout.EightByte.PointerSize);
+        Check("four-byte pointer size", 4, PointerLayout.FourByte.PointerSize);
+
+        var layout = new ObjectLayout(
+            new[] { 0, 8 },
+            new Dictionary<string, int>(StringComparer.Ordinal) { ["a"] = 0, ["b"] = 8 }, 16, 8);
+        Check("size", 16, layout.Size);
+        Check("alignment", 8, layout.Alignment);
+        Check("offset by position", 8, layout.Offsets[1]);
+        Check("offset of b", 8, layout.OffsetOf("b"));
+        Check("offset of missing", null, layout.OffsetOf("nope"));
+    }
+
+    private static void TheWalkerReproducesEveryStoredEightByteOffset()
+    {
+        var types = HavokClassTypes.Shipped;
+        int placeable = 0, reproducedWrong = 0;
+        string firstWrong = "";
+
+        foreach (var name in types.Names)
+        {
+            if (types[name]?.Size is not int storedSize) continue;
+            if (!LayoutWalker.CanPlace(types, name)) continue;
+
+            placeable++;
+            var walked = LayoutWalker.Of(types, name, PointerLayout.EightByte);
+
+            bool ok = walked.Size == storedSize;
+            var flat = types.Members(name);
+            for (int i = 0; i < flat.Count; i++)
+                if (i >= walked.Offsets.Count || walked.Offsets[i] != flat[i].Offset) ok = false;
+
+            if (!ok)
+            {
+                reproducedWrong++;
+                if (firstWrong == "") firstWrong = $"{name}: size walked {walked.Size}, stored {storedSize}";
+            }
+        }
+
+        if (firstWrong != "") Console.WriteLine("  first placeable-but-wrong: " + firstWrong);
+        CheckTrue("most classes are placeable", placeable > 800);
+        Check("placeable classes that reproduce wrong", 0, reproducedWrong);
+
+        string[] essential =
+        {
+            "hkbClipGenerator", "hkbStateMachine", "hkbStateMachineStateInfo", "hkbBehaviorGraph",
+            "hkbBehaviorGraphData", "hkbBehaviorGraphStringData", "hkbVariableValueSet",
+            "hkbBlenderGenerator", "hkbBlenderGeneratorChild", "hkbModifierGenerator",
+            "hkbManualSelectorGenerator", "hkbBlendingTransitionEffect", "hkbLayerGenerator",
+            "hkbStateMachineTransitionInfoArray", "hkbExpressionDataArray", "hkbVariableBindingSet",
+        };
+        foreach (var className in essential)
+            CheckTrue($"{className} is placeable", LayoutWalker.CanPlace(types, className));
+    }
+
+    private static void FieldOffsetsFollowTheFilesPointerWidth()
+    {
+        const string className = "hkbStateMachineStateInfo";
+        var nameBytes = System.Text.Encoding.ASCII.GetBytes(className);
+        var classNamesData = new byte[5 + nameBytes.Length + 1];
+        nameBytes.CopyTo(classNamesData, 5);
+
+        var image = new PackfileImage { LayoutRules = new byte[] { 4, 1, 0, 1 }, Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = classNamesData });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = new byte[256],
+            VirtualFixups = Triple(0, 0, 5),
+        });
+
+        var objects = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        var instance = objects.Instances[0];
+        Check("the instance is the class we named", className, instance.ClassName);
+
+        Check("FieldAt reads generator at its exact four-byte offset", 52, objects.FieldAt(instance, "generator"));
+    }
+
+    private static void ArraysAreReadAtTheFilesPointerWidth()
+    {
+        var image = new PackfileImage { LayoutRules = new byte[] { 4, 1, 0, 1 }, Predicates = new byte[16] };
+        var data = new byte[32];
+        BitConverter.GetBytes(3).CopyTo(data, 4);
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            LocalFixups = Pair(0, 16),
+        });
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__") });
+
+        var objects = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        var array = objects.ArrayAt(0);
+        Check("the array count is read at the four-byte offset", 3, array?.Count);
+        Check("the array points where the fixup says", 16, array?.At);
+    }
+
+    private static void PointerSizedIntegersHalveAtFourBytes()
+    {
+        var types = HavokClassTypes.Shipped;
+        var four = LayoutWalker.Of(types, "hkbNode", PointerLayout.FourByte);
+        Check("userData is eight bytes at eight-byte",
+            LayoutWalker.Of(types, "hkbNode", PointerLayout.EightByte).OffsetOf("name"),
+            LayoutWalker.Of(types, "hkbNode", PointerLayout.EightByte).OffsetOf("userData") + 8);
+        Check("userData is four bytes at four-byte", four.OffsetOf("userData") + 4, four.OffsetOf("name"));
+    }
+
+    private static void ConvertingToFourBytesKeepsTheGraph()
+    {
+        var original = ClipInAPackfile("A.hkx", out _);
+        byte[] eight = original.Rebuild();
+        var before = new PackfileObjects(PackfileImage.Read(eight));
+
+        var image = PackfileImage.Read(eight);
+        CheckTrue("conversion to four bytes succeeds", PackfileConverter.ConvertTo(image, PointerLayout.FourByte));
+        Check("the file is now four-byte", 4, image.Layout.PointerSize);
+
+        var after = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        Check("object count is unchanged", before.Instances.Count, after.Instances.Count);
+        CheckTrue("class names are unchanged in order",
+            before.Instances.Select(i => i.ClassName).SequenceEqual(after.Instances.Select(i => i.ClassName)));
+    }
+
+    private static void BigEndianPackfilesAreRefused()
+    {
+        var image = new PackfileImage { Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__data__"), Data = new byte[16] });
+
+        byte[] bytes = image.Rebuild();
+        Check("a shipped file reads as eight-byte pointers", 8, PackfileImage.Read(bytes).Layout.PointerSize);
+
+        var bigEndian = (byte[])bytes.Clone();
+        bigEndian[0x11] = 0;
+        CheckThrows<InvalidDataException>("a big-endian header is refused",
+            () => PackfileImage.Read(bigEndian));
+
+        var oddPointer = (byte[])bytes.Clone();
+        oddPointer[0x10] = 2;
+        CheckThrows<InvalidDataException>("an unsupported pointer size is refused",
+            () => PackfileImage.Read(oddPointer));
+    }
+
+    private static void TheWalkerReportsClassesItCannotPlace()
+    {
+        var types = HavokClassTypes.Shipped;
+
+        Check("a stock class is placeable", true, LayoutWalker.CanPlace(types, "hkbStateMachine"));
+        Check("an unknown class is not placeable", false, LayoutWalker.CanPlace(types, "hkpMadeUpEntity"));
+
+        Check("an unreproducible custom class is not placeable", false,
+              LayoutWalker.CanPlace(types, "BSBehaviorGraphSwapGenerator"));
+    }
+
+    private static void TheWalkerHalvesPointerOffsetsAtFourBytes()
+    {
+        var types = HavokClassTypes.Shipped;
+
+        var baseFour = LayoutWalker.Of(types, "hkBaseObject", PointerLayout.FourByte);
+        Check("hkBaseObject four-byte size", 4, baseFour.Size);
+
+        var refFour = LayoutWalker.Of(types, "hkReferencedObject", PointerLayout.FourByte);
+        Check("hkReferencedObject four-byte size", 8, refFour.Size);
+        Check("memSizeAndRefCount four-byte offset", 4, refFour.OffsetOf("memSizeAndRefCount"));
+
+        var info8 = LayoutWalker.Of(types, "hkbStateMachineStateInfo", PointerLayout.EightByte);
+        Check("generator eight-byte offset", 88, info8.OffsetOf("generator"));
+        var info4 = LayoutWalker.Of(types, "hkbStateMachineStateInfo", PointerLayout.FourByte);
+        Check("generator four-byte offset", 52, info4.OffsetOf("generator"));
     }
 
     private static void DetachedSubtreeStaysDrawn()
