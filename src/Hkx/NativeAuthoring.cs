@@ -15,6 +15,7 @@ public sealed class NativeAuthoringPlan
     public sealed record Result(byte[] Bytes, IReadOnlyList<GraphValidator.Finding> Findings);
 
     private readonly byte[] _source;
+    private readonly PackfileObjects _sourceObjects;
     private readonly List<NativeSave.Change> _changes = new();
     private readonly Dictionary<int, ObjectRef> _objects = new();
     private readonly Dictionary<int, int> _classIndices = new();
@@ -26,19 +27,23 @@ public sealed class NativeAuthoringPlan
         ArgumentNullException.ThrowIfNull(source);
         _source = source.ToArray();
 
-        var objects = new PackfileObjects(PackfileImage.Read(_source), HavokClasses.Shipped);
-        for (int i = 0; i < objects.Instances.Count; i++)
+        _sourceObjects = new PackfileObjects(PackfileImage.Read(_source), HavokClasses.Shipped);
+        for (int i = 0; i < _sourceObjects.Instances.Count; i++)
         {
             int id = NativeGraphModel.FirstId + i;
-            string className = objects.Instances[i].ClassName;
+            string className = _sourceObjects.Instances[i].ClassName;
             int classIndex = _classCounts.GetValueOrDefault(className);
             _objects[id] = new ObjectRef(id, className);
             _classIndices[id] = classIndex;
             _classCounts[className] = classIndex + 1;
         }
 
-        _nextId = NativeGraphModel.FirstId + objects.Instances.Count;
+        _nextId = NativeGraphModel.FirstId + _sourceObjects.Instances.Count;
     }
+
+    // The packfile parse this plan already performed over the untouched source, exposed so callers
+    // can model the source without reading its bytes a second time.
+    internal PackfileObjects SourceObjects => _sourceObjects;
 
     public bool Contains(int id) => _objects.ContainsKey(id);
 
@@ -322,8 +327,7 @@ public sealed class BehaviourAuthoringSession
     public BehaviourAuthoringSession(byte[] source)
     {
         _plan = new NativeAuthoringPlan(source);
-        var objects = new PackfileObjects(PackfileImage.Read(source), HavokClasses.Shipped);
-        _model = NativeGraphModel.From(objects)
+        _model = NativeGraphModel.From(_plan.SourceObjects)
             ?? throw new InvalidOperationException("the source file cannot be represented by the native graph model");
     }
 

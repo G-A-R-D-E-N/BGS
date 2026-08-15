@@ -28,8 +28,8 @@ public static class NativeVariableBuilder
         if (duplicate != null)
             throw new ArgumentException($"variable name '{duplicate.Key}' appears more than once", nameof(entries));
 
-        var objects = new PackfileObjects(PackfileImage.Read(source), HavokClasses.Shipped);
-        var model = NativeGraphModel.From(objects)
+        var plan = new NativeAuthoringPlan(source);
+        var model = NativeGraphModel.From(plan.SourceObjects)
             ?? throw new InvalidOperationException("the source file cannot be represented by the native graph model");
 
         var strings = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraphStringData")
@@ -55,13 +55,11 @@ public static class NativeVariableBuilder
         int valuesId = ParseId(values.Id);
         bool parallelBounds = audit.Bounds == audit.Names;
 
-        var plan = new NativeAuthoringPlan(source);
         var created = new List<Created>(requested.Count);
         foreach (var entry in requested)
         {
             int index = names.Count;
             names.Add(entry.Name);
-            plan.SetTextArray(stringsId, "variableNames", names);
 
             plan.ResizeStructArray(dataId, "variableInfos", index + 1);
             SetStructEnum(plan, dataId, "variableInfos", index, "role.role", "ROLE_DEFAULT");
@@ -81,6 +79,8 @@ public static class NativeVariableBuilder
 
             created.Add(new Created(entry, index));
         }
+
+        plan.SetTextArray(stringsId, "variableNames", names);
 
         var result = plan.Apply();
         return new Result(result.Bytes, created, result.Findings);
