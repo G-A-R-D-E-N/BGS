@@ -15,16 +15,12 @@ concurrency:
 jobs:
   package:
     name: Package ${{ matrix.rid }}
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: [self-hosted, linux, x64]
-            rid: linux-x64
-          - os: [self-hosted, windows, x64]
-            rid: win-x64
+        rid: [linux-x64, win-x64]
 
     steps:
       - name: Check out tagged source
@@ -32,12 +28,13 @@ jobs:
         with:
           clean: true
 
-      - name: Verify Linux runner tooling
-        if: runner.os == 'Linux'
+      - name: Verify runner tooling
         shell: bash
         run: |
           set -euo pipefail
-          for tool in zip unzip; do
+          needed="python3"
+          if [ "${{ matrix.rid }}" = "win-x64" ]; then needed="$needed wine"; fi
+          for tool in $needed; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "This self-hosted runner is missing '$tool', which the release needs."
               exit 1
@@ -45,16 +42,8 @@ jobs:
           done
 
       - name: Discard archives left by an earlier run
-        if: runner.os == 'Linux'
         shell: bash
         run: rm -rf release BehaviourGraphStudio-*.zip
-
-      - name: Discard archives left by an earlier run
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Remove-Item -Recurse -Force release -ErrorAction SilentlyContinue
-          Remove-Item -Force BehaviourGraphStudio-*.zip -ErrorAction SilentlyContinue
 
       - name: Set up pinned .NET SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.1.0
@@ -62,7 +51,6 @@ jobs:
           dotnet-version: 8.0.424
 
       - name: Verify tag matches application version
-        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -73,17 +61,6 @@ jobs:
             exit 1
           fi
 
-      - name: Verify tag matches application version
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          [xml]$project = Get-Content app/BehaviourStudio.csproj
-          $version = [string]$project.Project.PropertyGroup.Version
-          $tagVersion = "${{ github.ref_name }}" -replace '^v', ''
-          if ($version -ne $tagVersion) {
-            throw "Tag ${{ github.ref_name }} does not match app version $version"
-          }
-
       - name: Restore locked release dependencies
         run: dotnet restore app/BehaviourStudio.csproj --locked-mode
 
@@ -91,44 +68,45 @@ jobs:
         run: dotnet publish app/BehaviourStudio.csproj --configuration Release --runtime "${{ matrix.rid }}" --self-contained true --no-restore --output "release/${{ matrix.rid }}"
 
       - name: Include release notices
-        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
           cp CHANGELOG.md LICENSE THIRD_PARTY_NOTICES.md "release/${{ matrix.rid }}/"
 
-      - name: Include release notices
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Copy-Item CHANGELOG.md "release/${{ matrix.rid }}/CHANGELOG.md"
-          Copy-Item LICENSE "release/${{ matrix.rid }}/LICENSE"
-          Copy-Item THIRD_PARTY_NOTICES.md "release/${{ matrix.rid }}/THIRD_PARTY_NOTICES.md"
-
       - name: Verify Linux executable
-        if: runner.os == 'Linux'
+        if: matrix.rid == 'linux-x64'
         run: ./release/${{ matrix.rid }}/BehaviourGraphStudio --version
 
-      - name: Verify Windows executable
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: .\release\${{ matrix.rid }}\BehaviourGraphStudio.exe --version
+      - name: Verify Windows executable under Wine
+        if: matrix.rid == 'win-x64'
+        shell: bash
+        env:
+          WINEDEBUG: "-all"
+        run: |
+          set -euo pipefail
+          export WINEPREFIX="$PWD/.wineprefix"
+          mkdir -p "$WINEPREFIX"
+          reported=$(wine "release/${{ matrix.rid }}/BehaviourGraphStudio.exe" --version 2>/dev/null | tail -1)
+          echo "$reported"
+          case "$reported" in
+            *win-x64*) ;;
+            *) echo "The packaged Windows executable did not report a win-x64 version."; exit 1 ;;
+          esac
 
-      - name: Archive Linux release
-        if: runner.os == 'Linux'
+      - name: Archive release
         shell: bash
         run: |
           set -euo pipefail
-          archive="BehaviourGraphStudio-${GITHUB_REF_NAME}-${{ matrix.rid }}.zip"
-          cd "release/${{ matrix.rid }}"
-          zip -r "../../${archive}" .
-
-      - name: Archive Windows release
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $archive = "BehaviourGraphStudio-${{ github.ref_name }}-${{ matrix.rid }}.zip"
-          Compress-Archive -Path "release/${{ matrix.rid }}/*" -DestinationPath $archive
+          python3 - "release/${{ matrix.rid }}" "BehaviourGraphStudio-${GITHUB_REF_NAME}-${{ matrix.rid }}.zip" <<'PY'
+          import os, sys, zipfile
+          source, archive = sys.argv[1], sys.argv[2]
+          with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+              for folder, _, files in os.walk(source):
+                  for name in sorted(files):
+                      full = os.path.join(folder, name)
+                      bundle.write(full, os.path.relpath(full, source))
+          print("wrote " + archive)
+          PY
 
       - name: Upload release archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
