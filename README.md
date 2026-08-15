@@ -1,5 +1,7 @@
 # Behaviour Graph Studio
 
+[![Pipeline status](https://git.nomadicinteractive.dev/nomadic-interactive/behaviortoolstandalone/badges/main/pipeline.svg)](https://git.nomadicinteractive.dev/nomadic-interactive/behaviortoolstandalone/-/pipelines)
+
 Behaviour Graph Studio is a standalone desktop editor for Fallout 4 Havok behaviour files (`.hkx`).
 It runs outside the game and lets you inspect, edit, validate, compare, and preview behaviour graphs
 and animations.
