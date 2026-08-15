@@ -21,6 +21,8 @@ jobs:
       fail-fast: false
       matrix:
         rid: [linux-x64, win-x64]
+    env:
+      DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
 
     steps:
       - name: Check out tagged source
