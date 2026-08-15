@@ -200,6 +200,8 @@ public static class HavokClothValidator
                 if (!Matches(set.Kind, constraint))
                     findings.Add(Error($"cloth constraint set {set.Id}",
                         $"declares {set.Kind} but contains {constraint.GetType().Name}"));
+
+            CheckConstraintIntrinsics(set, model, findings);
         }
 
         foreach (var sim in model.SimCloths)
@@ -238,7 +240,7 @@ public static class HavokClothValidator
 
             foreach (int constraintSetId in sim.ConstraintSetIds)
                 if (constraintSets.TryGetValue(constraintSetId, out var set))
-                    CheckConstraintSet(set, sim, model, findings);
+                    CheckConstraintParticles(set, sim, findings);
         }
 
         foreach (var op in model.Operators)
@@ -281,7 +283,9 @@ public static class HavokClothValidator
         _ => false,
     };
 
-    private static void CheckConstraintSet(HavokClothConstraintSet set, HavokSimCloth sim, HavokClothModel model, List<HavokPhysicsValidationFinding> findings)
+    // Particle indices live in the space of whichever sim cloth consumes the set, so this runs
+    // once per referencing sim.
+    private static void CheckConstraintParticles(HavokClothConstraintSet set, HavokSimCloth sim, List<HavokPhysicsValidationFinding> findings)
     {
         var particles = sim.Particles.Select(value => value.Index).ToHashSet();
 
@@ -298,6 +302,39 @@ public static class HavokClothValidator
                 case HavokClothLinkConstraint link:
                     Particle(link.ParticleA);
                     Particle(link.ParticleB);
+                    break;
+                case HavokClothBendLinkConstraint bendLink:
+                    Particle(bendLink.ParticleA);
+                    Particle(bendLink.ParticleB);
+                    break;
+                case HavokClothBendStiffnessConstraint bend:
+                    Particle(bend.ParticleA);
+                    Particle(bend.ParticleB);
+                    Particle(bend.ParticleC);
+                    Particle(bend.ParticleD);
+                    break;
+                case HavokClothLocalRangeConstraint range:
+                    Particle(range.ParticleIndex);
+                    break;
+                case HavokClothTransitionConstraint transition:
+                    Particle(transition.ParticleIndex);
+                    break;
+                case HavokClothVolumeConstraint volume:
+                    Particle(volume.ParticleIndex);
+                    break;
+            }
+        }
+    }
+
+    // Finite values, self-links, and buffer-relative reference vertices are intrinsic to the set,
+    // so this runs once for every constraint set, including sets no sim cloth references.
+    private static void CheckConstraintIntrinsics(HavokClothConstraintSet set, HavokClothModel model, List<HavokPhysicsValidationFinding> findings)
+    {
+        foreach (var constraint in set.Constraints)
+        {
+            switch (constraint)
+            {
+                case HavokClothLinkConstraint link:
                     if (link.ParticleA == link.ParticleB)
                         findings.Add(Error($"cloth constraint set {set.Id}", "link cannot constrain a particle to itself"));
                     CheckFiniteNonNegative(link.RestLength, $"cloth constraint set {set.Id}", "rest length", findings);
@@ -306,8 +343,6 @@ public static class HavokClothValidator
                         CheckFiniteNonNegative(compression, $"cloth constraint set {set.Id}", "compression length", findings);
                     break;
                 case HavokClothBendLinkConstraint bendLink:
-                    Particle(bendLink.ParticleA);
-                    Particle(bendLink.ParticleB);
                     if (bendLink.ParticleA == bendLink.ParticleB)
                         findings.Add(Error($"cloth constraint set {set.Id}", "bend link cannot constrain a particle to itself"));
                     CheckFiniteNonNegative(bendLink.BendMinLength, $"cloth constraint set {set.Id}", "bend minimum length", findings);
@@ -316,16 +351,11 @@ public static class HavokClothValidator
                     CheckFiniteNonNegative(bendLink.StretchStiffness, $"cloth constraint set {set.Id}", "stretch stiffness", findings);
                     break;
                 case HavokClothBendStiffnessConstraint bend:
-                    Particle(bend.ParticleA);
-                    Particle(bend.ParticleB);
-                    Particle(bend.ParticleC);
-                    Particle(bend.ParticleD);
                     CheckFiniteNonNegative(bend.BendStiffness, $"cloth constraint set {set.Id}", "bend stiffness", findings);
                     if (!Finite(bend.RestCurvature))
                         findings.Add(Error($"cloth constraint set {set.Id}", "rest curvature must be finite"));
                     break;
                 case HavokClothLocalRangeConstraint range:
-                    Particle(range.ParticleIndex);
                     CheckReferenceVertex(set, range.ReferenceVertex, model, findings);
                     CheckFiniteNonNegative(range.MaximumDistance, $"cloth constraint set {set.Id}", "maximum distance", findings);
                     if (!Finite(range.MaxNormalDistance) || !Finite(range.MinNormalDistance))
@@ -334,14 +364,12 @@ public static class HavokClothValidator
                         findings.Add(Error($"cloth constraint set {set.Id}", "minimum normal distance is greater than maximum normal distance"));
                     break;
                 case HavokClothTransitionConstraint transition:
-                    Particle(transition.ParticleIndex);
                     CheckReferenceVertex(set, transition.ReferenceVertex, model, findings);
                     CheckFiniteNonNegative(transition.ToAnimDelay, $"cloth constraint set {set.Id}", "animation delay", findings);
                     CheckFiniteNonNegative(transition.ToSimDelay, $"cloth constraint set {set.Id}", "simulation delay", findings);
                     CheckFiniteNonNegative(transition.ToSimMaxDistance, $"cloth constraint set {set.Id}", "simulation maximum distance", findings);
                     break;
                 case HavokClothVolumeConstraint volume:
-                    Particle(volume.ParticleIndex);
                     if (!Finite(volume.FrameVector))
                         findings.Add(Error($"cloth constraint set {set.Id}", "volume frame vector must contain only finite values"));
                     CheckFiniteNonNegative(volume.Weight, $"cloth constraint set {set.Id}", "volume weight", findings);

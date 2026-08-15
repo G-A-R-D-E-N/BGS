@@ -93,4 +93,41 @@ public sealed class HavokClothTests
         Assert.Contains(findings, finding => finding.Message.Contains("operator index 2"));
         Assert.True(findings.Count(finding => finding.Level == HavokPhysicsValidationLevel.Error) >= 6);
     }
+
+    [Fact]
+    public void ClothValidatorChecksConstraintSetsNotReferencedByAnySim()
+    {
+        var model = new HavokClothModel();
+        var set = new HavokClothConstraintSet { Id = 1, Kind = HavokClothConstraintKind.StandardLink };
+        set.Constraints.Add(new HavokClothLinkConstraint(0, 0, float.NaN, -1.0f));
+        model.ConstraintSets.Add(set);
+
+        var findings = HavokClothValidator.Check(model);
+
+        Assert.Contains(findings, finding => finding.Message.Contains("constrain a particle to itself"));
+        Assert.Contains(findings, finding => finding.Message.Contains("rest length must be a finite non-negative"));
+        Assert.Contains(findings, finding => finding.Message.Contains("stiffness must be a finite non-negative"));
+    }
+
+    [Fact]
+    public void ClothValidatorDoesNotDuplicateFindingsForASharedConstraintSet()
+    {
+        var model = new HavokClothModel();
+        var set = new HavokClothConstraintSet { Id = 1, Kind = HavokClothConstraintKind.StandardLink };
+        set.Constraints.Add(new HavokClothLinkConstraint(0, 1, -1.0f, 0.5f));
+        model.ConstraintSets.Add(set);
+
+        for (int i = 0; i < 2; i++)
+        {
+            var sim = new HavokSimCloth { Id = 10 + i, TotalMass = 1.0f, MaxParticleRadius = 1.0f };
+            sim.Particles.Add(new HavokClothParticle(0, 1, 1, 1, 0));
+            sim.Particles.Add(new HavokClothParticle(1, 1, 1, 1, 0));
+            sim.ConstraintSetIds.Add(1);
+            model.SimCloths.Add(sim);
+        }
+
+        var findings = HavokClothValidator.Check(model);
+
+        Assert.Equal(1, findings.Count(finding => finding.Message.Contains("rest length must be a finite non-negative")));
+    }
 }

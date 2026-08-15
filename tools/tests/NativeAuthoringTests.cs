@@ -170,6 +170,41 @@ public sealed class NativeAuthoringTests
         Assert.Equal(new[] { 0, 2, 3 }, states.Select(state => state.StateId).ToArray());
     }
 
+    [Fact]
+    public void AddsTransitionToATransitionArrayThatAlreadyHasOne()
+    {
+        byte[] source = Source(
+            "hkbStateMachine",
+            "hkbBehaviorGraphStringData",
+            "hkbBehaviorGraphData");
+        int machineId = NativeGraphModel.FirstId;
+
+        var seed = new BehaviourAuthoringSession(source);
+        int startWalk = seed.AddEvent("StartWalk");
+        int startRun = seed.AddEvent("StartRun");
+        var idle = seed.AddClip("Idle", "Animations\\Idle.hkx");
+        var walk = seed.AddClip("Walk", "Animations\\Walk.hkx");
+        var run = seed.AddClip("Run", "Animations\\Run.hkx");
+        var idleState = seed.AddState(machineId, "Idle", idle.Id);
+        var walkState = seed.AddState(machineId, "Walk", walk.Id);
+        var runState = seed.AddState(machineId, "Run", run.Id);
+        seed.AddTransition(machineId, idleState.ObjectId, walkState.ObjectId, startWalk);
+        byte[] withOne = seed.Build().Bytes;
+
+        var session = new BehaviourAuthoringSession(withOne);
+        session.AddTransition(machineId, idleState.ObjectId, runState.ObjectId, startRun);
+        byte[] withTwo = session.Build().Bytes;
+
+        var transitions = StateEditor.Transitions(Model(withTwo), machineId.ToString());
+        Assert.Equal(2, transitions.Count);
+        Assert.Contains(transitions, transition =>
+            transition.FromStateId == idleState.StateId && transition.ToStateId == walkState.StateId &&
+            transition.EventId == startWalk);
+        Assert.Contains(transitions, transition =>
+            transition.FromStateId == idleState.StateId && transition.ToStateId == runState.StateId &&
+            transition.EventId == startRun);
+    }
+
     private static BehaviourGraphModel Model(byte[] bytes)
     {
         var objects = new PackfileObjects(PackfileImage.Read(bytes), HavokClasses.Shipped);

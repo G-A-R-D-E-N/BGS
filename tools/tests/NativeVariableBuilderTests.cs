@@ -81,6 +81,40 @@ public sealed class NativeVariableBuilderTests
         Assert.Contains("hkbVariableValueSet", error.Message);
     }
 
+    [Fact]
+    public void AddsVariablesToAGraphThatAlreadyHasVariables()
+    {
+        byte[] source = Source(
+            "hkbBehaviorGraphStringData",
+            "hkbBehaviorGraphData",
+            "hkbVariableValueSet");
+
+        byte[] withOne = NativeVariableBuilder.Build(source, new[]
+        {
+            new NativeVariableBuilder.Entry("Existing", SymbolEditor.VariableType.Int32, "5"),
+        }).Bytes;
+
+        var result = NativeVariableBuilder.Build(withOne, new[]
+        {
+            new NativeVariableBuilder.Entry("Added", SymbolEditor.VariableType.Real, "2.5"),
+        });
+
+        var model = Model(result.Bytes);
+        Assert.Equal(new[] { "Existing", "Added" }, SymbolEditor.VariableNames(model));
+        Assert.Equal(new[]
+        {
+            SymbolEditor.VariableType.Int32,
+            SymbolEditor.VariableType.Real,
+        }, SymbolEditor.VariableTypes(model));
+
+        var values = SymbolEditor.VariableValues(model);
+        Assert.Equal("5", values[0]);
+        Assert.Equal("2.5", SymbolEditor.DecodeValue(SymbolEditor.VariableType.Real, values[1]));
+        Assert.True(SymbolEditor.Audit(model).VariablesConsistent);
+        Assert.Equal(new[] { 1 }, result.Created.Select(item => item.Index).ToArray());
+        Assert.DoesNotContain(result.Findings, finding => finding.BlocksSave);
+    }
+
     private static BehaviourGraphModel Model(byte[] bytes)
     {
         var objects = new PackfileObjects(PackfileImage.Read(bytes), HavokClasses.Shipped);
