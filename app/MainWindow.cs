@@ -478,8 +478,11 @@ public class MainWindow : Window
         HideDropHint();
         if (!HasDroppedFiles(e.Data)) return;
 
-        var files = (Avalonia.Input.DataObjectExtensions.GetFileNames(e.Data)
-                     ?? Enumerable.Empty<string>()).ToList();
+        var files = (Avalonia.Input.DataObjectExtensions.GetFiles(e.Data) ?? Enumerable.Empty<IStorageItem>())
+                    .Select(item => item.TryGetLocalPath())
+                    .Where(path => !string.IsNullOrEmpty(path))
+                    .Select(path => path!)
+                    .ToList();
         if (files.Count == 0) return;
         e.Handled = true;
 
@@ -493,7 +496,9 @@ public class MainWindow : Window
     {
         try
         {
-            return Avalonia.Input.DataObjectExtensions.GetFileNames(data).FirstOrDefault();
+            return Avalonia.Input.DataObjectExtensions.GetFiles(data)?
+                .Select(item => item.TryGetLocalPath())
+                .FirstOrDefault(path => !string.IsNullOrEmpty(path));
         }
         catch (Exception)
         {

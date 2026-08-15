@@ -176,7 +176,7 @@ public sealed class ProjectAnalysisControllerTests
     }
 
     [Fact]
-    public void ProjectProgress_DiscardsAQueuedMessageAfterTheRevisionChanges()
+    public async Task ProjectProgress_DiscardsAQueuedMessageAfterTheRevisionChanges()
     {
         long revision = 37;
         var controller = new ProjectAnalysisController(() => revision);
@@ -199,7 +199,7 @@ public sealed class ProjectAnalysisControllerTests
             queued.RunOne();
             revision++;
             queued.Drain();
-            Assert.True(pending.GetAwaiter().GetResult().Completed);
+            Assert.True((await pending).Completed);
         }
         finally
         {
@@ -210,7 +210,7 @@ public sealed class ProjectAnalysisControllerTests
     }
 
     [Fact]
-    public void ProjectProgress_PublishesAQueuedMessageForTheCurrentRevision()
+    public async Task ProjectProgress_PublishesAQueuedMessageForTheCurrentRevision()
     {
         const long revision = 41;
         var controller = new ProjectAnalysisController(() => revision);
@@ -232,7 +232,7 @@ public sealed class ProjectAnalysisControllerTests
 
             queued.RunOne();
             queued.Drain();
-            Assert.True(pending.GetAwaiter().GetResult().Completed);
+            Assert.True((await pending).Completed);
         }
         finally
         {
@@ -243,7 +243,7 @@ public sealed class ProjectAnalysisControllerTests
     }
 
     [Fact]
-    public void ProjectProgress_DiscardsMessagesFromASupersededRequest()
+    public async Task ProjectProgress_DiscardsMessagesFromASupersededRequest()
     {
         const long revision = 43;
         var controller = new ProjectAnalysisController(() => revision);
@@ -270,8 +270,8 @@ public sealed class ProjectAnalysisControllerTests
                     (_, _) => Task.FromResult(new ProjectCheck.Result()));
             queued.Drain();
 
-            Assert.True(first.GetAwaiter().GetResult().Completed);
-            Assert.True(second.GetAwaiter().GetResult().Completed);
+            Assert.True((await first).Completed);
+            Assert.True((await second).Completed);
         }
         finally
         {

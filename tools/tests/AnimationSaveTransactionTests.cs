@@ -39,7 +39,7 @@ public sealed class AnimationSaveTransactionTests
             reopened.AnimationClass);
         float drift = (reopened.Tracks[0].Translations[frame] - edited).Length();
         Assert.True(drift < (spline ? 0.05f : 0.001f), $"edited frame drifted by {drift}");
-        Assert.True(result.Message.StartsWith("Saved ", StringComparison.Ordinal));
+        Assert.StartsWith("Saved ", result.Message, StringComparison.Ordinal);
         Assert.Contains(spline ? "spline compressed" : "uncompressed", result.Message,
                         StringComparison.Ordinal);
     }
