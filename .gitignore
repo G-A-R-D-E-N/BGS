@@ -16,3 +16,6 @@ obj/
 .avalonia-build-tasks/
 /BehaviourGraphStudio/
 /.worktrees/
+
+# Local docs and planning notes
+/docs/
