@@ -189,9 +189,15 @@ public static class SaveVerifier
         }
 
         if (TryParseInt(change.Value) is not long n) return false;
-        return storage == "uint32"
-            ? (long)(uint)read.Value == n
-            : read.Value == n;
+
+        long actual = storage switch
+        {
+            "int8" => (sbyte)(byte)read.Value,
+            "int16" => (short)(ushort)read.Value,
+            "uint32" => (uint)read.Value,
+            _ => read.Value,
+        };
+        return actual == n;
     }
 
     private static bool TextArrayLanded(PackfileObjects rebuilt, int offset, NativeSave.Change change)
