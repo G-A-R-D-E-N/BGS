@@ -3,6 +3,28 @@
 This page records changes that affect people using Behaviour Graph Studio. For instructions, read
 the public [getting started guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
 
+## 1.0.5, August 15, 2026
+
+### The Bridge home
+
+- The Bridge tab gathers every part of the studio on one screen: a current-file card, task-grouped station cards that jump straight to each tool, and a where-everything-is reference table.
+- A first-run spotlight tour walks through the stations; replay it any time from the Bridge header, or press Escape to skip.
+- The app reopens on the tab you were using last time.
+- Type in the Bridge search box to filter stations and the reference table as you type.
+- Drag a `.hkx` file anywhere onto the Bridge to open it, with a drop hint on the current-file card.
+- Jump back in to your recent files with one click.
+
+### Saving and reliability
+
+- A save no longer replaces the file in two steps, so the file on disk is never briefly missing and a crash mid-save cannot leave it gone.
+- If another program changes the file while a save is being written, the save is refused and that program's version is left in place rather than overwritten.
+- A save interrupted by a crash is recovered the next time you save the same file, and the version it displaced is kept as the backup.
+- Recovery only ever touches the files a save itself created, so a file of your own that happens to sit beside the source is left alone.
+- A backup that cannot be rotated no longer reports a save as failed when the file was written correctly.
+- Large but valid arrays load again: a file is no longer refused for declaring more elements than an arbitrary limit allowed.
+- A malformed array is refused before any memory is reserved for it, and reports the problem instead of failing later.
+- Extracting from a `.ba2` archive refuses entry names that point outside the chosen folder, including drive-qualified and rooted names.
+
 ## 1.0.4
 
 ### Saving and reliability
@@ -29,15 +51,6 @@ the public [getting started guide](https://prisma-user-interface-framework.githu
 - Playback can use the selected animation's sibling `CharacterAssets` folder when the behaviour file does not provide a project rig.
 - Inspect project chains, symbol usage, playback paths, and graph validation results.
 - Open vanilla files directly from a Bethesda `.ba2` archive for read-only inspection.
-
-### The Bridge home
-
-- The Bridge tab gathers every part of the studio on one screen: a current-file card, task-grouped station cards that jump straight to each tool, and a where-everything-is reference table.
-- A first-run spotlight tour walks through the stations; replay it any time from the Bridge header, or press Escape to skip.
-- The app reopens on the tab you were using last time.
-- Type in the Bridge search box to filter stations and the reference table as you type.
-- Drag a `.hkx` file anywhere onto the Bridge to open it, with a drop hint on the current-file card.
-- Jump back in to your recent files with one click.
 
 ## 1.0.3, August 8, 2026
 
