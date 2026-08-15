@@ -21,8 +21,6 @@ jobs:
       fail-fast: false
       matrix:
         rid: [linux-x64, win-x64]
-    env:
-      DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
 
     steps:
       - name: Check out tagged source
@@ -49,6 +47,8 @@ jobs:
 
       - name: Set up pinned .NET SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.1.0
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
         with:
           dotnet-version: 8.0.424
 
