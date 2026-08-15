@@ -30,6 +30,15 @@ the public [getting started guide](https://prisma-user-interface-framework.githu
 - Inspect project chains, symbol usage, playback paths, and graph validation results.
 - Open vanilla files directly from a Bethesda `.ba2` archive for read-only inspection.
 
+### The Bridge home
+
+- The Bridge tab gathers every part of the studio on one screen: a current-file card, task-grouped station cards that jump straight to each tool, and a where-everything-is reference table.
+- A first-run spotlight tour walks through the stations; replay it any time from the Bridge header, or press Escape to skip.
+- The app reopens on the tab you were using last time.
+- Type in the Bridge search box to filter stations and the reference table as you type.
+- Drag a `.hkx` file anywhere onto the Bridge to open it, with a drop hint on the current-file card.
+- Jump back in to your recent files with one click.
+
 ## 1.0.3, August 8, 2026
 
 - Added graph simulation for event-driven states, transition timing, and blend weights.
