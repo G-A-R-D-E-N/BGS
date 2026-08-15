@@ -17,6 +17,7 @@ public class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var window = new MainWindow();
+            NativeAuthoringUi.Attach(window);
             desktop.MainWindow = window;
 
             var args = desktop.Args ?? Array.Empty<string>();
@@ -44,6 +45,7 @@ public static class Program
     public static int Main(string[] args)
     {
         if (args.Contains("--version")) { Console.WriteLine(Version()); return 0; }
+        if (args.Contains("--probe-havok")) return ProbeHavok(args);
         if (args.Contains("--headless")) return Headless.Run(args);
 
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
@@ -59,6 +61,26 @@ public static class Program
         var name = typeof(Program).Assembly.GetName();
         return $"Behaviour Graph Studio {name.Version?.ToString(3)} " +
                $"({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier})";
+    }
+
+    private static int ProbeHavok(string[] args)
+    {
+        string? path = args.FirstOrDefault(arg => arg != "--probe-havok" && File.Exists(arg));
+        if (path == null)
+        {
+            Console.Error.WriteLine("--probe-havok needs a path to a Havok file");
+            return 2;
+        }
+
+        var version = HavokVersionProbe.Read(path);
+        if (version == null)
+        {
+            Console.Error.WriteLine($"{Path.GetFileName(path)}: no hk_ version string in the first {HavokVersionProbe.HeaderBytes} bytes");
+            return 1;
+        }
+
+        Console.WriteLine($"{Path.GetFileName(path)}  {version.Version}  header offset 0x{version.Offset:X}");
+        return 0;
     }
 }
 
