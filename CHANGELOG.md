@@ -1,82 +1,165 @@
-# Changelog
+# Behaviour Graph Studio Changelog
 
-This page records changes that affect people using Behaviour Graph Studio. For instructions, read
-the public [getting started guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
+Changes that affect Behaviour Graph Studio users are documented here.
 
-## 1.0.5, August 15, 2026
+New to BGS? See the [Getting Started Guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
 
-### The Bridge home
+## 1.0.5
 
-- The Bridge tab gathers every part of the studio on one screen: a current-file card, task-grouped station cards that jump straight to each tool, and a where-everything-is reference table.
-- A first-run spotlight tour walks through the stations; replay it any time from the Bridge header, or press Escape to skip.
-- The app reopens on the tab you were using last time.
-- Type in the Bridge search box to filter stations and the reference table as you type.
-- Drag a `.hkx` file anywhere onto the Bridge to open it, with a drop hint on the current-file card.
-- Jump back in to your recent files with one click.
+August 15, 2026
 
-### Saving and reliability
+<details>
+<summary><strong>The Bridge</strong></summary>
+<br>
 
-- A save no longer replaces the file in two steps, so the file on disk is never briefly missing and a crash mid-save cannot leave it gone.
-- If another program changes the file while a save is being written, the save is refused and that program's version is left in place rather than overwritten.
-- A save interrupted by a crash is recovered the next time you save the same file, and the version it displaced is kept as the backup.
-- Recovery only ever touches the files a save itself created, so a file of your own that happens to sit beside the source is left alone.
-- A backup that cannot be rotated no longer reports a save as failed when the file was written correctly.
-- Large but valid arrays load again: a file is no longer refused for declaring more elements than an arbitrary limit allowed.
-- A malformed array is refused before any memory is reserved for it, and reports the problem instead of failing later.
-- Extracting from a `.ba2` archive refuses entry names that point outside the chosen folder, including drive-qualified and rooted names.
+* Added The Bridge, a new home tab that puts the main parts of BGS in one place.
+* See your current file, jump directly to tools, and quickly find where something lives in the studio.
+* Added a first-run tour. You can replay it from the Bridge header at any time or press `Escape` to close it.
+* BGS now remembers which tab you were using and returns to it the next time you open the app.
+* Added search to the Bridge. Stations and reference entries filter as you type.
+* Drag and drop a `.hkx` file anywhere onto the Bridge to open it.
+* Recent files are now available directly from the Bridge.
+
+</details>
+
+<details>
+<summary><strong>Safer Saving</strong></summary>
+<br>
+
+* Saving no longer temporarily removes the original file while replacing it.
+* If BGS or the system crashes during a save, the original file will not disappear as a result.
+* BGS now detects if another program changes a file while it is being saved. The save is stopped instead of overwriting the newer version.
+* Interrupted saves can be recovered the next time you save the same file.
+* The version replaced during recovery is preserved as a backup.
+* Recovery only touches files created by BGS during the save process. Other files next to your `.hkx` are left alone.
+* A backup rotation problem no longer causes BGS to report the entire save as failed when the main file was written successfully.
+
+</details>
+
+<details>
+<summary><strong>File Handling &amp; Safety</strong></summary>
+<br>
+
+* Large valid arrays load correctly again. BGS no longer rejects them because of an arbitrary element limit.
+* Malformed arrays are rejected before memory is allocated for them, with an error explaining the problem.
+* `.ba2` extraction now rejects unsafe paths that could write outside the folder you selected.
+
+</details>
 
 ## 1.0.4
 
-### Saving and reliability
+<details>
+<summary><strong>Saving &amp; Reliability</strong></summary>
+<br>
 
-- Supported behaviour and animation edits save through the built-in native pipeline.
-- Saves create a `.bak` copy of the original file.
-- An edit that cannot be written safely is refused before the source file changes.
-- A refused save names the exact field and why it cannot be written in place.
-- Growing an empty array keeps the storage-is-not-owned flag, so authoring a `variableBounds` list from nothing does not corrupt the file.
-- Graph validation and supported project checks are available before saving.
-- Closing a changed file gives you a clear save, discard, or cancel choice. A refused save keeps the file open.
+* Supported behaviour and animation edits can now be saved through BGS's native pipeline.
+* Saving creates a `.bak` copy of the original file.
+* If an edit cannot be written safely, BGS refuses the save before touching the source file.
+* Refused saves tell you which field could not be written and why.
+* Fixed corruption when creating a `variableBounds` array from an empty list.
+* Added graph validation and supported-project checks before saving.
+* Closing a modified file now gives you Save, Discard, or Cancel.
+* If a save is refused, the file stays open.
 
-### Editing and playback
+</details>
 
-- Create, edit, and remove states, transitions, generators, variables, events, and bindings.
-- Copy a graph subtree, paste it into another file, and save reusable templates from your own work.
-- Edit animation frames, trim clips, and change clip duration.
-- Compare two behaviour files to identify added, removed, and changed objects.
-- Browse behaviour files in tree and graph views.
-- Opening a large behaviour file no longer freezes the window, and graph checks run off the UI thread.
-- The Symbols tab shows the real minimum and maximum of each variable bound.
-- Files that are not Fallout 4 packfiles are refused before opening, with an explanation of why.
-- Preview animations on skeletons and supported skinned meshes.
-- Playback can use the selected animation's sibling `CharacterAssets` folder when the behaviour file does not provide a project rig.
-- Inspect project chains, symbol usage, playback paths, and graph validation results.
-- Open vanilla files directly from a Bethesda `.ba2` archive for read-only inspection.
+<details>
+<summary><strong>Editing &amp; Authoring</strong></summary>
+<br>
 
-## 1.0.3, August 8, 2026
+* Create, edit, and remove states, transitions, generators, variables, events, and bindings.
+* Copy graph subtrees between files.
+* Save reusable templates from your own work.
+* Edit animation frames, trim clips, and change clip duration.
+* Compare behaviour files to see what was added, removed, or changed.
+* Browse behaviour files in tree or graph views.
+* Inspect project chains, symbol usage, playback paths, and validation results.
+* The Symbols tab now shows the actual minimum and maximum values of variable bounds.
 
-- Added graph simulation for event-driven states, transition timing, and blend weights.
-- Added subtree copy and paste, reusable templates, and path highlighting.
-- Added animation trimming, retiming, and improved frame editing.
-- Improved animation playback, root-motion display, and mesh preview.
+</details>
 
-## 1.0.2, August 7, 2026
+<details>
+<summary><strong>Playback &amp; File Support</strong></summary>
+<br>
 
-- Added native animation saving for supported frame edits.
-- Added a frame browser with bone filtering and direct frame navigation.
-- Improved animation details, playback controls, and validation feedback.
+* Large behaviour files can now open without freezing the UI.
+* Graph validation runs in the background instead of blocking the window.
+* Files that are not Fallout 4 packfiles are rejected before opening, with an explanation.
+* Preview animations using skeletons and supported skinned meshes.
+* Playback can use a sibling `CharacterAssets` folder when the behaviour file does not provide its own project rig.
+* Open vanilla files directly from Bethesda `.ba2` archives for read-only inspection.
 
-## 1.0.1, August 6, 2026
+</details>
 
-- Added archive browsing for inspecting vanilla behaviour files without manual extraction.
-- Added skeleton, mesh, and root-motion views.
-- Improved graph editing, symbol management, field editing, and save safeguards.
+## 1.0.3
 
-## 1.0.0, August 4, 2026
+August 8, 2026
 
-- Added graph editing, filtering, selection, validation markers, undo, and compare support.
-- Added support for animation controls, variables, events, and behaviour authoring workflows.
+<details>
+<summary><strong>Changes</strong></summary>
+<br>
 
-## Help and feedback
+* Added graph simulation for event-driven states, transition timing, and blend weights.
+* Added subtree copy and paste, reusable templates, and path highlighting.
+* Added animation trimming, retiming, and improved frame editing.
+* Improved animation playback, root-motion display, and mesh previews.
 
-- Read the [getting started guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
-- Report a reproducible problem through [GitHub Issues](https://github.com/G-A-R-D-E-N/BGS/issues).
+</details>
+
+## 1.0.2
+
+August 7, 2026
+
+<details>
+<summary><strong>Changes</strong></summary>
+<br>
+
+* Added native animation saving for supported frame edits.
+* Added a frame browser with bone filtering and direct frame navigation.
+* Improved animation details, playback controls, and validation feedback.
+
+</details>
+
+## 1.0.1
+
+August 6, 2026
+
+<details>
+<summary><strong>Changes</strong></summary>
+<br>
+
+* Added archive browsing so vanilla behaviour files can be inspected without manually extracting them first.
+* Added skeleton, mesh, and root-motion views.
+* Improved graph editing, symbol management, field editing, and save safeguards.
+
+</details>
+
+## 1.0.0
+
+August 4, 2026
+
+<details>
+<summary><strong>Initial Release</strong></summary>
+<br>
+
+* Initial release of Behaviour Graph Studio.
+* Added graph editing, filtering, selection, validation markers, undo, and file comparison.
+* Added animation controls, variables, events, and behaviour authoring tools.
+
+</details>
+
+## Help &amp; Feedback
+
+<details>
+<summary><strong>Getting Started, Documentation &amp; Bug Reports</strong></summary>
+<br>
+
+New to BGS?
+
+Read the [Getting Started Guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
+
+Found a bug?
+
+Open a report through [GitHub Issues](https://github.com/G-A-R-D-E-N/BGS/issues). Please include enough information to reproduce the problem.
+
+</details>
