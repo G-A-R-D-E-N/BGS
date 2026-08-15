@@ -1,5 +1,6 @@
 
 stages:
+  - compile
   - test
   - build
   - release
@@ -7,40 +8,57 @@ stages:
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-      when: never
+      variables:
+        PKG_SUFFIX: "-mr"
     - if: '$CI_COMMIT_BRANCH'
+      variables:
+        PKG_SUFFIX: ""
     - if: '$CI_COMMIT_TAG'
+      variables:
+        PKG_SUFFIX: ""
 
 variables:
   DOTNET: mcr.microsoft.com/dotnet/sdk:8.0.424
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
-  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"
-  PACKAGE_REGISTRY: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/behaviour-graph-studio/${CI_COMMIT_SHORT_SHA}"
+  PACKAGE_REGISTRY: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/behaviour-graph-studio/${CI_COMMIT_SHORT_SHA}${PKG_SUFFIX}"
 
 .dotnet:
   image: $DOTNET
-  cache:
-    key: nuget
-    paths:
-      - .nuget/packages
-    when: always
+  before_script:
+    - 'export RUNNER_HOME="$(getent passwd "$(id -u)" | cut -d: -f6)"'
+    - 'export DOTNET8_DIR="$RUNNER_HOME/.dotnet8"'
+    - 'export NUGET_PACKAGES="$RUNNER_HOME/.nuget/packages"'
+    - 'if [ ! -x "$DOTNET8_DIR/dotnet" ]; then curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --install-dir "$DOTNET8_DIR"; fi'
+    - 'export PATH="$DOTNET8_DIR:$PATH"'
+
+.verify:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+compile:
+  extends: [.dotnet, .verify]
+  stage: compile
+  script:
+    - dotnet build app/BehaviourStudio.csproj --configuration Release
 
 format:
-  extends: .dotnet
+  extends: [.dotnet, .verify]
   stage: test
   script:
     - dotnet test tools/tests/BehaviourGraph.Tests.csproj
     - dotnet run --project tools/symrm/symrm.csproj -- test
 
 window:
-  extends: .dotnet
+  extends: [.dotnet, .verify]
   stage: test
   script:
     - dotnet run --project tools/uismoke/uismoke.csproj
 
 .publish:
-  extends: .dotnet
+  extends: [.dotnet, .verify]
   stage: build
   needs: [format, window]
   script:
@@ -49,12 +67,10 @@ window:
     - ls -la out
     - test -f "out/$BINARY"
     - mv out "BehaviourGraphStudio-$RID"
-    - apt-get update -qq && apt-get install -y -qq zip >/dev/null
-    - zip -qr "BehaviourGraphStudio-$RID.zip" "BehaviourGraphStudio-$RID"
-  artifacts:
-    paths:
-      - "*.zip"
-    expire_in: 1 week
+    - python3 -c "import shutil; shutil.make_archive('BehaviourGraphStudio-$RID', 'zip', '.', 'BehaviourGraphStudio-$RID')"
+    - |
+      curl -sf --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "BehaviourGraphStudio-$RID.zip" "$PACKAGE_REGISTRY/BehaviourGraphStudio-$RID.zip" \
+        || curl -sf --header "JOB-TOKEN: $CI_JOB_TOKEN" -o /dev/null "$PACKAGE_REGISTRY/BehaviourGraphStudio-$RID.zip"
 
 linux:
   extends: .publish
@@ -69,12 +85,13 @@ windows:
     BINARY: BehaviourGraphStudio.exe
 
 standalone:
+  extends: .verify
   stage: build
   image: debian:bookworm-slim
   needs: [linux]
   script:
-    - apt-get update -qq && apt-get install -y -qq unzip >/dev/null
-    - unzip -q BehaviourGraphStudio-linux-x64.zip
+    - 'curl -sf --header "JOB-TOKEN: $CI_JOB_TOKEN" -o BehaviourGraphStudio-linux-x64.zip "$PACKAGE_REGISTRY/BehaviourGraphStudio-linux-x64.zip"'
+    - unzip -qo BehaviourGraphStudio-linux-x64.zip
     - cd BehaviourGraphStudio-linux-x64
     - chmod +x BehaviourGraphStudio
     - ./BehaviourGraphStudio --version
@@ -83,6 +100,8 @@ standalone:
 
 .publishable:
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
     - if: '$CI_COMMIT_BRANCH == "main"'
     - when: manual
       allow_failure: true
@@ -90,18 +109,18 @@ standalone:
 upload:
   extends: .publishable
   stage: release
-  image: curlimages/curl:latest
   needs: [linux, windows, standalone]
   script:
-    - |
-      for z in BehaviourGraphStudio-linux-x64.zip BehaviourGraphStudio-win-x64.zip; do
-        curl -sf --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$z" "$PACKAGE_REGISTRY/$z"
-      done
+    - echo "zips already published to $PACKAGE_REGISTRY"
 
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   needs: [upload]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+    - when: on_success
   script:
     - echo "release for $CI_COMMIT_SHORT_SHA"
   release:
