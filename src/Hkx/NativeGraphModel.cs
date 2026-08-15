@@ -189,17 +189,11 @@ public static class NativeGraphModel
             obj.Lists[member.Name] = new List<string>();
             if (member.CType == null || !types.Knows(member.CType)) return;
 
-            var array = objects.ArrayAt(at);
-            if (array == null) return;
-
             int stride = types[member.CType]?.Size ?? 0;
             if (stride <= 0) return;
 
-
-
-
-
-            if (array.Count == 0) return;
+            var array = objects.ArrayAt(at, stride);
+            if (array == null || array.Count == 0) return;
 
             var elements = new List<Dictionary<string, string>>(array.Count);
             for (int e = 0; e < array.Count; e++)
@@ -237,12 +231,9 @@ public static class NativeGraphModel
 
 
     internal static IEnumerable<string> Elements(PackfileObjects objects, HavokClassTypes types, int at,
-                                                HavokClassTypes.Member member,
-                                                FieldRender.Reference reference)
+                                                 HavokClassTypes.Member member,
+                                                 FieldRender.Reference reference)
     {
-        var array = objects.ArrayAt(at);
-        if (array == null) yield break;
-
         if (member.VSub == "TYPE_POINTER")
         {
             var targets = objects.ReadRefArrayAt(at);
@@ -255,10 +246,13 @@ public static class NativeGraphModel
 
 
 
-        var element = new HavokClassTypes.Member { Name = member.Name, VType = member.VSub };
-        int stride = Stride(member.VSub);
+        int stride = ElementWidth(member.VSub);
         if (stride <= 0) yield break;
 
+        var array = objects.ArrayAt(at, stride);
+        if (array == null) yield break;
+
+        var element = new HavokClassTypes.Member { Name = member.Name, VType = member.VSub };
         for (int e = 0; e < array.Count; e++)
             yield return FieldRender.Render(objects, array.At + e * stride, "", element, reference,
                                             null, 0, types, FieldRender.ReferenceText) ?? "";
@@ -329,7 +323,7 @@ public static class NativeGraphModel
     internal static string Escaped(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\r", "&#13;");
 
-    private static int Stride(string vsub) => vsub switch
+    internal static int ElementWidth(string vsub) => vsub switch
     {
         "TYPE_BOOL" or "TYPE_CHAR" or "TYPE_INT8" or "TYPE_UINT8" => 1,
         "TYPE_INT16" or "TYPE_UINT16" or "TYPE_HALF" => 2,

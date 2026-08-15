@@ -30,7 +30,7 @@ New `app/NotBehaviourDialog.cs`, a `Window` modeled on `LegendWindow`:
 - Title: "Can't open this file".
 - Body: the reason text, wrapped.
 - Footer: "If you believe this is a mistake, please report it at
-  github.com/NomadsReach/BehaviorGraphStudio/issues".
+  github.com/G-A-R-D-E-N/BGS/issues".
 - One **OK** button; closing via the window X acts the same.
 - Centered on the owner, fixed size, not in the taskbar.
 

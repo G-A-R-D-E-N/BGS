@@ -85,8 +85,7 @@ internal static class AnimationSaveTransaction
 
         try
         {
-            FileSafety.Backup(path);
-            FileSafety.Replace(path, written.Bytes);
+            FileSafety.ReplaceChecked(path, written.Bytes, transactionStamp);
         }
         catch (Exception error)
         {

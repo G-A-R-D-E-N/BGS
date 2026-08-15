@@ -92,9 +92,6 @@ public static class PackfileLayout
                 }
 
                 if (member.VType is not ("TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")) continue;
-
-                var array = objects.ArrayAt(at);
-                if (array == null || array.Count == 0) continue;
                 if (!aims.ContainsKey(at)) continue;
 
                 if (member.VSub == "TYPE_STRUCT" && member.CType != null && types.Knows(member.CType))
@@ -102,16 +99,22 @@ public static class PackfileLayout
                     int stride = types[member.CType]?.Size ?? 0;
                     if (stride <= 0) continue;
 
-                    if (seen.Add(array.At))
-                        items.Add(new Item("struct array", array.At, array.Count * stride));
+                    var structArray = objects.ArrayAt(at, stride);
+                    if (structArray == null || structArray.Count == 0) continue;
 
-                    for (int i = 0; i < array.Count; i++)
-                        Walk(array.At + i * stride, member.CType, depth + 1);
+                    if (seen.Add(structArray.At))
+                        items.Add(new Item("struct array", structArray.At, structArray.Count * stride));
+
+                    for (int i = 0; i < structArray.Count; i++)
+                        Walk(structArray.At + i * stride, member.CType, depth + 1);
                     continue;
                 }
 
                 int width = HavokClassTypes.Width(member.VSub);
                 if (width <= 0) continue;
+
+                var array = objects.ArrayAt(at, width);
+                if (array == null || array.Count == 0) continue;
 
                 string kind = member.VSub == "TYPE_POINTER" ? "pointer array"
                             : member.VSub is "TYPE_STRINGPTR" or "TYPE_CSTRING" ? "string array"

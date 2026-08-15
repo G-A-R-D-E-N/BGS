@@ -87,12 +87,12 @@ public static class ClassFields
 
             if (member.VType == "TYPE_ARRAY" && member.VSub == "TYPE_STRUCT" && member.CType != null)
             {
-                var elements = objects.ArrayAt(here);
-                if (elements == null) return null;
-                if (elements.Count == 0) continue;
-
                 int? stride = types[member.CType]?.Size;
                 if (stride == null || stride <= 0) return null;
+
+                var elements = objects.ArrayAt(here, stride.Value);
+                if (elements == null) return null;
+                if (elements.Count == 0) continue;
 
                 for (int i = 0; i < elements.Count; i++)
                 {

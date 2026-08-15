@@ -13,6 +13,8 @@ internal sealed class DocumentSourceStamp
 
     private DocumentSourceStamp(byte[] sha256) => _sha256 = sha256;
 
+    internal string Token => Convert.ToHexString(_sha256).ToLowerInvariant();
+
     internal static DocumentSourceStamp Capture(string path)
     {
         using var stream = Open(path);

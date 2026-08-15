@@ -93,6 +93,10 @@ public sealed class Ba2 : IDisposable
             if ((long)length > stream.Length - stream.Position)
                 throw new InvalidDataException($"{name} has a name table that runs past the end of the file");
             string entryName = Encoding.UTF8.GetString(reader.ReadBytes(length)).Replace('\\', '/');
+            if (HasRootedComponent(entryName))
+                throw new InvalidDataException($"{name} contains a rooted archive path: {entryName}");
+            if (entryName.Contains(':'))
+                throw new InvalidDataException($"{name} contains an archive path with a colon: {entryName}");
             entries.Add(new Entry(i, entryName, (long)offsets[i], packed[i], unpacked[i]));
         }
 
@@ -159,6 +163,9 @@ public sealed class Ba2 : IDisposable
 
 
 
+    public static string FlatFileName(string name) =>
+        name.Replace('/', '_').Replace('\\', '_').Replace(':', '_');
+
 
     public static int ExtractMatching(string archivePath, string substring, string outputDir,
                                       string extension, Action<string> log, bool keepFolders = false)
@@ -183,10 +190,15 @@ public sealed class Ba2 : IDisposable
 
                 string root = System.IO.Path.GetFullPath(outputDir);
                 string full = System.IO.Path.GetFullPath(System.IO.Path.Combine(root, flat));
-                bool inside = full.Equals(root, StringComparison.OrdinalIgnoreCase) ||
-                              full.StartsWith(root + System.IO.Path.DirectorySeparatorChar,
-                                              StringComparison.OrdinalIgnoreCase);
-                if (!inside)
+                string relative = System.IO.Path.GetRelativePath(root, full);
+                bool outside = System.IO.Path.IsPathRooted(relative) ||
+                               relative.Equals("..", StringComparison.Ordinal) ||
+                               relative.StartsWith(".." + System.IO.Path.DirectorySeparatorChar,
+                                                   StringComparison.Ordinal) ||
+                               (System.IO.Path.AltDirectorySeparatorChar != System.IO.Path.DirectorySeparatorChar &&
+                                relative.StartsWith(".." + System.IO.Path.AltDirectorySeparatorChar,
+                                                    StringComparison.Ordinal));
+                if (outside)
                     throw new InvalidDataException($"{entry.Name} is not inside the extraction folder");
                 RefuseLinkedComponents(root, full, entry.Name);
                 target = full;
@@ -196,13 +208,21 @@ public sealed class Ba2 : IDisposable
             }
             else
             {
-                target = System.IO.Path.Combine(outputDir, entry.Name.Replace('/', '_'));
+                target = System.IO.Path.Combine(outputDir, FlatFileName(entry.Name));
             }
             File.WriteAllBytes(target, archive.Read(entry));
             written++;
         }
 
         return written;
+    }
+
+    private static bool HasRootedComponent(string name)
+    {
+        if (name.StartsWith("/", StringComparison.Ordinal)) return true;
+        foreach (string part in name.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            if (part.Length >= 2 && char.IsAsciiLetter(part[0]) && part[1] == ':') return true;
+        return false;
     }
 
     private static byte[] Inflate(byte[] compressed, uint expectedUnpacked)

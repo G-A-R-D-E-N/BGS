@@ -6,9 +6,8 @@ and animations.
 
 ## Get started
 
-Download a release from [GitHub](https://github.com/NomadsReach/BehaviorGraphStudio/releases) or
-[Nexus Mods](https://www.nexusmods.com/fallout4/mods/107691), extract it anywhere on your computer,
-and run `BehaviourGraphStudio` or `BehaviourGraphStudio.exe`.
+Download a release from [Nexus Mods](https://www.nexusmods.com/fallout4/mods/107691), extract it
+anywhere on your computer, and run `BehaviourGraphStudio` or `BehaviourGraphStudio.exe`.
 
 There is no installer and nothing needs to be added to your Fallout 4 folder.
 
@@ -59,4 +58,4 @@ dotnet publish app/BehaviourStudio.csproj -c Release -r linux-x64 -o out
 ## Help and feedback
 
 - Read the [public guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
-- Report reproducible problems through [GitHub Issues](https://github.com/NomadsReach/BehaviorGraphStudio/issues).
+- Report reproducible problems through [GitHub Issues](https://github.com/G-A-R-D-E-N/BGS/issues).

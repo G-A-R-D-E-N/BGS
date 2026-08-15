@@ -117,7 +117,7 @@ public static class FieldRender
                 return reference(target, wasNull);
             }
 
-            case "TYPE_ARRAY": return Array(objects, at, member, reference, real);
+            case "TYPE_ARRAY": return Array(objects, at, member, reference, real, types);
 
 
 
@@ -126,7 +126,7 @@ public static class FieldRender
     }
 
     private static string? Array(PackfileObjects objects, int at, HavokClassTypes.Member member,
-                                 Reference reference, Real real)
+                                 Reference reference, Real real, HavokClassTypes types)
     {
         switch (member.VSub)
         {
@@ -149,8 +149,14 @@ public static class FieldRender
 
             case "TYPE_STRUCT":
             {
-                var array = objects.ArrayAt(at);
-                return array == null ? null : List(array.Count, "structs");
+                if (member.CType != null && types[member.CType]?.Size is int stride && stride > 0)
+                {
+                    var array = objects.ArrayAt(at, stride);
+                    return array == null ? null : List(array.Count, "structs");
+                }
+
+                var declared = objects.ArrayAt(at);
+                return declared == null ? null : List(declared.Count, "structs");
             }
 
             case "TYPE_VECTOR4":
@@ -250,14 +256,11 @@ public static class FieldRender
 
     private static string? Grouped(PackfileObjects objects, int at, int stride, int floats, Real real)
     {
-        var array = objects.ArrayAt(at);
-        if (array == null) return null;
-
         var all = objects.ReadValueArrayAt(at, stride,
                                            (b, o) => Enumerable.Range(0, floats)
                                                                .Select(i => BitConverter.ToSingle(b, o + i * 4))
                                                                .ToArray());
-        return all == null ? null : List(array.Count, all.Select(e => Floats(e, real)!));
+        return all == null ? null : List(all.Count, all.Select(e => Floats(e, real)!));
     }
 
 

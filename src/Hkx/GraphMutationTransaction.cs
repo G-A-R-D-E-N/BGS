@@ -74,8 +74,7 @@ internal static class GraphMutationTransaction
 
         try
         {
-            FileSafety.Backup(path);
-            FileSafety.Replace(path, change.Bytes);
+            FileSafety.ReplaceChecked(path, change.Bytes, transactionStamp);
         }
         catch (Exception error)
         {

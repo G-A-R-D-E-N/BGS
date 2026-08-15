@@ -89,8 +89,7 @@ internal static class DocumentSaveTransaction
 
         try
         {
-            FileSafety.Backup(path);
-            FileSafety.Replace(path, rebuilt);
+            FileSafety.ReplaceChecked(path, rebuilt, transactionStamp);
         }
         catch (Exception error)
         {
