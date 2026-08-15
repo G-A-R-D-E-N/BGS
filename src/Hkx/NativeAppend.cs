@@ -5,34 +5,13 @@ using System.Text;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class NativeAppend
 {
-
 
     public sealed record Added(int Id, int Offset, int Index)
     {
         public override string ToString() => $"#{Id} at 0x{Offset:x}, index {Index} of its class";
     }
-
-
-
 
     public const int Alignment = 16;
 
@@ -60,17 +39,12 @@ public static class NativeAppend
 
         int nameAt = NameOffset(names, className, layout.Signature);
 
-
-
         image.Section("__data__")!.AlignData(Alignment);
         int offset = data.AppendData(new byte[size]);
 
         var virtuals = data.Virtuals().ToList();
         virtuals.Add((offset, image.Sections.IndexOf(names), nameAt));
         data.SetVirtuals(virtuals);
-
-
-
 
         FixupOrder.Reorder(image, types);
 
@@ -80,10 +54,6 @@ public static class NativeAppend
             throw new InvalidOperationException(
                 $"appending {className} changed the object count from {before.Instances.Count} to " +
                 $"{after.Instances.Count} rather than adding one");
-
-
-
-
 
         int actualId = NativeGraphModel.FirstId + after.Instances.Count - 1;
         var last = after.Instances[^1];
@@ -101,16 +71,6 @@ public static class NativeAppend
 
         return new Added(expectedId, offset, expectedIndex);
     }
-
-
-
-
-
-
-
-
-
-
 
     public static void Attach(PackfileImage image, int fromId, string field, int toId,
                               HavokClassTypes? types = null)
@@ -137,8 +97,6 @@ public static class NativeAppend
 
         data.SetGlobal(at, image.Sections.IndexOf(data), to.Offset);
 
-
-
         FixupOrder.Reorder(image, types);
     }
 
@@ -154,17 +112,6 @@ public static class NativeAppend
         return objects.Instances[index];
     }
 
-
-
-
-
-
-
-
-
-
-
-
     public static int NameOffset(PackfileSection names, string className, uint signature)
     {
         var wanted = Encoding.ASCII.GetBytes(className);
@@ -179,13 +126,6 @@ public static class NativeAppend
             if (same) return at;
         }
 
-
-
-
-
-
-
-
         int end = names.Data.Length;
         while (end > 0 && names.Data[end - 1] == 0xFF) end--;
         if (end != names.Data.Length) Array.Resize(ref names.Data, end);
@@ -194,8 +134,6 @@ public static class NativeAppend
         BitConverter.GetBytes(signature).CopyTo(entry, 0);
         entry[4] = 0x09;
         wanted.CopyTo(entry, 5);
-
-
 
         return names.AppendData(entry) + 5;
     }

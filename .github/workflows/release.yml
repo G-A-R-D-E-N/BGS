@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   package:
     name: Package ${{ matrix.rid }}
@@ -17,14 +21,40 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
+          - os: [self-hosted, linux, x64]
             rid: linux-x64
-          - os: windows-2022
+          - os: [self-hosted, windows, x64]
             rid: win-x64
 
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+        with:
+          clean: true
+
+      - name: Verify Linux runner tooling
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tool in zip unzip; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "This self-hosted runner is missing '$tool', which the release needs."
+              exit 1
+            fi
+          done
+
+      - name: Discard archives left by an earlier run
+        if: runner.os == 'Linux'
+        shell: bash
+        run: rm -rf release BehaviourGraphStudio-*.zip
+
+      - name: Discard archives left by an earlier run
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force release -ErrorAction SilentlyContinue
+          Remove-Item -Force BehaviourGraphStudio-*.zip -ErrorAction SilentlyContinue
 
       - name: Set up pinned .NET SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.1.0
@@ -32,6 +62,19 @@ jobs:
           dotnet-version: 8.0.424
 
       - name: Verify tag matches application version
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' app/BehaviourStudio.csproj | head -1)
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag_version" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match app version ${version}"
+            exit 1
+          fi
+
+      - name: Verify tag matches application version
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           [xml]$project = Get-Content app/BehaviourStudio.csproj
@@ -48,6 +91,14 @@ jobs:
         run: dotnet publish app/BehaviourStudio.csproj --configuration Release --runtime "${{ matrix.rid }}" --self-contained true --no-restore --output "release/${{ matrix.rid }}"
 
       - name: Include release notices
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp CHANGELOG.md LICENSE THIRD_PARTY_NOTICES.md "release/${{ matrix.rid }}/"
+
+      - name: Include release notices
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Copy-Item CHANGELOG.md "release/${{ matrix.rid }}/CHANGELOG.md"
@@ -90,7 +141,7 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: package
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     permissions:
       contents: write
@@ -98,6 +149,21 @@ jobs:
       attestations: write
 
     steps:
+      - name: Verify publish runner tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tool in gh sha256sum; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "This self-hosted runner is missing '$tool', which publishing needs."
+              exit 1
+            fi
+          done
+
+      - name: Discard archives left by an earlier run
+        shell: bash
+        run: rm -rf dist
+
       - name: Download validated archives
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

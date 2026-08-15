@@ -6,12 +6,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-/// <summary>
-/// Proves that rebuilt bytes semantically match the intended NativeSave.Plan before the
-/// source file is touched. Parsing, class signatures, and object count alone cannot detect
-/// the wrong-object save bug; this verifier also re-reads the intended values from the
-/// rebuilt file at the stable-id-resolved instance and compares them with the plan.
-/// </summary>
 public static class SaveVerifier
 {
     public static void Verify(byte[] sourceBytes, byte[] rebuiltBytes, NativeSave.Plan plan)
@@ -42,8 +36,6 @@ public static class SaveVerifier
         if (model == null)
             throw new InvalidDataException("rebuilt bytes do not model as a graph");
 
-        // The expected count is derived from the actual source packfile, never from a UI
-        // collection that may already represent edited XML.
         PackfileObjects source;
         try
         {
@@ -59,8 +51,6 @@ public static class SaveVerifier
             throw new InvalidDataException(
                 $"rebuilt holds {rebuilt.Instances.Count} objects, expected {expected}");
 
-        // Deleting objects renumbers final ids, so every change's ORIGINAL id is resolved
-        // through the stable order: survivors keep source order, adds append after them.
         var survivorIds = Enumerable.Range(NativeGraphModel.FirstId, source.Instances.Count)
             .Where(id => !plan.Gone.Contains(id)).ToList();
         var added = plan.Changes.Where(c => c.Added).ToList();

@@ -4,9 +4,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
 public static class GeneratorEditor
 {
     public sealed class Kind
@@ -65,9 +62,6 @@ public static class GeneratorEditor
                 "            <hkparam name=\"generator\">{child}</hkparam>",
         },
 
-
-
-
         ["sequence"] = new Kind
         {
             Class = "BGSGamebryoSequenceGenerator",
@@ -112,9 +106,6 @@ public static class GeneratorEditor
         return HkxTextEdit.AddObject(xml, spec.Class, HkxSignatures.Of(spec.Class), body, out newId);
     }
 
-
-
-
     public static string AddBlenderChild(string xml, string blenderId, string generatorRef, float weight,
                                          out string childId)
     {
@@ -137,12 +128,8 @@ public static class GeneratorEditor
     public static string AttachToSelector(string xml, string selectorId, string generatorRef) =>
         HkxTextEdit.ArrayAppend(xml, selectorId, "generators", $"                {generatorRef}");
 
-
-
     public static List<string> ReferencesTo(BehaviourGraphModel model, string id)
     {
-
-
 
         var holders = new List<string>();
         foreach (var obj in model.Objects)

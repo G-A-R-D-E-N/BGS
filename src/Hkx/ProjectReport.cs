@@ -149,15 +149,12 @@ public static class ProjectReport
     {
         value = value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 
-        // Spreadsheets skip leading blanks before deciding a cell is a formula, so " =X" is
-        // as dangerous as "=X". A leading tab is itself a trigger in some importers.
         int lead = 0;
         while (lead < value.Length && value[lead] is ' ' or '\t') lead++;
         bool formula = value.Length > 0
                        && (value[0] is '\t'
                            || (lead < value.Length && value[lead] is '=' or '+' or '-' or '@'));
 
-        // Quote padded cells so the blanks the neutralisation depends on survive a round trip.
         bool padded = value.Length > 0
                       && (char.IsWhiteSpace(value[0]) || char.IsWhiteSpace(value[^1]));
 

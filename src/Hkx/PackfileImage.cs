@@ -7,25 +7,12 @@ using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
 public sealed class PackfileImage
 {
     public const uint Magic0 = 0x57E0E057;
     public const uint Magic1 = 0x10C0C010;
     public const int HeaderSize = 0x40;
     public const int SectionHeaderSize = 0x40;
-
-
 
     private const int TablePadding = 0x10;
     private const byte PadByte = 0xFF;
@@ -40,10 +27,6 @@ public sealed class PackfileImage
     public byte[] ContentsVersion = new byte[16];
     public int Flags;
     public short MaxPredicate;
-
-
-
-
 
     public byte[] Predicates = Array.Empty<byte>();
 
@@ -95,8 +78,6 @@ public sealed class PackfileImage
         return image;
     }
 
-
-
     public byte[] Rebuild()
     {
         var stream = new MemoryStream();
@@ -117,9 +98,6 @@ public sealed class PackfileImage
         writer.Write(MaxPredicate);
         writer.Write((short)Predicates.Length);
         writer.Write(Predicates);
-
-
-
 
         long headerTableAt = stream.Position;
         writer.Write(new byte[Sections.Count * SectionHeaderSize]);
@@ -150,9 +128,6 @@ public sealed class PackfileImage
 public sealed class PackfileSection
 {
 
-
-
-
     public byte[] TagBytes = new byte[20];
 
     public byte[] Data = Array.Empty<byte>();
@@ -161,8 +136,6 @@ public sealed class PackfileSection
     public byte[] VirtualFixups = Array.Empty<byte>();
     public byte[] Exports = Array.Empty<byte>();
     public byte[] Imports = Array.Empty<byte>();
-
-
 
     public byte[] HeaderTail = new byte[16];
 
@@ -175,8 +148,6 @@ public sealed class PackfileSection
         }
     }
 
-
-
     public IEnumerable<(int Source, int Destination)> Locals()
     {
         for (int at = 0; at + 8 <= LocalFixups.Length; at += 8)
@@ -186,25 +157,11 @@ public sealed class PackfileSection
         }
     }
 
-
-
-
-
-
-
     private static bool IsFiller(byte[] table, int at, int length)
     {
         for (int i = at; i < at + length; i++) if (table[i] != 0xFF) return false;
         return true;
     }
-
-
-
-
-
-
-
-
 
     public int AppendData(byte[] bytes)
     {
@@ -214,22 +171,7 @@ public sealed class PackfileSection
         return at;
     }
 
-
-
-
-
-
-
-
-
-
-
-
     public const int StringAlignment = 2;
-
-
-
-
 
     public int AppendAligned(byte[] bytes, int alignment)
     {
@@ -238,15 +180,7 @@ public sealed class PackfileSection
         return AppendData(bytes);
     }
 
-
-
-
-
-
-
     public int AppendObject(byte[] bytes) => AppendAligned(bytes, 16);
-
-
 
     public void AddVirtual(int source, int section, int destination)
     {
@@ -263,13 +197,6 @@ public sealed class PackfileSection
         VirtualFixups = table;
     }
 
-
-
-
-
-
-
-
     public void SetLocal(int source, int destination)
     {
         var entries = Locals().ToList();
@@ -278,15 +205,11 @@ public sealed class PackfileSection
         if (destination < 0)
         {
 
-
             if (existing < 0) return;
             entries.RemoveAt(existing);
         }
         else if (existing >= 0) entries[existing] = (source, destination);
         else entries.Add((source, destination));
-
-
-
 
         var table = new byte[entries.Count * 8];
         for (int i = 0; i < entries.Count; i++)
@@ -297,26 +220,7 @@ public sealed class PackfileSection
         LocalFixups = table;
     }
 
-
     public IEnumerable<(int Source, int Section, int Destination)> Globals() => Triples(GlobalFixups);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     public void SetGlobals(IEnumerable<(int Source, int Section, int Destination)> entries)
     {
@@ -330,7 +234,6 @@ public sealed class PackfileSection
         }
         GlobalFixups = table;
     }
-
 
     public void SetLocals(IEnumerable<(int Source, int Destination)> entries)
     {
@@ -352,7 +255,6 @@ public sealed class PackfileSection
         if (destination < 0)
         {
 
-
             if (existing < 0) return;
             entries.RemoveAt(existing);
         }
@@ -369,17 +271,7 @@ public sealed class PackfileSection
         GlobalFixups = table;
     }
 
-
-
     public IEnumerable<(int Source, int Section, int Destination)> Virtuals() => Triples(VirtualFixups);
-
-
-
-
-
-
-
-
 
     public void SetVirtuals(IEnumerable<(int Source, int Section, int Destination)> entries)
     {
@@ -393,9 +285,6 @@ public sealed class PackfileSection
         }
         VirtualFixups = table;
     }
-
-
-
 
     public int AlignData(int boundary)
     {
@@ -452,8 +341,6 @@ public sealed class PackfileSection
         section.Imports = bytes[(start + mark[4])..(start + mark[5])];
         return section;
     }
-
-
 
     internal int[] Append(BinaryWriter writer, Stream stream)
     {

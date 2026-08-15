@@ -7,18 +7,6 @@ using System.Text;
 
 namespace OpenCommonwealth.Services.Archive;
 
-
-
-
-
-
-
-
-
-
-
-
-
 public sealed class Ba2 : IDisposable
 {
     public sealed record Entry(int Index, string Name, long Offset, uint Packed, uint Unpacked)
@@ -45,8 +33,6 @@ public sealed class Ba2 : IDisposable
         _reader = reader;
         Entries = entries;
     }
-
-
 
     public static Ba2 Open(string archivePath)
     {
@@ -116,7 +102,6 @@ public sealed class Ba2 : IDisposable
         }
     }
 
-
     public byte[] Read(Entry entry)
     {
         long wanted = entry.Packed != 0 ? entry.Packed : entry.Unpacked;
@@ -136,9 +121,6 @@ public sealed class Ba2 : IDisposable
         }
         return entry.Packed != 0 ? Inflate(raw, entry.Unpacked) : raw;
     }
-
-
-
 
     public IEnumerable<Entry> Matching(string query, string extension = "")
     {
@@ -160,12 +142,8 @@ public sealed class Ba2 : IDisposable
         _stream.Dispose();
     }
 
-
-
-
     public static string FlatFileName(string name) =>
         name.Replace('/', '_').Replace('\\', '_').Replace(':', '_');
-
 
     public static int ExtractMatching(string archivePath, string substring, string outputDir,
                                       string extension, Action<string> log, bool keepFolders = false)
@@ -179,7 +157,6 @@ public sealed class Ba2 : IDisposable
 
         foreach (var entry in archive.Matching(substring, extension))
         {
-
 
             string target;
             if (keepFolders)

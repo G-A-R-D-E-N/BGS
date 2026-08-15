@@ -9,21 +9,12 @@ using OpenCommonwealth.Services.Archive;
 
 namespace BehaviourStudio.App;
 
-
-
-
-
-
-
-
-
 public sealed class ArchiveBrowser : Window
 {
     private readonly Ba2 _archive;
     private readonly ListBox _list = new() { Background = Ux.CardBrush, MaxHeight = 520 };
     private readonly TextBox _filter = Ux.Field();
     private readonly TextBlock _count = Ux.Label("");
-
 
     public Ba2.Entry? Chosen { get; private set; }
 
@@ -37,9 +28,6 @@ public sealed class ArchiveBrowser : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         _filter.Watermark = "words to look for, in any order, such as: dogmeat behavior";
-
-
-
 
         _filter.PropertyChanged += (_, e) =>
         {
@@ -100,9 +88,6 @@ public sealed class ArchiveBrowser : Window
         DockPanel.SetDock(c, Dock.Bottom);
         return c;
     }
-
-
-
 
     private const int Shown = 400;
 

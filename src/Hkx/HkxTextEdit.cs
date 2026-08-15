@@ -18,15 +18,6 @@ public static class HkxTextEdit
     private static readonly Regex ObjectHead =
         new(@"<hkobject class=""(?<cls>[A-Za-z0-9_]+)"" name=""#(?<id>\d+)""", RegexOptions.Compiled);
 
-
-
-
-
-
-
-
-
-
     private static readonly Regex SimpleParam =
         new(@"^(?<indent>[ \t]*)<hkparam name=""(?<name>[^""]+)""(?:\s*/>|>(?<value>[^<\r\n]*)</hkparam>)[ \t]*\r?$",
             RegexOptions.Compiled | RegexOptions.Multiline);
@@ -47,8 +38,6 @@ public static class HkxTextEdit
             }
         }
     }
-
-
 
     public static string? WhyNotWritable(string path)
     {
@@ -76,23 +65,6 @@ public static class HkxTextEdit
     public static string ReadXml(string path) =>
         File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r", "\n");
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     public static string TextOf(string hkxPath)
     {
         try
@@ -105,7 +77,6 @@ public static class HkxTextEdit
         }
         catch (Exception)
         {
-
 
         }
 
@@ -128,19 +99,12 @@ public static class HkxTextEdit
             if (matches[i].Groups["id"].Value != id) continue;
             int start = matches[i].Index;
 
-
-
-
-
-
             if (i + 1 < matches.Count) return (start, matches[i + 1].Index - start);
 
             int closed = xmlText.LastIndexOf("</hkobject>", StringComparison.Ordinal);
             if (closed < start) return (start, xmlText.Length - start);
 
             int end = closed + "</hkobject>".Length;
-
-
 
             while (end < xmlText.Length && char.IsWhiteSpace(xmlText[end])) end++;
 
@@ -165,10 +129,6 @@ public static class HkxTextEdit
         return result;
     }
 
-
-
-
-
     public static List<string>? ArrayValues(string xmlText, string id, string paramName)
     {
         var (start, length) = ObjectBlock(xmlText, id);
@@ -182,8 +142,6 @@ public static class HkxTextEdit
         if (body.Contains('<')) return null;
         return Decode(body).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).ToList();
     }
-
-
 
     public static string SetArrayValues(string xmlText, string id, string paramName,
                                         IReadOnlyList<string> values)
@@ -215,10 +173,6 @@ public static class HkxTextEdit
                     $@"<hkparam\s+name=""{Regex.Escape(name)}""(?<attrs>[^>]*)/(?<self>)>",
                     RegexOptions.Singleline);
 
-
-
-
-
     private static string Decode(string value) => System.Net.WebUtility.HtmlDecode(value);
 
     public static string EscapeXml(string value) =>
@@ -247,30 +201,12 @@ public static class HkxTextEdit
         return xmlText.Substring(0, start) + updated + xmlText.Substring(start + length);
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     public static string SetParamAt(string xmlText, string id, string path, string newValue)
     {
         var (start, length) = ObjectBlock(xmlText, id);
         if (start < 0) throw new ArgumentException($"object #{id} not found");
 
         string block = xmlText.Substring(start, length);
-
-
 
         var self = TopLevel(block, 0, block.Length)
             .Find(p => p.Kind == "hkobject");
@@ -287,7 +223,6 @@ public static class HkxTextEdit
 
             if (index < 0)
             {
-
 
                 var inline = TopLevel(block, param.InnerStart, param.InnerEnd)
                     .Find(p => p.Kind == "hkobject");
@@ -321,7 +256,6 @@ public static class HkxTextEdit
         return xmlText[..start] + rewritten + xmlText[(start + length)..];
     }
 
-
     private static (string Name, int Index) Segment(string segment)
     {
         int bracket = segment.IndexOf('[');
@@ -348,11 +282,6 @@ public static class HkxTextEdit
 
     private static readonly Regex AnyTag =
         new(@"<(?<close>/?)(?<kind>hkparam|hkobject)(?<attrs>[^>]*)>", RegexOptions.Compiled);
-
-
-
-
-
 
     private static List<Piece> TopLevel(string text, int from, int to)
     {
@@ -381,7 +310,6 @@ public static class HkxTextEdit
 
             if (selfClosing)
             {
-
 
                 if (depth == 0)
                     pieces.Add(new Piece(kind, NameOf(attrs), m.Index, m.Index + m.Length,
@@ -441,8 +369,6 @@ public static class HkxTextEdit
 
         return xmlText.Substring(0, close) + block + xmlText.Substring(close);
     }
-
-
 
     public static string ArrayAppend(string xmlText, string id, string paramName, string elementXml)
     {
@@ -541,9 +467,6 @@ public static class HkxTextEdit
         return xmlText.Substring(0, start) + block + xmlText.Substring(start + length);
     }
 
-
-
-
     private static int ArrayBodyEnd(string block, int bodyStart)
     {
         var tag = new Regex(@"<hkparam\b[^>]*?(?<selfclose>/)?>|</hkparam>");
@@ -591,8 +514,6 @@ public static class HkxTextEdit
         foreach (Match m in Regex.Matches(body, @"<hkcstring>.*?</hkcstring>", RegexOptions.Singleline))
             result.Add(m.Value);
         if (result.Count > 0) return result;
-
-
 
         foreach (Match m in Regex.Matches(body, @"(#\d+|null)"))
             result.Add("                " + m.Value);

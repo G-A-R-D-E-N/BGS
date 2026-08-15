@@ -4,42 +4,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class NativePaste
 {
-
-
-
 
     public sealed record Subtree(int RootId, string RootClass, IReadOnlyList<int> Ids,
                                  IReadOnlyList<int> Shared, IReadOnlyList<string> Events,
@@ -50,14 +16,10 @@ public static class NativePaste
             $"{Events.Count} event(s), {Variables.Count} variable(s)";
     }
 
-
-
-
     public sealed record Clip(string Path, Subtree Tree)
     {
         public override string ToString() => $"{System.IO.Path.GetFileName(Path)} {Tree}";
     }
-
 
     public sealed record Result(byte[] Bytes, int RootId, int Objects, int Pointers, int Shared,
                                 int Symbols, string Note)
@@ -70,17 +32,6 @@ public static class NativePaste
         byte[] source = InputFilePolicy.ReadHkx(path);
         return new Clip(path, Of(PackfileImage.Read(source), rootId, types));
     }
-
-
-
-
-
-
-
-
-
-
-
 
     public static Subtree Of(PackfileImage image, int rootId, HavokClassTypes? types = null)
     {
@@ -101,9 +52,6 @@ public static class NativePaste
         int section = image.Sections.IndexOf(data);
         var startsAt = new Dictionary<int, int>();
         for (int i = 0; i < objects.Instances.Count; i++) startsAt[objects.Instances[i].Offset] = i;
-
-
-
 
         var outs = new List<HashSet<int>>();
         var preds = new List<HashSet<int>>();
@@ -171,12 +119,6 @@ public static class NativePaste
                            events, variables);
     }
 
-
-
-
-
-
-
     public static Result Paste(string targetPath, Clip clip, int attachToId = -1,
                                string attachField = "", HavokClassTypes? types = null) =>
         Paste(InputFilePolicy.ReadHkx(targetPath), targetPath, clip, attachToId, attachField, types);
@@ -213,7 +155,6 @@ public static class NativePaste
                           ? StringComparison.OrdinalIgnoreCase
                           : StringComparison.Ordinal);
 
-
     public static Result Into(PackfileImage target, PackfileImage source, Subtree tree, bool sameFile,
                               int attachToId = -1, string attachField = "",
                               HavokClassTypes? types = null)
@@ -231,9 +172,6 @@ public static class NativePaste
         int sourceSection = source.Sections.IndexOf(sourceData);
         int targetSection = target.Sections.IndexOf(targetData);
 
-
-
-
         if (!sameFile && tree.Shared.Count > 0)
             throw new InvalidOperationException(
                 $"#{tree.RootId} shares {tree.Shared.Count} object(s) with the rest of the file it " +
@@ -250,8 +188,6 @@ public static class NativePaste
         foreach (var (s, which, d) in sourceData.Globals())
             if (which == sourceSection) sourceGlobals[s] = d;
 
-
-
         var made = new Dictionary<int, int>();
         var newIds = new List<int>();
         foreach (int id in tree.Ids)
@@ -261,8 +197,6 @@ public static class NativePaste
             made[instance.Offset] = added.Offset;
             newIds.Add(added.Id);
         }
-
-
 
         int? Aim(int destination)
         {
@@ -309,12 +243,6 @@ public static class NativePaste
                           symbols, note);
     }
 
-
-
-
-
-
-
     private static void CopyMembers(PackfileSection targetData, PackfileSection sourceData,
                                     IReadOnlyDictionary<int, int> sourceLocals,
                                     IReadOnlyDictionary<int, int> sourceGlobals,
@@ -322,7 +250,6 @@ public static class NativePaste
                                     Func<int, int?> aim, HavokClassTypes types, ref int pointers,
                                     int depth)
     {
-
 
         if (depth > 8 || !types.Knows(className)) return;
 
@@ -418,19 +345,10 @@ public static class NativePaste
         }
     }
 
-
-
-
-
-
-
-
-
     private static int Rewrite(PackfileImage target, PackfileSection data, HavokClassTypes types,
                                HashSet<int> pastedAt, IReadOnlyDictionary<int, int> events,
                                IReadOnlyDictionary<int, int> variables)
     {
-
 
         bool moved = events.Any(m => m.Key != m.Value) || variables.Any(m => m.Key != m.Value);
         if (!moved) return 0;
@@ -476,13 +394,6 @@ public static class NativePaste
         return changed;
     }
 
-
-
-
-
-
-
-
     private static string Attach(PackfileImage image, PackfileSection data, int section,
                                  HavokClassTypes types, int attachToId, string field, int rootAt,
                                  int rootId, string rootClass)
@@ -523,10 +434,6 @@ public static class NativePaste
             var held = data.Globals().FirstOrDefault(g => g.Source == old!.At + e * 8);
             keep.Add(held.Destination == 0 && held.Source == 0 ? -1 : held.Destination);
         }
-
-
-
-
 
         if (rootClass == "hkbStateMachineStateInfo" && field == "states")
         {
@@ -573,13 +480,6 @@ public static class NativePaste
         return $"added to #{attachToId}.{field} as element {keep.Count - 1}";
     }
 
-
-
-
-
-
-
-
     private static Dictionary<int, int> Remap(PackfileObjects source, PackfileObjects target,
                                               string field, IReadOnlyList<string> used, string what)
     {
@@ -607,7 +507,6 @@ public static class NativePaste
         return map;
     }
 
-
     private static List<string> Names(PackfileObjects objects, string field)
     {
         var strings = objects.OfClass("hkbBehaviorGraphStringData").FirstOrDefault();
@@ -616,7 +515,6 @@ public static class NativePaste
         var names = objects.ReadStringArray(strings, field);
         return names == null ? new List<string>() : names.Select(n => n ?? "").ToList();
     }
-
 
     private static List<(int At, int End, int Object)> Spans(PackfileImage image,
                                                              PackfileObjects objects,

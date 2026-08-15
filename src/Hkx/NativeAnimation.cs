@@ -6,35 +6,15 @@ using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class NativeAnimation
 {
     public const string InterleavedClass = "hkaInterleavedUncompressedAnimation";
-
 
     public static readonly string[] Compressed =
     {
         "hkaSplineCompressedAnimation",
         "hkaLosslessCompressedAnimation",
     };
-
-
 
     private const int Type = 0x10;
     private const int Duration = 0x14;
@@ -45,7 +25,6 @@ public static class NativeAnimation
     private const int Transforms = 0x38;
     private const int Floats = 0x48;
 
-
     private const int InterleavedType = 1;
 
     public sealed record Result(byte[] Bytes, int Frames, int Tracks, string From, long Grew)
@@ -53,11 +32,6 @@ public static class NativeAnimation
         public override string ToString() =>
             $"{From} written out as {Frames} frame(s) of {Tracks} track(s), {Grew} bytes larger";
     }
-
-
-
-
-
 
     public static Result Interleave(string hkxPath, HkxAnimationData decoded) =>
         Interleave(InputFilePolicy.ReadHkx(hkxPath), decoded);
@@ -103,9 +77,6 @@ public static class NativeAnimation
                     $"A track decoded to a different number of frames than the {frames} this " +
                     "animation declares, so it was not written out.");
 
-
-
-
         float duration = BitConverter.ToSingle(data.Data, at + Duration);
         var annotations = objects.ArrayAt(at + AnnotationTracks);
         int self = image.Sections.IndexOf(data);
@@ -113,8 +84,6 @@ public static class NativeAnimation
         bool hasMotion = data.Globals().Any(g => g.Source == at + ExtractedMotion);
 
         var added = NativeAppend.Object(image, InterleavedClass);
-
-
 
         objects = new PackfileObjects(image);
         int made = added.Offset;
@@ -124,15 +93,6 @@ public static class NativeAnimation
         BitConverter.GetBytes(tracks).CopyTo(data.Data, made + TransformTracks);
         BitConverter.GetBytes(0).CopyTo(data.Data, made + FloatTracks);
 
-
-
-
-
-
-
-
-
-
         if (annotations is { Count: > 0 })
         {
             int copied = CopyStructRun(image, data, annotations.At, annotations.Count, "hkaAnnotationTrack");
@@ -141,7 +101,6 @@ public static class NativeAnimation
         }
 
         if (hasMotion) data.SetGlobal(made + ExtractedMotion, motion.Section, motion.Destination);
-
 
         data.AlignData(NativeAppend.Alignment);
         var run = new byte[frames * tracks * HkxBinaryReader.QsTransformSize];
@@ -162,14 +121,8 @@ public static class NativeAnimation
         BitConverter.GetBytes(frames * tracks).CopyTo(data.Data, made + Transforms + 8);
         BitConverter.GetBytes(0x80000000u | (uint)(frames * tracks)).CopyTo(data.Data, made + Transforms + 12);
 
-
-
         BitConverter.GetBytes(0).CopyTo(data.Data, made + Floats + 8);
         BitConverter.GetBytes(0x80000000u).CopyTo(data.Data, made + Floats + 12);
-
-
-
-
 
         var globals = data.Globals().ToList();
         int repointed = 0;
@@ -196,32 +149,9 @@ public static class NativeAnimation
 
     public const string ReferenceFrameClass = "hkaDefaultAnimatedReferenceFrame";
 
-
-
     private const int MotionDuration = 0x40;
     private const int MotionSamples = 0x48;
     private const int MotionSize = 96;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     public sealed record Timeline(float Duration, float FromTime, float ToTime, float Scale,
                                   RootMotion.Motion? Motion)
@@ -237,7 +167,6 @@ public static class NativeAnimation
             (Motion is { Any: true } ? $"{Motion.Samples.Count} motion sample(s)" : "no new motion");
     }
 
-
     private const int NumFrames = 0x38;
     private const int NumBlocks = 0x3C;
     private const int MaxFramesPerBlock = 0x40;
@@ -251,20 +180,6 @@ public static class NativeAnimation
     private const int FloatOffsets = 0x88;
     private const int SplineData = 0x98;
     private const int Endian = 0xA8;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     public static Result Recompress(string hkxPath, HkxAnimationData decoded,
         SplineEncoder.Options? options = null, bool dropReplaced = true, Timeline? cut = null) =>
@@ -305,8 +220,6 @@ public static class NativeAnimation
                 $"The animation says it has {tracks} track(s) and decoded to {decoded.Tracks.Count}, " +
                 "so it was not written out.");
 
-
-
         var blob = SplineEncoder.Encode(decoded, options);
 
         float duration = cut?.Duration ?? BitConverter.ToSingle(data.Data, at + Duration);
@@ -315,13 +228,7 @@ public static class NativeAnimation
         var motion = data.Globals().FirstOrDefault(g => g.Source == at + ExtractedMotion);
         bool hasMotion = data.Globals().Any(g => g.Source == at + ExtractedMotion);
 
-
-
         int replacedId = objects.IndexOf(source) + NativeGraphModel.FirstId;
-
-
-
-
 
         bool replacingMotion = cut?.Motion is not null && hasMotion &&
                                motion.Section == self &&
@@ -355,9 +262,6 @@ public static class NativeAnimation
             data.SetLocal(made + AnnotationTracks, copied);
             Array.Copy(data.Data, at + AnnotationTracks + 8, data.Data, made + AnnotationTracks + 8, 8);
 
-
-
-
             if (cut != null && copied >= 0)
                 RebaseAnnotations(data, copied, annotations.Count, cut);
         }
@@ -371,8 +275,6 @@ public static class NativeAnimation
 
         WriteUintArray(data, made + BlockOffsets, blob.BlockOffsets);
         WriteUintArray(data, made + FloatBlockOffsets, blob.FloatBlockOffsets);
-
-
 
         WriteUintArray(data, made + TransformOffsets, Array.Empty<int>());
         WriteUintArray(data, made + FloatOffsets, Array.Empty<int>());
@@ -399,18 +301,6 @@ public static class NativeAnimation
 
         data.SetGlobals(globals);
 
-
-
-
-
-
-
-
-
-
-
-
-
         if (dropReplaced)
         {
             var going = replacingMotion ? new[] { replacedId, replacedMotionId } : new[] { replacedId };
@@ -428,25 +318,10 @@ public static class NativeAnimation
         return new Result(bytes, frames, tracks, source.ClassName, bytes.Length - was);
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
     private static void RebaseAnnotations(PackfileSection data, int run, int count, Timeline cut)
     {
         int trackStride = HavokClassTypes.Shipped["hkaAnnotationTrack"]?.Size ?? 24;
         int noteStride = HavokClassTypes.Shipped["hkaAnnotationTrackAnnotation"]?.Size ?? 16;
-
-
-
 
         var locals = data.Locals().ToList();
         var where = new Dictionary<int, int>();
@@ -463,7 +338,6 @@ public static class NativeAnimation
         void Clear(int source)
         {
             if (!where.TryGetValue(source, out int i)) return;
-
 
             locals[i] = (-1, -1);
             where.Remove(source);
@@ -506,21 +380,7 @@ public static class NativeAnimation
         data.SetLocals(locals.Where(l => l.Source >= 0));
     }
 
-
-
-
     private const float Slack = 1f / 60f;
-
-
-
-
-
-
-
-
-
-
-
 
     private static int WriteReferenceFrame(PackfileImage image, PackfileSection data, int from,
                                            RootMotion.Motion motion)
@@ -529,9 +389,6 @@ public static class NativeAnimation
         int made = added.Offset;
 
         Array.Copy(data.Data, from + 16, data.Data, made + 16, MotionSize - 16);
-
-
-
 
         BitConverter.GetBytes(0).CopyTo(data.Data, made + MotionSamples + 8);
         BitConverter.GetBytes(0x80000000u).CopyTo(data.Data, made + MotionSamples + 12);
@@ -548,8 +405,6 @@ public static class NativeAnimation
                 var sample = motion.Samples[i];
                 Write(run, i * 16, sample.Position);
 
-
-
                 BitConverter.GetBytes(sample.TurnRadians).CopyTo(run, i * 16 + 12);
             }
 
@@ -562,7 +417,6 @@ public static class NativeAnimation
 
         return made;
     }
-
 
     private static void WriteUintArray(PackfileSection data, int field, int[] values)
     {
@@ -583,36 +437,16 @@ public static class NativeAnimation
         BitConverter.GetBytes(0x80000000u | (uint)values.Length).CopyTo(data.Data, field + 12);
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static int CopyStructRun(PackfileImage image, PackfileSection data, int from, int count,
                                      string elementClass, int depth = 0,
                                      Dictionary<int, int>? copiedText = null)
     {
         var types = HavokClassTypes.Shipped;
 
-
-
         if (depth > 6 || count <= 0 || !types.Knows(elementClass)) return -1;
 
         int stride = types[elementClass]?.Size ?? 0;
         if (stride <= 0) return -1;
-
-
 
         copiedText ??= new Dictionary<int, int>();
 
@@ -660,8 +494,6 @@ public static class NativeAnimation
                     continue;
                 }
 
-
-
                 int width = member.VSub is "TYPE_STRINGPTR" or "TYPE_CSTRING" or "TYPE_POINTER" ? 8 : 0;
                 if (width == 0) { data.SetLocal(made, inner); continue; }
 
@@ -678,11 +510,6 @@ public static class NativeAnimation
 
         return to;
     }
-
-
-
-
-
 
     private static int CopyText(PackfileSection data, int at, Dictionary<int, int> already)
     {
@@ -705,8 +532,6 @@ public static class NativeAnimation
         BitConverter.GetBytes(value.Y).CopyTo(into, at + 4);
         BitConverter.GetBytes(value.Z).CopyTo(into, at + 8);
 
-
-
     }
 
     private static void Write(byte[] into, int at, Quaternion value)
@@ -716,9 +541,6 @@ public static class NativeAnimation
         BitConverter.GetBytes(value.Z).CopyTo(into, at + 8);
         BitConverter.GetBytes(value.W).CopyTo(into, at + 12);
     }
-
-
-
 
     private static Quaternion Normalized(Quaternion q)
     {

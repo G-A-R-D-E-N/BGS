@@ -4,22 +4,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class GraphOwnership
 {
     public sealed class Tree
@@ -45,12 +29,8 @@ public static class GraphOwnership
             }
         }
 
-
-
         public IReadOnlyList<string> Children(string id) =>
             _children.TryGetValue(id, out var kids) ? kids : None;
-
-
 
         public List<string> Under(string id)
         {
@@ -71,7 +51,6 @@ public static class GraphOwnership
             return found;
         }
 
-
         public List<string> Chain(string id)
         {
             var chain = new List<string>();
@@ -87,19 +66,8 @@ public static class GraphOwnership
             return chain;
         }
 
-
-
-
-
-
-
         public bool Hidden(ISet<string> collapsed, string id) =>
             collapsed.Count > 0 && Chain(id).Any(collapsed.Contains);
-
-
-
-
-
 
         public int HiddenBy(ISet<string> collapsed, string id)
         {
@@ -111,11 +79,6 @@ public static class GraphOwnership
 
             return Under(id).Count(n => !Hidden(without, n));
         }
-
-
-
-
-
 
         public HashSet<string> Moving(IEnumerable<string> selected)
         {

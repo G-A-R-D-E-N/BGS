@@ -5,8 +5,6 @@ using Avalonia.Media;
 
 namespace BehaviourStudio.App;
 
-
-
 public static class Ux
 {
     public static readonly Color Base = Color.Parse("#151515");
@@ -23,24 +21,9 @@ public static class Ux
     public static readonly Color Warn = Color.Parse("#E0A030");
     public static readonly Color Good = Color.Parse("#3FB950");
 
-
-
-
     public static readonly Color RouteColour = Color.Parse("#58D0C0");
 
-
-
-
-
-
     public static readonly Color Wildcard = Color.Parse("#F778BA");
-
-
-
-
-
-
-
 
     public static readonly Color Casing = Base;
 
@@ -116,18 +99,9 @@ public static class Ux
         };
     }
 
-
-
     public static readonly Color Machine = Accent;
     public static readonly Color StateInfo = Color.Parse("#79C0FF");
     public static readonly Color Transitions = Color.Parse("#A371F7");
-
-
-
-
-
-
-
 
     public static Color ForClass(string cls) => cls switch
     {

@@ -7,10 +7,6 @@ using Avalonia.Media;
 
 namespace BehaviourStudio.App;
 
-
-
-
-
 public sealed class HkGrid : Border
 {
     private readonly TreeView _tree = new() { Background = Brushes.Transparent };
@@ -60,11 +56,7 @@ public sealed class HkGrid : Border
 
     public object? SelectedTag => (_tree.SelectedItem as TreeViewItem)?.Tag;
 
-
-
     public int RowCount { get; private set; }
-
-
 
     public bool HasSelection => _tree.SelectedItem != null;
 
@@ -84,16 +76,12 @@ public sealed class HkGrid : Border
         return row;
     }
 
-
-
     public bool SelectByTag(object tag)
     {
         foreach (var item in _tree.Items)
             if (Select(item as TreeViewItem, tag)) return true;
         return false;
     }
-
-
 
     public bool SelectFirst()
     {
@@ -168,8 +156,6 @@ public sealed class HkRow
             layout.Children.Add(text);
             _cells[i] = text;
         }
-
-
 
         Item = new TreeViewItem { Header = layout, IsExpanded = depth < 2, Padding = new Thickness(0, 1) };
     }

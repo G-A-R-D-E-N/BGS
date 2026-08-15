@@ -5,16 +5,6 @@ using System.IO.Compression;
 
 namespace BehaviourStudio.Tools;
 
-
-
-
-
-
-
-
-
-
-
 public sealed class Png
 {
     private readonly int _width;
@@ -44,8 +34,6 @@ public sealed class Png
             }
     }
 
-
-
     public void Line(int x0, int y0, int x1, int y1, byte r, byte g, byte b)
     {
         int dx = Math.Abs(x1 - x0), dy = Math.Abs(y1 - y0);
@@ -72,8 +60,6 @@ public sealed class Png
         header.Add(2);
         header.Add(0); header.Add(0); header.Add(0);
         Chunk(file, "IHDR", header.ToArray());
-
-
 
         var raw = new byte[_height * (_width * 3 + 1)];
         for (int y = 0; y < _height; y++)

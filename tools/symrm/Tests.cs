@@ -8,15 +8,10 @@ using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.Tools;
 
-
-
-
 public static class Tests
 {
     private static int _failed;
     private static int _ran;
-
-
 
     public static readonly (string Name, Action Check)[] Cases =
     {
@@ -191,8 +186,6 @@ public static class Tests
         ("ARotationIsReadAlongTheArcNotAcrossIt", ARotationIsReadAlongTheArcNotAcrossIt),
     };
 
-
-
     public static int RunOne(string name)
     {
         var match = Array.Find(Cases, c => c.Name == name);
@@ -215,9 +208,6 @@ public static class Tests
         return _failed == 0 ? 0 : 1;
     }
 
-
-
-
     private static void Check(string what, object? expected, object? actual)
     {
         _ran++;
@@ -231,12 +221,9 @@ public static class Tests
         null => "null",
         string s when s.Length == 0 => "an empty string",
 
-
         HkObject o => $"#{o.Id} {o.Class}" + (o.Str("name").Length > 0 ? $" '{o.Str("name")}'" : ""),
         _ => value.ToString() ?? "null",
     };
-
-
 
     private static void CheckThrows<T>(string what, Action action) where T : Exception
     {
@@ -267,10 +254,6 @@ public static class Tests
         Console.WriteLine($"  {(value ? "ok  " : "FAIL")}  {what}");
     }
 
-
-
-
-
     private static void DetachedSubtreeStaysDrawn()
     {
         Console.WriteLine("detached subtree stays drawn after a retarget");
@@ -281,8 +264,6 @@ public static class Tests
         Check("objects in the file", 7, before.Objects.Count);
         Check("reachable from the root before", 6, Reachable(before));
         Check("drawn before", 7, GraphAuthor.Layout(before, 1000).Count);
-
-
 
         xml = GraphLinks.Connect(xml, "91", "rootGenerator", "97", out _);
         var after = BehaviourGraphModel.Parse(xml);
@@ -297,19 +278,12 @@ public static class Tests
         CheckTrue("the clip under that state #94 is still drawn", drawn.Contains("94"));
     }
 
-
-
-
     private static void EveryDrawnNodeHasOneOwner()
     {
         Console.WriteLine("\nevery drawn node has one owner");
 
         var model = BehaviourGraphModel.Parse(BlenderGraph(0, 0, 1, 1));
         var placed = GraphAuthor.Layout(model, 1000);
-
-
-
-
 
         Check("the walk placed the graph, breadth first", "91, 110, 80, 111, 112, 81, 121, 122",
               string.Join(", ", placed.Select(p => p.Node.Id)));
@@ -318,7 +292,6 @@ public static class Tests
         Check("the root owns nothing above it", "", owner["91"]);
         Check("the blender is owned by the graph that names it", "91", owner["110"]);
         Check("and a blender child by the blender", "110", owner["111"]);
-
 
         foreach (var (node, _, ownerId) in placed)
         {
@@ -334,8 +307,6 @@ public static class Tests
             }
         }
     }
-
-
 
     private static void OwnershipAnswersWhatMovesAndWhatHides()
     {
@@ -363,16 +334,9 @@ public static class Tests
         Check("B's badge counts only what B hides", 1, tree.HiddenBy(collapsed, "B"));
         Check("a node that is not collapsed hides nothing", 0, tree.HiddenBy(collapsed, "A"));
 
-
-
-
-
-
-
         var both = new HashSet<string> { "A", "E" };
         Check("an inner collapse claims nothing already hidden", 0, tree.HiddenBy(both, "E"));
         Check("and the outer one claims what it can actually bring back", 4, tree.HiddenBy(both, "A"));
-
 
         var moving = tree.Moving(new[] { "A", "E" });
         Check("everything moves, once each", "A, B, C, D, E, F",
@@ -381,12 +345,6 @@ public static class Tests
 
         Check("a node nobody placed moves nothing", 0, tree.Moving(new[] { "Z" }).Count);
     }
-
-
-
-
-
-
 
     private static void ASharedGeneratorBelongsToOneBranchOnly()
     {
@@ -403,7 +361,6 @@ public static class Tests
         Check("and owned by the state that reached it first", "93", tree.Owner["94"]);
         Check("the second state owns nothing", 0, tree.Under("95").Count);
 
-
         var shutSecond = new HashSet<string> { "95" };
         CheckTrue("collapsing the borrower does not hide the shared clip",
             !tree.Hidden(shutSecond, "94"));
@@ -413,29 +370,20 @@ public static class Tests
         CheckTrue("collapsing the owner does hide it", tree.Hidden(shutFirst, "94"));
         Check("and its badge says so", 1, tree.HiddenBy(shutFirst, "93"));
 
-
         Check("dragging the borrower moves only itself", "95",
             string.Join(", ", tree.Moving(new[] { "95" })));
         Check("dragging the owner takes the clip with it", "93, 94",
             string.Join(", ", tree.Moving(new[] { "93" }).OrderBy(m => m, StringComparer.Ordinal)));
     }
 
-
-
     private static GraphLayout.Item Node(string id, int column, string owner) =>
         new(id, column, owner, 100);
 
-
     private static double Centre(Dictionary<string, double> y, string id) => y[id] + 50;
-
-
-
 
     private static void ChildrenSitBesideTheParentThatOwnsThem()
     {
         Console.WriteLine("\nchildren sit beside the parent that owns them");
-
-
 
         var items = new List<GraphLayout.Item> { Node("root", 0, "") };
         items.Add(Node("P1", 1, "root"));
@@ -448,17 +396,14 @@ public static class Tests
 
         CheckTrue($"the second parent really is far down ({y["P2"]:F0})", y["P2"] > 300);
 
-
         double drop = Math.Abs(Centre(y, "b0") - Centre(y, "P2"));
         CheckTrue($"its children are beside it, not at the top ({y["b0"]:F0} against {y["P2"]:F0})",
             drop < 200);
         CheckTrue($"and nowhere near the other family ({y["b0"]:F0} against {y["a0"]:F0})",
             y["b0"] > y["a0"] + 200);
 
-
         CheckTrue($"the family straddles its parent ({y["b0"]:F0}, {y["b1"]:F0})",
             Centre(y, "b0") < Centre(y, "P2") + 1 && Centre(y, "b1") > Centre(y, "P2") - 1);
-
 
         foreach (var column in items.GroupBy(i => i.Column))
         {
@@ -468,13 +413,10 @@ public static class Tests
                     y[sorted[i].Id] >= y[sorted[i - 1].Id] + sorted[i - 1].Height - 0.001);
         }
 
-
         var again = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
         Check("the layout is deterministic", string.Join(",", y.OrderBy(p => p.Key).Select(p => $"{p.Key}={p.Value:F2}")),
               string.Join(",", again.OrderBy(p => p.Key).Select(p => $"{p.Key}={p.Value:F2}")));
     }
-
-
 
     private static void ACollidingFamilyMovesWhole()
     {
@@ -491,14 +433,10 @@ public static class Tests
 
         var y = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
 
-
         Check("the first family keeps its spacing", "120, 120",
             $"{y["a1"] - y["a0"]:F0}, {y["a2"] - y["a1"]:F0}");
         Check("and so does the second", "120, 120",
             $"{y["b1"] - y["b0"]:F0}, {y["b2"] - y["b1"]:F0}");
-
-
-
 
         var order = items.Where(i => i.Column == 2).OrderBy(i => y[i.Id])
                          .Select(i => i.Id[0]).ToArray();
@@ -507,15 +445,11 @@ public static class Tests
         CheckTrue($"and the two are clear of each other ({y["b0"]:F0} against {y["a2"]:F0})",
             y["b0"] >= y["a2"] + 100 - 0.001);
 
-
-
         Check("the first parent is level with its family", Centre(y, "a1").ToString("F2"),
               Centre(y, "P1").ToString("F2"));
         Check("and so is the second", Centre(y, "b1").ToString("F2"),
               Centre(y, "P2").ToString("F2"));
     }
-
-
 
     private static void APinnedNodeIsNeverMovedToMakeRoom()
     {
@@ -529,7 +463,6 @@ public static class Tests
             Node("Held", 2, "root"),
         };
 
-
         var loose = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
         double wanted = loose["a0"];
 
@@ -541,12 +474,8 @@ public static class Tests
             y["a0"] >= y["Held"] + 100 || y["a0"] + 100 <= y["Held"]);
         Check("the family that moved kept its spacing", 120d, Math.Round(y["a1"] - y["a0"]));
 
-
-
         CheckTrue("the pin did not drag its neighbours with it", Math.Abs(y["Held"] - wanted) < 0.001);
     }
-
-
 
     private static void ASharedNodeIsPlacedOnceByItsOwner()
     {
@@ -561,12 +490,9 @@ public static class Tests
 
         Check("every node got exactly one position", items.Count, y.Count);
 
-
         Check("the shared clip is owned by the first state", "93", tree.Owner["94"]);
         Check("and is centred on that state, not on the borrower",
             Centre(y, "93").ToString("F2"), Centre(y, "94").ToString("F2"));
-
-
 
         CheckTrue($"the borrower did not drag it across ({y["94"]:F0} against {y["95"]:F0})",
             Math.Abs(y["94"] - y["95"]) > 1);
@@ -574,14 +500,6 @@ public static class Tests
         var again = GraphLayout.Place(items, new Dictionary<string, double>(), 20);
         Check("and placing it twice gives the same answer", y["94"].ToString("F2"), again["94"].ToString("F2"));
     }
-
-
-
-
-
-
-
-
 
     private static void SubtreesOfDifferentDepthsShareTheHeight()
     {
@@ -594,12 +512,10 @@ public static class Tests
             Node("wide", 1, "root"),
         };
 
-
         items.Add(Node("d2", 2, "deep"));
         items.Add(Node("d3", 3, "d2"));
         items.Add(Node("d4", 4, "d3"));
         items.Add(Node("d5", 5, "d4"));
-
 
         for (int i = 0; i < 8; i++) items.Add(Node("w" + i, 2, "wide"));
 
@@ -607,17 +523,10 @@ public static class Tests
 
         double tall = items.Max(i => y[i.Id] + i.Height) - items.Min(i => y[i.Id]);
 
-
-
-
-
         CheckTrue($"the two families share the height rather than stacking ({tall:F0})", tall < 1300);
-
-
 
         Check("the chain stays level with itself", "0, 0, 0",
             $"{y["d3"] - y["d2"]:F0}, {y["d4"] - y["d3"]:F0}, {y["d5"] - y["d4"]:F0}");
-
 
         foreach (var column in items.GroupBy(i => i.Column))
         {
@@ -627,18 +536,10 @@ public static class Tests
                     y[sorted[i].Id] >= y[sorted[i - 1].Id] + sorted[i - 1].Height - 0.001);
         }
 
-
         var order = items.Where(i => i.Column == 2).OrderBy(i => y[i.Id]).Select(i => i.Id[0]).ToArray();
         Check("neither family is split by the other in the column they share", "dwwwwwwww",
             new string(order));
     }
-
-
-
-
-
-
-
 
     private static void DepthOnOneSideCostsNothingOnTheOther()
     {
@@ -653,7 +554,6 @@ public static class Tests
                 Node("wide", 1, "root"),
             };
 
-
             string parent = "deep";
             for (int level = 0; level < levels; level++)
             {
@@ -661,7 +561,6 @@ public static class Tests
                 items.Add(Node(id, 2 + level, parent));
                 parent = id;
             }
-
 
             for (int i = 0; i < 12; i++) items.Add(Node($"w{i:00}", 2, "wide"));
 
@@ -671,29 +570,22 @@ public static class Tests
         var shallow = WithChainOf(3);
         var deeper = WithChainOf(9);
 
-
         var before = string.Join(", ", Enumerable.Range(0, 12).Select(i => $"{shallow[$"w{i:00}"]:F0}"));
         var after = string.Join(", ", Enumerable.Range(0, 12).Select(i => $"{deeper[$"w{i:00}"]:F0}"));
         Check("six more columns of depth move the wide family not at all", before, after);
-
 
         double sharedShallow = shallow["w11"] + 100 - Math.Min(shallow["d0"], shallow["w00"]);
         double sharedDeeper = deeper["w11"] + 100 - Math.Min(deeper["d0"], deeper["w00"]);
         Check("and the column they share is the same height", sharedShallow.ToString("F0"),
               sharedDeeper.ToString("F0"));
 
-
-
         int Links(Dictionary<string, double> laid) => laid.Keys.Count(k => k.Length > 1 && k[0] == 'd' && char.IsDigit(k[1]));
         Check("while the chain really is six nodes longer", "3, 9", $"{Links(shallow)}, {Links(deeper)}");
-
 
         for (int level = 1; level < 9; level++)
             CheckTrue($"d{level} is level with d{level - 1}",
                 Math.Abs(deeper["d" + level] - deeper["d" + (level - 1)]) < 0.001);
     }
-
-
 
     private static string SharedGeneratorGraph() => """
         <?xml version="1.0" encoding="ascii"?>
@@ -744,8 +636,6 @@ public static class Tests
         CheckTrue("an empty link says nothing about replacing", !plain.Contains("replacing"));
     }
 
-
-
     private static void BlenderChildIsWrapped()
     {
         Console.WriteLine("\na generator dropped on a blender is wrapped");
@@ -768,8 +658,6 @@ public static class Tests
         Check("the wrapper points at the clip", "94", model.Get(child)?.Ref("generator"));
         CheckTrue("the note mentions the wrapper", note.Contains(child));
     }
-
-
 
     private static void EditorSignaturesComeFromTheClassTable()
     {
@@ -830,9 +718,6 @@ public static class Tests
                   matches.Any(match => match.Groups["sig"].Value == expected));
     }
 
-
-
-
     private static void AnyNodeCanBeDeleted()
     {
         Console.WriteLine("\nany node can be deleted, links into it are broken first");
@@ -853,23 +738,11 @@ public static class Tests
             .All(f => !f.What.Contains("not in this file")));
     }
 
-
-
-
-
-
-
-
-
-
     private static void AReferenceInsideAStructIsSeenByBothReaders()
     {
         Console.WriteLine("\na reference held in a named struct counts as a reference");
 
         var model = BehaviourGraphModel.Parse(StructReferenceGraph());
-
-
-
 
         var holder = model.Get("98")!;
         CheckTrue("the fixture really parsed alarmEvent as a struct",
@@ -879,42 +752,24 @@ public static class Tests
         CheckTrue("with nothing else in the file pointing at the payload",
                   model.Objects.All(o => o.Scalars.Values.All(v => v != "#99")));
 
-
-
-
-
-
         CheckTrue("Unattached reads structs, so a node held only by one is not called orphaned",
                   GraphAuthor.Unattached(model).All(o => o.Id != "97"));
-
-
-
 
         CheckTrue("PointsAt reads structs, so the canvas keeps the payload connected",
                   GraphAuthor.PointsAt(model, holder).Contains("99"));
 
-
-
         Check("ReferencesTo names the modifier that holds it", 1,
               GeneratorEditor.ReferencesTo(model, "99").Count);
-
-
 
         string after = GeneratorEditor.Remove(StructReferenceGraph(), "99", force: false,
                                               out var blockers);
         Check("and Remove refuses to delete it", 1, blockers.Count);
         CheckTrue("so the payload is still there", BehaviourGraphModel.Parse(after).Get("99") != null);
 
-
-
-
         string cleared = HkxTextEdit.SetParamAt(StructReferenceGraph(), "98", "alarmEvent.payload", "null");
         Check("a struct member can be cleared the way Detach would need to", "null",
               BehaviourGraphModel.Parse(cleared).Get("98")?.Structs["alarmEvent"]
                   .GetValueOrDefault("payload"));
-
-
-
 
         string gone = GraphAuthor.DeleteNode(StructReferenceGraph(), "99", out string note);
         var afterDelete = BehaviourGraphModel.Parse(gone);
@@ -923,22 +778,14 @@ public static class Tests
         Check("the payload is gone", null, afterDelete.Get("99"));
         CheckTrue("the note says which holder it cleared", note.Contains("#98"));
 
-
-
-
         CheckTrue("and no dangling reference is left behind",
                   GraphValidator.Check(gone).All(f => !f.What.Contains("not in this file")));
-
-
-
 
         Check("a reference in a list element is found", 1,
               GeneratorEditor.ReferencesTo(model, "93").Count);
         string listCleared = GraphAuthor.DeleteNode(StructReferenceGraph(), "93", out _);
         CheckTrue("and deleting it drops the element rather than nulling it",
                   BehaviourGraphModel.Parse(listCleared).Get("92")!.Refs("states").Count == 0);
-
-
 
         var blend = BehaviourGraphModel.Parse(TwoStateBlendGraph());
         Check("a reference inside a struct list element is found", 1,
@@ -951,13 +798,6 @@ public static class Tests
         Check("the transition itself survives", 1,
               BehaviourGraphModel.Parse(effectGone).Get("101")!.StructLists["transitions"].Count);
     }
-
-
-
-
-
-
-
 
     private static void ADanglingReferenceIsReportedWhereverItSits()
     {
@@ -979,8 +819,6 @@ public static class Tests
                       dangling.Count == 0 || dangling[0].Where.StartsWith('#'));
         }
     }
-
-
 
     private static string StructReferenceGraph() => """
         <?xml version="1.0" encoding="ascii"?>
@@ -1057,8 +895,6 @@ public static class Tests
         CheckTrue("a state machine is not protected", GraphAuthor.CanDelete("hkbStateMachine"));
     }
 
-
-
     private static void PortTypesRefuseNonsense()
     {
         Console.WriteLine("\nport types accept what fits and refuse what does not");
@@ -1085,9 +921,6 @@ public static class Tests
             !Allowed("states", "hkbClipTriggerArray"));
     }
 
-
-
-
     private static int Reachable(BehaviourGraphModel model)
     {
         var root = model.Objects.First(o => o.Class == "hkbBehaviorGraph");
@@ -1107,10 +940,6 @@ public static class Tests
         }
         return seen.Count;
     }
-
-
-
-
 
     private static void Fo4CharacterListsItsAnimations()
     {
@@ -1211,7 +1040,6 @@ public static class Tests
             Check("nothing is reported without a chain to check against", 0,
                   GraphValidator.Check(SmallGraph()).Count(f => f.What.Contains("not on disk")));
 
-
             File.Move(Path.Combine(root, "a.hkx"), Path.Combine(root, "b.hkx"));
             var swapped = new ProjectChain { Root = root };
             Check("a .HKT declaration resolves to the .hkx on disk", 0,
@@ -1234,7 +1062,6 @@ public static class Tests
         CheckTrue("an unchanged file drifts by nothing",
                   RepackCheck.Compare(before, RepackCheck.Take(SmallGraph())).Clean);
 
-
         var renumbered = RepackCheck.Take(SmallGraph().Replace("\"#9", "\"#20"));
         CheckTrue("renumbering every object is not drift", RepackCheck.Compare(before, renumbered).Clean);
 
@@ -1252,10 +1079,6 @@ public static class Tests
         CheckTrue("a dropped object is drift", !dropped.Clean);
         CheckTrue("it counts both sides", dropped.ToString().Contains("7 objects and came back with 6"));
     }
-
-
-
-
 
     private static void AnUnreachableStateIsReported()
     {
@@ -1277,8 +1100,6 @@ public static class Tests
         string wild = StateEditor.AddTransition(driven, "92", "", 1, 0, "null");
         Check("a wildcard transition clears it too", 0, Unreachable(wild).Count);
 
-
-
         string chained = StateEditor.AddTransition(
             StateEditor.AddState(driven, "92", "C", "#97", out _, out int third), "92", "95", third, 0, "null");
         var chainDead = Unreachable(chained);
@@ -1298,8 +1119,6 @@ public static class Tests
         Check("a disabled state cannot relay reachability", 1, disabledRouteWarnings.Count);
         CheckTrue("the state beyond the disabled one stays unreachable",
                   disabledRouteWarnings.Any(f => f.Where.Contains("'C'")));
-
-
 
         string noStart = driven.Replace("<hkparam name=\"startStateId\">0</hkparam>",
                                         "<hkparam name=\"startStateId\">9</hkparam>");
@@ -1369,9 +1188,6 @@ public static class Tests
         Check("an unflagged zero is not treated as a nested target", 2,
               Unreachable(unflagged).Count);
     }
-
-
-
 
     private static void TransitionRowsCarryPriorityAndFlags()
     {
@@ -1529,16 +1345,11 @@ public static class Tests
         </hkpackfile>
         """;
 
-
-
-
     private static void EventUsageSaysWhoSendsAndWhoListens()
     {
         Console.WriteLine("\nwho sends and who listens for each event, with no verdict");
 
         var usage = EventUsage.ByEvent(EventGraph());
-
-
 
         Check("the enter notify event is seen at all", 1, Lines(usage, 3).Count);
         Check("and it is a send", EventUsage.Role.Raised, Line(usage, 3).Role);
@@ -1550,8 +1361,6 @@ public static class Tests
         Check("the clip trigger is a send", EventUsage.Role.Raised, Line(usage, 2).Role);
         Check("named by the trigger array, not hkbEventProperty", "hkbClipTriggerArray.event", Line(usage, 2).Site);
 
-
-
         Check("an unrecognised member has no role", EventUsage.Role.Referenced, Line(usage, 0).Role);
         Check("it is still named", "BSLimbCycleModifier.EventCycleLeft", Line(usage, 0).Site);
         Check("with no note invented for it", "", Line(usage, 0).Note);
@@ -1560,11 +1369,6 @@ public static class Tests
                   !EventUsage.Summarise(usage[1]).Contains("dead", StringComparison.OrdinalIgnoreCase)
                   && !EventUsage.Summarise(usage[1]).Contains("unused", StringComparison.OrdinalIgnoreCase));
         Check("it just says what it saw", "1 listened for here", EventUsage.Summarise(usage[1]));
-
-
-
-
-
 
         Check("a notify event is visible to the reference walk", 1,
               SymbolIndexFixup.ReferencesTo(EventGraph(), events: true, 3).Count);
@@ -1580,10 +1384,6 @@ public static class Tests
         CheckTrue("and nothing is left pointing at the old top index", !after.ContainsKey(3));
     }
 
-
-
-
-
     private static void ScaleIsShownOnlyWhenItIsRealScale()
     {
         Console.WriteLine("\nscale is reported when it is real and quiet when it is not");
@@ -1594,7 +1394,6 @@ public static class Tests
         CheckTrue("a flat 1,1,1 is not called scaled",
                   !HkxTrackData.IsScaled(Scaled(Vector3.One, Vector3.One)));
 
-
         CheckTrue("the crow's 0.4599 wing counts as scaled",
                   HkxTrackData.IsScaled(Scaled(new Vector3(0.4599f, 0.4599f, 0.4599f))));
 
@@ -1604,21 +1403,14 @@ public static class Tests
         CheckTrue("a single axis is enough",
                   HkxTrackData.IsScaled(Scaled(new Vector3(1f, 1f, 0.82f))));
 
-
-
         CheckTrue("a zero scale is reported rather than hidden",
                   HkxTrackData.IsScaled(Scaled(Vector3.Zero)));
-
-
 
         CheckTrue("float noise just under 1 is not scale",
                   !HkxTrackData.IsScaled(Scaled(new Vector3(0.99999994f, 1f, 1.00000006f))));
         CheckTrue("but a real 0.999 is",
                   HkxTrackData.IsScaled(Scaled(new Vector3(0.999f, 1f, 1f))));
     }
-
-
-
 
     private static void AnEmptyStateIsFoundTheSameWayEverywhere()
     {
@@ -1627,8 +1419,6 @@ public static class Tests
         string xml = SmallGraph();
         var model = BehaviourGraphModel.Parse(xml);
         Check("a whole graph has no empty states", 0, GraphValidator.StatesWithNoGenerator(model).Count);
-
-
 
         string after = GraphAuthor.DeleteNode(xml, "94", out _);
         var afterModel = BehaviourGraphModel.Parse(after);
@@ -1639,25 +1429,17 @@ public static class Tests
         Check("the state itself is still there, not deleted with it", "A", afterModel.Get("93")?.Str("name"));
         Check("its generator link reads null rather than dangling", "null", afterModel.Get("93")?.Str("generator"));
 
-
-
         var reported = GraphValidator.Check(after)
             .Where(f => f.What.Contains("nothing to play", StringComparison.Ordinal)).ToList();
         Check("Check graph reports exactly the same count", empty.Count, reported.Count);
         CheckTrue("and reports it as an error", reported.All(f => f.Level == GraphValidator.Level.Error));
         CheckTrue("naming the state", reported.Any(f => f.Where.Contains("'A'")));
 
-
         Check("an untouched graph stays unmarked", 0,
               GraphValidator.StatesWithNoGenerator(BehaviourGraphModel.Parse(SmallGraph())).Count);
 
-
-
-
         Check("a whole graph is not refused", null, GraphValidator.RefuseToSave(xml));
         Check("an empty file is not refused either", null, GraphValidator.RefuseToSave(""));
-
-
 
         string refusal = GraphValidator.RefuseToSave(after) ?? "";
         CheckTrue("one empty state is refused", refusal.Length > 0);
@@ -1666,22 +1448,16 @@ public static class Tests
         CheckTrue("without claiming the state has to be entered",
                   refusal.Contains("whether or not anything can enter"));
 
-
-
         CheckTrue("naming the state rather than only counting it", refusal.Contains("'A'"));
         CheckTrue("and the machine it sits in", refusal.Contains("in Root"));
         CheckTrue("saying how to fix it", refusal.Contains("give each one a generator"));
         CheckTrue("and that deleting the state is the other way out", refusal.Contains("delete the state"));
-
 
         var many = GraphValidator.EmptyStates(BehaviourGraphModel.Parse(after));
         Check("one empty state is found by name", 1, many.Count);
         Check("named the way the refusal prints it", "'A' in Root", many[0].ToString());
         CheckTrue("counting the states rather than guessing", refusal.Contains("1 state has"));
     }
-
-
-
 
     private static void EveryFindingPointsAtAnObject()
     {
@@ -1700,8 +1476,6 @@ public static class Tests
         CheckTrue("the empty state is one of them", byObject.ContainsKey("93"));
         Check("and it is marked as an error", GraphValidator.Level.Error, byObject["93"]);
 
-
-
         var mixed = GraphValidator.ByObject(new List<GraphValidator.Finding>
         {
             new() { Level = GraphValidator.Level.Warning, Where = "#7 thing", ObjectId = "7" },
@@ -1715,20 +1489,10 @@ public static class Tests
                   new() { Level = GraphValidator.Level.Error, Where = "hkbBehaviorGraphData" },
               }).Count);
 
-
-
-
         var reaching = SymbolIndexFixup.ReferencesAtOrAbove(EventGraph(), events: true, 0);
         CheckTrue("an event index reference is found at all", reaching.Count > 0);
         CheckTrue("and it names the object that carries it", reaching.All(r => r.StartsWith('#')));
     }
-
-
-
-
-
-
-
 
     private static void AShortBoundsArrayStaysLinedUp()
     {
@@ -1740,7 +1504,6 @@ public static class Tests
         Check("and only two bounds", 2, before.Bounds);
         CheckTrue("so the array is short, not parallel", !before.BoundsAreParallel);
 
-
         string after = SymbolEditor.RemoveVariable(xml, 0, force: true, out _);
         var counts = SymbolEditor.Audit(BehaviourGraphModel.Parse(after));
         Check("two variables are left", 2, counts.Names);
@@ -1748,18 +1511,11 @@ public static class Tests
         Check("the bound left behind is the second one, not the first", "20",
               BoundMax(after, 0));
 
-
         string tail = SymbolEditor.RemoveVariable(xml, 2, force: true, out _);
         var tailCounts = SymbolEditor.Audit(BehaviourGraphModel.Parse(tail));
         Check("removing a variable past the bounds leaves them alone", 2, tailCounts.Bounds);
         Check("with the first bound untouched", "10", BoundMax(tail, 0));
     }
-
-
-
-
-
-
 
     private static void ABoundCanBeAuthoredPastTheEndOfTheArray()
     {
@@ -1767,7 +1523,6 @@ public static class Tests
 
         string xml = ThreeVariablesWithTwoBounds();
         Check("two bounds to begin with", 2, SymbolEditor.Audit(BehaviourGraphModel.Parse(xml)).Bounds);
-
 
         string after = SymbolEditor.SetVariableBounds(xml, 2, "-5", "35");
         var counts = SymbolEditor.Audit(BehaviourGraphModel.Parse(after));
@@ -1777,19 +1532,14 @@ public static class Tests
         Check("the new bound is the one asked for", "35", BoundMax(after, 2));
         Check("with its minimum too", "-5", BoundMin(after, 2));
 
-
-
         Check("the first bound is untouched", "10", BoundMax(after, 0));
         Check("and the second", "20", BoundMax(after, 1));
-
 
         string second = SymbolEditor.SetVariableBounds(xml, 0, "1", "2");
         Check("bounding one already in the array does not lengthen it", 2,
               SymbolEditor.Audit(BehaviourGraphModel.Parse(second)).Bounds);
         Check("and it takes the new value", "2", BoundMax(second, 0));
         Check("leaving its neighbour alone", "20", BoundMax(second, 1));
-
-
 
         string refused = "";
         try { SymbolEditor.SetVariableBounds(xml, 7, "0", "0"); }
@@ -1798,28 +1548,11 @@ public static class Tests
                   refused.Contains("3 variable(s)", StringComparison.Ordinal));
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static void AnElementsFieldIsWrittenToThatElement()
     {
         Console.WriteLine("\na field inside an element is written to that element");
 
         string xml = TwoTransitions();
-
-
 
         string byName = HkxTextEdit.SetParam(xml, "95", "eventId", "9");
         Check("naming the field alone still reaches the first element", "9",
@@ -1829,12 +1562,6 @@ public static class Tests
         string byPath = HkxTextEdit.SetParamAt(xml, "95", "transitions[1].eventId", "9");
         Check("addressing the element writes that element", "9", TransitionEventId(byPath, 1));
         Check("and leaves the one before it alone", "1", TransitionEventId(byPath, 0));
-
-
-
-
-
-
 
         string nested = HkxTextEdit.SetParamAt(xml, "95",
                                                "transitions[1].initiateInterval.enterEventId", "7");
@@ -1867,8 +1594,6 @@ public static class Tests
 
     private static string TransitionEventId(string xml, int element) =>
         BehaviourGraphModel.Parse(xml).Get("95")!.StructLists["transitions"][element]["eventId"];
-
-
 
     private static string TwoTransitions() =>
         """
@@ -1909,7 +1634,6 @@ public static class Tests
 
         string xml = ThreeVariablesWithTwoBounds();
 
-
         var plan = NativeSave.Compare(xml, SymbolEditor.SetVariableBounds(xml, 0, "-2", "9"));
         CheckTrue("changing a bound already in the array is writable", plan.Possible);
         Check("as one change per number", 2, plan.Changes.Count);
@@ -1921,19 +1645,11 @@ public static class Tests
                       .SequenceEqual(new[] { "max.value", "min.value" }));
         CheckTrue("and it does not grow the file", !plan.Grows);
 
-
-
-
         CheckTrue("a change inside a bound is not attributed to hkbVariableValue",
                   plan.Changes.All(c => c.ClassName != "hkbVariableValue"));
         Check("it belongs to the object that owns the array", "hkbBehaviorGraphData",
               plan.Changes[0].ClassName);
     }
-
-
-
-
-
 
     private static void AStructArrayCanBeMadeLonger()
     {
@@ -1953,16 +1669,10 @@ public static class Tests
               run[0].Element);
         CheckTrue("a resize is not mistaken for a write inside an element", !run[0].InElement);
 
-
-
-
         var fill = longer.Changes.Where(c => c.InElement).ToList();
         Check("with the new element's two numbers to write into it", 2, fill.Count);
         CheckTrue("both aimed at the element that was added", fill.All(c => c.Element == 2));
         CheckTrue("and none at the ones already there", fill.All(c => c.Element >= 2));
-
-
-
 
         var shorter = NativeSave.Compare(SymbolEditor.SetVariableBounds(xml, 2, "-5", "35"), xml);
         CheckTrue("shortening it is written the same way", shorter.Possible);
@@ -1970,8 +1680,6 @@ public static class Tests
                   shorter.Changes.Any(c => c.Grow && c.Field == "variableBounds"));
         Check("at the length it is going back to", "2",
               shorter.Changes.First(c => c.Grow).Value);
-
-
 
         string withName = xml.Replace(
             "<hkparam name=\"eventInfos\" numelements=\"0\"></hkparam>",
@@ -1996,8 +1704,6 @@ public static class Tests
         return index < minima.Count ? minima[index].Groups[1].Value : "";
     }
 
-
-
     private static string BoundMax(string xml, int index)
     {
         int start = xml.IndexOf("name=\"variableBounds\"", StringComparison.Ordinal);
@@ -2008,17 +1714,9 @@ public static class Tests
         return index < maxima.Count ? maxima[index].Groups[1].Value : "";
     }
 
-
-
-
-
-
     private static void LosslessScaleFollowsTheEngine()
     {
         Console.WriteLine("\nlossless scale decodes the way the engine's own sampler does");
-
-
-
 
         ulong word = Field(0, 5, 1) | Field(1, 9, 2) | Field(2, 0, 0) | Field(3, 0x3FFF, 2);
 
@@ -2027,7 +1725,6 @@ public static class Tests
         Check("component 1 is dynamic", 2, HkxBinaryReader.LosslessType(word, 1));
         Check("with offset 9", 9, HkxBinaryReader.LosslessOffset(word, 1));
         Check("component 2 is clear", 0, HkxBinaryReader.LosslessType(word, 2));
-
 
         Check("component 3 carries the widest offset the format allows", 0x3FFF,
               HkxBinaryReader.LosslessOffset(word, 3));
@@ -2039,22 +1736,15 @@ public static class Tests
         Check("static reads the constant at its offset", 0.5f,
               HkxBinaryReader.LosslessValue(word, 0, frame: 3, stride: 4, dynamic, constants, 1f));
 
-
-
-
         Check("dynamic is frame major, frame 0", 9f,
               HkxBinaryReader.LosslessValue(word, 1, frame: 0, stride: 4, dynamic, constants, 1f));
         Check("dynamic is frame major, frame 3", 21f,
               HkxBinaryReader.LosslessValue(word, 1, frame: 3, stride: 4, dynamic, constants, 1f));
 
-
-
-
         Check("a clear scale component is 1, not 0", 1f,
               HkxBinaryReader.LosslessValue(word, 2, frame: 3, stride: 4, dynamic, constants, 1f));
         Check("a clear translation component is 0", 0f,
               HkxBinaryReader.LosslessValue(word, 2, frame: 3, stride: 4, dynamic, constants, 0f));
-
 
         ulong wild = Field(0, 4000, 1) | Field(1, 4000, 2);
         Check("a static offset past the array falls back", 1f,
@@ -2066,9 +1756,6 @@ public static class Tests
     private static ulong Field(int component, int offset, int type) =>
         ((ulong)(((offset & 0x3FFF) << 2) | (type & 3))) << (component * 16);
 
-
-
-
     private static void AFractionLandsOnAFrame()
     {
         Console.WriteLine("\na userControlledTimeFraction lands on a frame");
@@ -2079,8 +1766,6 @@ public static class Tests
         Check("half way is frame 20 of 40, not 20.5", 20, clip.FrameAt(0.5f));
         Check("a quarter", 10, clip.FrameAt(0.25f));
 
-
-
         Check("below zero clamps to the first frame", 0, clip.FrameAt(-2f));
         Check("above one clamps to the last", 40, clip.FrameAt(7f));
 
@@ -2088,7 +1773,6 @@ public static class Tests
         Check("a one frame clip is always frame 0", 0, single.FrameAt(0.5f));
         var empty = new HkxAnimationData { NumFrames = 0 };
         Check("and an empty one does not divide by its own length", 0, empty.FrameAt(0.5f));
-
 
         var long_ = new HkxAnimationData { NumFrames = 3685 };
         Check("the longest vanilla animation ends on 3684", 3684, long_.FrameAt(1f));
@@ -2113,14 +1797,6 @@ public static class Tests
             : new EventUsage.Line(EventUsage.Role.Referenced, "not found", "", 0, Array.Empty<string>());
     }
 
-
-
-
-
-
-
-
-
     private static void AddedVariablesCarryTheirDeclaredType()
     {
         Console.WriteLine("\nan added variable carries its declared type into variableInfos");
@@ -2143,15 +1819,11 @@ public static class Tests
             CheckTrue($"{type}: the three arrays still agree", counts.VariablesConsistent);
         }
 
-
-
         string bound = BindingEditor.AddVariable(SymbolGraph(), "fBoundProbe", out int boundIndex);
         var boundModel = BehaviourGraphModel.Parse(bound);
         Check("BindingEditor declares a real variable too", "VARIABLE_TYPE_REAL",
               TypeOfVariable(boundModel, boundIndex));
         CheckTrue("and leaves the arrays consistent", SymbolEditor.Audit(boundModel).VariablesConsistent);
-
-
 
         string twice = SymbolEditor.AddVariable(
             SymbolEditor.AddVariable(SymbolGraph(), "fOne", SymbolEditor.VariableType.Real, out _),
@@ -2169,8 +1841,6 @@ public static class Tests
         if (index < 0 || index >= infos.Count) return "no element at that index";
         return infos[index].TryGetValue("type", out string? t) ? t : "element with no type";
     }
-
-
 
     private static string SymbolGraph() => """
         <?xml version="1.0" encoding="ascii"?>
@@ -2208,8 +1878,6 @@ public static class Tests
             </hksection>
         </hkpackfile>
         """;
-
-
 
     private static string ThreeVariablesWithTwoBounds() => """
         <?xml version="1.0" encoding="ascii"?>
@@ -2279,9 +1947,6 @@ public static class Tests
             </hksection>
         </hkpackfile>
         """;
-
-
-
 
     private static string GatedGraph() => """
         <?xml version="1.0" encoding="ascii"?>
@@ -2421,12 +2086,6 @@ public static class Tests
         </hkpackfile>
         """;
 
-
-
-
-
-
-
     private static void WindowsLineEndingsStillEdit()
     {
         Console.WriteLine("a file with Windows line endings is still editable");
@@ -2441,11 +2100,9 @@ public static class Tests
         Check("a field set on a windows file",
               "changed.hkx", BehaviourGraphModel.Parse(edited).Get("96")!.Str("animationName"));
 
-
         string linked = GraphLinks.Connect(crlf, "95", "generator", "97", out _);
         Check("a node connected on a windows file",
               "97", BehaviourGraphModel.Parse(linked).Get("95")!.Ref("generator"));
-
 
         string normalised = lf.Replace("\n", "\r\n");
         CheckTrue("reading normalises the line endings",
@@ -2455,16 +2112,11 @@ public static class Tests
     private static string NormaliseLike(string text) =>
         text.Replace("\r\n", "\n").Replace("\r", "\n");
 
-
-
-
-
     private static void RepackDriftCatchesAChangedValue()
     {
         Console.WriteLine("\nrepack drift catches a value that moved, and ignores renumbering");
 
         string before = SmallGraph();
-
 
         string renumbered = Regex.Replace(before, @"#(\d+)",
                                           m => "#" + (int.Parse(m.Groups[1].Value) + 400));
@@ -2489,9 +2141,6 @@ public static class Tests
         CheckTrue("an object coming back a different class is drift", !swapped.Clean);
     }
 
-
-
-
     private static void AnAnimationIsRefusedForSaving()
     {
         Console.WriteLine("\nan animation reference formatter cannot carry is refused before it is written");
@@ -2512,9 +2161,6 @@ public static class Tests
         CheckTrue("and says the original is untouched", refusal?.Contains("untouched") == true);
     }
 
-
-
-
     private static HkxSkeleton ThreeBoneChain() => new()
     {
         Name = "TestRig",
@@ -2528,12 +2174,6 @@ public static class Tests
         },
     };
 
-
-
-
-
-
-
     private static OpenCommonwealth.Services.Nif.NifShape BoundShape(HkxSkeleton rig, Vector3 placement)
     {
         var rest = AnimationPose.ReferencePose(rig);
@@ -2544,8 +2184,6 @@ public static class Tests
             shape.BoneNames.Add(rig.BoneNames[b]);
             shape.SkinToBone.Add(Matrix4x4.CreateTranslation(placement - rest.Bones[b].Position));
         }
-
-
 
         shape.BoneNames.Add("Tip_skin");
         shape.SkinToBone.Add(Matrix4x4.Identity);
@@ -2562,13 +2200,6 @@ public static class Tests
 
         return shape;
     }
-
-
-
-
-
-
-
 
     private static void AMeshAuthoredAwayFromTheOriginIsNotAFault()
     {
@@ -2592,16 +2223,12 @@ public static class Tests
             CheckTrue($"and they agree, wherever the mesh sits (placement {placement.Z})",
                       spread < 0.001f);
 
-
-
             var posed = OpenCommonwealth.Services.Nif.SkinnedMesh.Pose(shape, binding, rest, rig);
             CheckTrue("a vertex on a bone the skeleton lacks is still placed with the mesh",
                       Near(posed[^1], shape.Vertices[^1] + placement));
             CheckTrue("and one on a bone it has lands in the same space",
                       Near(posed[0], shape.Vertices[0] + placement));
         }
-
-
 
         var wrong = BoundShape(rig, new Vector3(0, 0, 120.84f));
         wrong.SkinToBone[1] = Matrix4x4.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2) *
@@ -2612,12 +2239,6 @@ public static class Tests
 
         CheckTrue("a bind turned the wrong way is still caught", broken > 10);
     }
-
-
-
-
-
-
 
     private static string ArchiveOfTwoFiles(byte[] plain, byte[] compressible)
     {
@@ -2672,8 +2293,6 @@ public static class Tests
         return path;
     }
 
-
-
     private static void AnArchiveIsReadWithoutUnpackingIt()
     {
         Console.WriteLine("\nan archive is read without unpacking it");
@@ -2691,15 +2310,11 @@ public static class Tests
             Check("and the file name on its own", "CanineRoot.hkx", archive.Entries[0].FileName);
             Check("and the folder it sits in", "Meshes/Actors/Canine/Behaviors", archive.Entries[0].Folder);
 
-
-
             Check("words match in any order", 1, archive.Matching("canine behavior").Count());
             Check("and in the other order too", 1, archive.Matching("behavior canine").Count());
             Check("an extension narrows it", 1, archive.Matching("", ".nif").Count());
             Check("a word nothing has matches nothing", 0, archive.Matching("mirelurk").Count());
             Check("no filter matches everything", 2, archive.Matching("").Count());
-
-
 
             CheckTrue("a plainly stored file comes back as it went in",
                       archive.Read(archive.Entries[0]).SequenceEqual(plain));
@@ -2709,12 +2324,6 @@ public static class Tests
 
         File.Delete(path);
     }
-
-
-
-
-
-
 
     private static void TravelIsReadBetweenSamples()
     {
@@ -2730,15 +2339,11 @@ public static class Tests
         CheckTrue("the turn is read the same way",
                   Math.Abs(RootMotion.At(motion, 0.5f).TurnRadians - MathF.PI / 2) < 0.001f);
 
-
-
         CheckTrue("before the start is the start", Near(RootMotion.At(motion, -5).Position, Vector3.Zero));
         CheckTrue("past the end is the end", Near(RootMotion.At(motion, 5).Position, new Vector3(0, 100, 0)));
 
         Check("travel is the straight line between the ends", 100f, RootMotion.At(motion, 1).Position.Y);
         CheckTrue("and the total is the same", Math.Abs(motion.Travel.Length() - 100) < 0.001f);
-
-
 
         var still = new RootMotion.Motion();
         CheckTrue("a clip with no motion carries none", !still.Any);
@@ -2777,8 +2382,6 @@ public static class Tests
         CheckTrue("root to middle", rest.Links.Contains((0, 1)));
         CheckTrue("middle to tip", rest.Links.Contains((1, 2)));
 
-
-
         var quarter = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2);
         var anim = new HkxAnimationData
         {
@@ -2799,10 +2402,6 @@ public static class Tests
         CheckTrue("the root itself has not moved", Near(turned.Bones[0].Position, Vector3.Zero));
     }
 
-
-
-
-
     private static void AClearChannelKeepsTheReferencePose()
     {
         Console.WriteLine("\na channel the animation does not drive keeps the reference pose");
@@ -2815,8 +2414,6 @@ public static class Tests
             FrameDuration = 1f / 30f,
             TrackToBoneIndices = { 0, 1, 2 },
         };
-
-
 
         for (int i = 0; i < 3; i++)
         {
@@ -2833,16 +2430,11 @@ public static class Tests
         CheckTrue("and so does the tip", Near(posed.Bones[2].Position, new Vector3(20, 0, 0)));
         Check("which is the reference pose exactly", 0f, AnimationPose.Distance(posed, AnimationPose.ReferencePose(rig)));
 
-
         anim.Tracks[1] = FullTrack((Vector3.Zero, Quaternion.Identity));
         var collapsed = AnimationPose.At(rig, anim, 0);
         CheckTrue("a driven zero translation is honoured",
                   Near(collapsed.Bones[1].Position, Vector3.Zero));
     }
-
-
-
-
 
     private static void SplineUndrivenChannelsReadAsIdentity()
     {
@@ -2864,17 +2456,11 @@ public static class Tests
         CheckTrue("every bone folds onto the root, because none of them is given an offset",
                   Near(posed.Bones[1].Position, Vector3.Zero) && Near(posed.Bones[2].Position, Vector3.Zero));
 
-
         anim.AnimationClass = "hkaLosslessCompressedAnimation";
         var kept = AnimationPose.At(rig, anim, 0);
         CheckTrue("and a format without that guarantee still keeps the rest pose",
                   Near(kept.Bones[1].Position, new Vector3(10, 0, 0)));
     }
-
-
-
-
-
 
     private static void APackfileSurvivesBeingRebuilt()
     {
@@ -2896,9 +2482,6 @@ public static class Tests
         CheckTrue("one section survives", reread.Sections.Count == 1);
         Check("named the same", "__data__", reread.Sections[0].Tag);
 
-
-
-
         Check("the odd sized data comes back padded to the boundary", 112, reread.Sections[0].Data.Length);
         Check("the bytes before the section headers survive", 16, reread.Predicates.Length);
 
@@ -2910,16 +2493,10 @@ public static class Tests
         Check("one virtual fixup", 1, virtuals.Count);
         Check("naming section 0, which is always __classnames__", 0, virtuals[0].Section);
 
-
-
         byte[] once = image.Rebuild();
         byte[] twice = PackfileImage.Read(once).Rebuild();
         CheckTrue("rebuilding what was rebuilt gives the same bytes", once.SequenceEqual(twice));
     }
-
-
-
-
 
     private static void AStringIsWrittenAtWhateverLength()
     {
@@ -2945,11 +2522,7 @@ public static class Tests
         Check("so does the name that was empty", "bundle", reread.ReadString(again, "animationBundleName"));
         Check("the object did not move", 0, again.Offset);
 
-
-
         Check("the value next to it is untouched", 2.5f, reread.ReadFloat(again, "playbackSpeed"));
-
-
 
         var second = ClipInAPackfile("LongAnimationName.hkx", out _);
         var writing = new PackfileObjects(second);
@@ -2966,20 +2539,6 @@ public static class Tests
               sources.Count);
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static void AppendedStringsLandOnAnEvenOffset()
     {
         Console.WriteLine("\nan appended string lands on an even offset");
@@ -2987,9 +2546,6 @@ public static class Tests
         var image = ClipInAPackfile("A.hkx", out _);
         var objects = new PackfileObjects(image);
         var clip = objects.Instances.Single();
-
-
-
 
         const string even = "Walk.hkx";
         CheckTrue("a name of even length is accepted", objects.WriteString(clip, "animationName", even));
@@ -2999,17 +2555,12 @@ public static class Tests
         Check("both names are pointed at", 2, landed.Count);
         Check("and neither landed on an odd offset", 0, landed.Count(d => d % 2 != 0));
 
-
-
         var reread = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
         var again = reread.Instances.Single();
         Check("the first name still reads back", even, reread.ReadString(again, "animationName"));
         Check("and so does the second", "bundle", reread.ReadString(again, "animationBundleName"));
         Check("the value beside them is untouched", 2.5f, reread.ReadFloat(again, "playbackSpeed"));
     }
-
-
-
 
     private static void WideAndVectorFieldsReadFromTheBytes()
     {
@@ -3021,7 +2572,6 @@ public static class Tests
 
         var image = ClipInAPackfile("A.hkx", out _);
         var data = image.Section("__data__")!.Data;
-
 
         BitConverter.GetBytes(0x0123_4567_89AB_CDEFUL).CopyTo(data, userData);
         for (int i = 0; i < 12; i++) BitConverter.GetBytes(i + 0.5f).CopyTo(data, motion + i * 4);
@@ -3039,13 +2589,9 @@ public static class Tests
         Check("in the order they sit in", 0.5f, transform?[0]);
         Check("to the end", 11.5f, transform?[11]);
 
-
         Check("a run that does not fit is refused rather than cut short", null,
               objects.ReadFloats(clip, "extractedMotion", 4096));
     }
-
-
-
 
     private static void ReferencesAndArraysReadFromTheBytes()
     {
@@ -3059,18 +2605,15 @@ public static class Tests
         var image = ClipInAPackfile("A.hkx", out _);
         var data = image.Section("__data__")!;
 
-
         int second = data.AppendData(new byte[size]);
         data.VirtualFixups = data.VirtualFixups
             .Concat(Triple(second, 0, 5)).ToArray();
-
 
         data.GlobalFixups = Triple(binding, 1, second);
         int list = data.AppendData(new byte[16]);
         var arrayHeader = new byte[16];
         BitConverter.GetBytes(2).CopyTo(arrayHeader, 8);
         int header = data.AppendData(arrayHeader);
-
 
         data.GlobalFixups = data.GlobalFixups.Concat(Triple(list + 8, 1, second)).ToArray();
         data.SetLocal(triggers, list);
@@ -3096,12 +2639,6 @@ public static class Tests
               elements?[1]?.Offset);
     }
 
-
-
-
-
-
-
     private static void AnUndeclaredEnumValueIsNotNamed()
     {
         Console.WriteLine("\nan enum value the table does not declare is left unnamed");
@@ -3116,7 +2653,6 @@ public static class Tests
         Check("neither is a field whose enum the table has never heard of", null,
               types.NameOf("hkbNothing", new HavokClassTypes.Member { EType = "Nowhere" }, 0));
 
-
         var flags = types.Members("hkbBlendingTransitionEffect").First(m => m.Name == "flags");
 
         Check("a single flag is named", "FLAG_SYNC",
@@ -3126,11 +2662,6 @@ public static class Tests
         Check("a combination holding a bit with no name is refused whole", null,
               types.NameOf("hkbBlendingTransitionEffect", flags, 6 | 1 << 20));
     }
-
-
-
-
-
 
     private static void ThePanelReadsItsListFromTheTable()
     {
@@ -3146,8 +2677,6 @@ public static class Tests
         CheckTrue("and not the running state it does not",
                   !names.Contains("localTime") && !names.Contains("atEnd"));
 
-
-
         var xml = names.Select(n => (n, "from-reference formatter")).ToList();
         var fields = PanelFields.For(objects, clip, xml, (_, wasNull) => wasNull ? "null" : "");
 
@@ -3161,23 +2690,17 @@ public static class Tests
         Check("nothing fell back to reference formatter", 0,
               fields.Count(f => f.From == PanelFields.Source.Fallback));
 
-
-
         var edited = PanelFields.For(objects, clip, xml, (_, _) => "",
                                      new HashSet<string> { "playbackSpeed" });
         int speed = names.IndexOf("playbackSpeed");
         Check("an edited field shows the edit, not the bytes", "from-reference formatter", edited[speed].Value);
         Check("and says so", PanelFields.Source.Edited, edited[speed].From);
 
-
-
         var short_ = PanelFields.For(objects, clip, xml.Take(3).ToList(), (_, _) => "");
         Check("a list that does not line up with reference formatter's degrades to reference formatter's", 3, short_.Count);
         Check("and reads none of it from the bytes", 3,
               short_.Count(f => f.From == PanelFields.Source.Fallback));
     }
-
-
 
     private static void AnEscapedValueIsShownAsItself()
     {
@@ -3196,13 +2719,8 @@ public static class Tests
         Check("so a round trip gives back what was typed", "x < y & z",
               HkxTextEdit.ReadParams(written, "90")[0].Value);
 
-
-
         CheckTrue("and the file stays readable", written.Contains("&amp;&amp;") == false);
     }
-
-
-
 
     private static void ASpaceInAValueIsKept()
     {
@@ -3221,16 +2739,9 @@ public static class Tests
         Check("and the panel shows what the file holds rather than the tidied text",
               " StateMachine00 ", shown[names.IndexOf("animationName")].Value);
 
-
-
-
         var parents = HavokClasses.Shipped.Field("hkaSkeleton", "parentIndices");
         CheckTrue("a skeleton's parent indices are an array of int16", parents?.Type == "array of int16");
     }
-
-
-
-
 
     private static void TheClassTableKnowsWhatTheDumpCannot()
     {
@@ -3256,7 +2767,6 @@ public static class Tests
         Check("and the values have names", "MODE_USER_CONTROLLED", types.NameOf("hkbClipGenerator", mode, 2));
         Check("a value nothing declares stays unnamed", null, types.NameOf("hkbClipGenerator", mode, 99));
 
-
         var transitions = types.Members("hkbStateMachineTransitionInfoArray")
                                .Single(m => m.Name == "transitions");
         Check("an array of structs names the class of its elements", "hkbStateMachineTransitionInfo",
@@ -3269,15 +2779,12 @@ public static class Tests
         CheckTrue("and the members the engine never writes are marked",
                   ignored.Contains("hasEventlessTransitions"));
 
-
         var flags = types.Members("hkbBlendingTransitionEffect").Single(m => m.Name == "flags");
         Check("flags read as their names", "FLAG_SYNC|FLAG_IGNORE_TO_WORLD_FROM_MODEL",
               types.NameOf("hkbBlendingTransitionEffect", flags, 6));
         Check("a combination holding a bit with no name is refused whole", null,
               types.NameOf("hkbBlendingTransitionEffect", flags, 6 | 1 << 20));
     }
-
-
 
     private static void AFieldListIsBuiltWithoutReferenceFormatter()
     {
@@ -3293,7 +2800,6 @@ public static class Tests
         CheckTrue("and not the ones it never writes", !names.Contains("localTime") &&
                                                       !names.Contains("atEnd"));
 
-
         CheckTrue("a pointer is a field", names.Contains("triggers"));
         CheckTrue("an array is not", !names.Contains("animDatas"));
 
@@ -3303,12 +2809,6 @@ public static class Tests
                                    .Select(m => m.Name).ToList();
         Check("in the order the file writes them", string.Join(",", order), string.Join(",", names));
     }
-
-
-
-
-
-
 
     private static void EveryFieldSaysWhereItSits()
     {
@@ -3329,8 +2829,6 @@ public static class Tests
                   panel.All(p => p.Address == p.Name));
     }
 
-
-
     private static void AClassSignedDifferentlyIsRefused()
     {
         Console.WriteLine("\na class signed differently is refused");
@@ -3348,14 +2846,10 @@ public static class Tests
         var unknown = types.SignatureProblems(new[] { (1u, "hkbSomethingWeHaveNeverSeen") });
         Check("so does a class we have no definition for", 1, unknown.Count);
 
-
         var image = ClipInAPackfile("A.hkx", out _);
         Check("the names a real packfile carries pass", 0,
               types.SignatureProblems(new PackfileObjects(image).ClassNames()).Count);
     }
-
-
-
 
     private static void AMisSignedFileIsNotWrittenInto()
     {
@@ -3365,8 +2859,6 @@ public static class Tests
         string bad = Path.Combine(Path.GetTempPath(), "symrm-signed-wrong.hkx");
 
         ClipInAPackfile("A.hkx", out _).Save(good);
-
-
 
         var wrong = ClipInAPackfile("A.hkx", out _);
         var names = wrong.Section("__classnames__")!;
@@ -3403,9 +2895,6 @@ public static class Tests
         File.Delete(bad);
     }
 
-
-
-
     private static void AnEnumIsNamedSignedAndPrintedUnsigned()
     {
         Console.WriteLine("\nan enum is named signed and printed unsigned");
@@ -3426,14 +2915,11 @@ public static class Tests
         Check("a value with a name reads as its name", "2:MODE_USER_CONTROLLED",
               FieldRender.Render(objects, clip.Offset + mode, "hkbClipGenerator", member, (_, _) => ""));
 
-
-
         data[clip.Offset + mode] = 0xFF;
         Check("a value with none reads as the byte, unsigned", "255",
               FieldRender.Render(objects, clip.Offset + mode, "hkbClipGenerator", member,
                                  (_, _) => "", "255"));
     }
-
 
     private static void APaddedStructIsKnownFromReferenceFormattersIdeaOfIt()
     {
@@ -3441,22 +2927,14 @@ public static class Tests
 
         var types = HavokClassTypes.Shipped;
 
-
-
-
         Check("the game's size for the bone data", 528, types["BSLookAtModifierBoneData"]!.Size);
         CheckTrue("and it is padded past what reference formatter would work out",
                   types.HasTrailingPadding("BSLookAtModifierBoneData"));
-
 
         Check("a struct with nothing wider than a pointer", 72,
               types["hkbStateMachineTransitionInfo"]!.Size);
         CheckTrue("is not padded past it",
                   !types.HasTrailingPadding("hkbStateMachineTransitionInfo"));
-
-
-
-
 
         Check("a class smaller than the rounding itself", 6, types["hkbVariableInfo"]!.Size);
         CheckTrue("is not called padded", !types.HasTrailingPadding("hkbVariableInfo"));
@@ -3464,17 +2942,12 @@ public static class Tests
         CheckTrue("either", !types.HasTrailingPadding("hkbEventInfo"));
     }
 
-
-
     private static PackfileImage ClipInAPackfile(string animation, out int nameField)
     {
         var classes = HavokClasses.Shipped;
         int size = classes["hkbClipGenerator"]!.Size;
         nameField = classes.Field("hkbClipGenerator", "animationName")!.Offset;
         int speed = classes.Field("hkbClipGenerator", "playbackSpeed")!.Offset;
-
-
-
 
         var names = new byte[5 + "hkbClipGenerator".Length + 1];
         BitConverter.GetBytes(HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature).CopyTo(names, 0);
@@ -3498,9 +2971,6 @@ public static class Tests
         return image;
     }
 
-
-
-
     private static PackfileImage TwoClipsOnePointingAtTheOther(out int pointedAt)
     {
         var classes = HavokClasses.Shipped;
@@ -3511,8 +2981,6 @@ public static class Tests
         BitConverter.GetBytes(HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature).CopyTo(names, 0);
         names[4] = 0x09;
         System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
-
-
 
         int second = (size + 15) / 16 * 16;
 
@@ -3543,11 +3011,6 @@ public static class Tests
     private static byte[] Pair(int source, int destination) =>
         BitConverter.GetBytes(source).Concat(BitConverter.GetBytes(destination)).ToArray();
 
-
-
-
-
-
     private static PackfileImage ThreeClipsSharingAChild(out int shared)
     {
         var classes = HavokClasses.Shipped;
@@ -3576,7 +3039,6 @@ public static class Tests
         return image;
     }
 
-
     private static string WriteImage(PackfileImage image, string folder, string name)
     {
         System.IO.Directory.CreateDirectory(folder);
@@ -3584,8 +3046,6 @@ public static class Tests
         System.IO.File.WriteAllBytes(path, image.Rebuild());
         return path;
     }
-
-
 
     private static string OwnTemplateFolder(string name)
     {
@@ -3635,12 +3095,9 @@ public static class Tests
         Check("the frame number is carried on the pose", 2, last.Frame);
         Check("with the time that frame plays at", 1.0f, last.Time);
 
-
         Check("scrubbing before the start clamps", 0, AnimationPose.At(rig, anim, -5).Frame);
         Check("and past the end clamps", 2, AnimationPose.At(rig, anim, 99).Frame);
         Check("clamped low is the same pose as frame 0", 0f, AnimationPose.Distance(AnimationPose.At(rig, anim, -5), first));
-
-
 
         Check("the halfway fraction lands on the middle frame", 1, anim.FrameAt(0.5f));
         CheckTrue("and that frame is neither end",
@@ -3653,8 +3110,6 @@ public static class Tests
 
         var rig = ThreeBoneChain();
         var anim = new HkxAnimationData { NumFrames = 1, NumTracks = 1, FrameDuration = 1f / 30f };
-
-
 
         anim.TrackToBoneIndices.Add(2);
         anim.Tracks.Add(FullTrack((new Vector3(0, 5, 0), Quaternion.Identity)));
@@ -3669,8 +3124,6 @@ public static class Tests
                   Near(posed.Bones[1].Position, new Vector3(10, 0, 0)));
         CheckTrue("and only the named bone moved", Near(posed.Bones[2].Position, new Vector3(10, 5, 0)));
 
-
-
         var unnamed = new HkxAnimationData { NumFrames = 1, NumTracks = 1, FrameDuration = 1f / 30f };
         unnamed.Tracks.Add(FullTrack((Vector3.Zero, Quaternion.Identity)));
         CheckTrue("one track and three bones with no mapping drives nothing",
@@ -3681,8 +3134,6 @@ public static class Tests
         CheckTrue("matching counts with no mapping fall back to order",
                   AnimationPose.TracksByBone(rig, matched).SequenceEqual(new[] { 0, 1, 2 }));
     }
-
-
 
     private static void AnimationsForAnotherRigAreRefused()
     {
@@ -3708,8 +3159,6 @@ public static class Tests
 
     private static bool Near(Vector3 a, Vector3 b) => Vector3.Distance(a, b) < 0.001f;
 
-
-
     private static void EverySymbolUsageNamesItsObject()
     {
         Console.WriteLine("\nevery symbol usage names the object it sits in");
@@ -3721,8 +3170,6 @@ public static class Tests
         CheckTrue("and every one of them names an object", events.All(u => u.ObjectId.Length > 0));
         CheckTrue("with a member to go with it", events.All(u => u.Member.Length > 0));
 
-
-
         foreach (var lines in EventUsage.ByEvent(xml).Values)
             CheckTrue("event rows carry the objects they came from", lines.All(l => l.ObjectIds.Count > 0));
 
@@ -3731,8 +3178,6 @@ public static class Tests
         CheckTrue("and the reverse lookup finds the same site", backwards.Any(u => u.Index == events[0].Index));
         CheckTrue("without straying into other objects", backwards.All(u => u.ObjectId == first));
     }
-
-
 
     private static void PapyrusSendersAreReportedNotJudged()
     {
@@ -3755,7 +3200,6 @@ public static class Tests
         Check("so is the wait event", "DoorScript.psc", index.Senders("doneClosing").FirstOrDefault());
         Check("a string that is only printed is not a send", 0, index.Senders("OpenAnim is not sent from here").Count);
 
-
         Check("names match without case", "DoorScript.psc", index.Senders("openanim").FirstOrDefault());
 
         string quiet = PapyrusEvents.Describe(index, "somethingNobodySends");
@@ -3767,8 +3211,6 @@ public static class Tests
 
         Directory.Delete(folder, true);
     }
-
-
 
     private static void TwoFilesDiffToWhatEachChanged()
     {
@@ -3789,7 +3231,6 @@ public static class Tests
         CheckTrue("and it names the field", changed.Lines[0].Where == "animationName");
         CheckTrue("with both sides of it",
                   changed.Lines[0].Was == "b.hkx" && changed.Lines[0].Now == "theirs.hkx");
-
 
         string shortened = Regex.Replace(theirs,
             @"\s*<hkobject class=""hkbClipGenerator"" name=""#497""[\s\S]*?</hkobject>", "");
@@ -3872,10 +3313,6 @@ public static class Tests
         </hkpackfile>
         """;
 
-
-
-
-
     private static void AModelIsFoundOnlyWhenThereIsNoDoubt()
     {
         var disk = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
@@ -3902,7 +3339,6 @@ public static class Tests
         CheckTrue("and naming them", many.Reason.Contains("a.nif") && many.Reason.Contains("b.nif"));
         CheckTrue("and it does not fall through to the next folder", many.Path == null);
 
-
         var nearest = MeshLookup.Find(new[] { "/project", "/assets" }, In);
         Check("the nearest folder decides", "/project/Dogmeat.nif", nearest.Path);
 
@@ -3920,9 +3356,6 @@ public static class Tests
                                        Path.Combine(root, "skeleton.hkt")).ToList();
         Check("one folder is searched once", 1, deduped.Count);
     }
-
-
-
 
     private static byte[] MinimalMeshNif()
     {
@@ -4022,7 +3455,6 @@ public static class Tests
             </hkobject></hksection></hkpackfile>
             """;
 
-
         foreach (string rubbish in new[] { "abc", "1.5x", "1,5", "" })
         {
             var plan = NativeSave.Compare(Before, Before.Replace(">1.0<", $">{rubbish}<"));
@@ -4035,11 +3467,9 @@ public static class Tests
         CheckTrue("a real number is still accepted", good.Possible);
         Check("and is the only change", 1, good.Changes.Count);
 
-
         foreach (string special in new[] { "NaN", "Infinity" })
             CheckTrue($"'{special}' is refused rather than written",
                       !NativeSave.Compare(Before, Before.Replace(">1.0<", $">{special}<")).Possible);
-
 
         var tooBig = NativeSave.Compare(Before, Before.Replace(">0<", ">99999999999<"));
         CheckTrue("a number too big for the field is refused", !tooBig.Possible);
@@ -4048,22 +3478,15 @@ public static class Tests
         CheckTrue("one that fits is accepted", fits.Possible);
     }
 
-
-
     private static void AFloatIsSpelledTheWayReferenceFormatterSpellsIt()
     {
         Console.WriteLine("\na float is spelled the way reference formatter spells it");
-
-
 
         Check("one", "1.0", HkxNumber.Text(1.0f));
         Check("zero", "0.0", HkxNumber.Text(0.0f));
         Check("a half", "0.5", HkxNumber.Text(0.5f));
 
-
-
         Check("negative zero", "-0.0", HkxNumber.Text(-0.0f));
-
 
         Check("a tenth", "0.10000000149011612", HkxNumber.Text(0.1f));
         Check("nine tenths", "0.8999999761581421", HkxNumber.Text(0.9f));
@@ -4071,12 +3494,9 @@ public static class Tests
         Check("two tenths", "0.20000000298023224", HkxNumber.Text(0.2f));
         Check("a negative", "-0.23399999737739563", HkxNumber.Text(-0.234f));
 
-
-
         Check("a very small number", "3.8432640863340837E-34", HkxNumber.Text(3.8432640863340837E-34));
         Check("one small enough to be subnormal", "8.127531093083939E-44",
               HkxNumber.Text(8.127531093083939E-44));
-
 
         Check("just inside the small edge", "0.001", HkxNumber.Text(0.001));
         Check("just outside it", "9.99E-4", HkxNumber.Text(0.000999));
@@ -4086,12 +3506,6 @@ public static class Tests
         Check("not a number", "NaN", HkxNumber.Text(float.NaN));
         Check("and the infinities", "-Infinity", HkxNumber.Text(float.NegativeInfinity));
     }
-
-
-
-
-
-
 
     private static void TheConsumerComparisonCatchesADifferentAnswer()
     {
@@ -4104,10 +3518,6 @@ public static class Tests
         ConsumerDiff.Result After(Action<BehaviourGraphModel> change) =>
             ConsumerDiff.Compare(Reading(), Broken(change));
 
-
-
-
-
         var rewired = After(m => m.Objects[0].Scalars["triggers"] = "#404");
         Check("a wire pointing at nothing shows up twice", 2, rewired.Differences.Count);
         Check("once in the checker", "checker findings", rewired.Differences[0].Consumer);
@@ -4115,27 +3525,15 @@ public static class Tests
         CheckTrue("naming the line it is on",
                   rewired.Differences[1].What.StartsWith("line 1 of", StringComparison.Ordinal));
 
-
         var reclassed = After(m => m.Objects[0].Class = "hkbNothing");
         CheckTrue("a class the wiring does not know about is a difference too", !reclassed.Clean);
-
-
 
         var nothing = ConsumerDiff.Compare(new BehaviourGraphModel(), new BehaviourGraphModel());
         CheckTrue("two readings of an empty file still agree", nothing.Clean);
 
-
         CheckTrue("a reading of nothing does not agree with a real one",
                   !ConsumerDiff.Compare(Reading(), new BehaviourGraphModel()).Clean);
     }
-
-
-
-
-
-
-
-
 
     private static void WideFloatFieldsAreWrittenInBracketedFours()
     {
@@ -4149,17 +3547,10 @@ public static class Tests
         Check("and a transform is four", 4,
               FieldRender.Floats(new float[16])!.Count(c => c == '('));
 
-
         Check("which splits into ten tokens, not twelve", 10,
               FieldRender.Floats(new float[12])!
                          .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length);
     }
-
-
-
-
-
-
 
     private static void TheReadingFromTheBytesRefusesWhatItCannotDescribe()
     {
@@ -4175,15 +3566,10 @@ public static class Tests
         Check("its string read from the bytes", "A.hkx", model.Objects[0].Str("animationName"));
         Check("and its number spelled like the file", "2.5", model.Objects[0].Str("playbackSpeed"));
 
-
-
         Check("a build with no class table reads nothing", null,
               NativeGraphModel.From(objects, HavokClassTypes.Parse(Stream("""
                   { "classes": {} }
                   """))));
-
-
-
 
         var elsewhere = HavokClassTypes.Parse(Stream("""
             { "classes": { "hkbNothing": { "signature": "0x00000001", "members": [] } } }
@@ -4194,12 +3580,6 @@ public static class Tests
 
     private static System.IO.Stream Stream(string json) =>
         new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
-
-
-
-
-
-
 
     private static void APointerIsRewiredByMovingItsFixup()
     {
@@ -4217,11 +3597,8 @@ public static class Tests
         var objects = new PackfileObjects(image);
         var clip = objects.Instances[0];
 
-
-
         objects.ReadRef(clip, "variableBindingSet", out bool emptyToStart);
         CheckTrue("a field with no fixup starts null", emptyToStart);
-
 
         data.SetGlobal(binding, image.Sections.IndexOf(data), second);
         var pointed = new PackfileObjects(image).ReadRef(clip, "variableBindingSet", out bool none);
@@ -4229,12 +3606,10 @@ public static class Tests
         Check("and it names the object it was aimed at", second, pointed?.Offset);
         Check("with one entry in the table", 1, data.Globals().Count());
 
-
         data.SetGlobal(binding, image.Sections.IndexOf(data), clip.Offset);
         var moved = new PackfileObjects(image).ReadRef(clip, "variableBindingSet", out _);
         Check("repointing it names the new object", clip.Offset, moved?.Offset);
         Check("and does not add a second entry for the same field", 1, data.Globals().Count());
-
 
         data.SetGlobal(binding, 0, -1);
         objects = new PackfileObjects(image);
@@ -4242,16 +3617,8 @@ public static class Tests
         CheckTrue("clearing it reads as null", cleared);
         Check("because the entry is gone, not aimed at zero", 0, data.Globals().Count());
 
-
         Check("and the data never changed length", size + size, data.Data.Length - "A.hkx".Length - 1);
     }
-
-
-
-
-
-
-
 
     private static void AnAddedObjectHasToLandWhereItsIdSays()
     {
@@ -4278,26 +3645,18 @@ public static class Tests
         Check("and its fields come with it", "userPartitionMask", added.Changes[1].Field);
         Check("as a value on the new object rather than the old one", 1, added.Changes[1].Index);
 
-
-
-
         var removed = NativeSave.Compare(Extra("0091"), One);
         CheckTrue("removing one is no longer refused", removed.Possible);
         Check("and is planned as a deletion", 1, removed.Gone.Count);
         Check("naming the object that went", 91, removed.Gone[0]);
         CheckTrue("with no value change invented to go with it", removed.Changes.Count == 0);
 
-
-
         CheckTrue("and taking the last of a class with it is still a deletion",
                   NativeSave.Compare(Extra("0091"), One).Possible);
-
 
         string renumbered = Extra("0091").Replace("#0090", "#0500");
         CheckTrue("renumbering the existing objects is refused",
                   !NativeSave.Compare(One, renumbered).Possible);
-
-
 
         var image = ClipInAPackfile("A.hkx", out _);
         string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "symrm-add-probe.hkx");
@@ -4315,9 +3674,6 @@ public static class Tests
         CheckTrue("and the refusal says which id it would have had",
                   said.Contains("#91", StringComparison.Ordinal));
 
-
-
-
         var unnamed = new NativeSave.Plan(
             new List<NativeSave.Change> { new("hkbBlenderGenerator", 0, "", "#91", Added: true) }, null);
 
@@ -4333,25 +3689,10 @@ public static class Tests
         CheckTrue("and no 0xFF filler left in front of it",
                   !written.Section("__classnames__")!.Data.SkipLast(1).Any(b => b == 0xFF));
 
-
-
         CheckTrue("an addition counts as growing the file", unnamed.Grows);
 
         System.IO.File.Delete(path);
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static void ThePointerTableKeepsTheOrderItWasWrittenIn()
     {
@@ -4366,25 +3707,20 @@ public static class Tests
         CheckTrue("with their sections and destinations intact",
                   section.Globals().SequenceEqual(written));
 
-
         section.SetGlobal(32, 2, 999);
         Check("changing one does not move it", "96,32,64",
               string.Join(",", section.Globals().Select(g => g.Source)));
         Check("and it holds the new destination", 999,
               section.Globals().First(g => g.Source == 32).Destination);
 
-
         section.SetGlobal(128, 2, 700);
         Check("a new entry goes on the end", "96,32,64,128",
               string.Join(",", section.Globals().Select(g => g.Source)));
-
 
         section.SetGlobal(64, 0, -1);
         Check("clearing one removes it", "96,32,128",
               string.Join(",", section.Globals().Select(g => g.Source)));
     }
-
-
 
     private static void APointerChangeIsPlannedAsOne()
     {
@@ -4414,8 +3750,6 @@ public static class Tests
             CheckTrue($"a generator of '{rubbish}' is refused", !plan.Possible);
         }
 
-
-
         const string Machine = """
             <hkpackfile><hksection name="__data__">
             <hkobject name="#0090" class="hkbStateMachine" signature="0x816c1dcb">
@@ -4434,14 +3768,6 @@ public static class Tests
         var rubbishElement = NativeSave.Compare(Machine, Machine.Replace("#0092<", "elsewhere<"));
         CheckTrue("an element that is not an object id is refused", !rubbishElement.Possible);
     }
-
-
-
-
-
-
-
-
 
     private static void AnEnumFieldOffersItsDeclaredValues()
     {
@@ -4465,7 +3791,6 @@ public static class Tests
         CheckTrue("and the value in the file is one of them",
                   mode.Options.Contains(mode.Value, StringComparer.Ordinal));
 
-
         var flags = types.Members("hkbBlendingTransitionEffect").First(m => m.Name == "flags");
         Check("a flags field is not offered as a list", "TYPE_FLAGS", flags.VType);
 
@@ -4473,23 +3798,6 @@ public static class Tests
         Check("a field that is not an enum stays a plain box", 0, ordinary.Options.Count);
         CheckTrue("and still holds its value", ordinary.Value.Length > 0);
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static void AConditionSaysWhatItSays()
     {
@@ -4527,47 +3835,33 @@ public static class Tests
             ("Speed <= 12", Expression.Verdict.True),
             ("Speed <= 11", Expression.Verdict.False),
 
-
             ("Speed > TrotMaxSpeed", Expression.Verdict.False),
             ("TrotMaxSpeed > Speed", Expression.Verdict.True),
-
 
             ("IsPlayer", Expression.Verdict.True),
             ("!IsPlayer", Expression.Verdict.False),
             ("!bBlockMoveStop", Expression.Verdict.True),
             ("bBlockMoveStop", Expression.Verdict.False),
 
-
-
             ("(iSyncReadyAlertRelaxed==2) && (iSyncIdleLocomotion==0)", Expression.Verdict.True),
             ("(iSyncReadyAlertRelaxed!=2) || (iSyncIdleLocomotion==1)", Expression.Verdict.False),
             ("(isMirrored == 0) && (isSightedOver == 0)", Expression.Verdict.False),
             ("(isMirrored == 1) && (isSightedOver == 0)", Expression.Verdict.True),
 
-
             ("iIsInSneak == 0 && Pose == 5", Expression.Verdict.True),
             ("iIsInSneak == 1 || Pose == 5", Expression.Verdict.True),
             ("iIsInSneak == 1 && Pose == 5", Expression.Verdict.False),
 
-
-
             ("fReal > 2", Expression.Verdict.True),
             ("fReal > 3", Expression.Verdict.False),
 
-
-
-
             ("noSuchVariable == 0", Expression.Verdict.Unknown),
-
 
             ("noSuchVariable == 0 && iIsInSneak == 1", Expression.Verdict.False),
             ("noSuchVariable == 0 || iIsInSneak == 0", Expression.Verdict.True),
             ("noSuchVariable == 0 && iIsInSneak == 0", Expression.Verdict.Unknown),
 
-
-
             ("iSyncIdleLocomotion=18", Expression.Verdict.Unknown),
-
 
             ("Speed >", Expression.Verdict.Unknown),
             ("((Speed > 1)", Expression.Verdict.Unknown),
@@ -4576,10 +3870,6 @@ public static class Tests
 
         foreach (var (text, want) in expected)
             Check($"\"{text}\"", want, Expression.Evaluate(text, Value));
-
-
-
-
 
         CheckTrue("an unreadable condition is not a reason to hold a transition back",
                   Expression.Evaluate("this is not an expression @@@", Value) != Expression.Verdict.False);
@@ -4621,12 +3911,6 @@ public static class Tests
                   unsupported.Refusal.Contains("lerp", StringComparison.Ordinal));
     }
 
-
-
-
-
-
-
     private static void AFalseConditionHoldsATransitionBack()
     {
         Console.WriteLine("\na false condition holds a transition back");
@@ -4637,18 +3921,11 @@ public static class Tests
         Check("the graph starts in its first state", "Start", run.Where().FirstOrDefault()?.StateName ?? "");
         Check("and declares the variable the condition names", 0d, run.ValueOf("bGateOpen") ?? -1);
 
-
-
-
-
-
-
         Check("a real variable is the number it stores and not its bit pattern", 2.5d,
               run.ValueOf("fSpeed") ?? -1);
         Check("so a comparison against it means what it says", Expression.Verdict.True,
               run.Test("fSpeed > 2"));
         Check("in both directions", Expression.Verdict.False, run.Test("fSpeed > 3"));
-
 
         var fired = run.Send("Go");
         Check("the gated route does not fire while its condition is false", "Fallback",
@@ -4657,12 +3934,8 @@ public static class Tests
         CheckTrue("naming the condition that held it",
                   run.HeldBack.Count > 0 && run.HeldBack[0].Condition == "bGateOpen == 1");
 
-
-
         run.Set("bGateOpen", 1);
         Check("changing a variable drops the reason the last send gave", 0, run.HeldBack.Count);
-
-
 
         var again = GraphRun.Start(model);
         again.Set("bGateOpen", 1);
@@ -4670,8 +3943,6 @@ public static class Tests
         Check("with the variable set the gated route fires instead", "Gated",
               second.FirstOrDefault()?.ToStateName ?? "");
         Check("and nothing is held back", 0, again.HeldBack.Count);
-
-
 
         string refused = "";
         try { again.Set("noSuchVariable", 1); }
@@ -4723,17 +3994,9 @@ public static class Tests
         throw new DirectoryNotFoundException("could not find the repository's " + Path.Combine(parts));
     }
 
-
-
-
-
-
-
-
     private static void APastedSubtreePointsAtItself()
     {
         Console.WriteLine("\na pasted subtree points at itself");
-
 
         var image = TwoClipsOnePointingAtTheOther(out int child);
         int root = NativeGraphModel.FirstId;
@@ -4750,17 +4013,12 @@ public static class Tests
         Check("and the paste says which id the copied root got", NativeGraphModel.FirstId + before,
               done.RootId);
 
-
-
         var copiedRoot = after.Instances[done.RootId - NativeGraphModel.FirstId];
         var aimedAt = after.ReadRef(copiedRoot, "variableBindingSet", out _);
         Check("the copy points at its own child rather than the original's",
               after.Instances[^1].Offset, aimedAt?.Offset ?? -1);
         CheckTrue("which is not where the original's child sits",
                   aimedAt?.Offset != after.Instances[child - NativeGraphModel.FirstId].Offset);
-
-
-
 
         var shared = TwoClipsOnePointingAtTheOther(out int held);
         var borrower = NativePaste.Of(shared, held);
@@ -4779,8 +4037,6 @@ public static class Tests
                   refused.Contains("#" + held, StringComparison.Ordinal));
     }
 
-
-
     private static void ATemplateLiftedFromOneFileGoesIntoAnother()
     {
         Console.WriteLine("\na template lifted from one file goes into another");
@@ -4796,14 +4052,10 @@ public static class Tests
         Check("and knows what it was lifted from", "hkbClipGenerator", template.RootClass);
         Check("and is named on disk by a readable slug", "a-clip-pair", template.Slug);
 
-
-
         var listed = TemplateStore.All();
         Check("it is listed afterwards", 1, listed.Count);
         Check("under the name it was given", "A Clip Pair", listed.FirstOrDefault()?.Name ?? "nothing listed");
         Check("with its note kept", "for testing", listed.FirstOrDefault()?.Note ?? "nothing listed");
-
-
 
         int before = new PackfileObjects(PackfileImage.Read(into)).Instances.Count;
 
@@ -4818,25 +4070,15 @@ public static class Tests
         Check("both objects arrive in the other file", before + 2, after.Instances.Count);
         Check("and the applied root is the id reported", NativeGraphModel.FirstId + before, result.RootId);
 
-
-
-
         var root = after.Instances[result.RootId - NativeGraphModel.FirstId];
         var child = after.ReadRef(root, "variableBindingSet", out _);
         Check("and it points at its own copy of the child", after.Instances[^1].Offset, child?.Offset ?? -1);
-
 
         CheckTrue("a template can be forgotten", TemplateStore.Remove("a-clip-pair"));
         Check("and is gone from the list", 0, TemplateStore.All().Count);
         CheckTrue("along with its copy of the file",
                   !System.IO.File.Exists(System.IO.Path.Combine(folder, "a-clip-pair.hkx")));
     }
-
-
-
-
-
-
 
     private static void ATemplateRefusesToLiftWhatSharesItsFile()
     {
@@ -4845,7 +4087,6 @@ public static class Tests
         string folder = OwnTemplateFolder("shares");
         string work = System.IO.Path.Combine(folder, "work");
         string from = WriteImage(ThreeClipsSharingAChild(out int shared), work, "Shared.hkx");
-
 
         var tree = NativePaste.Of(PackfileImage.Read(from), NativeGraphModel.FirstId);
         Check("the root owns only itself", 1, tree.Ids.Count);
@@ -4915,10 +4156,6 @@ public static class Tests
         CheckTrue("and still reports no truncation", !truncated);
     }
 
-
-
-
-
     private static void ATemplateSaysWhatToDeclareRatherThanJustFailing()
     {
         Console.WriteLine("\na template says what to declare rather than just failing");
@@ -4930,13 +4167,9 @@ public static class Tests
 
         var lifted = TemplateStore.Lift(from, NativeGraphModel.FirstId, "Plain");
 
-
         var plain = TemplateStore.Against(lifted, into);
         CheckTrue("a template using no symbols fits a file declaring none", plain.Fits);
         Check("and says so plainly", "everything this needs is already declared", plain.ToString());
-
-
-
 
         var demanding = lifted with
         {
@@ -4953,8 +4186,6 @@ public static class Tests
                   fit.ToString().Contains("StartOpen", StringComparison.Ordinal) &&
                   fit.ToString().Contains("bIsLocked", StringComparison.Ordinal));
 
-
-
         string refused = "";
         try { TemplateStore.Apply(demanding, into); }
         catch (InvalidOperationException e) { refused = e.Message; }
@@ -4969,12 +4200,6 @@ public static class Tests
         Check("the target file was not touched", 2,
               new PackfileObjects(PackfileImage.Read(into)).Instances.Count);
     }
-
-
-
-
-
-
 
     private static void ATemplateDescriptionSurvivesAwkwardNames()
     {
@@ -4996,12 +4221,8 @@ public static class Tests
                   awkward, TemplateStore.Decode(TemplateStore.Encode(awkward)));
         }
 
-
-
         Check("an escaped backslash does not eat the character after it",
               "a\\rb", TemplateStore.Decode(TemplateStore.Encode("a\\rb")));
-
-
 
         string folder = OwnTemplateFolder("names");
         string work = System.IO.Path.Combine(folder, "work");
@@ -5237,7 +4458,6 @@ public static class Tests
         Check("the machine start state is unchanged", 2, objects.ReadInt(machine, "startStateId"));
     }
 
-
     private static string Readable(string text) =>
         text.Replace("\r", "\\r", StringComparison.Ordinal)
             .Replace("\n", "\\n", StringComparison.Ordinal)
@@ -5247,13 +4467,7 @@ public static class Tests
     {
         Console.WriteLine("\nremoving an object is refused and orphaning is not");
 
-
-
-
-
         var image = ClipInAPackfile("A.hkx", out _);
-
-
 
         string refused = "";
         try { NativeRemove.Orphan(image, 4000); }
@@ -5263,24 +4477,16 @@ public static class Tests
         CheckTrue("and the refusal says what the file does hold",
                   refused.Contains("#" + NativeGraphModel.FirstId, StringComparison.Ordinal));
 
-
-
         var already = NativeRemove.Orphan(image, NativeGraphModel.FirstId);
         CheckTrue("orphaning something nothing reaches changes nothing", !already.Reached);
         Check("no pointer cleared", 0, already.PointersCleared);
         Check("no element dropped", 0, already.ElementsDropped);
-
 
         var untouched = ClipInAPackfile("A.hkx", out _);
         NativeRemove.Orphan(untouched, NativeGraphModel.FirstId);
         CheckTrue("leaving the file exactly as it was",
                   untouched.Rebuild().SequenceEqual(ClipInAPackfile("A.hkx", out _).Rebuild()));
     }
-
-
-
-
-
 
     private static void DeletingTakesAnObjectOutOfTheFile()
     {
@@ -5296,9 +4502,6 @@ public static class Tests
         Check("and the file no longer lists it", before - 1, new PackfileObjects(image).Instances.Count);
         CheckTrue("and the file still reads", PackfileImage.Read(image.Rebuild()).Section("__data__") != null);
 
-
-
-
         var two = TwoClipsOnePointingAtTheOther(out int pointedAt);
         string refused = "";
         try { NativeRemove.Delete(two, new[] { pointedAt }); }
@@ -5310,12 +4513,6 @@ public static class Tests
                   refused.Contains("Detach", StringComparison.Ordinal));
         Check("and nothing was taken out", 2, new PackfileObjects(two).Instances.Count);
     }
-
-
-
-
-
-
 
     private static void AnArrayOfNamesCanGrow()
     {
@@ -5340,17 +4537,8 @@ public static class Tests
         CheckTrue("written as text", grown.Changes[0].Text);
         CheckTrue("and as an array", grown.Changes[0].Array);
 
-
-
         Check("carrying every name", 3, grown.Changes[0].Value.Split('\0').Length);
         Check("with the new one last", "Sprint", grown.Changes[0].Value.Split('\0')[^1]);
-
-
-
-
-
-
-
 
         const string Odd = "EventPartA\r\nEventPartB";
         var withNewline = NativeSave.Compare(Doc("EventPartA&#13;\nEventPartB"),
@@ -5361,14 +4549,9 @@ public static class Tests
         Check("and is still one name", 2, parts.Length);
         Check("with its carriage return intact", Odd, parts[0]);
 
-
-
         var shrunk = NativeSave.Compare(Doc("Walk", "Run", "Sprint"), Doc("Walk"));
         CheckTrue("shrinking it is writable too", shrunk.Possible);
         Check("down to one name", 1, shrunk.Changes[0].Value.Split('\0').Length);
-
-
-
 
         const string Pointers = """
             <?xml version="1.0" encoding="ascii"?>
@@ -5385,11 +4568,6 @@ public static class Tests
         Check("keeping its ids", "#0092 #0091", repointed.Changes[0].Value);
     }
 
-
-
-
-
-
     private static void AWideFieldIsWrittenWhereItSits()
     {
         Console.WriteLine("\na wide field is written where it sits");
@@ -5402,7 +4580,6 @@ public static class Tests
             </hkobject>
             </hksection></hkpackfile>
             """;
-
 
         var moved = NativeSave.Compare(Doc.Replace("VALUE", "0.0"), Doc.Replace("VALUE", "0.5"));
         CheckTrue("a plain real still works", moved.Possible);
@@ -5423,8 +4600,6 @@ public static class Tests
         CheckTrue("written in place rather than appended", !vector.Changes[0].Text &&
                                                            !vector.Changes[0].Array);
 
-
-
         var short3 = NativeSave.Compare(Vector.Replace("VALUE", "(0 0 0 0)"),
                                         Vector.Replace("VALUE", "(1 2 3)"));
         CheckTrue("a vector of the wrong length is refused", !short3.Possible);
@@ -5435,14 +4610,6 @@ public static class Tests
                                        Vector.Replace("VALUE", "(a b c d)"));
         CheckTrue("and so is one that is not numbers", !words.Possible);
     }
-
-
-
-
-
-
-
-
 
     private static void AnArrayOfNumbersCanGrow()
     {
@@ -5470,11 +4637,8 @@ public static class Tests
         var shrunk = NativeSave.Compare(Doc2(0, 1, 2), Doc2(0));
         CheckTrue("shrinking it too", shrunk.Possible);
 
-
-
         var words = NativeSave.Compare(Doc2(0, 1, 2), Doc2(0, 1, 2).Replace("2", "two"));
         CheckTrue("a value that is not a number is refused", !words.Possible);
-
 
         var data = new byte[6];
         data[4] = 0x39;
@@ -5489,18 +4653,9 @@ public static class Tests
         Check("and reading them as four still says nothing", null, objects.ReadIntAt(4));
     }
 
-
-
-
-
-
-
     private static void AFieldSaysWhatItIsAndOnlySaysWhatItMeansWhenWeKnow()
     {
         Console.WriteLine("\na field says what it is, and only says what it means when we know");
-
-
-
 
         Check("a pointer says what it points at",
               "a pointer to a hkbGenerator",
@@ -5514,19 +4669,15 @@ public static class Tests
                   FieldNotes.Structure("hkbStateMachine", "states")?.StartsWith("an array of pointers",
                       StringComparison.Ordinal) == true);
 
-
         CheckTrue("an inherited field names the class that declares it",
                   FieldNotes.Structure("hkbClipGenerator", "userData")?.Contains("declared by hkbNode",
                       StringComparison.Ordinal) == true);
-
-
 
         CheckTrue("one of a run of fields written side by side is still described",
                   FieldNotes.Structure("hkbFootIkControlData", "enabled3")?.Contains("number 3 of 8",
                       StringComparison.Ordinal) == true);
         Check("and a name that merely ends in a digit is not mistaken for one",
               null, FieldNotes.Structure("hkbClipGenerator", "notAField7"));
-
 
         var mode = FieldNotes.Meaning("hkbClipGenerator", "mode");
         CheckTrue("a field somebody established has a sentence", mode != null);
@@ -5537,17 +4688,10 @@ public static class Tests
         Check("and neither does one on a class with no findings at all",
               null, FieldNotes.Meaning("BSLookAtModifier", "lookAtCameraX"));
 
-
-
         CheckTrue("a sentence belongs to the class that declares the field",
                   FieldNotes.Meaning("hkbStateMachineTransitionInfo", "flags") != null &&
                   FieldNotes.Meaning("hkbClipGenerator", "flags") == null);
     }
-
-
-
-
-
 
     private static void TheLastObjectsBlockEndsAtItsOwnClosingTag()
     {
@@ -5589,13 +4733,6 @@ public static class Tests
         catch (System.Xml.XmlException) { return false; }
     }
 
-
-
-
-
-
-
-
     private static void AnAppendedObjectLandsWhereItsNumberSaysItWill()
     {
         Console.WriteLine("\nan appended object lands where its number says it will");
@@ -5616,14 +4753,10 @@ public static class Tests
         Check("and the new one is where it said", added.Offset, after.Instances[1].Offset);
         Check("holding the class asked for", "hkbClipGenerator", after.Instances[1].ClassName);
 
-
         var names = image.Section("__classnames__")!;
         int length = names.Data.Length;
         NativeAppend.Object(image, "hkbClipGenerator");
         Check("a class already in the name table is not added again", length, names.Data.Length);
-
-
-
 
         var fresh = NativeAppend.Object(image, "hkbStateMachine");
         CheckTrue("a class it has never named makes the table longer", names.Data.Length > length);
@@ -5635,17 +4768,12 @@ public static class Tests
         CheckTrue("no 0xFF filler is left inside the name table",
                   !names.Data.SkipLast(1).Any(b => b == 0xFF));
 
-
-
         string refused = "";
         try { NativeAppend.Object(image, "hkbNotAClass"); }
         catch (InvalidOperationException e) { refused = e.Message; }
         CheckTrue("a class the table does not describe is refused",
                   refused.Contains("hkbNotAClass", StringComparison.Ordinal));
     }
-
-
-
 
     private const string TwoObjects = """
         <hkobject class="hkbClipGenerator" name="#90">
@@ -5674,21 +4802,12 @@ public static class Tests
 
     private static BehaviourGraphModel Reading() => BehaviourGraphModel.Parse(TwoObjects);
 
-
     private static BehaviourGraphModel Broken(Action<BehaviourGraphModel> change)
     {
         var reading = Reading();
         change(reading);
         return reading;
     }
-
-
-
-
-
-
-
-
 
     private static void TheModelComparisonCatchesFaultsPutThereOnPurpose()
     {
@@ -5697,10 +4816,6 @@ public static class Tests
         var clean = ModelDiff.Compare(Reading(), Reading());
         CheckTrue("two readings of one file agree", clean.Clean);
         Check("over both objects", 2, clean.Objects);
-
-
-
-
 
         var one = Reading();
         int inTheFile = one.Objects.Sum(o => 2 + o.Scalars.Count
@@ -5742,22 +4857,14 @@ public static class Tests
         Check("a field inside one of its elements", 1,
               Faults(m => m.Objects[0].StructLists["states"][1]["id"] = "5"));
 
-
-
         Check("a value differing only by a space", 1,
               Faults(m => m.Objects[0].Scalars["name"] = "walk "));
-
-
 
         Check("and the disagreement names the object and the field",
               "#90 hkbClipGenerator.mode", Where(m => m.Objects[0].Scalars["mode"] = "MODE_LOOPING"));
         Check("naming the element too, inside a struct array",
               "#90 hkbClipGenerator.states[1].id",
               Where(m => m.Objects[0].StructLists["states"][1]["id"] = "5"));
-
-
-
-
 
         var wrong = Reading();
         foreach (var o in wrong.Objects)
@@ -5769,11 +4876,6 @@ public static class Tests
                 foreach (var element in list)
                     foreach (string key in element.Keys.ToList()) element[key] += "x";
         }
-
-
-
-
-
 
         ModelDiff.Result Excusing(ModelDiff.Strided excuse) =>
             ModelDiff.Compare(Reading(), Broken(m => m.Objects[0].StructLists["states"][1]["id"] = "5"),
@@ -5794,10 +4896,6 @@ public static class Tests
               ModelDiff.Compare(Reading(), Broken(m => m.Objects[0].Scalars["mode"] = "MODE_LOOPING"),
                                 40, (_, _) => true).Total);
 
-
-
-
-
         var capped = ModelDiff.Compare(Reading(),
                                        Broken(m => m.Objects[0].StructLists["states"][1]["id"] = "5"),
                                        0, (cls, field) => field == "states");
@@ -5809,13 +4907,6 @@ public static class Tests
         Check("about all seven of them", 7, everything.Total);
         Check("with the examples capped", 3, everything.Shown.Count);
     }
-
-
-
-
-
-
-
 
     private static void APackedRotationComesBackAsItself()
     {
@@ -5845,24 +4936,16 @@ public static class Tests
 
         Check("every rotation is tried", 36, samples.Count);
 
-
-
         CheckTrue($"forty bit rotations come back within a thousandth of a radian ({worst40:F6})",
             worst40 < 0.001f);
         CheckTrue($"forty eight bit rotations come back ten times closer ({worst48:F7})",
             worst48 < 0.0001f);
-
-
 
         var backwards = Quaternion.Normalize(new Quaternion(0.1f, 0.2f, 0.3f, -0.927f));
         SplineQuat.Write40(backwards, scratch, 0);
         CheckTrue("a negative largest component keeps its sign",
             SplineQuat.AngleBetween(backwards, SplineQuat.Read40(scratch, 0)) < 0.001f);
     }
-
-
-
-
 
     private static void ALinearCurvePassesThroughEveryFrame()
     {
@@ -5874,9 +4957,6 @@ public static class Tests
         Check("one control point per frame", frames, curve.ControlPoints.Length);
         Check("at degree one", 1, curve.Degree);
 
-
-
-
         float step = (curve.Max - curve.Min) / 65535f;
         CheckTrue($"and lands on every frame within one quantisation step ({curve.Error:F6} against {step:F6})",
             curve.Error <= step * 1.01f);
@@ -5887,7 +4967,6 @@ public static class Tests
         Check("and ends on the last frame", frames - 1, (int)knots[^1]);
         CheckTrue("with no repeated span in the middle", SplineFormat.KnotsUsable(knots, frames, 1));
     }
-
 
     private static HkxAnimationData MadeUpClip(int frames, int tracks)
     {
@@ -5939,11 +5018,6 @@ public static class Tests
         return (position, rotation);
     }
 
-
-
-
-
-
     private static void AnEncodedClipDecodesToWhatWentIn()
     {
         var clip = MadeUpClip(60, 3);
@@ -5960,22 +5034,16 @@ public static class Tests
         CheckTrue($"and facing the way it was ({drift.Rotation:F6} radian(s))", drift.Rotation < 0.01f);
     }
 
-
-
-
     private static void AnUndrivenChannelIsNotWrittenAsACurve()
     {
         var clip = MadeUpClip(40, 1);
         var blob = SplineEncoder.Encode(clip);
-
-
 
         Check("scale is marked undriven", 0, (int)blob.Data[3]);
         CheckTrue("rotation is marked as a curve", (blob.Data[2] >> 4) != 0);
         CheckTrue("and so is position", (blob.Data[1] >> 4) != 0);
 
         Check("three channels counted as undriven", 3, blob.Report.Identity);
-
 
         var moving = MadeUpClip(40, 1);
         for (int f = 0; f < moving.NumFrames; f++)
@@ -5984,10 +5052,6 @@ public static class Tests
         var second = SplineEncoder.Encode(moving);
         CheckTrue("a scale that moves is written as one", (second.Data[3] >> 4) != 0);
     }
-
-
-
-
 
     private static void AClipTooLongForOneBlockIsSplit()
     {
@@ -6007,11 +5071,6 @@ public static class Tests
             drift.Position < 0.05f);
         CheckTrue($"including its rotations ({drift.Rotation:F6} radian(s))", drift.Rotation < 0.01f);
     }
-
-
-
-
-
 
     private static string DoorGraph() => """
         <?xml version="1.0" encoding="ascii"?>
@@ -6141,9 +5200,6 @@ public static class Tests
     private static string StateName(BehaviourGraphModel model, GraphRun run) =>
         run.Where().Count == 0 ? "(nowhere)" : run.Where()[0].StateName;
 
-
-
-
     private static void ADoorOpensWhenSentTheEventItsOwnTransitionNames()
     {
         Console.WriteLine("\na door opens when sent the event its own transition names");
@@ -6167,8 +5223,6 @@ public static class Tests
         run.Send("Closed");
         Check("and Closed finishes", "Closed", StateName(model, run));
 
-
-
         Check("an event it is not listening for moves nothing", 0, run.Send("Opened").Count);
         Check("and it is still closed", "Closed", StateName(model, run));
         CheckThrows<ArgumentException>("an event the graph does not declare is refused rather than reported as ignored",
@@ -6180,13 +5234,9 @@ public static class Tests
         Check("and none is not", 0, reach.Unreachable.Count);
     }
 
-
-
-
     private static void EveryRunningMachineHearsAnEvent()
     {
         Console.WriteLine("\nevery running machine hears an event");
-
 
         string nested = DoorGraph()
             .Replace("""<hkparam name="generator">#94</hkparam>""",
@@ -6239,13 +5289,9 @@ public static class Tests
         Check("the outer door is opening", "Opening",
             run.Where().First(w => w.MachineName == "DoorMachine").StateName);
 
-
-
         CheckTrue("and the machine the door left is no longer running",
             run.Where().All(w => w.MachineName != "Inner"));
     }
-
-
 
     private static void TheRunRefusesToGuessPastAnotherFile()
     {
@@ -6272,9 +5318,6 @@ public static class Tests
         Check("the door itself still runs", "Closed", StateName(model, run));
     }
 
-
-
-
     private static void SteppingAgreesWithTheReachabilityItReports()
     {
         Console.WriteLine("\nstepping agrees with the reachability that is reported");
@@ -6297,9 +5340,6 @@ public static class Tests
         Check("and lands nowhere the analysis ruled out", 0,
             landed.Except(analysis.Reachable).Count());
     }
-
-
-
 
     public static string TwoStateBlendGraph() => """
         <?xml version="1.0" encoding="ascii"?>
@@ -6368,7 +5408,6 @@ public static class Tests
         </hkpackfile>
         """;
 
-
     private static void ATransitionBlendsFromOneStateToTheNext()
     {
         Console.WriteLine("\na transition blends from one state to the next over its duration");
@@ -6402,12 +5441,6 @@ public static class Tests
         CheckTrue("holding all of the pose", done[0].Weight > 0.999f);
         CheckTrue("with no blend still running", !run.Blending);
     }
-
-
-
-
-
-
 
     private static string ClipEndGraph() => """
         <?xml version="1.0" encoding="ascii"?>
@@ -6463,7 +5496,6 @@ public static class Tests
         </hkpackfile>
         """;
 
-
     private static Dictionary<string, ClipTiming.Clip> OneClip(float seconds, string mode,
                                                                params ClipTiming.Trigger[] triggers) =>
         new(StringComparer.Ordinal)
@@ -6471,16 +5503,12 @@ public static class Tests
             ["98"] = new ClipTiming.Clip("98", "TheClip", @"Animations\Test.hkt", seconds, triggers, mode),
         };
 
-
-
     private static void AClipEndsAndTheStateLeavesWithoutAnEvent()
     {
         Console.WriteLine("\na clip ends and the state leaves without an event");
 
         var model = BehaviourGraphModel.Parse(ClipEndGraph());
         var run = GraphRun.Start(model);
-
-
 
         run.Time(OneClip(7.5f, "MODE_SINGLE_PLAY",
                          new ClipTiming.Trigger(6.0f, "ClipDone", RelativeToEnd: true, Acyclic: false)));
@@ -6499,20 +5527,12 @@ public static class Tests
               "ClipDone", crossing.Count > 0 ? crossing[0].Event : "nothing fired");
         Check("and the machine has left", "Done", run.Where()[0].StateName);
 
-
-
         CheckTrue("nothing was sent by hand at any point", true);
     }
-
-
-
 
     private static void AClipLengthIsCroppedAndScaled()
     {
         Console.WriteLine("\na clip's length is cropped and scaled");
-
-
-
 
         Check("a trigger at an absolute time is at that time",
               2f, ClipTiming.TriggerAt(2f, relativeToEnd: false, seconds: 10f));
@@ -6535,9 +5555,6 @@ public static class Tests
         Check("a quarter speed makes it four times as long",
               40f, ClipTiming.Span(0, 10f, 0, 0, 0.25f, "a", out _));
 
-
-
-
         Check("cropped and scaled together, in that order",
               3.5f, ClipTiming.Span(0, 10f, 1f, 2f, 2f, "a", out _));
 
@@ -6546,8 +5563,6 @@ public static class Tests
 
         Check("an enforced duration ignores the animation entirely",
               4f, ClipTiming.Span(4f, 10f, 1f, 2f, 8f, "a", out _));
-
-
 
         Check("and still applies when the animation is missing",
               4f, ClipTiming.Span(4f, 0, 0, 0, 1, "a", out _));
@@ -6567,10 +5582,6 @@ public static class Tests
         CheckTrue("naming no animation is a different answer from one not found",
                   unnamed.Contains("names no animation", StringComparison.Ordinal));
     }
-
-
-
-
 
     private static void AnUntimedClipRaisesNothing()
     {
@@ -6595,23 +5606,14 @@ public static class Tests
         CheckTrue("and the stop names the clip",
                   run.Stops.Any(s => s.Why.Contains("TheClip", StringComparison.Ordinal)));
 
-
-
         var untimed = GraphRun.Start(BehaviourGraphModel.Parse(ClipEndGraph()));
         Check("with no timing supplied nothing fires either", 0, untimed.Advance(1000f).Count);
         Check("and no stop is invented for it", 0, untimed.Stops.Count);
     }
 
-
-
-
     private static void ALoopingClipKeepsFiringAndASinglePlayDoesNot()
     {
         Console.WriteLine("\na looping clip keeps firing and a single play does not");
-
-
-
-
 
         var looping = GraphRun.Start(BehaviourGraphModel.Parse(ClipEndGraph()));
         looping.Time(OneClip(3f, "MODE_LOOPING"));
@@ -6628,9 +5630,6 @@ public static class Tests
         Steps(once, 1f, 4);
         Check("a single play clip stops at its end", 3f, once.PlayingAt("98"));
 
-
-
-
         var trigger = new ClipTiming.Trigger(3f, "ClipDone", RelativeToEnd: true, Acyclic: false);
 
         var endsLooping = GraphRun.Start(BehaviourGraphModel.Parse(ClipEndGraph()));
@@ -6644,7 +5643,6 @@ public static class Tests
         Check("leaving the same way", "Done", endsOnce.Where()[0].StateName);
     }
 
-
     private static int Steps(GraphRun run, float seconds, int howMany)
     {
         int fired = 0;
@@ -6652,12 +5650,9 @@ public static class Tests
         return fired;
     }
 
-
-
     private static void AnInstantTransitionDoesNotBlend()
     {
         Console.WriteLine("\nan instant transition does not blend");
-
 
         var model = BehaviourGraphModel.Parse(TwoStateBlendGraph()
             .Replace("<hkparam name=\"duration\">0.5</hkparam>", "<hkparam name=\"duration\">0.0</hkparam>"));
@@ -6669,7 +5664,6 @@ public static class Tests
         CheckTrue("and nothing left blending", !run.Blending);
         CheckTrue("advancing the clock changes nothing", run.Where().Count == 1);
     }
-
 
     private static string BlenderGraph(int flags, float blendParameter, float w1, float w2,
                                        string binding = "") => $"""
@@ -6731,7 +5725,6 @@ public static class Tests
         </hkpackfile>
         """;
 
-
     private static void APlainBlenderSharesByWeight()
     {
         Console.WriteLine("\na plain blender shares the pose by weight");
@@ -6750,7 +5743,6 @@ public static class Tests
         CheckTrue($"and Run a quarter ({runc.Contribution:F3})",
             Math.Abs(runc.Contribution - 0.25f) < 1e-3f);
 
-
         var off = BlendWeights.Of(BehaviourGraphModel.Parse(BlenderGraph(0, 0, 1, 0)), "110");
         CheckTrue("a child weighted zero contributes nothing",
             off.Children.First(c => c.GeneratorName == "Run").Contribution < 1e-6f);
@@ -6758,12 +5750,9 @@ public static class Tests
             Math.Abs(off.Children.First(c => c.GeneratorName == "Walk").Contribution - 1f) < 1e-3f);
     }
 
-
-
     private static void AParametricBlenderIsPickedNotMixed()
     {
         Console.WriteLine("\na parametric blender is picked along an axis, not mixed by weight");
-
 
         var model = BehaviourGraphModel.Parse(BlenderGraph(flags: BlendWeights.Parametric,
             blendParameter: 0.75f, w1: 0, w2: 1));
@@ -6777,11 +5766,8 @@ public static class Tests
         CheckTrue($"and Walk a quarter ({walk.Contribution:F3})",
             Math.Abs(walk.Contribution - 0.25f) < 1e-3f);
 
-
-
         CheckTrue("which is not what mixing the weights would say", Math.Abs(runc.Contribution - 1f) > 0.1f);
     }
-
 
     private static void ADrivenBlendIsReportedNotGuessed()
     {
@@ -6800,9 +5786,6 @@ public static class Tests
         CheckTrue("so the blender is not resolved", !byWeight.Resolved);
     }
 
-
-
-
     private static void AnEditedFrameSurvivesReEncoding()
     {
         Console.WriteLine("\nan edited frame survives being re-encoded");
@@ -6810,7 +5793,6 @@ public static class Tests
         var clip = MadeUpClip(60, 2);
         int track = 0, frame = 30;
         var edit = new Vector3(11.5f, -22.25f, 33.75f);
-
 
         var neighbour = clip.Tracks[track].Translations[frame + 1];
         clip.Tracks[track].Translations[frame] = edit;
@@ -6826,18 +5808,9 @@ public static class Tests
         float neighbourDrift = (back.Tracks[track].Translations[frame + 1] - neighbour).Length();
         CheckTrue($"and the frame beside it did not move with it ({neighbourDrift:F4})", neighbourDrift < 0.1f);
 
-
-
-
         CheckTrue("the change is not lost to the encoder",
             Math.Abs(back.Tracks[track].Translations[frame].X - edit.X) < 0.05f);
     }
-
-
-
-
-
-
 
     private static void ACutTakesTheClipsOwnTimeWithIt()
     {
@@ -6847,8 +5820,6 @@ public static class Tests
         clip.Annotations.Add(new HkxAnnotation { Time = 0.1f, Text = "before the cut" });
         clip.Annotations.Add(new HkxAnnotation { Time = 1.0f, Text = "inside the cut" });
         clip.Annotations.Add(new HkxAnnotation { Time = 1.9f, Text = "after the cut" });
-
-
 
         var motion = new RootMotion.Motion { Duration = clip.Duration };
         for (int f = 0; f < clip.NumFrames; f++)
@@ -6861,7 +5832,6 @@ public static class Tests
             Math.Abs(cut.Animation.Duration - 1f) < 1e-4f);
         Check("every track was cut, not just the first", 2, cut.Animation.Tracks.Count);
         Check("and each holds the kept frames", 31, cut.Animation.Tracks[1].Translations.Count);
-
 
         Check("frame zero of the cut is the frame it came from",
             clip.Tracks[0].Translations[15], cut.Animation.Tracks[0].Translations[0]);
@@ -6879,19 +5849,11 @@ public static class Tests
         CheckTrue($"and says the clip's new length ({cut.Motion.Duration:F4}s)",
             Math.Abs(cut.Motion.Duration - 1f) < 1e-4f);
 
-
-
         CheckTrue("it starts at the origin the way every shipped clip does",
             cut.Motion.Samples[0].Position.Length() < 1e-4f);
         CheckTrue($"while the distance it covers is untouched ({cut.Motion.Travel.Length():F2})",
             Math.Abs(cut.Motion.Travel.Length() - 60f) < 1e-3f);
     }
-
-
-
-
-
-
 
     private static void ALinearTravelStaysTwoSamplesAfterACut()
     {
@@ -6907,11 +5869,9 @@ public static class Tests
         Check("still two samples, not one per frame", 2, cut.Motion!.Samples.Count);
         CheckTrue("still starting at the origin", cut.Motion.Samples[0].Position.Length() < 1e-4f);
 
-
         CheckTrue($"covering the half of the path the cut kept ({cut.Motion.Travel.Length():F3})",
             Math.Abs(cut.Motion.Travel.Length() - 20f) < 1e-2f);
     }
-
 
     private static void ACutRefusesWhatIsNotAClip()
     {
@@ -6927,9 +5887,6 @@ public static class Tests
             () => AnimationEdit.Trim(clip, null, 12, 4));
     }
 
-
-
-
     private static void DurationCountsIntervalsNotFrames()
     {
         Console.WriteLine("\nduration counts intervals, not frames");
@@ -6943,9 +5900,6 @@ public static class Tests
         CheckTrue("the written duration is exactly its number of intervals times frame duration",
             Math.Abs(retimed.Animation.Duration - expected) < 1e-6f);
     }
-
-
-
 
     private static void ARetimeMovesEverythingThatMeasuresTime()
     {
@@ -6977,17 +5931,12 @@ public static class Tests
         CheckTrue($"and says the new length ({slow.Motion.Duration:F4}s)",
             Math.Abs(slow.Motion.Duration - slow.Animation.Duration) < 1e-4f);
 
-
-
         CheckTrue($"it travels the distance it always travelled ({slow.Motion.Travel.Length():F2})",
             Math.Abs(slow.Motion.Travel.Length() - motion.Travel.Length()) < 1e-2f);
-
-
 
         CheckTrue($"every original frame is still exactly itself ({slow.PositionError:F5})",
             slow.PositionError < 1e-3f);
     }
-
 
     private static void KeepingTheFramesCostsNothingAtAll()
     {
@@ -7005,14 +5954,9 @@ public static class Tests
             slow.Animation.Tracks[0].Translations[10]);
     }
 
-
-
-
     private static void ARetimeSaysWhatTheResamplingCost()
     {
         Console.WriteLine("\na retime says what the resampling cost");
-
-
 
         var clip = MadeUpClip(21, 1);
         for (int f = 0; f < clip.NumFrames; f++)
@@ -7028,14 +5972,9 @@ public static class Tests
         CheckThrows<InvalidOperationException>("and refuses when a caller sets a budget it cannot meet",
             () => AnimationEdit.Retime(clip, null, 0.5f, true, new AnimationEdit.Budget(1f, 0.01f)));
 
-
-
         var anyway = AnimationEdit.Retime(clip, null, 0.5f);
         Check("without a budget the same retime is produced", 11, anyway.Animation.NumFrames);
     }
-
-
-
 
     private static void ARotationIsReadAlongTheArcNotAcrossIt()
     {
@@ -7053,8 +5992,6 @@ public static class Tests
 
         CheckTrue($"halfway is the same distance from each end ({toFirst:F4} and {toSecond:F4})",
             Math.Abs(toFirst - toSecond) < 1e-3f);
-
-
 
         float arc = SplineQuat.AngleBetween(frames[0], frames[1]);
         CheckTrue($"and that distance is half the arc ({toFirst:F4} against {arc / 2:F4})",
@@ -8000,8 +6937,6 @@ public static class Tests
         Check("the blender flags are written", 8, objects.ReadInt(blend, "flags"));
         Check("an empty children array is written", 0, objects.ReadRefArray(blend, "children")?.Count);
 
-        // The generic editor paths the audit flagged: first-of-class adds via
-        // GeneratorEditor, including named enum values inside the new object.
         string sequenceXml = GeneratorEditor.Add(original, "sequence", "Seq", "seq.hkx", "", out string seqId);
         Check("the sequence gets the next id", "92", seqId);
         var seqPlan = NativeSave.Compare(original, sequenceXml);

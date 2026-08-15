@@ -22,7 +22,6 @@ public class HkxBehaviorParser
 
     public static BehaviorNode? ParseBehavior(string filepath)
     {
-        // Never expose objects from a previously opened file after this parse fails.
         LastObjects = new List<BehaviorNode>();
         if (!File.Exists(filepath)) return null;
 
@@ -54,8 +53,6 @@ public class HkxBehaviorParser
                 !ValidOffset(local.Destination, data.Data.Length))
                 continue;
 
-            // One stored pointer field can only have one local destination. Treat duplicate
-            // sources as malformed instead of letting ToDictionary throw or choosing one.
             if (!fixups.TryAdd(local.Source, local.Destination)) return null;
         }
 
@@ -72,7 +69,6 @@ public class HkxBehaviorParser
             string cls = ReadNullTermString(classNames.Data, virtualFixup.Destination, 256);
             if (string.IsNullOrEmpty(cls)) continue;
 
-            // An object offset cannot name two different runtime classes.
             if (objectMap.ContainsKey(virtualFixup.Source)) return null;
 
             var node = new BehaviorNode { Offset = virtualFixup.Source, ClassName = cls };
@@ -89,7 +85,6 @@ public class HkxBehaviorParser
                 !ValidOffset(global.Destination, data.Data.Length))
                 continue;
 
-            // As with local fixups, a pointer field cannot target two objects.
             if (!globalSources.Add(global.Source)) return null;
             globalEdges.Add(new KeyValuePair<int, int>(global.Source, global.Destination));
         }

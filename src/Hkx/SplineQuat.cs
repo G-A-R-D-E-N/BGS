@@ -3,23 +3,11 @@ using System.Numerics;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
 public static class SplineQuat
 {
     private const float Fractal40 = 0.000345436f;
     private const float Fractal48 = 0.000043161f;
     private const int Mask15 = (1 << 15) - 1;
-
 
     private static int Largest(Quaternion q)
     {
@@ -37,13 +25,6 @@ public static class SplineQuat
         for (int i = 0; i < 4; i++)
             if (i != skip) into[n++] = c[i];
     }
-
-
-
-
-
-
-
 
     public static void Write40(Quaternion q, byte[] into, int at)
     {
@@ -66,8 +47,6 @@ public static class SplineQuat
         for (int i = 0; i < 5; i++) into[at + i] = (byte)(raw >> (i * 8));
     }
 
-
-
     public static void Write48(Quaternion q, byte[] into, int at)
     {
         q = Quaternion.Normalize(q);
@@ -84,8 +63,6 @@ public static class SplineQuat
             word[i] = (ushort)quantised;
         }
 
-
-
         if ((skip & 1) != 0) word[0] |= 1 << 15;
         if ((skip & 2) != 0) word[1] |= 1 << 15;
         if (negative) word[2] |= 1 << 15;
@@ -96,7 +73,6 @@ public static class SplineQuat
             into[at + i * 2 + 1] = (byte)(word[i] >> 8);
         }
     }
-
 
     public static void WritePlain(Quaternion q, byte[] into, int at)
     {
@@ -116,10 +92,6 @@ public static class SplineQuat
             default: Write40(q, into, at); break;
         }
     }
-
-
-
-
 
     public static Quaternion Read40(byte[] from, int at)
     {
@@ -175,17 +147,6 @@ public static class SplineQuat
         5 => ReadPlain(from, at),
         _ => Read40(from, at),
     };
-
-
-
-
-
-
-
-
-
-
-
 
     public static float AngleBetween(Quaternion a, Quaternion b)
     {

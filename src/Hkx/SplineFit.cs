@@ -3,21 +3,6 @@ using System.Collections.Generic;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class SplineFit
 {
 
@@ -25,20 +10,11 @@ public static class SplineFit
 
     public sealed record Curve(int Degree, byte[] Knots, float[] ControlPoints, float Min, float Max, float Error);
 
-
-
-
-
-
-
     public static Curve FitScalar(IReadOnlyList<float> samples, float tolerance)
     {
         int frames = samples.Count;
         float min = float.MaxValue, max = float.MinValue;
         foreach (float s in samples) { if (s < min) min = s; if (s > max) max = s; }
-
-
-
 
         if (max - min <= 0f)
         {
@@ -56,12 +32,6 @@ public static class SplineFit
         return ExactScalar(samples, min, max, frames);
     }
 
-
-
-
-
-
-
     public static Curve FitScalarAt(IReadOnlyList<float> samples, int controlPoints, int degree)
     {
         int frames = samples.Count;
@@ -74,10 +44,6 @@ public static class SplineFit
             for (int i = 0; i < controlPoints; i++) flat[i] = min;
             return new Curve(degree, SplineFormat.Knots(controlPoints, degree, frames), flat, min, max, 0f);
         }
-
-
-
-
 
         if (degree == 1 && controlPoints >= frames)
         {
@@ -93,10 +59,6 @@ public static class SplineFit
         Quantise(solved, min, max);
         return new Curve(degree, knots, solved, min, max, MeasureScalar(samples, degree, knots, solved, frames));
     }
-
-
-
-
 
     private static Curve ExactScalar(IReadOnlyList<float> samples, float min, float max, int frames)
     {
@@ -124,20 +86,10 @@ public static class SplineFit
         return new Curve(degree, knots, cps, min, max, MeasureScalar(samples, degree, knots, cps, frames));
     }
 
-
-
-
-
-
-
-
     public static (int Degree, byte[] Knots, System.Numerics.Quaternion[] ControlPoints, float Error)
         FitRotation(IReadOnlyList<System.Numerics.Quaternion> samples, float tolerance, int format)
     {
         int frames = samples.Count;
-
-
-
 
         var flat = new System.Numerics.Quaternion[frames];
         flat[0] = System.Numerics.Quaternion.Normalize(samples[0]);
@@ -162,7 +114,6 @@ public static class SplineFit
             var candidate = TryRotation(flat, channels, count, 3, frames, format);
             if (candidate != null && candidate.Value.Error <= tolerance) return candidate.Value;
         }
-
 
         int exact = Math.Max(2, frames);
         var knots = SplineFormat.Knots(exact, 1, frames);
@@ -190,8 +141,6 @@ public static class SplineFit
         return (degree, knots, cps, MeasureRotation(flat, degree, knots, cps, frames));
     }
 
-
-
     private static void Quantise(float[] cps, float min, float max)
     {
         for (int i = 0; i < cps.Length; i++)
@@ -206,9 +155,6 @@ public static class SplineFit
             SplineQuat.Write(format, cps[i], scratch, 0);
             cps[i] = SplineQuat.Read(format, scratch, 0);
         }
-
-
-
 
         for (int i = 1; i < cps.Length; i++)
             if (System.Numerics.Quaternion.Dot(cps[i], cps[i - 1]) < 0) cps[i] = -cps[i];
@@ -249,16 +195,6 @@ public static class SplineFit
         return f;
     }
 
-
-
-
-
-
-
-
-
-
-
     private static float[][] Solve(IReadOnlyList<IReadOnlyList<float>> channels, int count, int degree,
         float[] knots, int frames)
     {
@@ -291,10 +227,6 @@ public static class SplineFit
         }
 
         for (int i = 0; i < count; i++) normal[i, 0] += 1e-6;
-
-
-
-
 
         for (int i = 0; i < count; i++)
         {

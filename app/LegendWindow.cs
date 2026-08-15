@@ -5,8 +5,6 @@ using Avalonia.Controls;
 
 namespace BehaviourStudio.App;
 
-
-
 public sealed class LegendWindow : Window
 {
     private int _presentationRequests;

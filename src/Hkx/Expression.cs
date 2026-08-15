@@ -5,40 +5,6 @@ using System.Net;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class Expression
 {
     public enum Verdict { Unknown, True, False }
@@ -47,7 +13,6 @@ public static class Expression
     {
         public bool Possible => Value != null;
     }
-
 
     public sealed record Parsed(Node? Root, string? Problem, bool IsAssignment,
                                 IReadOnlyList<string> Names)
@@ -98,8 +63,6 @@ public static class Expression
             public override string ToString() => $"{FunctionName}({string.Join(", ", Arguments)})";
         }
 
-
-
         public sealed record Assign(string Variable, Node Value) : Node
         {
             public override string ToString() => $"{Variable} = {Value}";
@@ -129,11 +92,6 @@ public static class Expression
         return new Parsed(node, null, node is Node.Assign, names);
     }
 
-
-
-
-
-
     public static Verdict Evaluate(Parsed parsed, Func<string, double?> value)
     {
         if (!parsed.Ok || parsed.IsAssignment) return Verdict.Unknown;
@@ -158,9 +116,6 @@ public static class Expression
             {
                 var left = Truth(both.Left, value);
                 var right = Truth(both.Right, value);
-
-
-
 
                 if (both.Or)
                 {
@@ -200,8 +155,6 @@ public static class Expression
                 };
                 return answer ? Verdict.True : Verdict.False;
             }
-
-
 
             default:
                 if (Numeric(node, value).Value is not double alone) return Verdict.Unknown;
@@ -311,8 +264,6 @@ public static class Expression
                 continue;
             }
 
-
-
             if (at + 1 < text.Length)
             {
                 string pair = text.Substring(at, 2);
@@ -415,9 +366,6 @@ public static class Expression
             at++;
             return new Node.Not(Unary(tokens, ref at, names));
         }
-
-
-
 
         if (tokens[at].Text is "-" or "+")
         {

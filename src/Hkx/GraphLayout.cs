@@ -4,56 +4,10 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class GraphLayout
 {
 
-
-
     public sealed record Item(string Id, int Column, string OwnerId, double Height);
-
-
-
-
-
-
-
 
     public static Dictionary<string, double> Place(IReadOnlyList<Item> items,
                                                    IReadOnlyDictionary<string, double> pinned,
@@ -71,13 +25,6 @@ public static class GraphLayout
         var kids = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         foreach (var item in items)
             kids[item.Id] = tree.Children(item.Id).Where(byId.ContainsKey).ToList();
-
-
-
-
-
-
-
 
         var shape = new Dictionary<string, Dictionary<int, (double Top, double Bottom)>>(StringComparer.Ordinal);
         var own = new Dictionary<string, double>(StringComparer.Ordinal);
@@ -101,8 +48,6 @@ public static class GraphLayout
             foreach (string child in children)
             {
 
-
-
                 double offset = 0;
                 foreach (var (col, span) in shape[child])
                     if (stacked.TryGetValue(col, out var taken))
@@ -119,15 +64,12 @@ public static class GraphLayout
                 }
             }
 
-
             string first = children[0], last = children[^1];
             double firstCentre = under[first] + own[first] + byId[first].Height / 2;
             double lastCentre = under[last] + own[last] + byId[last].Height / 2;
 
             own[id] = (firstCentre + lastCentre) / 2 - height / 2;
             stacked[column] = (own[id], own[id] + height);
-
-
 
             double lift = stacked.Values.Min(s => s.Top);
             if (Math.Abs(lift) > 0.001)
@@ -140,8 +82,6 @@ public static class GraphLayout
 
             shape[id] = stacked;
         }
-
-
 
         var todo = new Queue<(string Id, double Top)>();
         var laid = new Dictionary<int, (double Top, double Bottom)>();
@@ -172,10 +112,8 @@ public static class GraphLayout
             foreach (string child in kids[id]) todo.Enqueue((child, top + under[child]));
         }
 
-
         foreach (var item in items)
             if (!y.ContainsKey(item.Id)) y[item.Id] = 0;
-
 
         foreach (var (id, at) in pinned)
             if (byId.ContainsKey(id)) y[id] = at;
@@ -183,7 +121,6 @@ public static class GraphLayout
         ClearPinned(items, y, pinned, tree, byId, rowGap);
         return y;
     }
-
 
     private static List<string> DeepestFirst(IReadOnlyList<string> roots,
                                              Dictionary<string, List<string>> kids)
@@ -208,16 +145,6 @@ public static class GraphLayout
         return order;
     }
 
-
-
-
-
-
-
-
-
-
-
     private static void ClearPinned(IReadOnlyList<Item> items, Dictionary<string, double> y,
                                     IReadOnlyDictionary<string, double> pinned,
                                     GraphOwnership.Tree tree,
@@ -226,8 +153,6 @@ public static class GraphLayout
         if (pinned.Count == 0) return;
 
         var columns = items.Select(i => i.Column).Distinct().OrderBy(c => c).ToList();
-
-
 
         for (int pass = 0; pass < 32; pass++)
         {
@@ -241,8 +166,6 @@ public static class GraphLayout
                                  .Select(i => (Top: y[i.Id], Bottom: y[i.Id] + i.Height))
                                  .OrderBy(b => b.Top).ToList();
                 if (blocks.Count == 0) continue;
-
-
 
                 var groups = new Dictionary<string, (List<string> Members, double Top, double Bottom)>(
                     StringComparer.Ordinal);
@@ -269,8 +192,6 @@ public static class GraphLayout
                     double want = group.Top;
                     double height = group.Bottom - group.Top;
 
-
-
                     for (bool again = true; again;)
                     {
                         again = false;
@@ -294,8 +215,6 @@ public static class GraphLayout
             if (!moved) return;
         }
     }
-
-
 
     private static void Shift(string id, double by, Dictionary<string, double> y,
                               IReadOnlyDictionary<string, double> pinned,

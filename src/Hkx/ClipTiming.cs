@@ -5,31 +5,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class ClipTiming
 {
-
-
-
-
-
 
     public sealed record Trigger(float At, string Event, bool RelativeToEnd, bool Acyclic,
                                 float LocalTime = 0)
@@ -38,21 +15,10 @@ public static class ClipTiming
             $"'{Event}' at {At:F3}s" + (RelativeToEnd ? " (from the end)" : "");
     }
 
-
-
-
-
-
-
     public sealed record Clip(string ClipId, string Name, string Animation, float Seconds,
                               IReadOnlyList<Trigger> Triggers, string Mode = "", string Why = "")
     {
         public bool Known => Seconds > 0;
-
-
-
-
-
 
         public bool Looping => Mode is "MODE_LOOPING" or "MODE_PING_PONG";
 
@@ -61,16 +27,7 @@ public static class ClipTiming
                   : $"'{Name}' has no length: {Why}";
     }
 
-
-
-
-
-
-
     public delegate float LengthOf(string animationName);
-
-
-
 
     public static Dictionary<string, Clip> All(PackfileObjects objects, IReadOnlyList<string> events,
                                                LengthOf lengthOf)
@@ -86,14 +43,10 @@ public static class ClipTiming
         return timed;
     }
 
-
     public static Clip? Of(PackfileObjects objects, PackfileObjects.Instance clip,
                            IReadOnlyList<string> events, LengthOf lengthOf)
     {
         if (clip.ClassName != "hkbClipGenerator") return null;
-
-
-
 
         string id = (NativeGraphModel.FirstId + objects.IndexOf(clip)).ToString();
         string name = objects.ReadString(clip, "name") ?? "";
@@ -102,24 +55,12 @@ public static class ClipTiming
         float seconds = Seconds(objects, clip, animation, lengthOf, out string why);
         var triggers = Triggers(objects, clip, events, seconds);
 
-
-
         int mode = (objects.ReadIntAt(clip.Offset + 190) ?? 0) & 0xff;
         string named = HavokClassTypes.Shipped.Enum("hkbClipGenerator", "PlaybackMode")
                                               ?.FirstOrDefault(v => v.Value == mode).Key ?? "";
 
         return new Clip(id, name, animation, seconds, triggers, named, why);
     }
-
-
-
-
-
-
-
-
-
-
 
     public static float Seconds(PackfileObjects objects, PackfileObjects.Instance clip,
                                 string animation, LengthOf lengthOf, out string why) =>
@@ -130,21 +71,10 @@ public static class ClipTiming
              objects.ReadFloat(clip, "playbackSpeed") ?? 1,
              animation, out why);
 
-
-
-
-
-
-
-
-
-
     public static float Span(float enforced, float animation, float cropStart, float cropEnd,
                              float speed, string named, out string why)
     {
         why = "";
-
-
 
         if (enforced > 0) return enforced;
 
@@ -167,12 +97,6 @@ public static class ClipTiming
             return 0;
         }
 
-
-
-
-
-
-
         if (speed == 0)
         {
             why = "the clip plays at zero speed, so it is parked on a frame and never finishes";
@@ -181,12 +105,6 @@ public static class ClipTiming
 
         return cropped / Math.Abs(speed);
     }
-
-
-
-
-
-
 
     public static List<Trigger> Triggers(PackfileObjects objects, PackfileObjects.Instance clip,
                                          IReadOnlyList<string> events, float seconds)
@@ -212,10 +130,6 @@ public static class ClipTiming
             bool acyclic = Flag(objects, at + 25);
             bool annotation = Flag(objects, at + 26);
 
-
-
-
-
             if (annotation) continue;
 
             string name = id >= 0 && id < events.Count ? events[id] : "";
@@ -230,27 +144,10 @@ public static class ClipTiming
         return found.OrderBy(t => t.At).ToList();
     }
 
-
-
-
-
-
-
-
-
-
-
-
     public static float TriggerAt(float localTime, bool relativeToEnd, float seconds) =>
         relativeToEnd ? seconds - localTime : localTime;
 
-
     private static bool Flag(PackfileObjects objects, int at) => ((objects.ReadIntAt(at) ?? 0) & 0xff) != 0;
-
-
-
-
-
 
     public static LengthOf FromDisk(string behaviourPath)
     {

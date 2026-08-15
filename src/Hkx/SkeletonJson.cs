@@ -7,17 +7,6 @@ using System.Text.Json;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
 public static class SkeletonJson
 {
     public const string Format = "fo4-skeleton";
@@ -68,8 +57,6 @@ public static class SkeletonJson
         return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
-
-
     public static HkxSkeleton Read(string json)
     {
         using var doc = JsonDocument.Parse(json);
@@ -116,7 +103,6 @@ public static class SkeletonJson
         var a = bone.GetProperty(name);
         return new Quaternion(a[0].GetSingle(), a[1].GetSingle(), a[2].GetSingle(), a[3].GetSingle());
     }
-
 
     public static List<int> ChildCounts(HkxSkeleton skeleton)
     {

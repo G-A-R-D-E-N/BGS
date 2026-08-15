@@ -4,28 +4,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class ModelDiff
 {
-
 
     public sealed record Difference(string Where, string What)
     {
@@ -43,22 +23,7 @@ public static class ModelDiff
             (Strided == 0 ? "" : $", {Strided} where a reference formatter strides padded structs differently");
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
     public delegate bool Strided(string owningClass, string field);
-
-
-
 
     public static Result Compare(BehaviourGraphModel a, BehaviourGraphModel b, int cap = 40,
                                  Strided? strided = null)
@@ -72,17 +37,11 @@ public static class ModelDiff
             if (shown.Count < cap) shown.Add(new Difference(where, what));
         }
 
-
-
-
-
         var excusedBy = new Dictionary<string, int>(StringComparer.Ordinal);
 
         void Excuse(string where, string what)
         {
             excused++;
-
-
 
             int bracket = where.IndexOf('[');
             int space = where.IndexOf(' ');
@@ -167,9 +126,6 @@ public static class ModelDiff
             var (l, r) = (left[key], right[key]);
             compared++;
 
-
-
-
             if (l.Count != r.Count)
             {
                 differ($"{where}.{key}", $"{l.Count} element(s) against {r.Count}");
@@ -181,9 +137,6 @@ public static class ModelDiff
                 CompareScalars($"{where}.{key}[{i}]", l[i], r[i], collect, ref compared);
         }
     }
-
-
-
 
     private static IEnumerable<string> Keys(string where, string what,
                                             IEnumerable<string> left, IEnumerable<string> right,

@@ -4,13 +4,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
 public static class GraphLinks
 {
     public sealed class Slot
@@ -46,9 +39,6 @@ public static class GraphLinks
         ["BGSGamebryoSequenceGenerator"] = new(),
     };
 
-
-
-
     public const int KindGenerator = 1;
     public const int KindModifier = 2;
     public const int KindTransitionArray = 3;
@@ -59,7 +49,6 @@ public static class GraphLinks
     public const int KindStates = 8;
     public const int KindChildren = 9;
     public const int KindOther = 99;
-
 
     public static int Accepts(string field) => field switch
     {
@@ -73,7 +62,6 @@ public static class GraphLinks
         "boneWeights" => KindBoneWeights,
         _ => KindOther,
     };
-
 
     public static int FamilyOf(string className) => className switch
     {
@@ -89,10 +77,6 @@ public static class GraphLinks
         "hkbModifierList" => KindModifier,
         _ => KindOther,
     };
-
-
-
-
 
     public static IEnumerable<(int From, int To)> ValidPairs => new[]
     {
@@ -126,7 +110,6 @@ public static class GraphLinks
             }
         }
 
-
         foreach (var (field, value) in obj.Scalars)
             if (value.StartsWith('#') && seen.Add(field) && field != "variableBindingSet")
                 slots.Add(new Slot { Field = field, Targets = { value[1..] } });
@@ -153,16 +136,12 @@ public static class GraphLinks
         if (!slot.Array)
         {
 
-
-
             string had = slot.Targets.FirstOrDefault() ?? "";
             note = had.Length > 0 && had != toId
                 ? $"#{fromId}.{field} now points at #{toId}, replacing #{had}, which is now detached"
                 : $"#{fromId}.{field} now points at #{toId}";
             return HkxTextEdit.SetParam(xml, fromId, field, "#" + toId);
         }
-
-
 
         if (from.Class == "hkbBlenderGenerator" && to.Class != "hkbBlenderGeneratorChild")
         {
@@ -204,8 +183,6 @@ public static class GraphLinks
         if (index < 0) { note = $"#{fromId}.{field} does not contain #{toId}"; return xml; }
 
         xml = HkxTextEdit.ArrayRemoveAt(xml, fromId, field, index);
-
-
 
         var removed = model.Get(toId);
         if (removed != null && removed.Class == "hkbBlenderGeneratorChild")

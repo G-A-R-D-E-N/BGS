@@ -19,10 +19,6 @@ public class App : Application
             var window = new MainWindow();
             desktop.MainWindow = window;
 
-
-
-
-
             var args = desktop.Args ?? Array.Empty<string>();
             foreach (string arg in args)
                 if (File.Exists(arg) && !arg.EndsWith(".nif", StringComparison.OrdinalIgnoreCase))
@@ -65,9 +61,6 @@ public static class Program
                $"({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier})";
     }
 }
-
-
-
 
 public static class Headless
 {

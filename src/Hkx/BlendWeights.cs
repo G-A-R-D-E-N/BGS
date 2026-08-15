@@ -5,31 +5,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class BlendWeights
 {
-
 
     public const int Parametric = 0x10;
 
@@ -39,7 +16,6 @@ public static class BlendWeights
         Mix,
 
         Parametric,
-
 
         ParametricDriven,
     }
@@ -73,7 +49,6 @@ public static class BlendWeights
         }
     }
 
-
     public static Result Of(BehaviourGraphModel model, string blenderId)
     {
         var blender = model.Get(blenderId)
@@ -95,7 +70,6 @@ public static class BlendWeights
             string generator = child.Ref("generator") ?? "";
             raw.Add((generator, weight, driven, driver));
         }
-
 
         var (paramDriven, paramName) = BlendParameterBinding(model, blender);
         float paramValue = Real(blender.Str("blendParameter"));
@@ -123,13 +97,8 @@ public static class BlendWeights
             paramDriven ? paramName : "blendParameter", paramValue, children);
     }
 
-
     public static IEnumerable<Result> All(BehaviourGraphModel model) =>
         model.Objects.Where(o => o.Class == "hkbBlenderGenerator").Select(o => Of(model, o.Id));
-
-
-
-
 
     private static float[] MixContributions(List<(string Id, float Weight, bool Driven, string Driver)> raw)
     {
@@ -141,17 +110,12 @@ public static class BlendWeights
         return shares;
     }
 
-
-
-
-
     private static float[] ParametricContributions(
         List<(string Id, float Weight, bool Driven, string Driver)> raw, float parameter)
     {
         var shares = new float[raw.Count];
         var points = raw.Select((c, i) => (Index: i, Pos: c.Weight)).OrderBy(p => p.Pos).ToList();
         if (points.Count == 0) return shares;
-
 
         if (parameter <= points[0].Pos) { shares[points[0].Index] = 1; return shares; }
         if (parameter >= points[^1].Pos) { shares[points[^1].Index] = 1; return shares; }
@@ -175,11 +139,6 @@ public static class BlendWeights
 
     private static (bool Driven, string Driver) BlendParameterBinding(BehaviourGraphModel model, HkObject blender)
         => Binding(model, blender.Ref("variableBindingSet") ?? "", "blendParameter");
-
-
-
-
-
 
     private static (bool Driven, string Driver) Binding(BehaviourGraphModel model, string bindingSetId, string member)
     {

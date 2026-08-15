@@ -4,9 +4,6 @@ using Xunit;
 
 namespace BehaviourStudio.Tests;
 
-
-
-
 public class SuiteTests
 {
     public static IEnumerable<object[]> Cases()

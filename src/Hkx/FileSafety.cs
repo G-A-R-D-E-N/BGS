@@ -10,8 +10,6 @@ public static class FileSafety
     private const int TokenLength = 64;
     private const int IdLength = 32;
 
-    // Invariant: .bak is the immediately previous version, .bak.1 one version
-    // older, .bak.2 two versions older; with keep = 3 there is never a .bak.3.
     public static void Backup(string path, int keep = 3)
     {
         if (!File.Exists(path)) return;
@@ -19,8 +17,6 @@ public static class FileSafety
         File.Copy(path, path + ".bak");
     }
 
-    // Stage under a unique name in the same directory so two saves cannot
-    // collide, then move the staged file over the target.
     public static void Replace(string path, byte[] bytes)
     {
         string staging = path + "." + Guid.NewGuid().ToString("N") + ".writing";
@@ -103,9 +99,6 @@ public static class FileSafety
                     "was kept as a backup");
             }
 
-            // The replacement is in place and verified by this point, so a backup that
-            // could not be rotated must not report the save as failed. The sidecar is
-            // left where it is and the next save recovers it.
             TryPromotePrevious(path, previous, keep);
         }
         catch

@@ -35,7 +35,6 @@ internal static class SettingsRetentionSmoke
             foreach (string path in paths)
                 Require(Settings.TrySetGraphLayout(path, point, out string failure), failure);
 
-            // Refresh the oldest entry, then add one more. The second-oldest entry must be pruned.
             Require(Settings.TrySetGraphLayout(paths[0], point, out string refreshFailure), refreshFailure);
             string newest = Path.Combine(root, "graph-newest.hkx");
             Require(Settings.TrySetGraphLayout(newest, point, out string newestFailure), newestFailure);

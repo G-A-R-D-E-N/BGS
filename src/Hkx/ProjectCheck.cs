@@ -5,11 +5,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
 public static class ProjectCheck
 {
     public sealed class FileResult
@@ -39,9 +34,6 @@ public static class ProjectCheck
                    (Unreadable > 0 ? $", {Unreadable} could not be unpacked" : "");
         }
     }
-
-
-
 
     public static List<string> BehaviourFiles(ProjectChain chain)
     {

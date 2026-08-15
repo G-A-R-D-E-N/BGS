@@ -4,22 +4,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class PanelFields
 {
     public enum Source
@@ -27,36 +11,20 @@ public static class PanelFields
 
         Bytes,
 
-
         Fallback,
-
-
 
         Edited,
     }
-
-
-
-
-
-
-
-
-
-
 
     public sealed record Field(string Name, string Value, Source From, string Raw, string Owner = "",
                                IReadOnlyList<string>? Choices = null, string Path = "", string Group = "")
     {
         public IReadOnlyList<string> Options => Choices ?? Array.Empty<string>();
 
-
-
         public string Address => Path.Length > 0 ? Path : Name;
 
         public override string ToString() => $"{Name} = {Value}" + (From == Source.Bytes ? "" : $"  ({From})");
     }
-
 
     public static List<Field> For(PackfileObjects objects, PackfileObjects.Instance instance,
                                   IReadOnlyList<(string Name, string Value)> xml,
@@ -66,9 +34,6 @@ public static class PanelFields
     {
         var found = ClassFields.Of(objects, instance, types);
 
-
-
-
         if (found == null || found.Count != xml.Count)
             return xml.Select(p => new Field(p.Name, p.Value, Source.Fallback, p.Value)).ToList();
 
@@ -77,9 +42,6 @@ public static class PanelFields
         {
             var field = found[i];
             string text = xml[i].Value;
-
-
-
 
             if (edited != null && edited.Contains(field.Path))
             {
@@ -107,21 +69,6 @@ public static class PanelFields
         return fields;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static IReadOnlyList<string>? Choices(string owner, HavokClassTypes.Member member,
                                                   string value, HavokClassTypes? types)
     {
@@ -134,10 +81,6 @@ public static class PanelFields
         var names = declared.OrderBy(v => v.Value).Select(v => v.Key).ToList();
         return names.Contains(value, StringComparer.Ordinal) ? names : null;
     }
-
-
-
-
 
     public static string Shown(string rendered) =>
         rendered == "∅" ? "" : FieldRender.Plain(rendered);

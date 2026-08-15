@@ -7,16 +7,6 @@ using System.Text.Json;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
 public sealed class HavokClasses
 {
     public sealed class Member
@@ -24,9 +14,6 @@ public sealed class HavokClasses
         public string Name { get; init; } = "";
         public int Offset { get; init; }
         public string Type { get; init; } = "";
-
-
-
 
         public string Owner { get; init; } = "";
 
@@ -38,7 +25,6 @@ public sealed class HavokClasses
         public string Name { get; init; } = "";
         public string? Parent { get; init; }
         public int Size { get; init; }
-
 
         public IReadOnlyList<Member> Declared { get; init; } = Array.Empty<Member>();
     }
@@ -53,8 +39,6 @@ public sealed class HavokClasses
 
     public Layout? this[string className] =>
         _byName.TryGetValue(className, out var layout) ? layout : null;
-
-
 
     public IReadOnlyList<Member> Members(string className)
     {
@@ -91,9 +75,6 @@ public sealed class HavokClasses
             using var stream = assembly.GetManifestResourceStream(resource)!;
             return Parse(stream);
         }
-
-
-
 
         string beside = Path.Combine(AppContext.BaseDirectory, "HavokClassLayouts.json");
         if (File.Exists(beside)) using (var stream = File.OpenRead(beside)) return Parse(stream);

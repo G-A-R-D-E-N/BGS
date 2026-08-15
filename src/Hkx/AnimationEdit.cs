@@ -5,29 +5,8 @@ using System.Numerics;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class AnimationEdit
 {
-
-
-
-
 
     public sealed record Trimmed(HkxAnimationData Animation, RootMotion.Motion? Motion,
                                  int FirstFrame, int LastFrame, float FromTime, float ToTime,
@@ -42,18 +21,10 @@ public static class AnimationEdit
             (Motion is { Any: true } ? $"{Motion.Samples.Count} motion sample(s)" : "no motion");
     }
 
-
-
-
     public static float FrameDuration(HkxAnimationData animation) =>
         animation.FrameDuration > 0 ? animation.FrameDuration
         : animation.NumFrames > 1 ? animation.Duration / (animation.NumFrames - 1)
         : 0;
-
-
-
-
-
 
     public static Trimmed Trim(HkxAnimationData animation, RootMotion.Motion? motion,
                                int firstFrame, int lastFrame)
@@ -120,10 +91,6 @@ public static class AnimationEdit
             cut.Tracks.Add(slice);
         }
 
-
-
-
-
         int dropped = 0;
         foreach (var note in animation.Annotations)
         {
@@ -139,18 +106,6 @@ public static class AnimationEdit
                            firstFrame, lastFrame, from, to, dropped);
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
     public sealed record Retimed(HkxAnimationData Animation, RootMotion.Motion? Motion, float Scale,
                                  bool Resampled, float PositionError, float RotationError)
     {
@@ -161,46 +116,14 @@ public static class AnimationEdit
                                     : "the same frames at a different rate, exactly");
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
     public sealed record Budget(float Position, float Rotation)
     {
-
-
-
 
         public static readonly Budget Tail = new(37f, 1.05f);
 
         public override string ToString() =>
             $"{Position} unit(s) of position and {Rotation} radian(s) of rotation";
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     public static Retimed Retime(HkxAnimationData animation, RootMotion.Motion? motion, float scale,
                                  bool keepFrameRate = true, Budget? budget = null)
@@ -212,9 +135,6 @@ public static class AnimationEdit
         if (!float.IsFinite(scale) || scale <= 0)
             throw new InvalidOperationException(
                 $"A clip cannot be retimed by {scale}: the scale has to be a positive number.");
-
-
-
 
         if (scale < 0.01f || scale > 100f)
             throw new InvalidOperationException(
@@ -238,7 +158,6 @@ public static class AnimationEdit
 
         float perFrame = keepFrameRate ? frameDuration : frameDuration * scale;
         float duration = (frames - 1) * perFrame;
-
 
         float happened = was > 0 ? duration / was : scale;
 
@@ -293,9 +212,6 @@ public static class AnimationEdit
                 Text = note.Text,
             });
 
-
-
-
         float positionError = 0, rotationError = 0;
         if (resampled)
             for (int t = 0; t < animation.Tracks.Count; t++)
@@ -320,7 +236,6 @@ public static class AnimationEdit
                            happened, resampled, positionError, rotationError);
     }
 
-
     public static Vector3 Between(IReadOnlyList<Vector3> frames, float at)
     {
         if (frames.Count == 0) return Vector3.Zero;
@@ -331,7 +246,6 @@ public static class AnimationEdit
         return Vector3.Lerp(frames[first], frames[first + 1], where - first);
     }
 
-
     public static Quaternion Turned(IReadOnlyList<Quaternion> frames, float at)
     {
         if (frames.Count == 0) return Quaternion.Identity;
@@ -341,12 +255,6 @@ public static class AnimationEdit
         int first = Math.Min((int)where, frames.Count - 2);
         return Quaternion.Normalize(Quaternion.Slerp(frames[first], frames[first + 1], where - first));
     }
-
-
-
-
-
-
 
     private static RootMotion.Motion? RetimeMotion(RootMotion.Motion? motion, int was, int frames,
                                                    float duration, bool resampled)
@@ -367,30 +275,11 @@ public static class AnimationEdit
         return made;
     }
 
-
     public static bool Inside(float time, float from, float to, float frameDuration)
     {
         float slack = frameDuration > 0 ? frameDuration / 2 : 1e-4f;
         return time >= from - slack && time <= to + slack;
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static RootMotion.Motion? TrimMotion(RootMotion.Motion? motion, int frames,
                                                  int firstFrame, int lastFrame, float duration)
@@ -415,8 +304,6 @@ public static class AnimationEdit
         cut.Samples.AddRange(Rebased(taken, motion.Up));
         return cut;
     }
-
-
 
     public static IEnumerable<RootMotion.Sample> Rebased(IReadOnlyList<RootMotion.Sample> samples,
                                                          Vector3 up)

@@ -4,20 +4,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class ConsumerDiff
 {
     public sealed record Difference(string Consumer, string What)
@@ -59,8 +45,6 @@ public static class ConsumerDiff
         Same("states with no generator", Lines(GraphValidator.StatesWithNoGenerator(a).OrderBy(s => s, StringComparer.Ordinal)),
                                          Lines(GraphValidator.StatesWithNoGenerator(b).OrderBy(s => s, StringComparer.Ordinal)));
 
-
-
         Same("checker findings", Lines(GraphValidator.Check(a).Select(f => f.ToString())),
                                 Lines(GraphValidator.Check(b).Select(f => f.ToString())));
 
@@ -71,11 +55,6 @@ public static class ConsumerDiff
 
         return new Result(compared, differences);
     }
-
-
-
-
-
 
     private static string Wiring(BehaviourGraphModel model) =>
         Lines(model.Objects.SelectMany(o => GraphLinks.OutSlots(model, o)
@@ -108,8 +87,6 @@ public static class ConsumerDiff
                                         string.Join(",", GeneratorEditor.ReferencesTo(model, o.Id))));
 
     private static string Lines(IEnumerable<string> values) => string.Join("\n", values);
-
-
 
     private static string First(string left, string right)
     {

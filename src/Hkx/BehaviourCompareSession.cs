@@ -26,8 +26,6 @@ internal sealed class BehaviourCompareSession
         }
         catch (Exception error)
         {
-            // A failure from a superseded comparison is as stale as a result from one: reporting
-            // it would put the old file's error over whatever is open now.
             return revision != _currentRevision()
                 ? new Outcome(true, null, "")
                 : new Outcome(false, null, error.Message.Split('\n')[0]);

@@ -4,18 +4,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
 public static class EventUsage
 {
     public enum Role
@@ -81,17 +69,8 @@ public static class EventUsage
 
     public static string NoteFor(string site) => Table.TryGetValue(site, out var known) ? known.Note : "";
 
-
-
     public static Dictionary<int, List<Line>> ByEvent(string xml) =>
         Group(SymbolIndexFixup.Usages(xml, events: true));
-
-
-
-
-
-
-
 
     public static Dictionary<int, List<Line>> ByEvent(PackfileObjects objects,
                                                       HavokClassTypes? types = null) =>
@@ -118,7 +97,6 @@ public static class EventUsage
         Role.Listened => "listened for here",
         _ => "referenced here",
     };
-
 
     public static string Summarise(IReadOnlyList<Line> lines)
     {

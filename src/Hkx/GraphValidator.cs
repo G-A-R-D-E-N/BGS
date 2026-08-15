@@ -5,10 +5,6 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
 public static class GraphValidator
 {
     public enum Level { Error, Warning }
@@ -24,34 +20,20 @@ public static class GraphValidator
         public override string ToString() => $"{(Level == Level.Error ? "error" : "warning")}  {Where}  {What}";
     }
 
-
-
-
     public static List<Finding> Check(string xml, ProjectChain? chain = null)
     {
         var model = BehaviourGraphModel.Parse(xml);
         var found = Check(model, chain);
-
-
 
         CheckSymbolIndices(xml, model, found);
 
         return found;
     }
 
-
-
-
-
-
-
     public static List<Finding> Check(BehaviourGraphModel model, ProjectChain? chain = null,
                                       PackfileObjects? objects = null)
     {
         var found = new List<Finding>();
-
-
-
 
         if (objects != null) CheckSymbolIndices(objects, model, found);
 
@@ -80,8 +62,6 @@ public static class GraphValidator
         return i > 1 ? where[1..i] : "";
     }
 
-
-
     public static Dictionary<string, Level> ByObject(IEnumerable<Finding> findings)
     {
         var worst = new Dictionary<string, Level>(StringComparer.Ordinal);
@@ -103,24 +83,12 @@ public static class GraphValidator
                 blocksSave: true);
     }
 
-
-
-
-
-
-
-
-
-
     private static void CheckDanglingReferences(BehaviourGraphModel model, List<Finding> found)
     {
         foreach (var obj in model.Objects)
             foreach (var site in HkReferences.In(obj))
             {
                 if (model.Get(site.Target) != null) continue;
-
-
-
 
                 string where = site.Member.Length > 0
                     ? $"#{obj.Id} {obj.Class}.{site.Field}.{site.Member}"
@@ -165,16 +133,8 @@ public static class GraphValidator
             Add(found, Level.Error, user, $"but this graph declares only {events} events");
     }
 
-
-
-
-
-
-
-
     public static bool HasNoGenerator(StateEditor.StateRow state) =>
         string.IsNullOrEmpty(state.GeneratorRef) || state.GeneratorRef == "null";
-
 
     public readonly record struct EmptyState(string Id, string Name, string Machine)
     {
@@ -192,27 +152,10 @@ public static class GraphValidator
         return found;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static readonly string[] LossyOnRepack =
     {
         "hkaLosslessCompressedAnimation",
     };
-
-
-
 
     public static string? NativeRebuildWouldLose(string xml)
     {
@@ -248,7 +191,6 @@ public static class GraphValidator
                "generator onto its generator slot in the graph, or delete the state itself if " +
                "nothing needs it. Check graph lists them all.";
     }
-
 
     public static string? SaveRefusal(string xml, string sourceXml, bool includeRepackLosses = false)
     {
@@ -297,10 +239,6 @@ public static class GraphValidator
         }
     }
 
-
-
-
-
     private static void CheckReachableStates(BehaviourGraphModel model, List<Finding> found)
     {
         var machines = model.Objects.Where(o => o.Class == "hkbStateMachine").ToList();
@@ -324,8 +262,6 @@ public static class GraphValidator
             bool defaultStart = startMode.Length == 0 ||
                                 startMode is "START_STATE_MODE_DEFAULT" or "0";
 
-
-
             bool externalEntry = (!defaultStart && !randomStart) ||
                                  machine.Ref("startStateIdSelector") != null ||
                                  machine.Int("syncVariableIndex") >= 0 ||
@@ -339,8 +275,6 @@ public static class GraphValidator
 
             int start = machine.Int("startStateId");
 
-
-
             if (!randomStart && !states.Any(s => s.StateId == start))
             {
                 reachable.UnionWith(states.Where(s => s.Enabled).Select(s => s.StateId));
@@ -348,9 +282,6 @@ public static class GraphValidator
             }
 
             var transitions = transitionsByMachine[machine.Id];
-
-
-
 
             if (transitions.Count == 0)
             {
@@ -362,9 +293,6 @@ public static class GraphValidator
             else if (enabledByMachine[machine.Id].Contains(start)) reachable.Add(start);
             checkedMachines.Add(machine.Id);
         }
-
-
-
 
         for (bool grew = true; grew;)
         {
@@ -407,8 +335,6 @@ public static class GraphValidator
         {
             var states = statesByMachine[machine.Id];
             var reachable = reachableByMachine[machine.Id];
-
-
 
             foreach (var s in states.Where(s => s.Enabled && !reachable.Contains(s.StateId)))
                 Add(found, Level.Warning, $"#{s.Id} state '{s.Name}'",
@@ -466,11 +392,6 @@ public static class GraphValidator
                 Add(found, Level.Error, $"#{clip.Id} clip '{clip.Str("name")}'", "has no animationName",
                     blocksSave: true);
 
-
-
-
-
-
             if (clip.Str("mode") != "MODE_USER_CONTROLLED" || declaredVariables == 0) continue;
 
             var set = model.Follow(clip, "variableBindingSet");
@@ -494,10 +415,6 @@ public static class GraphValidator
             if (string.IsNullOrWhiteSpace(anim)) continue;
 
             string where = $"#{clip.Id} clip '{clip.Str("name")}'";
-
-
-
-
 
             if (!File.Exists(ProjectChain.ResolvePath(chain.Root, anim)))
                 Add(found, Level.Warning, where, $"plays '{anim}', which is not on disk under {chain.Root}");

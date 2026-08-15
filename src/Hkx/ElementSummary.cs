@@ -4,24 +4,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 public static class ElementSummary
 {
-
 
     public static Dictionary<string, string> For(BehaviourGraphModel model, string objectId)
     {
@@ -51,17 +35,10 @@ public static class ElementSummary
         return lines;
     }
 
-
-
-
-
     private static string Line(StateEditor.TransitionRow row,
                                IReadOnlyList<string> events, IReadOnlyDictionary<int, string> states,
                                string flags)
     {
-
-
-
 
         string from = row.Wildcard
             ? Kind(flags) switch
@@ -79,20 +56,12 @@ public static class ElementSummary
             ? $"{row.ToStateId} {name}"
             : $"state {row.ToStateId}";
 
-
-
         if (row.ToNestedStateId != 0) to += $", then nested {row.ToNestedStateId}";
 
         return (from.Length > 0 ? from + "  " : "") + on + "  ->  " + to;
     }
 
     public enum Wildcard { None, Local, Global }
-
-
-
-
-
-
 
     public static Wildcard Kind(string flags)
     {
@@ -115,9 +84,6 @@ public static class ElementSummary
         if (local != 0 && (bits & local) == local) return Wildcard.Local;
         return Wildcard.None;
     }
-
-
-
 
     public static string MachineOwning(BehaviourGraphModel model, string arrayId)
     {

@@ -8,9 +8,6 @@ using Avalonia.Layout;
 
 namespace BehaviourStudio.App;
 
-
-
-
 public sealed class WorkspaceWindow : Window
 {
     private readonly TabControl _tabs = new();

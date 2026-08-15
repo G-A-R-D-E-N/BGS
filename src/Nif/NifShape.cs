@@ -6,35 +6,19 @@ using System.Numerics;
 
 namespace OpenCommonwealth.Services.Nif;
 
-
-
-
-
 public sealed class NifShape
 {
     public string Name = "";
     public readonly List<Vector3> Vertices = new();
 
-
     public readonly List<int> Indices = new();
-
-
-
 
     public readonly List<int> BoneIndices = new();
     public readonly List<float> BoneWeights = new();
 
-
-
     public readonly List<string> BoneNames = new();
 
-
-
     public readonly List<Matrix4x4> SkinToBone = new();
-
-
-
-
 
     public Vector3 NodeTranslation;
     public float NodeScale = 1;
@@ -48,13 +32,8 @@ public sealed class NifShape
         (IsSkinned ? $", weighted to {BoneNames.Count} bones" : ", not skinned");
 }
 
-
-
 public static class NifGeometry
 {
-
-
-
 
     private const int HasVertex = 1 << 0;
     private const int HasUv = 1 << 1;
@@ -111,8 +90,6 @@ public static class NifGeometry
         int stride = (int)(desc & 0xF) * 4;
         int flags = (int)(desc >> 44);
 
-
-
         if (dataSize == 0 || vertices == 0 || stride == 0) return null;
         if (triangles < 0 || dataSize < 0 || at + dataSize > d.Length)
             throw new InvalidDataException(
@@ -158,10 +135,6 @@ public static class NifGeometry
         if (skin >= 0) ReadSkin(nif, skin, shape);
         return shape;
     }
-
-
-
-
 
     private static (int Weights, int Indices) Layout(int flags, int stride)
     {

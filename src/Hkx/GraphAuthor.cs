@@ -4,16 +4,9 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-
-
-
-
-
-
 public static class GraphAuthor
 {
     public static IEnumerable<string> Kinds => GeneratorEditor.Kinds.Keys;
-
 
     public static string AttachmentFor(string parentClass) => parentClass switch
     {
@@ -57,8 +50,6 @@ public static class GraphAuthor
         }
     }
 
-
-
     public static string AddNode(string xml, string kind, string name, string animation,
                                  string parentId, out string newId, out string note)
     {
@@ -83,22 +74,13 @@ public static class GraphAuthor
         }
     }
 
-
-
     public static List<HkObject> Unattached(BehaviourGraphModel model)
     {
 
-
-
         var referenced = HkReferences.Targets(model);
-
-
 
         return model.Objects.Where(o => !referenced.Contains(o.Id) && IsNode(o.Class)).ToList();
     }
-
-
-
 
     private static readonly HashSet<string> Structural = new(StringComparer.Ordinal)
     {
@@ -108,9 +90,6 @@ public static class GraphAuthor
     };
 
     public static bool CanDelete(string className) => !Structural.Contains(className);
-
-
-
 
     public static string DeleteNode(string xml, string id, out string note)
     {
@@ -134,8 +113,6 @@ public static class GraphAuthor
             xml = Detach(xml, holder, id);
             cleared.Add($"#{holderId} {holder.Class}");
 
-
-
             if (holder.Class == "hkbBlenderGeneratorChild")
             {
                 xml = DeleteNode(xml, holderId, out _);
@@ -154,27 +131,9 @@ public static class GraphAuthor
         return xml;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static string Detach(string xml, HkObject holder, string targetId)
     {
         var sites = HkReferences.In(holder).Where(s => s.Target == targetId).ToList();
-
-
-
 
         foreach (var site in sites.Where(s => s.How == HkReferences.Held.Scalar))
             xml = HkxTextEdit.SetParam(xml, holder.Id, site.Field, "null");
@@ -183,29 +142,12 @@ public static class GraphAuthor
                                                    or HkReferences.Held.StructMember))
             xml = HkxTextEdit.SetParamAt(xml, holder.Id, site.Path(), "null");
 
-
         foreach (var site in sites.Where(s => s.How == HkReferences.Held.ListElement)
                                   .OrderByDescending(s => s.Index))
             xml = HkxTextEdit.ArrayRemoveAt(xml, holder.Id, site.Field, site.Index);
 
         return xml;
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     public static List<(HkObject Node, int Column, string OwnerId)> Layout(BehaviourGraphModel model, int max) =>
         Layout(model, max, out _);
@@ -231,8 +173,6 @@ public static class GraphAuthor
             deepest = Math.Max(deepest, Walk(model, detached, deepest + 1, placed, order, max));
         }
 
-        // The cap is the only reason a drawable node is missing: the root walk covers
-        // everything reachable and the detached pass covers everything else.
         truncated = order.Count >= max &&
                     model.Objects.Any(o => IsNode(o.Class) && !placed.ContainsKey(o.Id));
         return order;
@@ -244,8 +184,6 @@ public static class GraphAuthor
         var queue = new Queue<(HkObject Node, int Column)>();
         queue.Enqueue((from, column));
         placed[from.Id] = column;
-
-
 
         order.Add((from, column, ""));
         int deepest = column;
@@ -269,14 +207,6 @@ public static class GraphAuthor
         return deepest;
     }
 
-
-
-
-
-
-
-
-
     public static IEnumerable<string> PointsAt(BehaviourGraphModel model, HkObject obj)
     {
         foreach (var slot in GraphLinks.OutSlots(model, obj))
@@ -292,9 +222,6 @@ public static class GraphAuthor
             foreach (string value in fields.Values)
                 if (value.StartsWith('#')) yield return value[1..];
     }
-
-
-
 
     public static bool IsNode(string className) =>
         className.EndsWith("Generator", StringComparison.Ordinal)

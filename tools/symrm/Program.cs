@@ -9,11 +9,6 @@ using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.Tools;
 
-
-
-
-
-
 public static class Program
 {
     private static string _root = "";
@@ -93,7 +88,6 @@ public static class Program
           its required input. The retired Java packer commands are intentionally unavailable.
         """);
 
-
     private static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -101,20 +95,6 @@ public static class Program
             dir = dir.Parent;
         return dir?.FullName ?? Directory.GetCurrentDirectory();
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static int Defaults(string[] argv)
     {
@@ -127,8 +107,6 @@ public static class Program
 
         var types = HavokClassTypes.Shipped;
         var (read, refused) = GameDefaults.Of(argv[1], argv[2], types);
-
-
 
         string? only = argv.Skip(3).FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
         if (only != null)
@@ -170,7 +148,6 @@ public static class Program
                 }
                 if (game == null)
                 {
-
 
                     if (IsZero(table)) { zeroed++; continue; }
                     lost++;
@@ -219,22 +196,8 @@ public static class Program
             return WriteDefaults(read, types);
         }
 
-
-
         return differed == 0 ? 0 : 1;
     }
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static int WriteDefaults(List<GameDefaults.Found> read, HavokClassTypes types)
     {
@@ -286,9 +249,6 @@ public static class Program
         return 0;
     }
 
-
-
-
     private static readonly string TableNote =
         "What a Havok class is made of. The member types, which members are ever written to a " +
         "file, the class of every inline struct and every enum's values come from the class " +
@@ -296,7 +256,6 @@ public static class Program
         "The instance sizes come from HavokClassLayouts.json, which was read out of Fallout 4 " +
         "itself. The table is checked in and maintained with the native source. Its defaults come " +
         "from the game's own class registrations.";
-
 
     private static bool IsZero(string value)
     {
@@ -314,7 +273,6 @@ public static class Program
         if (float.TryParse(table, NumberStyles.Float, CultureInfo.InvariantCulture, out float a) &&
             float.TryParse(game, NumberStyles.Float, CultureInfo.InvariantCulture, out float b))
         {
-
 
             float scale = Math.Max(Math.Abs(a), Math.Abs(b));
             return Math.Abs(a - b) <= (scale > 1 ? scale * 1e-6f : 1e-6f);
@@ -334,31 +292,15 @@ public static class Program
             : work;
     }
 
-
-
     private static int Corpus(string[] argv)
     {
         if (argv.Length < 3) { Usage(); return 1; }
-
-
-
-
 
         string filter = argv.Length > 3 ? argv[3] : "behavior";
         int written = OpenCommonwealth.Services.Archive.Ba2.ExtractMatching(argv[1], filter, argv[2], ".hkx", Console.WriteLine);
         Console.WriteLine($"wrote {written} file(s) matching \"{filter}\" to {argv[2]}");
         return 0;
     }
-
-
-
-
-
-
-
-
-
-
 
     private static int States(string[] argv)
     {
@@ -394,11 +336,6 @@ public static class Program
 
         return noGenerator + dangling == 0 ? 0 : 1;
     }
-
-
-
-
-
 
     private static int Frames(string[] argv)
     {
@@ -445,8 +382,6 @@ public static class Program
             foreach (var kv in reasons.OrderByDescending(k => k.Value)) Console.WriteLine($"  {kv.Value,5}  {kv.Key}");
             return threw == 0 && empty == 0 ? 0 : 1;
         }
-
-
 
         if (argv.Length > 2 && argv[2] == "--digest")
         {
@@ -512,8 +447,6 @@ public static class Program
             }
         }
 
-
-
         Console.WriteLine();
         foreach (float fraction in new[] { 0f, 0.25f, 0.5f, 0.75f, 1f })
             Console.WriteLine($"  userControlledTimeFraction {fraction:F2} -> frame {anim.FrameAt(fraction)} " +
@@ -521,10 +454,6 @@ public static class Program
 
         return 0;
     }
-
-
-
-
 
     private static HkxSkeleton? SiblingSkeleton(string animationPath)
     {
@@ -568,9 +497,6 @@ public static class Program
         string annotation = track < anim.BoneNames.Count ? anim.BoneNames[track] : "";
         return annotation.Length > 0 ? annotation : $"track {track}";
     }
-
-
-
 
     private static int Events(string[] argv)
     {
@@ -631,9 +557,6 @@ public static class Program
         return 0;
     }
 
-
-
-
     private static int Scale(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -670,7 +593,6 @@ public static class Program
                         if (v < lo) lo = v;
                         if (v > hi) hi = v;
 
-
                         if (v == 0f) zeroFrames++;
                         if (Math.Abs(v - 1f) > 0.0001f) odd = true;
                     }
@@ -698,11 +620,6 @@ public static class Program
     private static string Short(string file, string root) =>
         file.StartsWith(root, StringComparison.Ordinal) ? file[(root.Length + 1)..] : file;
 
-
-
-
-
-
     private static int Extract(string[] argv)
     {
         if (argv.Length < 4) { Usage(); return 1; }
@@ -715,25 +632,6 @@ public static class Program
         return written > 0 ? 0 : 1;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static List<(char Side, int At, string Line)> Diff(string[] left, string[] right)
     {
         const int Reach = 400;
@@ -743,8 +641,6 @@ public static class Program
         while (a < left.Length && b < right.Length)
         {
             if (left[a] == right[b]) { a++; b++; continue; }
-
-
 
             int found = -1, skipLeft = 0, skipRight = 0;
             for (int d = 1; d <= Reach && found < 0; d++)
@@ -772,7 +668,6 @@ public static class Program
         return edits;
     }
 
-
     private static string FirstBound(string xml, string which)
     {
         int start = xml.IndexOf("name=\"variableBounds\"", StringComparison.Ordinal);
@@ -783,12 +678,6 @@ public static class Program
             System.Text.RegularExpressions.RegexOptions.Singleline);
         return m.Success ? m.Groups[1].Value : "absent";
     }
-
-
-
-
-
-
 
     private static int Motion(string[] argv)
     {
@@ -834,26 +723,15 @@ public static class Program
         Console.WriteLine($"up {motion.Up.X:F0} {motion.Up.Y:F0} {motion.Up.Z:F0}, " +
                           $"forward {motion.Forward.X:F0} {motion.Forward.Y:F0} {motion.Forward.Z:F0}");
 
-
-
         for (int i = 0; i < motion.Samples.Count; i += Math.Max(1, motion.Samples.Count / 8))
             Console.WriteLine($"  sample {i,3}  {motion.Samples[i]}");
 
         Console.WriteLine($"  sample {motion.Samples.Count - 1,3}  {motion.Samples[^1]}");
 
-
-
         var half = RootMotion.At(motion, 0.5f);
         Console.WriteLine($"halfway through: {half}");
         return 0;
     }
-
-
-
-
-
-
-
 
     private static int Ba2Browse(string[] argv)
     {
@@ -875,9 +753,6 @@ public static class Program
 
         if (found.Count > 20) Console.WriteLine($"  and {found.Count - 20} more");
         if (found.Count == 0) return 1;
-
-
-
 
         var first = found[0];
         byte[] bytes = archive.Read(first);
@@ -902,21 +777,6 @@ public static class Program
             return 1;
         }
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static bool NullSaveIsByteIdentical(string file, string originalXml)
     {
@@ -959,25 +819,10 @@ public static class Program
         return true;
     }
 
-
-
-
-
-
-
-
-
-
-
     private static bool OnlyAppended(byte[] before, byte[] after, NativeSave.Plan plan)
     {
         var was = PackfileImage.Read(before);
         var now = PackfileImage.Read(after);
-
-
-
-
-
 
         int allowedPointerMoves = plan.Changes.Count(c => c.Ref);
         if (plan.Changes.Any(c => c.Array))
@@ -1013,11 +858,6 @@ public static class Program
                 return false;
             }
 
-
-
-
-
-
             int touched = Enumerable.Range(0, a.Data.Length).Count(k => a.Data[k] != b.Data[k]);
             int allowed = 4 * plan.Changes.Count(c => !c.Text && !c.Ref);
             if (touched > allowed)
@@ -1026,9 +866,6 @@ public static class Program
                                   $"more than the {allowed} the planned values can account for");
                 return false;
             }
-
-
-
 
             var wasBySource = a.Globals().ToDictionary(g => g.Source, g => (g.Section, g.Destination));
             var nowBySource = b.Globals().ToDictionary(g => g.Source, g => (g.Section, g.Destination));
@@ -1046,12 +883,6 @@ public static class Program
                 return false;
             }
 
-
-
-
-
-
-
             int added = a.Tag == "__data__" ? plan.Changes.Count(c => c.Added) : 0;
             var wasVirtual = a.Virtuals().ToList();
             var nowVirtual = b.Virtuals().ToList();
@@ -1065,10 +896,6 @@ public static class Program
             }
 
             var (locals, wasLocals) = (b.Locals().ToList(), a.Locals().ToList());
-
-
-
-
 
             var wasLocalsBySource = wasLocals.ToDictionary(l => l.Source, l => l.Destination);
             var nowLocalsBySource = locals.ToDictionary(l => l.Source, l => l.Destination);
@@ -1090,12 +917,6 @@ public static class Program
                           $"{plan.Changes.Count(c => c.Text)} pointer(s) repointed");
         return true;
     }
-
-
-
-
-
-
 
     private static bool GrowingAnArrayOfStringsWorks(string file, string originalXml)
     {
@@ -1127,8 +948,6 @@ public static class Program
             Console.WriteLine($"  resize guard: FAILED, applying it threw, {e.Message.Split('\n')[0]}");
             return false;
         }
-
-
 
         var objects = new PackfileObjects(PackfileImage.Read(after));
         var holder = objects.Instances.FirstOrDefault(i => i.ClassName == "hkbBehaviorGraphStringData");
@@ -1172,22 +991,11 @@ public static class Program
         Try("<hkparam name=\"ignoreStartTime\">false</hkparam>",
             "<hkparam name=\"ignoreStartTime\">true</hkparam>");
 
-
-
-
-
         Try("<hkparam name=\"duration\">[0-9.]+</hkparam>",
             "<hkparam name=\"duration\">3.5</hkparam>");
 
-
-
-
         Try("<hkparam name=\"animationName\">[^<]{3,}</hkparam>",
             "<hkparam name=\"animationName\">Animations\\Renamed_By_Symrm_Longer.hkx</hkparam>");
-
-
-
-
 
         var generators = System.Text.RegularExpressions.Regex
             .Matches(xml, "<hkparam name=\"generator\">#(?<id>[0-9]+)</hkparam>")
@@ -1197,15 +1005,8 @@ public static class Program
             Try($"<hkparam name=\"generator\">#{generators[0]}</hkparam>",
                 $"<hkparam name=\"generator\">#{generators[1]}</hkparam>");
 
-
-
-
         Try("<hkparam name=\"variableBindingSet\">#[0-9]+</hkparam>",
             "<hkparam name=\"variableBindingSet\">null</hkparam>");
-
-
-
-
 
         var array = System.Text.RegularExpressions.Regex.Match(
             xml, "<hkparam name=\"(?<field>states|children|generators|modifiers|layers)\" " +
@@ -1234,28 +1035,6 @@ public static class Program
         int at = text.IndexOf(was, StringComparison.Ordinal);
         return at < 0 ? text : text[..at] + now + text[(at + was.Length)..];
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static int Signatures(string[] argv)
     {
@@ -1290,40 +1069,6 @@ public static class Program
 
         return problems.Count == 0 && read > 0 ? 0 : 1;
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static int Nesting(string[] argv)
     {
@@ -1363,9 +1108,6 @@ public static class Program
             }
             filesRead++;
 
-
-
-
             var machineIds = model.Objects.Where(o => o.Class == "hkbStateMachine")
                                           .Select(o => o.Id).ToList();
             var nestedInside = new HashSet<string>(StringComparer.Ordinal);
@@ -1389,10 +1131,6 @@ public static class Program
                 var rows = StateEditor.Transitions(model, id);
                 perMachine.Add(rows.Count);
 
-
-
-
-
                 int wildcardsHere = rows.Count(r => r.Wildcard);
                 naiveWildcardLines += (long)wildcardsHere * states.Count;
                 fromMachineLines += wildcardsHere;
@@ -1411,20 +1149,8 @@ public static class Program
 
                     nestedTo++;
 
-
-
-
-
-
                     string? entered = states.FirstOrDefault(s => s.StateId == row.ToStateId)?.GeneratorRef;
                     var inner = model.Get(entered?.TrimStart('#'));
-
-
-
-
-
-
-
 
                     var machine = StateRoutes.MachineUnder(model, inner, 0);
                     if (machine == null)
@@ -1440,10 +1166,6 @@ public static class Program
                     else nestedUnresolved++;
                 }
 
-
-
-
-
                 foreach (var array in model.Objects)
                 {
                     if (array.Class != "hkbStateMachineTransitionInfoArray") continue;
@@ -1457,11 +1179,6 @@ public static class Program
                     {
                         if (element.TryGetValue("fromNestedStateId", out var from) &&
                             int.TryParse(from, out int value) && value != 0) nestedFrom++;
-
-
-
-
-
 
                         element.TryGetValue("flags", out var flags);
                         long bits = FlagBits(flags ?? "", declaredFlags);
@@ -1484,9 +1201,6 @@ public static class Program
             }
         }
 
-
-
-
         long drawable = 0, drawableNested = 0, startStates = 0;
         long waysOut = 0, rewriteWrong = 0, notAState = 0, selfDirect = 0;
         foreach (string file in files)
@@ -1499,23 +1213,13 @@ public static class Program
                 drawableNested += routes.Routes.Count(r => r.IntoId.Length > 0);
                 startStates += routes.StartStates.Count;
 
-
-
-
-
                 foreach (string stateId in routes.MachineOfState.Keys)
                 {
                     var leaving = routes.LeavingState(stateId).ToList();
                     waysOut += leaving.Count;
 
-
-
                     if (leaving.Any(r => r.FromId != stateId)) rewriteWrong++;
                     if (leaving.Any(r => !routes.MachineOfState.ContainsKey(r.ToId))) notAState++;
-
-
-
-
 
                     selfDirect += leaving.Count(r => r.ToId == stateId && !r.Wildcard);
                     if (leaving.Any(r => r.ToId == stateId && r.Wildcard)) rewriteWrong++;
@@ -1574,9 +1278,6 @@ public static class Program
         return drawable == transitions && rewriteWrong == 0 && notAState == 0 ? 0 : 1;
     }
 
-
-
-
     private static HkObject? MachineUnder(BehaviourGraphModel model, HkObject? generator, int depth)
     {
         if (generator == null || depth > 6) return null;
@@ -1593,13 +1294,6 @@ public static class Program
 
     private static string Percent(long part, long whole) =>
         whole == 0 ? "n/a" : $"{100.0 * part / whole:0.00}%";
-
-
-
-
-
-
-
 
     private static int Elements(string[] argv)
     {
@@ -1628,7 +1322,6 @@ public static class Program
             if (lines.Count == 0)
             {
 
-
                 unnamed++;
                 Console.WriteLine($"  #{obj.Id}  no state machine points at this array");
                 continue;
@@ -1638,7 +1331,6 @@ public static class Program
             string machine = ElementSummary.MachineOwning(model, obj.Id);
             Console.WriteLine($"  #{obj.Id}  on #{machine} {model.Get(machine)?.Str("name")}");
 
-
             foreach (var key in lines.Keys.OrderBy(ElementNumber))
                 Console.WriteLine($"      {key,-16} {lines[key]}");
         }
@@ -1647,9 +1339,6 @@ public static class Program
                           $"{summarised,5} element(s) summarised, {unnamed,3} array(s) with no owner");
         return 0;
     }
-
-
-
 
     private static long FlagBits(string text, List<KeyValuePair<string, long>> declared)
     {
@@ -1672,17 +1361,6 @@ public static class Program
         int bracket = group.IndexOf('[');
         return bracket >= 0 && int.TryParse(group[(bracket + 1)..].TrimEnd(']'), out int n) ? n : 0;
     }
-
-
-
-
-
-
-
-
-
-
-
 
     private static int Paths(string[] argv)
     {
@@ -1726,14 +1404,12 @@ public static class Program
             if (before.Count != fields.Count)
             {
 
-
                 unaddressable += fields.Count;
                 continue;
             }
 
             for (int f = 0; f < fields.Count; f++)
             {
-
 
                 const string Sentinel = "-987654321";
                 string after;
@@ -1751,10 +1427,6 @@ public static class Program
 
                 checkedFields++;
                 if (fields[f].Group.Length > 0) elementFields++;
-
-
-
-
 
                 if (before.FindIndex(p => p.Name == fields[f].Name) != f) byNameWrong++;
 
@@ -1780,64 +1452,15 @@ public static class Program
         return wrong == 0 ? 0 : 1;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static int References(string xml, int id) =>
         System.Text.RegularExpressions.Regex.Matches(xml, $@"#{id}\b").Count
         - System.Text.RegularExpressions.Regex.Matches(xml, $@"name=""#{id}""").Count;
-
 
     private static int Nulls(string xml) =>
         System.Xml.Linq.XDocument.Parse(xml).Descendants("hkparam")
             .Where(p => p.Attribute("numelements") != null && !p.Elements().Any())
             .Sum(p => (p.Value ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
                                      .Count(t => t == "null"));
-
 
     private static Dictionary<int, string> Numbered(string xml)
     {
@@ -1883,12 +1506,6 @@ public static class Program
 
             bool ok = true;
 
-
-
-
-
-
-
             var offsets = data.Virtuals().Select(v => v.Source).ToList();
             virtuals += offsets.Count;
             for (int at = 1; at < offsets.Count; at++)
@@ -1926,22 +1543,12 @@ public static class Program
         return bad == 0 ? 0 : 1;
     }
 
-
-
-
-
-
-
-
-
-
     private static bool Same(SymbolIndexFixup.Usage a, SymbolIndexFixup.Usage b) =>
         a.Index == b.Index && a.Owner == b.Owner && a.Member == b.Member &&
         a.ObjectId == b.ObjectId && a.OwnerClass == b.OwnerClass;
 
     private static string Spell(SymbolIndexFixup.Usage u) =>
         $"#{u.ObjectId} {u.OwnerClass} {u.Owner}.{u.Member}={u.Index}";
-
 
     private static List<string> Roles(Dictionary<int, List<EventUsage.Line>> byEvent)
     {
@@ -1953,10 +1560,6 @@ public static class Program
         return lines;
     }
 
-
-
-
-
     private static bool MisStrided(string owningClass, string field)
     {
         var types = HavokClassTypes.Shipped;
@@ -1967,26 +1570,13 @@ public static class Program
         return false;
     }
 
-
-
     private static BehaviourGraphModel? SecondReading(string xml, string hkxPath) =>
         NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(hkxPath)));
-
-
-
-
-
 
     private static string Canonical(System.Xml.Linq.XElement p, Func<string, string> reference)
     {
         string raw = p.Value ?? "";
         string text = raw.Trim();
-
-
-
-
-
-
 
         if (p.Attribute("numelements") == null)
             return raw.StartsWith('#') ? reference(raw) : raw;
@@ -1998,17 +1588,10 @@ public static class Program
         if (strings.Count > 0)
             return List(count, strings.Select(s => (s.Value ?? "").Trim()));
 
-
-
-
         if (text.Contains('('))
         {
             var groups = System.Text.RegularExpressions.Regex.Matches(text, @"\([^)]*\)")
                              .Select(m => m.Value).ToList();
-
-
-
-
 
             if (count > 0 && groups.Count > count && groups.Count % count == 0)
             {
@@ -2030,12 +1613,7 @@ public static class Program
     private static string List(int count, IEnumerable<string> tokens) =>
         $"[{count}: {string.Join("|", tokens)}]";
 
-
-
     private static string List(int count, string what) => count == 0 ? "[0: ]" : $"[{count}: {what}]";
-
-
-
 
     private static string? Rendered(PackfileObjects objects, PackfileObjects.Instance instance,
                                     HavokClasses.Member member,
@@ -2047,10 +1625,6 @@ public static class Program
             : target != null && indexOf.TryGetValue(target, out int at) ? "@" + at
             : "a pointer landing where no object begins";
 
-
-
-
-
         var described = HavokClassTypes.Shipped.Members(instance.ClassName)
                                        .FirstOrDefault(m => m.Name == member.Name);
         if (described == null) return null;
@@ -2058,9 +1632,6 @@ public static class Program
         return FieldRender.Render(objects, instance.Offset + described.Offset, instance.ClassName,
                                   described, Reference, expected);
     }
-
-
-
 
     private static List<float> Numbers(string text) =>
         System.Text.RegularExpressions.Regex.Matches(text, @"-?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?")
@@ -2075,20 +1646,14 @@ public static class Program
         if (float.TryParse(ours, out float a) && float.TryParse(theirs, out float b))
             return Math.Abs(a - b) <= 1e-6f * Math.Max(1f, Math.Abs(b));
 
-
-
         int colon = ours.IndexOf(':');
         if (colon > 0 && long.TryParse(ours[..colon], out long number))
             return long.TryParse(theirs, out long theirNumber)
                 ? number == theirNumber
                 : ours[(colon + 1)..] == theirs;
 
-
-
-
         if (ours.StartsWith('[') && theirs.StartsWith('['))
         {
-
 
             var mine = ours[(ours.IndexOf(':') + 1)..^1]
                 .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -2097,9 +1662,6 @@ public static class Program
             if (ours[..ours.IndexOf(':')] != theirs[..theirs.IndexOf(':')]) return false;
             return mine.Length == yours.Length && mine.Zip(yours).All(p => Same(p.First, p.Second));
         }
-
-
-
 
         if (ours.StartsWith('(') && theirs.Contains('.'))
         {
@@ -2114,31 +1676,11 @@ public static class Program
             return theirs.Equals(ours, StringComparison.OrdinalIgnoreCase) ||
                    theirs == (ours == "true" ? "1" : "0");
 
-
-
-
         return false;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static string BoundAt(string xml, int index)
     {
-
-
-
 
         var array = System.Xml.Linq.XDocument.Parse(xml).Descendants("hkparam")
             .FirstOrDefault(p => p.Attribute("name")?.Value == "variableBounds");
@@ -2155,43 +1697,6 @@ public static class Program
 
         return $"{Side("min")} to {Side("max")}";
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static int ClipTrim(string[] argv)
     {
@@ -2235,9 +1740,6 @@ public static class Program
             int floats = objects.ReadInt(animation, "numberOfFloatTracks") ?? 0;
             if (floats > 0) withFloatTracks++;
 
-
-
-
             int frames = objects.ReadInt(animation, "numFrames") ?? 0;
             if (frames > 0) frameCounts.Add(frames);
 
@@ -2245,10 +1747,6 @@ public static class Program
             if (!motionNull && motion != null)
             {
                 withMotion++;
-
-
-
-
 
                 var samples = objects.ReadArray(motion, "referenceFrameSamples");
                 float motionDuration = objects.ReadFloat(motion, "duration") ?? 0;
@@ -2337,19 +1835,6 @@ public static class Program
         return 0;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static int ClipTime(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -2357,8 +1842,6 @@ public static class Program
         string target = Path.GetFullPath(argv[1]);
         var files = Directory.Exists(target)
             ? Directory.GetFiles(target, "*.hkx", SearchOption.AllDirectories)
-
-
 
                        .Where(f => f.Contains("behavior", StringComparison.OrdinalIgnoreCase))
                        .OrderBy(f => f, StringComparer.Ordinal).ToArray()
@@ -2378,8 +1861,6 @@ public static class Program
         var missesBy = new Dictionary<string, int>(StringComparer.Ordinal);
         var perCharacterExamples = new List<string>();
         var listenedExamples = new List<string>();
-
-
 
         var rootOf = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var lengths = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
@@ -2457,10 +1938,6 @@ public static class Program
 
             }
 
-
-
-
-
             var run = GraphRun.Start(model);
             if (run.RootId.Length == 0) continue;
 
@@ -2474,9 +1951,6 @@ public static class Program
             foreach (var clip in timed.Values)
             {
 
-
-
-
                 if (!clip.Known) untimedTriggers += clip.Triggers.Count;
 
                 foreach (var trigger in clip.Triggers)
@@ -2489,11 +1963,6 @@ public static class Program
                                                $"'{trigger.Event}' at {trigger.At:F3}s of a {clip.Seconds:F3}s clip");
                         continue;
                     }
-
-
-
-
-
 
                     if (!trigger.RelativeToEnd) continue;
                     atEnd++;
@@ -2516,16 +1985,8 @@ public static class Program
             var allowed = run.Reachable();
             int firedHere = 0;
 
-
-
             for (int step = 0; step < 100; step++)
                 firedHere += run.Advance(0.1f).Count;
-
-
-
-
-
-
 
             foreach (string name in run.Events)
             {
@@ -2546,18 +2007,9 @@ public static class Program
                 }
         }
 
-
-
-
-
         void ResolveLength(string file, string root, string animation)
         {
             if (animation.Length == 0) return;
-
-
-
-
-
 
             if (string.IsNullOrEmpty(root)) { rootless++; return; }
 
@@ -2568,16 +2020,6 @@ public static class Program
                 if (Length(reader, lengths, path) > 0) durationRead++;
                 return;
             }
-
-
-
-
-
-
-
-
-
-
 
             var candidates = Variants(root, animation);
             if (candidates.Count == 0)
@@ -2649,18 +2091,9 @@ public static class Program
         return outOfRange + impossible + endMisplaced + untimedTriggers == 0 ? 0 : 1;
     }
 
-
     private static string ModeName(int mode) =>
         HavokClassTypes.Shipped.Enum("hkbClipGenerator", "PlaybackMode")
                        ?.FirstOrDefault(v => v.Value == mode).Key ?? $"mode {mode}";
-
-
-
-
-
-
-
-
 
     private static List<string> Variants(string root, string animation)
     {
@@ -2677,7 +2110,6 @@ public static class Program
         }
         catch (Exception) { return new List<string>(); }
     }
-
 
     private static float Length(HkxBinaryReader reader, Dictionary<string, float> cache, string path)
     {
@@ -2720,8 +2152,6 @@ public static class Program
                 }
                 drivenChildren += blend.Children.Count(c => c.WeightDriven);
 
-
-
                 if (blend.Mode == BlendWeights.Mode.Mix)
                 {
                     float sum = blend.Children.Where(c => !c.WeightDriven).Sum(c => c.Contribution);
@@ -2735,7 +2165,6 @@ public static class Program
                 }
             }
 
-
             var run = GraphRun.Start(model);
             foreach (var route in StateRoutes.Of(model).Routes)
             {
@@ -2744,9 +2173,6 @@ public static class Program
                 timed++;
             }
         }
-
-
-
 
         if (!BlendRamps(out string why))
         {
@@ -2769,8 +2195,6 @@ public static class Program
     private static float TransitionSeconds(BehaviourGraphModel model, StateRoutes.Route route)
     {
 
-
-
         var machine = model.Get(route.MachineId);
         string arrayId = route.Wildcard
             ? machine?.Ref("wildcardTransitions") ?? ""
@@ -2791,7 +2215,6 @@ public static class Program
         return 0;
     }
 
-
     private static bool BlendRamps(out string why)
     {
         why = "";
@@ -2800,7 +2223,6 @@ public static class Program
 
         string startState = run.Where().First().StateId;
         run.Send("Go");
-
 
         var atStart = run.Where();
         var incoming = atStart.FirstOrDefault(a => !a.Fading);
@@ -2838,17 +2260,6 @@ public static class Program
         }
         return 0;
     }
-
-
-
-
-
-
-
-
-
-
-
 
     private static int Run(string[] argv)
     {
@@ -2897,17 +2308,6 @@ public static class Program
                     noGraphObject++;
             }
 
-
-
-
-
-
-
-
-
-
-
-
             var validatorSays = ValidatorReaches(model);
             var entered = reach.Reachable
                 .Select(id => model.Get(id))
@@ -2915,12 +2315,6 @@ public static class Program
                 .Select(o => MachineOf(model, o!.Id))
                 .Where(m => m.Length > 0)
                 .ToHashSet(StringComparer.Ordinal);
-
-
-
-
-
-
 
             var stepped = StepEverywhere(model, out int heldBack, out int weighed);
             blockedByCondition += heldBack;
@@ -2977,12 +2371,6 @@ public static class Program
         return narrower + walkedOff == 0 ? 0 : 1;
     }
 
-
-
-
-
-
-
     private static HashSet<string> StepEverywhere(BehaviourGraphModel model, out int heldBack,
                                                   out int weighed)
     {
@@ -3011,7 +2399,6 @@ public static class Program
         return landed;
     }
 
-
     private static readonly Dictionary<BehaviourGraphModel, Dictionary<string, string>> _machineOf = new();
 
     private static string MachineOf(BehaviourGraphModel model, string stateId)
@@ -3026,11 +2413,6 @@ public static class Program
         }
         return map.TryGetValue(stateId, out var found) ? found : "";
     }
-
-
-
-
-
 
     private static HashSet<string> ValidatorReaches(BehaviourGraphModel model)
     {
@@ -3064,7 +2446,6 @@ public static class Program
         return reached;
     }
 
-
     private static int RunOne(string file, string[] events)
     {
         PackfileObjects objects;
@@ -3079,9 +2460,6 @@ public static class Program
 
         var run = GraphRun.Start(model);
         if (run.RootId.Length == 0) { Console.WriteLine("this file has no generator to start from"); return 1; }
-
-
-
 
         var timed = ClipTiming.All(objects, SymbolEditor.EventNames(model), ClipTiming.FromDisk(file));
         run.Time(timed);
@@ -3099,7 +2477,6 @@ public static class Program
 
         foreach (string name in events)
         {
-
 
             if (float.TryParse(name, out float seconds) && seconds > 0)
             {
@@ -3136,17 +2513,6 @@ public static class Program
 
         return 0;
     }
-
-
-
-
-
-
-
-
-
-
-
 
     private static int EditFrame(string[] argv)
     {
@@ -3191,8 +2557,6 @@ public static class Program
             done++;
             int track = 0, frame = before.NumFrames / 2;
 
-
-
             var wasTranslations = before.Tracks[track].Translations.ToList();
             before.Tracks[track].Translations[frame] = edit;
 
@@ -3215,8 +2579,6 @@ public static class Program
 
             float keptDrift = (after.Tracks[track].Translations[frame] - edit).Length();
             if (keptDrift > worstKept) { worstKept = keptDrift; worstKeptFile = Path.GetFileName(file); }
-
-
 
             float elsewhere = 0;
             for (int fr = 0; fr < before.NumFrames && fr < after.Tracks[track].Translations.Count; fr++)
@@ -3250,27 +2612,6 @@ public static class Program
         return lost + disturbed + refused == 0 ? 0 : 1;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static int Trim(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -3284,8 +2625,6 @@ public static class Program
         int everyNth = argv.Length > 2 && int.TryParse(argv[2], out int n) && n > 0 ? n : 1;
         if (everyNth > 1) Console.WriteLine($"every {everyNth}th file");
 
-
-
         const float positionLimit = 0.05f;
         const float rotationLimit = 0.01f;
 
@@ -3294,8 +2633,6 @@ public static class Program
 
         var reader = new HkxBinaryReader();
         int done = 0, skipped = 0, refused = 0, threw = 0, unreadable = 0;
-
-
 
         var held = new Dictionary<string, int>();
         var broke = new Dictionary<string, int>();
@@ -3320,9 +2657,6 @@ public static class Program
         float worstPos = 0, worstRot = 0;
         string worstPosFile = "", worstRotFile = "";
         long before = 0, after = 0;
-
-
-
 
         int motionSeen = 0, motionAtOrigin = 0;
 
@@ -3398,8 +2732,6 @@ public static class Program
             Check("frame duration", MathF.Abs(now.FrameDuration - was.FrameDuration) <= 1e-5f, file,
                   $"{now.FrameDuration:F6} against {was.FrameDuration:F6}");
 
-
-
             float pos = 0, rot = 0;
             int comparable = Math.Min(kept, now.NumFrames);
             for (int t = 0; t < was.Tracks.Count && t < now.Tracks.Count; t++)
@@ -3422,10 +2754,6 @@ public static class Program
             Check("annotations kept", now.Annotations.Count == cut.Animation.Annotations.Count, file,
                   $"{now.Annotations.Count} annotation(s) against the {cut.Animation.Annotations.Count} the cut kept");
 
-
-
-
-
             var texts = cut.Animation.Annotations.Select(a => a.Text).OrderBy(t => t, StringComparer.Ordinal);
             var back = now.Annotations.Select(a => a.Text).OrderBy(t => t, StringComparer.Ordinal);
             Check("annotations keep their text", texts.SequenceEqual(back, StringComparer.Ordinal), file,
@@ -3440,8 +2768,6 @@ public static class Program
                   motion.Any ? "the travel was lost" : "a travel object appeared from nowhere");
 
             if (!motion.Any) continue;
-
-
 
             int wanted = motion.Samples.Count == was.NumFrames ? kept
                        : motion.Samples.Count == 2 ? 2
@@ -3459,8 +2785,6 @@ public static class Program
                            MathF.Abs(nowMotion.Samples[0].TurnRadians) < 1e-3f;
             Check("motion starts at the origin", started, file,
                   nowMotion.Samples.Count > 0 ? $"starts at {nowMotion.Samples[0]}" : "has no samples");
-
-
 
             if (files.Length > 1) continue;
 
@@ -3505,27 +2829,6 @@ public static class Program
 
         return broke.Values.Sum() + threw + unreadable + refused == 0 ? 0 : 1;
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static int Retime(string[] argv)
     {
@@ -3579,8 +2882,6 @@ public static class Program
         var refusals = new SortedDictionary<string, int>(StringComparer.Ordinal);
         int done = 0, skipped = 0, refused = 0, threw = 0, unreadable = 0;
 
-
-
         var cost = passes.ToDictionary(p => p.Name, _ => new List<(float Position, float Rotation)>());
         var overBudget = passes.ToDictionary(p => p.Name, _ => 0);
 
@@ -3607,8 +2908,6 @@ public static class Program
             foreach (var (name, scale, keepRate) in passes)
             {
                 AnimationEdit.Retimed made;
-
-
 
                 try { made = AnimationEdit.Retime(was, motion, scale, keepRate); }
                 catch (InvalidOperationException e)
@@ -3670,9 +2969,6 @@ public static class Program
                       wanted.SequenceEqual(back, StringComparer.Ordinal), file,
                       $"came back as [{string.Join(", ", back)}] against [{string.Join(", ", wanted)}]");
 
-
-
-
                 var wantTimes = made.Animation.Annotations.Select(a => a.Time).OrderBy(t => t).ToList();
                 var haveTimes = now.Annotations.Select(a => a.Time).OrderBy(t => t).ToList();
                 float moved = wantTimes.Count == haveTimes.Count && wantTimes.Count > 0
@@ -3700,16 +2996,11 @@ public static class Program
                           $"the travel says {nowMotion.Duration:F4}s and the clip says " +
                           $"{made.Animation.Duration:F4}s");
 
-
-
-
                     float went = motion.Travel.Length(), goes = nowMotion.Travel.Length();
                     Check(name, "travels the same distance",
                           MathF.Abs(went - goes) <= MathF.Max(0.5f, went * 0.02f), file,
                           $"travelled {went:F2} units and now travels {goes:F2}");
                 }
-
-
 
                 if (keepRate) continue;
 
@@ -3790,10 +3081,8 @@ public static class Program
         return broke.Values.Sum() + threw + unreadable + refused == 0 ? 0 : 1;
     }
 
-
     private static float At(List<float> sorted, float fraction) =>
         sorted.Count == 0 ? 0 : sorted[Math.Clamp((int)(fraction * (sorted.Count - 1)), 0, sorted.Count - 1)];
-
 
     private static string Head(string message)
     {
@@ -3801,16 +3090,6 @@ public static class Program
         string head = stop > 0 ? message[..(stop + 1)] : message;
         return head.Length > 140 ? head[..140] : head;
     }
-
-
-
-
-
-
-
-
-
-
 
     private static int SaveSpline(string[] argv)
     {
@@ -3896,9 +3175,6 @@ public static class Program
             if (now.Annotations.Count != was.Annotations.Count)
                 wrong.Add($"{now.Annotations.Count} annotations against {was.Annotations.Count}");
 
-
-
-
             else if (!was.Annotations.Select(a => a.Text).OrderBy(t => t, StringComparer.Ordinal)
                         .SequenceEqual(now.Annotations.Select(a => a.Text)
                         .OrderBy(t => t, StringComparer.Ordinal), StringComparer.Ordinal))
@@ -3953,20 +3229,6 @@ public static class Program
         return bad + refused == 0 ? 0 : 1;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static int Spline(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -3978,10 +3240,6 @@ public static class Program
 
         int everyNth = argv.Length > 2 && int.TryParse(argv[2], out int n) && n > 0 ? n : 1;
         if (everyNth > 1) Console.WriteLine($"every {everyNth}th file");
-
-
-
-
 
         const float positionLimit = 0.05f;
         const float rotationLimit = 0.01f;
@@ -4067,9 +3325,6 @@ public static class Program
             if (fileRot > worstRot) { worstRot = fileRot; worstRotFile = Path.GetFileName(file); }
             if (fileScale > worstScale) { worstScale = fileScale; worstScaleFile = Path.GetFileName(file); }
 
-
-
-
             originalBytes += OriginalBlobSize(file);
             writtenBytes += blob.Data.Length;
 
@@ -4099,7 +3354,6 @@ public static class Program
         return bad + refused == 0 ? 0 : 1;
     }
 
-
     private static long OriginalBlobSize(string file)
     {
         try
@@ -4115,17 +3369,6 @@ public static class Program
         catch (Exception) { }
         return 0;
     }
-
-
-
-
-
-
-
-
-
-
-
 
     private static int SplineStats(string[] argv)
     {
@@ -4183,8 +3426,6 @@ public static class Program
                 framesTotal += numFrames;
                 blockSizes[perBlock] = blockSizes.GetValueOrDefault(perBlock) + 1;
 
-
-
                 string shape = maskSize == 4 * numTracks ? "4 per track"
                              : maskSize == SplineFormat.Align(4 * numTracks, 16) ? "4 per track, rounded to 16"
                              : $"other ({maskSize} for {numTracks})";
@@ -4209,8 +3450,6 @@ public static class Program
                         rotFlags[r] = rotFlags.GetValueOrDefault(r) + 1;
                         scaleFlags[s] = scaleFlags.GetValueOrDefault(s) + 1;
                     }
-
-
 
                     byte first = data.Data[blockStart + 1];
                     bool opensOnPosSpline = (first & 0x70) != 0;
@@ -4256,13 +3495,6 @@ public static class Program
         return 0;
     }
 
-
-
-
-
-
-
-
     private static string DecodeFingerprint(IEnumerable<string> files)
     {
         var reader = new HkxBinaryReader();
@@ -4272,8 +3504,6 @@ public static class Program
 
         void Feed(float v)
         {
-
-
 
             int q = (int)MathF.Round(v * 4096f);
             for (int b = 0; b < 4; b++)
@@ -4306,21 +3536,11 @@ public static class Program
         return $"{decoded} file(s), {values} value(s), {hash:x16}";
     }
 
-
-
-
-
-
-
-
-
     private static bool Nudged(HkxBinaryReader reader, string file, HkxAnimationData before,
                                string work, ref string why)
     {
         var by = new System.Numerics.Vector3(1.5f, -2.25f, 0.75f);
         int track = before.NumTracks / 2, frame = before.NumFrames / 2;
-
-
 
         var edited = reader.ReadAnimation(file);
         var was = edited.Tracks[track].Translations[frame];
@@ -4356,25 +3576,10 @@ public static class Program
         return ok;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
     private static float Angle(System.Numerics.Quaternion a, System.Numerics.Quaternion b)
     {
         a = System.Numerics.Quaternion.Normalize(a);
         b = System.Numerics.Quaternion.Normalize(b);
-
-
 
         double near = Math.Min(Distance(a, b, 1), Distance(a, b, -1));
         return (float)(2 * Math.Asin(Math.Clamp(near / 2, 0, 1)) * 180 / Math.PI);
@@ -4385,14 +3590,6 @@ public static class Program
         double x = a.X - sign * b.X, y = a.Y - sign * b.Y, z = a.Z - sign * b.Z, w = a.W - sign * b.W;
         return Math.Sqrt(x * x + y * y + z * z + w * w);
     }
-
-
-
-
-
-
-
-
 
     private static int QsTransform(string[] argv)
     {
@@ -4458,13 +3655,6 @@ public static class Program
         return 0;
     }
 
-
-
-
-
-
-
-
     private static int Capacity(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -4472,8 +3662,6 @@ public static class Program
         var files = Directory.Exists(argv[1])
             ? Directory.EnumerateFiles(argv[1], "*.hkx", SearchOption.AllDirectories).OrderBy(f => f).ToList()
             : new List<string> { Path.GetFullPath(argv[1]) };
-
-
 
         var all = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var structs = new SortedDictionary<string, int>(StringComparer.Ordinal);
@@ -4517,8 +3705,6 @@ public static class Program
 
                     Count(all, key);
                     if (member.VSub == "TYPE_STRUCT") Count(structs, key);
-
-
 
                     if ((capacity & 0x3FFFFFFFu) != (uint)count)
                         Count(mismatched, $"{instance.ClassName}.{member.Name} count={count} " +
@@ -4598,8 +3784,6 @@ public static class Program
         return 0;
     }
 
-
-
     private static string Narrow(int? value, string type)
     {
         if (value is not int raw) return "?";
@@ -4611,45 +3795,6 @@ public static class Program
             _ => raw.ToString(),
         };
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static int Layout(string[] argv)
     {
@@ -4667,9 +3812,6 @@ public static class Program
         long placedSeen = 0, placedWhereExpected = 0;
         int cleanFiles = 0, oddFiles = 0, skipped = 0;
         var notes = new List<string>();
-
-
-
 
         var padding = new Dictionary<string, Dictionary<int, int>>(StringComparer.Ordinal);
         void Pad(string kind, int amount)
@@ -4700,9 +3842,6 @@ public static class Program
 
             bool odd = false;
 
-
-
-
             var starts = objects.Instances.Select(i => i.Offset).ToList();
             int Owner(int offset)
             {
@@ -4718,9 +3857,6 @@ public static class Program
                 if (size > 0) gapBytes += Math.Max(0, next - (instance.Offset + size));
             }
 
-
-
-
             var order = FixupOrder.Sources(objects, types, data, global: false);
             var aims = new Dictionary<int, int>();
             foreach (var (source, destination) in data.Locals()) aims[source] = destination;
@@ -4731,9 +3867,6 @@ public static class Program
             {
                 if (!aims.TryGetValue(source, out int destination)) continue;
                 runsSeen++;
-
-
-
 
                 int owner = Owner(source);
                 int endOfOwner = owner < 0 ? data.Data.Length
@@ -4759,23 +3892,10 @@ public static class Program
                 }
             }
 
-
             runBytes += seen.Count;
-
-
-
-
-
-
-
-
-
 
             var items = PackfileLayout.Of(image, types);
             if (items == null) { skipped++; continue; }
-
-
-
 
             if (!PackfileLayout.Accounted(items, data.Data.Length))
             {
@@ -4828,16 +3948,6 @@ public static class Program
         return oddFiles == 0 && skipped == 0 ? 0 : 1;
     }
 
-
-
-
-
-
-
-
-
-
-
     private static int Notes(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -4864,10 +3974,6 @@ public static class Program
             {
                 if (!types.Knows(instance.ClassName)) continue;
                 classes.Add(instance.ClassName);
-
-
-
-
 
                 var shown = ClassFields.Of(objects, instance, types);
                 if (shown == null) continue;
@@ -4900,12 +4006,6 @@ public static class Program
         return described == fields ? 0 : 1;
     }
 
-
-
-
-
-
-
     private static int Chain(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -4921,8 +4021,6 @@ public static class Program
 
         foreach (string problem in chain.Problems) Console.WriteLine("  problem: " + problem);
 
-
-
         var checkResult = ProjectCheck.Run(chain);
         int unread = checkResult.Files.Count(f => f.Error.Length > 0);
 
@@ -4934,13 +4032,6 @@ public static class Program
                           $"{checkResult.Errors} error(s), {checkResult.Warnings} warning(s)");
         return chain.Links.Count == 0 || unread > 0 ? 1 : 0;
     }
-
-
-
-
-
-
-
 
     private static int Lifecycle(string[] argv)
     {
@@ -5160,9 +4251,6 @@ public static class Program
                 continue;
             }
 
-
-
-
             var found = System.Text.RegularExpressions.Regex.Match(
                 xml, "<hkparam name=\"(?<field>[A-Za-z0-9_]+)\" numelements=\"(?<n>[1-9][0-9]*)\">(?<body>[-0-9 \\r\\n\\t]+)</hkparam>");
             if (!found.Success) { none++; continue; }
@@ -5253,15 +4341,6 @@ public static class Program
         return wrong == 0 && refused == 0 ? 0 : 1;
     }
 
-
-
-
-
-
-
-
-
-
     private static int SaveWide(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -5292,9 +4371,6 @@ public static class Program
                 if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: {e.Message}");
                 continue;
             }
-
-
-
 
             var found = System.Text.RegularExpressions.Regex.Match(
                 xml, "<hkparam name=\"(?<field>[A-Za-z0-9_]+)\">\\((?<body>[-0-9.e ]+)\\)</hkparam>");
@@ -5376,16 +4452,6 @@ public static class Program
         return wrong == 0 && refused == 0 ? 0 : 1;
     }
 
-
-
-
-
-
-
-
-
-
-
     private static int SaveEvent(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -5410,10 +4476,6 @@ public static class Program
                 var image = PackfileImage.Read(file);
                 var objects = new PackfileObjects(image);
                 xml = NativeXml.From(objects, image);
-
-
-
-
 
                 var holder = objects.Instances.FirstOrDefault(i => i.ClassName == "hkbBehaviorGraphStringData");
                 was = holder == null ? new List<string?>()
@@ -5484,12 +4546,6 @@ public static class Program
         return wrong == 0 && refused == 0 ? 0 : 1;
     }
 
-
-
-
-
-
-
     private static string Named(byte[] after, string edited, List<string?> was, string added)
     {
         PackfileImage image;
@@ -5524,8 +4580,6 @@ public static class Program
         if (names.Count == 0 || names[^1] != added)
             return "the name added is not the last one in the array";
 
-
-
         for (int e = 0; e < was.Count; e++)
             if (names[e] != was[e])
                 return $"eventNames[{e}] was '{was[e]}' in the file and reads '{names[e]}' now";
@@ -5538,17 +4592,6 @@ public static class Program
 
         return "";
     }
-
-
-
-
-
-
-
-
-
-
-
 
     private static int ClassCheck(string[] argv)
     {
@@ -5576,8 +4619,6 @@ public static class Program
                 sizes[current] = int.Parse(isHead.Groups["size"].Value, System.Globalization.CultureInfo.InvariantCulture);
                 fromGame[current] = new List<(int, string, string)>();
 
-
-
                 string parent = isHead.Groups["parent"].Value;
                 if (parent != "-")
                     parents[current] = parent.EndsWith("Class", StringComparison.Ordinal)
@@ -5591,14 +4632,6 @@ public static class Program
             fromGame[current].Add((int.Parse(isMember.Groups["at"].Value, System.Globalization.CultureInfo.InvariantCulture),
                                    isMember.Groups["name"].Value, isMember.Groups["type"].Value));
         }
-
-
-
-
-
-
-
-
 
         List<(int At, string Name, string Type)> Whole(string className)
         {
@@ -5634,9 +4667,6 @@ public static class Program
                         notes.Add($"{name} is {size} bytes here and {sizes[name]} in the game");
                 }
             }
-
-
-
 
             int at = 0;
             foreach (var mine in types.Members(name))
@@ -5685,15 +4715,6 @@ public static class Program
             Console.WriteLine("only this build has: " + string.Join(", ", unvalidated));
         return sizeDiffered == 0 && offsetDiffered == 0 && missingFromGame == 0 ? 0 : 1;
     }
-
-
-
-
-
-
-
-
-
 
     private static int SaveDelete(string[] argv)
     {
@@ -5783,8 +4804,6 @@ public static class Program
             saved++;
             objectsGone += plan.Gone.Count;
 
-
-
             if (files.Length == 1 && argv.Length > 2)
             {
                 File.WriteAllBytes(argv[2], after);
@@ -5807,8 +4826,6 @@ public static class Program
         Console.WriteLine($"{objectsGone} object(s) taken out across them");
         return wrong == 0 ? 0 : 1;
     }
-
-
 
     private static string Sound(byte[] after, int expected)
     {
@@ -5836,17 +4853,6 @@ public static class Program
 
         return "";
     }
-
-
-
-
-
-
-
-
-
-
-
 
     private static int DeleteObject(string[] argv)
     {
@@ -5926,7 +4932,6 @@ public static class Program
         return wrong == 0 ? 0 : 1;
     }
 
-
     private static string Wrong(byte[] after, int wasCount, List<string> wasClasses, string className)
     {
         PackfileImage image;
@@ -5953,9 +4958,6 @@ public static class Program
         if (!PackfileLayout.Accounted(items, data.Data.Length))
             return "the result has bytes in it nothing accounts for";
 
-
-
-
         var spans = items.Select(i => (i.At, End: i.At + i.Length)).OrderBy(x => x.At).ToList();
         bool Lands(int offset) => spans.Exists(sp => offset >= sp.At && offset < sp.End);
 
@@ -5973,11 +4975,6 @@ public static class Program
 
         return "";
     }
-
-
-
-
-
 
     private static int Conditions(string[] argv)
     {
@@ -6034,8 +5031,6 @@ public static class Program
                 parsedOk++;
                 if (parsed.IsAssignment) assignments.Add($"{Path.GetFileName(file)}: {text}");
 
-
-
                 foreach (string name in parsed.Names)
                     if (!declared.ContainsKey(name))
                         undeclared.Add($"{Path.GetFileName(file)}: \"{text}\" names {name}, which this file does not declare");
@@ -6045,9 +5040,6 @@ public static class Program
                 else if (verdict == Expression.Verdict.True) trueAtStart++;
                 else falseAtStart++;
             }
-
-
-
 
             foreach (var instance in objects.OfClass("hkbExpressionDataArray"))
             {
@@ -6113,9 +5105,6 @@ public static class Program
         foreach (var (text, count) in conditions.OrderByDescending(c => c.Value))
             Console.WriteLine($"  {count,5}  {text}");
 
-
-
-
         foreach (string file in files)
         {
             BehaviourGraphModel? model;
@@ -6140,15 +5129,6 @@ public static class Program
             reachedFromState += analysisReaches;
             sweepEnters += stepReaches;
             falseNow += wouldHold;
-
-
-
-
-
-
-
-
-
 
             foreach (var (route, condition, _) in withCondition)
             {
@@ -6211,24 +5191,10 @@ public static class Program
         if (expressionRefusals.Count > 12) Console.WriteLine($"  ... and {expressionRefusals.Count - 12} more");
         foreach (string eventClause in eventPredicates.Take(12)) Console.WriteLine("  event predicate: " + eventClause);
 
-
-
-
-
-
-
         return unparsed == 0 && stuck.Count == 0 ? 0 : 1;
     }
 
-
-
     private static readonly double[] Spread = { -1, 0, 1, 2, 3, 5, 9, 10, 18, 20, 21, 100 };
-
-
-
-
-
-
 
     private static Dictionary<string, double> VariableTable(PackfileObjects objects)
     {
@@ -6262,37 +5228,11 @@ public static class Program
                 type = objects.ReadNarrowAt(infos.At + i * infoStride + typeMember.Offset,
                                             HavokClassTypes.Width(typeMember.VType)) ?? 0;
 
-
-
             table[name] = type == 2 ? BitConverter.Int32BitsToSingle(word) : word;
         }
 
         return table;
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static int Template(string[] argv)
     {
@@ -6371,14 +5311,6 @@ public static class Program
         Console.WriteLine($"symbol uses across every liftable subtree: {symbolsUsed}");
         foreach (string line in examples) Console.WriteLine($"  {line}");
 
-
-
-
-
-
-
-
-
         Console.WriteLine();
         int lifted = 0, applied = 0, wrong = 0, refused = 0;
         int sharing = 0, properlyRefused = 0, wronglyKept = 0;
@@ -6414,11 +5346,6 @@ public static class Program
                     NativePaste.Subtree tree;
                     try { tree = NativePaste.Of(image, id); }
                     catch (Exception) { continue; }
-
-
-
-
-
 
                     if (tree.Shared.Count > 0)
                     {
@@ -6581,8 +5508,6 @@ public static class Program
             rewritten += result.Pointers;
             sharedKept += tree.Shared.Count;
 
-
-
             try
             {
                 var undo = PackfileImage.Read(after);
@@ -6606,9 +5531,6 @@ public static class Program
                 wrong++;
                 if (notes.Count < 10) notes.Add($"{Path.GetFileName(file)}: cannot undo the paste: {e.Message}");
             }
-
-
-
 
             if (tree.RootClass != "hkbStateMachineStateInfo") continue;
 
@@ -6651,9 +5573,6 @@ public static class Program
             }
         }
 
-
-
-
         for (int i = 0; i < files.Length && files.Length > 1; i++)
         {
             if (!chosen.TryGetValue(files[i], out var pick)) continue;
@@ -6692,9 +5611,6 @@ public static class Program
             }
         }
 
-
-
-
         int cycles = 0, cyclicFiles = 0;
         foreach (string file in files)
         {
@@ -6724,9 +5640,6 @@ public static class Program
 
         return wrong == 0 ? 0 : 1;
     }
-
-
-
 
     private static int PointerCycles(PackfileImage image)
     {
@@ -6787,8 +5700,6 @@ public static class Program
         {
             if (index[start] >= 0) continue;
 
-
-
             var work = new Stack<(int Node, int Edge)>();
             work.Push((start, 0));
             index[start] = low[start] = next++;
@@ -6836,8 +5747,6 @@ public static class Program
         return onCycle;
     }
 
-
-
     private static List<int> StateIds(PackfileObjects objects, PackfileObjects.Instance machine)
     {
         var ids = new List<int>();
@@ -6845,8 +5754,6 @@ public static class Program
             if (state != null && objects.ReadInt(state, "stateId") is int held) ids.Add(held);
         return ids;
     }
-
-
 
     private static string Kind(string message) =>
         message.Contains("does not declare", StringComparison.Ordinal)
@@ -6856,8 +5763,6 @@ public static class Program
         : message.Contains("there is no name to copy it across by", StringComparison.Ordinal)
             ? "an index pointing past the end of the file's own symbol list"
         : message;
-
-
 
     private static NativePaste.Subtree? BiggestSubtree(PackfileImage image)
     {
@@ -6883,7 +5788,6 @@ public static class Program
         return best is { Ids.Count: > 1 } ? best : null;
     }
 
-
     private static string PasteWrong(byte[] bytes, List<string> wasClasses, List<string> copiedClasses,
                                      NativePaste.Subtree tree, HashSet<int> ownedWas,
                                      HashSet<int> sharedWas, string was, NativePaste.Result result)
@@ -6900,8 +5804,6 @@ public static class Program
         int expected = wasClasses.Count + tree.Ids.Count;
         if (objects.Instances.Count != expected)
             return $"holds {objects.Instances.Count} object(s), expected {expected}";
-
-
 
         for (int i = 0; i < wasClasses.Count; i++)
             if (objects.Instances[i].ClassName != wasClasses[i])
@@ -6936,10 +5838,6 @@ public static class Program
 
         bool InCopy(int offset) => mineSpans.Exists(s => offset >= s.At && offset < s.End);
 
-
-
-
-
         foreach (var (source, which, destination) in data.Globals())
         {
             if (which != section || !InCopy(source)) continue;
@@ -6963,19 +5861,11 @@ public static class Program
         return "";
     }
 
-
-
-
-
-
     private static string Shape(PackfileImage image, PackfileObjects objects, int rootId)
     {
         var types = HavokClassTypes.Shipped;
         var data = image.Section("__data__")!;
         int section = image.Sections.IndexOf(data);
-
-
-
 
         var symbols = new Dictionary<int, string>();
         foreach (bool events in new[] { true, false })
@@ -7117,13 +6007,6 @@ public static class Program
         return names == null ? new List<string>() : names.Select(n => n ?? "").ToList();
     }
 
-
-
-
-
-
-
-
     private static int Relayout(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -7179,10 +6062,6 @@ public static class Program
                           $"{differed} did not, {refused} left alone");
         return differed == 0 && refused == 0 ? 0 : 1;
     }
-
-
-
-
 
     private static int Packfile(string[] argv)
     {
@@ -7307,9 +6186,6 @@ public static class Program
                 if (!data.RotationAnimated) noRot++;
                 if (!anyScale) noScale++;
 
-
-
-
                 if (bone >= skeleton.ReferencePose.Count) continue;
                 var rest = skeleton.ReferencePose[bone];
 
@@ -7383,12 +6259,6 @@ public static class Program
         return 0;
     }
 
-
-
-
-
-
-
     private static int DrawMesh(string[] argv)
     {
         if (argv.Length < 4) { Usage(); return 1; }
@@ -7397,7 +6267,6 @@ public static class Program
         var shapes = OpenCommonwealth.Services.Nif.NifGeometry.Shapes(nif);
         var skeleton = new HkxBinaryReader().ReadSkeleton(Path.GetFullPath(argv[2]));
         string outPath = Path.GetFullPath(argv[3]);
-
 
         var wanted = argv.Skip(4).ToList();
         var colours = new (byte R, byte G, byte B)[]
@@ -7436,8 +6305,6 @@ public static class Program
         float scale = (Height - 60) / span;
         var centre = (min + max) * 0.5f;
 
-
-
         (int X, int Y) Place(System.Numerics.Vector3 p, bool front)
         {
             float across = front ? p.X - centre.X : p.Y - centre.Y;
@@ -7450,7 +6317,6 @@ public static class Program
         int marked = 0;
         foreach (var (shape, posed) in drawn)
         {
-
 
             var owner = new int[shape.Vertices.Count];
             System.Array.Fill(owner, -1);
@@ -7489,8 +6355,6 @@ public static class Program
                 }
             }
         }
-
-
 
         foreach (string name in wanted)
         {
@@ -7543,9 +6407,6 @@ public static class Program
                shape.BoneNames[b].Equals(boneName, StringComparison.OrdinalIgnoreCase);
     }
 
-
-
-
     private static int Mesh(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -7572,9 +6433,6 @@ public static class Program
             var binding = OpenCommonwealth.Services.Nif.SkinnedMesh.Bind(s, skeleton);
             Console.WriteLine($"  {s.Name,-26} {binding}");
             unmatched += binding.Unmatched.Count;
-
-
-
 
             float drift = OpenCommonwealth.Services.Nif.SkinnedMesh
                 .BindError(s, binding, skeleton, out int measured);
@@ -7615,18 +6473,9 @@ public static class Program
             if (drift > DriftLimit) worstShare = Math.Max(worstShare, PerBone(s, binding, rest));
         }
 
-
-
         Console.WriteLine(unmatched == 0
             ? "\nevery mesh bone found a skeleton bone"
             : $"\n{unmatched} mesh bone reference(s) had no skeleton bone of that name");
-
-
-
-
-
-
-
 
         bool ok = worstShare <= 0.25f;
         Console.WriteLine(ok
@@ -7636,13 +6485,6 @@ public static class Program
               $"{DriftLimit:F1}, worst disagreement {worstDrift:F3}, so the bind is not composing");
         return ok ? 0 : 1;
     }
-
-
-
-
-
-
-
 
     private static float PerBone(OpenCommonwealth.Services.Nif.NifShape shape,
                                  OpenCommonwealth.Services.Nif.SkinnedMesh.Binding binding,
@@ -7675,8 +6517,6 @@ public static class Program
         Console.WriteLine($"    per bone, on the reference pose: {clean} of {rows.Count} matched " +
                           "bones agree with the first one");
 
-
-
         foreach (var r in rows.OrderByDescending(r => r.Error).Take(12))
             Console.WriteLine($"      {r.Name,-28} {r.Error,9:F3} over {r.Vertices,5} vertices, " +
                               $"origin to {r.Off.X,8:F2} {r.Off.Y,8:F2} {r.Off.Z,8:F2}" +
@@ -7684,9 +6524,6 @@ public static class Program
 
         return rows.Count == 0 ? 0 : (float)(rows.Count - clean) / rows.Count;
     }
-
-
-
 
     private const float DriftLimit = 0.5f;
 
@@ -7697,8 +6534,6 @@ public static class Program
         var skeleton = new HkxBinaryReader().ReadSkeleton(Path.GetFullPath(argv[1]));
         Console.WriteLine($"{skeleton.Name}: {skeleton.BoneNames.Count} bones, " +
                           $"{skeleton.ParentIndices.Count} parent indices, {skeleton.ReferencePose.Count} poses");
-
-
 
         var rest = AnimationPose.ReferencePose(skeleton);
 
@@ -7721,8 +6556,6 @@ public static class Program
         }
         return 0;
     }
-
-
 
     private static int Rig(string[] argv)
     {
@@ -7816,8 +6649,6 @@ public static class Program
         return dir;
     }
 
-
-
     private static int Check(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -7855,15 +6686,6 @@ public static class Program
         return errorCount == 0 ? 0 : 1;
     }
 
-
-
-
-
-
-
-
-
-
     private static void Show(string label, string xml)
     {
         var model = BehaviourGraphModel.Parse(xml);
@@ -7896,25 +6718,6 @@ public static class Program
         }
         return seen.Count;
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     private static string FirstTransitionEffect(BehaviourGraphModel model, string machine, string xml)
     {
@@ -7957,8 +6760,6 @@ public static class Program
     }
 
     private sealed record Snapshot(List<string> Bindings, List<string> Transitions);
-
-
 
     private static Snapshot Resolved(string xml)
     {
