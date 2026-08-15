@@ -40,6 +40,8 @@ public sealed class HavokClassTypes
 
         public int? Size { get; init; }
 
+        public int? Align { get; init; }
+
         public IReadOnlyList<Member> Declared { get; init; } = Array.Empty<Member>();
         public IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> Enums { get; init; } =
             new Dictionary<string, IReadOnlyDictionary<string, long>>();
@@ -195,6 +197,9 @@ public sealed class HavokClassTypes
                                        System.Globalization.NumberStyles.HexNumber),
                 Size = entry.Value.TryGetProperty("size", out var s) && s.ValueKind != JsonValueKind.Null
                     ? s.GetInt32()
+                    : null,
+                Align = entry.Value.TryGetProperty("align", out var al) && al.ValueKind != JsonValueKind.Null
+                    ? al.GetInt32()
                     : null,
                 Declared = members,
                 Enums = enums,
