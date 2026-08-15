@@ -1,13 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Checks a graph before it is repacked, because hkxpack validates shape and signatures but not
-// meaning: it will happily write a file whose transitions point at states that do not exist, or
-// whose event ids run past the end of the event list. Those load without an error and then behave
-// wrongly, which is the worst kind of failure to chase from inside the game.
 public static class GraphValidator
 {
     public enum Level { Error, Warning }
@@ -17,59 +14,108 @@ public static class GraphValidator
         public Level Level;
         public string Where = "";
         public string What = "";
+        public string ObjectId = "";
+        public bool BlocksSave;
+
         public override string ToString() => $"{(Level == Level.Error ? "error" : "warning")}  {Where}  {What}";
     }
 
-    public static List<Finding> Check(string xml)
+    public static List<Finding> Check(string xml, ProjectChain? chain = null)
     {
         var model = BehaviourGraphModel.Parse(xml);
+        var found = Check(model, chain);
+
+        CheckSymbolIndices(xml, model, found);
+
+        return found;
+    }
+
+    public static List<Finding> Check(BehaviourGraphModel model, ProjectChain? chain = null,
+                                      PackfileObjects? objects = null)
+    {
         var found = new List<Finding>();
+
+        if (objects != null) CheckSymbolIndices(objects, model, found);
 
         CheckSymbolArrays(model, found);
         CheckDanglingReferences(model, found);
-        CheckSymbolIndices(xml, model, found);
         CheckStateMachines(model, found);
+        CheckReachableStates(model, found);
         CheckBlenders(model, found);
         CheckClips(model, found);
+        CheckClipAnimations(model, chain, found);
         CheckUnattached(model, found);
 
         return found;
     }
 
-    private static void Add(List<Finding> found, Level level, string where, string what) =>
-        found.Add(new Finding { Level = level, Where = where, What = what });
+    private static void Add(List<Finding> found, Level level, string where, string what,
+                            bool blocksSave = false) =>
+        found.Add(new Finding { Level = level, Where = where, What = what, ObjectId = LeadingId(where),
+                                BlocksSave = blocksSave });
+
+    private static string LeadingId(string where)
+    {
+        if (where.Length < 2 || where[0] != '#') return "";
+        int i = 1;
+        while (i < where.Length && char.IsAsciiDigit(where[i])) i++;
+        return i > 1 ? where[1..i] : "";
+    }
+
+    public static Dictionary<string, Level> ByObject(IEnumerable<Finding> findings)
+    {
+        var worst = new Dictionary<string, Level>(StringComparer.Ordinal);
+        foreach (var f in findings.Where(f => f.ObjectId.Length > 0))
+            if (!worst.TryGetValue(f.ObjectId, out var had) || (had == Level.Warning && f.Level == Level.Error))
+                worst[f.ObjectId] = f.Level;
+        return worst;
+    }
 
     private static void CheckSymbolArrays(BehaviourGraphModel model, List<Finding> found)
     {
         var counts = SymbolEditor.Audit(model);
         if (!counts.VariablesConsistent)
             Add(found, Level.Error, "hkbBehaviorGraphData",
-                $"the variable arrays disagree: {counts}");
+                $"the variable arrays disagree: {counts}", blocksSave: true);
         if (!counts.EventsConsistent)
             Add(found, Level.Error, "hkbBehaviorGraphData",
-                $"eventNames has {counts.EventNames} entries but eventInfos has {counts.EventInfos}");
+                $"eventNames has {counts.EventNames} entries but eventInfos has {counts.EventInfos}",
+                blocksSave: true);
     }
 
     private static void CheckDanglingReferences(BehaviourGraphModel model, List<Finding> found)
     {
         foreach (var obj in model.Objects)
-        {
-            foreach (var (field, value) in obj.Scalars)
-                if (value.StartsWith('#') && model.Get(value[1..]) == null)
-                    Add(found, Level.Error, $"#{obj.Id} {obj.Class}.{field}", $"points at {value}, which is not in this file");
+            foreach (var site in HkReferences.In(obj))
+            {
+                if (model.Get(site.Target) != null) continue;
 
-            foreach (var (field, list) in obj.Lists)
-                foreach (string token in list)
-                    if (token.StartsWith('#') && model.Get(token[1..]) == null)
-                        Add(found, Level.Error, $"#{obj.Id} {obj.Class}.{field}", $"contains {token}, which is not in this file");
+                string where = site.Member.Length > 0
+                    ? $"#{obj.Id} {obj.Class}.{site.Field}.{site.Member}"
+                    : $"#{obj.Id} {obj.Class}.{site.Field}";
 
-            foreach (var (field, rows) in obj.StructLists)
-                foreach (var row in rows)
-                    foreach (var (member, value) in row)
-                        if (value.StartsWith('#') && model.Get(value[1..]) == null)
-                            Add(found, Level.Error, $"#{obj.Id} {obj.Class}.{field}.{member}",
-                                $"points at {value}, which is not in this file");
-        }
+                Add(found, Level.Error, where,
+                    site.How == HkReferences.Held.ListElement
+                        ? $"contains #{site.Target}, which is not in this file"
+                        : $"points at #{site.Target}, which is not in this file",
+                    blocksSave: true);
+            }
+    }
+
+    private static void CheckSymbolIndices(PackfileObjects objects, BehaviourGraphModel model,
+                                           List<Finding> found)
+    {
+        foreach (string unknown in SymbolIndexFixup.UnknownIndexFields(objects))
+            Add(found, Level.Warning, unknown,
+                "looks like an event or variable index but is not in the known table, so removing a symbol will refuse");
+
+        int variables = SymbolEditor.VariableNames(model).Count;
+        int events = SymbolEditor.EventNames(model).Count;
+
+        foreach (string user in SymbolIndexFixup.ReferencesAtOrAbove(objects, events: false, variables))
+            Add(found, Level.Error, user, $"but this graph declares only {variables} variables");
+        foreach (string user in SymbolIndexFixup.ReferencesAtOrAbove(objects, events: true, events))
+            Add(found, Level.Error, user, $"but this graph declares only {events} events");
     }
 
     private static void CheckSymbolIndices(string xml, BehaviourGraphModel model, List<Finding> found)
@@ -87,6 +133,82 @@ public static class GraphValidator
             Add(found, Level.Error, user, $"but this graph declares only {events} events");
     }
 
+    public static bool HasNoGenerator(StateEditor.StateRow state) =>
+        string.IsNullOrEmpty(state.GeneratorRef) || state.GeneratorRef == "null";
+
+    public readonly record struct EmptyState(string Id, string Name, string Machine)
+    {
+        public override string ToString() =>
+            $"'{(Name.Length > 0 ? Name : "#" + Id)}'" +
+            (Machine.Length > 0 ? $" in {Machine}" : "");
+    }
+
+    public static List<EmptyState> EmptyStates(BehaviourGraphModel model)
+    {
+        var found = new List<EmptyState>();
+        foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
+            foreach (var state in StateEditor.States(model, machine.Id).Where(HasNoGenerator))
+                found.Add(new EmptyState(state.Id, state.Name ?? "", machine.Str("name")));
+        return found;
+    }
+
+    private static readonly string[] LossyOnRepack =
+    {
+        "hkaLosslessCompressedAnimation",
+    };
+
+    public static string? NativeRebuildWouldLose(string xml)
+    {
+        foreach (string cls in LossyOnRepack)
+            if (xml.Contains($"class=\"{cls}\"", StringComparison.Ordinal))
+                return $"Not saved, and the original is untouched. This edit needs the file rebuilt, " +
+                       $"and this file holds a {cls}, which a native rebuild cannot write back without " +
+                       "changing it: the packed words it stores are cut short on the way through, so " +
+                       "the animation that came out would not be the one that went in. Changing " +
+                       "values on their own is written straight into the file and does not hit this.";
+        return null;
+    }
+
+    public static string? RefuseToSave(string xml) => RefuseToSave(xml, includeRepackLosses: true);
+
+    public static string? RefuseToSave(string xml, bool includeRepackLosses)
+    {
+        if (xml.Length == 0) return null;
+
+        if (includeRepackLosses && NativeRebuildWouldLose(xml) is { } lossy) return lossy;
+
+        var empty = EmptyStates(BehaviourGraphModel.Parse(xml));
+        if (empty.Count == 0) return null;
+
+        const int Show = 4;
+        string named = string.Join(", ", empty.Take(Show));
+        if (empty.Count > Show) named += $", and {empty.Count - Show} more";
+
+        return $"Not saved, and the original is untouched. {empty.Count} " +
+               $"state{(empty.Count == 1 ? " has" : "s have")} nothing to play: {named}. " +
+               "Fallout 4 crashes on load while it walks the graph, whether or not anything can " +
+               "enter the state. To fix: give each one a generator, by dragging a clip or another " +
+               "generator onto its generator slot in the graph, or delete the state itself if " +
+               "nothing needs it. Check graph lists them all.";
+    }
+
+    public static string? SaveRefusal(string xml, string sourceXml, bool includeRepackLosses = false)
+    {
+        if (RefuseToSave(xml, includeRepackLosses) is { } refused) return refused;
+
+        var sourceErrors = Check(sourceXml).Where(f => f.BlocksSave)
+                                           .Select(FindingKey).ToHashSet(StringComparer.Ordinal);
+        var blocking = Check(xml).FirstOrDefault(f => f.BlocksSave &&
+                                                      !sourceErrors.Contains(FindingKey(f)));
+        return blocking == null ? null
+            : $"Not saved, and the original is untouched. {blocking.Where}: {blocking.What}";
+    }
+
+    private static string FindingKey(Finding finding) => finding.Where + "\n" + finding.What;
+
+    public static HashSet<string> StatesWithNoGenerator(BehaviourGraphModel model) =>
+        EmptyStates(model).Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
+
     private static void CheckStateMachines(BehaviourGraphModel model, List<Finding> found)
     {
         foreach (var machine in model.Objects.Where(o => o.Class == "hkbStateMachine"))
@@ -96,20 +218,151 @@ public static class GraphValidator
 
             foreach (var group in states.GroupBy(s => s.StateId).Where(g => g.Count() > 1))
                 Add(found, Level.Error, $"#{machine.Id} {name}",
-                    $"stateId {group.Key} is used by {group.Count()} states, so transitions to it are ambiguous");
+                    $"stateId {group.Key} is used by {group.Count()} states, so transitions to it are ambiguous",
+                    blocksSave: true);
 
-            foreach (var state in states.Where(s => string.IsNullOrEmpty(s.GeneratorRef) || s.GeneratorRef == "null"))
-                Add(found, Level.Error, $"#{state.Id} state '{state.Name}'", "has no generator, so entering it plays nothing");
+            foreach (var state in states.Where(HasNoGenerator))
+                Add(found, Level.Error, $"#{state.Id} state '{state.Name}'",
+                    "has nothing to play, and Fallout 4 crashes while loading a graph that contains " +
+                    "one; give it a generator or delete the state");
 
             var ids = states.Select(s => s.StateId).ToHashSet();
             foreach (var t in StateEditor.Transitions(model, machine.Id).Where(t => !ids.Contains(t.ToStateId)))
                 Add(found, Level.Error, $"#{machine.Id} {name}",
-                    $"a {(t.Wildcard ? "wildcard " : "")}transition targets stateId {t.ToStateId}, which no state in this machine has");
+                    $"a {(t.Wildcard ? "wildcard " : "")}transition targets stateId {t.ToStateId}, which no state in this machine has",
+                    blocksSave: true);
 
             int start = machine.Int("startStateId");
             if (states.Count > 0 && start >= 0 && !ids.Contains(start))
-                Add(found, Level.Error, $"#{machine.Id} {name}", $"startStateId is {start}, which no state in this machine has");
+                Add(found, Level.Error, $"#{machine.Id} {name}",
+                    $"startStateId is {start}, which no state in this machine has", blocksSave: true);
         }
+    }
+
+    private static void CheckReachableStates(BehaviourGraphModel model, List<Finding> found)
+    {
+        var machines = model.Objects.Where(o => o.Class == "hkbStateMachine").ToList();
+        var statesByMachine = machines.ToDictionary(m => m.Id, m => StateEditor.States(model, m.Id));
+        var transitionsByMachine = machines.ToDictionary(m => m.Id,
+            m => StateEditor.Transitions(model, m.Id));
+        var enabledByMachine = statesByMachine.ToDictionary(p => p.Key,
+            p => p.Value.Where(s => s.Enabled).Select(s => s.StateId).ToHashSet());
+        var reachableByMachine = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        var checkedMachines = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var machine in machines)
+        {
+            var states = statesByMachine[machine.Id];
+            var reachable = new HashSet<int>();
+            reachableByMachine[machine.Id] = reachable;
+            if (states.Count == 0) continue;
+
+            string startMode = machine.Str("startStateMode");
+            bool randomStart = startMode is "START_STATE_MODE_RANDOM" or "2";
+            bool defaultStart = startMode.Length == 0 ||
+                                startMode is "START_STATE_MODE_DEFAULT" or "0";
+
+            bool externalEntry = (!defaultStart && !randomStart) ||
+                                 machine.Ref("startStateIdSelector") != null ||
+                                 machine.Int("syncVariableIndex") >= 0 ||
+                                 machine.Int("transitionToNextHigherStateEventId") >= 0 ||
+                                 machine.Int("transitionToNextLowerStateEventId") >= 0;
+            if (externalEntry)
+            {
+                reachable.UnionWith(states.Where(s => s.Enabled).Select(s => s.StateId));
+                continue;
+            }
+
+            int start = machine.Int("startStateId");
+
+            if (!randomStart && !states.Any(s => s.StateId == start))
+            {
+                reachable.UnionWith(states.Where(s => s.Enabled).Select(s => s.StateId));
+                continue;
+            }
+
+            var transitions = transitionsByMachine[machine.Id];
+
+            if (transitions.Count == 0)
+            {
+                reachable.UnionWith(states.Where(s => s.Enabled).Select(s => s.StateId));
+                continue;
+            }
+
+            if (randomStart) reachable.UnionWith(states.Where(s => s.Enabled).Select(s => s.StateId));
+            else if (enabledByMachine[machine.Id].Contains(start)) reachable.Add(start);
+            checkedMachines.Add(machine.Id);
+        }
+
+        for (bool grew = true; grew;)
+        {
+            grew = false;
+            foreach (var machine in machines)
+            {
+                if (ExpandReachable(reachableByMachine[machine.Id],
+                                    transitionsByMachine[machine.Id],
+                                    enabledByMachine[machine.Id]))
+                    grew = true;
+            }
+
+            foreach (var outer in machines)
+            {
+                var outerReachable = reachableByMachine[outer.Id];
+                if (outerReachable.Count == 0) continue;
+
+                var outerStates = statesByMachine[outer.Id];
+                foreach (var transition in transitionsByMachine[outer.Id]
+                             .Where(t => t.HasFlag(0x2000)))
+                {
+                    if (!transition.Wildcard && !outerReachable.Contains(transition.FromStateId))
+                        continue;
+
+                    var entered = outerStates.FirstOrDefault(s => s.StateId == transition.ToStateId);
+                    if (entered == null || !entered.Enabled) continue;
+                    var generator = model.Get(entered?.GeneratorRef.TrimStart('#'));
+                    var inner = StateRoutes.MachineUnder(model, generator, 0);
+                    if (inner == null || !reachableByMachine.TryGetValue(inner.Id, out var innerReachable))
+                        continue;
+
+                    if (enabledByMachine[inner.Id].Contains(transition.ToNestedStateId) &&
+                        innerReachable.Add(transition.ToNestedStateId))
+                        grew = true;
+                }
+            }
+        }
+
+        foreach (var machine in machines.Where(m => checkedMachines.Contains(m.Id)))
+        {
+            var states = statesByMachine[machine.Id];
+            var reachable = reachableByMachine[machine.Id];
+
+            foreach (var s in states.Where(s => s.Enabled && !reachable.Contains(s.StateId)))
+                Add(found, Level.Warning, $"#{s.Id} state '{s.Name}'",
+                    $"cannot be entered from inside this file: nothing in #{machine.Id} '{machine.Str("name")}' transitions to stateId {s.StateId}, and it is not the start state");
+        }
+    }
+
+    private static bool ExpandReachable(HashSet<int> reachable,
+                                        IReadOnlyList<StateEditor.TransitionRow> transitions,
+                                        IReadOnlySet<int> enabled)
+    {
+        bool changed = false;
+        for (bool grew = true; grew;)
+        {
+            grew = false;
+            foreach (var transition in transitions)
+            {
+                if (transition.ToStateId < 0 || !enabled.Contains(transition.ToStateId) ||
+                    reachable.Contains(transition.ToStateId))
+                    continue;
+
+                if (!transition.Wildcard && !reachable.Contains(transition.FromStateId)) continue;
+                if (transition.Wildcard && reachable.Count == 0) continue;
+                reachable.Add(transition.ToStateId);
+                changed = grew = true;
+            }
+        }
+        return changed;
     }
 
     private static void CheckBlenders(BehaviourGraphModel model, List<Finding> found)
@@ -118,9 +371,14 @@ public static class GraphValidator
             foreach (string childId in blender.Refs("children"))
             {
                 var child = model.Get(childId);
-                if (child != null && child.Class != "hkbBlenderGeneratorChild")
+                if (child == null) continue;
+                if (child.Class != "hkbBlenderGeneratorChild")
                     Add(found, Level.Error, $"#{blender.Id} {blender.Str("name")}",
-                        $"child #{childId} is a {child.Class}; a blender's children must be hkbBlenderGeneratorChild wrappers");
+                        $"child #{childId} is a {child.Class}; a blender's children must be hkbBlenderGeneratorChild wrappers",
+                        blocksSave: true);
+                else if (child.Ref("generator") == null)
+                    Add(found, Level.Error, $"#{blender.Id} {blender.Str("name")}",
+                        $"child #{childId} has no generator, so it plays nothing", blocksSave: true);
             }
     }
 
@@ -131,13 +389,9 @@ public static class GraphValidator
         foreach (var clip in model.Objects.Where(o => o.Class == "hkbClipGenerator"))
         {
             if (string.IsNullOrWhiteSpace(clip.Str("animationName")))
-                Add(found, Level.Error, $"#{clip.Id} clip '{clip.Str("name")}'", "has no animationName");
+                Add(found, Level.Error, $"#{clip.Id} clip '{clip.Str("name")}'", "has no animationName",
+                    blocksSave: true);
 
-            // An unbound MODE_USER_CONTROLLED clip sits on frame zero, which in a door, lift or
-            // periscope graph is the point: it is the rest pose the state machine sits in until an
-            // event moves it on. Those graphs declare no variables at all, so only say something
-            // when the graph does have variables and this clip could plausibly have meant to use
-            // one. Without that condition this fires on fifteen vanilla files and means nothing.
             if (clip.Str("mode") != "MODE_USER_CONTROLLED" || declaredVariables == 0) continue;
 
             var set = model.Follow(clip, "variableBindingSet");
@@ -146,6 +400,27 @@ public static class GraphValidator
             if (!driven)
                 Add(found, Level.Warning, $"#{clip.Id} clip '{clip.Str("name")}'",
                     "is MODE_USER_CONTROLLED with nothing bound to userControlledTimeFraction, so it holds frame zero");
+        }
+    }
+
+    private static void CheckClipAnimations(BehaviourGraphModel model, ProjectChain? chain, List<Finding> found)
+    {
+        if (chain == null || chain.Root.Length == 0) return;
+
+        var declared = chain.Animations.Select(ProjectChain.AnimationKey).ToHashSet();
+
+        foreach (var clip in model.Objects.Where(o => o.Class == "hkbClipGenerator"))
+        {
+            string anim = clip.Str("animationName");
+            if (string.IsNullOrWhiteSpace(anim)) continue;
+
+            string where = $"#{clip.Id} clip '{clip.Str("name")}'";
+
+            if (!File.Exists(ProjectChain.ResolvePath(chain.Root, anim)))
+                Add(found, Level.Warning, where, $"plays '{anim}', which is not on disk under {chain.Root}");
+            else if (declared.Count > 0 && !declared.Contains(ProjectChain.AnimationKey(anim)))
+                Add(found, Level.Warning, where,
+                    $"plays '{anim}', which the character file does not list, so the engine may not load it");
         }
     }
 

@@ -4,17 +4,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Adding and removing states and transitions. Sits on the same depth-aware array primitives in
-// HkxTextEdit that the binding work uses, because an element carries its own hkparam children and a
-// naive scan edits the inside of element zero.
 public static class StateEditor
 {
-    // Signatures come from vanilla files; hkxpack validates them on repack.
-    // Read out of a vanilla file, not guessed; hkxpack validates them on repack.
-    private const string StateInfoSignature = "0x39d76713";
-    private const string TransitionArraySignature = "0x704a19af";
-    private const string TimeIntervalSignature = "0x60a881e5";
-
     public sealed class StateRow
     {
         public string Id = "";
@@ -22,15 +13,22 @@ public static class StateEditor
         public string Name = "";
         public string GeneratorRef = "";
         public string TransitionsRef = "";
+        public bool Enabled = true;
     }
 
     public sealed class TransitionRow
     {
         public string ArrayId = "";
         public int Index;
+        public int FromStateId = -1;
         public int ToStateId = -1;
+        public int ToNestedStateId;
         public int EventId = -1;
+        public int Priority;
+        public int Flags;
         public bool Wildcard;
+
+        public bool HasFlag(int flag) => (Flags & flag) == flag;
     }
 
     public static List<StateRow> States(BehaviourGraphModel model, string machineId)
@@ -50,6 +48,7 @@ public static class StateEditor
                 Name = info.Str("name"),
                 GeneratorRef = info.Str("generator"),
                 TransitionsRef = info.Str("transitions"),
+                Enabled = !string.Equals(info.Str("enable"), "false", StringComparison.OrdinalIgnoreCase),
             });
         }
         return rows;
@@ -61,7 +60,7 @@ public static class StateEditor
         var machine = model.Get(machineId);
         if (machine == null) return rows;
 
-        foreach (var (arrayRef, wildcard) in Arrays(model, machine))
+        foreach (var (arrayRef, wildcard, from) in Arrays(model, machine))
         {
             var array = model.Get(arrayRef);
             if (array == null || !array.StructLists.TryGetValue("transitions", out var elements)) continue;
@@ -69,12 +68,19 @@ public static class StateEditor
             {
                 elements[i].TryGetValue("toStateId", out var to);
                 elements[i].TryGetValue("eventId", out var ev);
+                elements[i].TryGetValue("toNestedStateId", out var nested);
+                elements[i].TryGetValue("priority", out var priority);
+                elements[i].TryGetValue("flags", out var flags);
                 rows.Add(new TransitionRow
                 {
                     ArrayId = array.Id,
                     Index = i,
+                    FromStateId = from,
                     ToStateId = int.TryParse(to, out int t) ? t : -1,
+                    ToNestedStateId = int.TryParse(nested, out int n) ? n : 0,
                     EventId = int.TryParse(ev, out int e) ? e : -1,
+                    Priority = int.TryParse(priority, out int p) ? p : 0,
+                    Flags = TransitionFlags(flags),
                     Wildcard = wildcard,
                 });
             }
@@ -82,16 +88,32 @@ public static class StateEditor
         return rows;
     }
 
-    private static IEnumerable<(string Ref, bool Wildcard)> Arrays(BehaviourGraphModel model, HkObject machine)
+    private static int TransitionFlags(string? text)
+    {
+        text = text?.Trim() ?? "";
+        if (int.TryParse(text, out int number)) return number;
+
+        var declared = HavokClassTypes.Shipped
+            .Enum("hkbStateMachineTransitionInfo", "TransitionFlags");
+        if (declared == null) return 0;
+
+        int bits = 0;
+        foreach (string part in text.Split('|', StringSplitOptions.RemoveEmptyEntries))
+            if (declared.TryGetValue(part.Trim(), out long value)) bits |= (int)value;
+        return bits;
+    }
+
+    private static IEnumerable<(string Ref, bool Wildcard, int FromStateId)> Arrays(
+        BehaviourGraphModel model, HkObject machine)
     {
         string wild = machine.Ref("wildcardTransitions") ?? "";
-        if (wild.Length > 0) yield return (wild, true);
+        if (wild.Length > 0) yield return (wild, true, -1);
 
         foreach (string id in machine.Refs("states"))
         {
             var info = model.Get(id);
             string own = info?.Ref("transitions") ?? "";
-            if (own.Length > 0) yield return (own, false);
+            if (own.Length > 0) yield return (own, false, info?.Int("stateId") ?? -1);
         }
     }
 
@@ -101,8 +123,6 @@ public static class StateEditor
         return used.Count == 0 ? 0 : used.Max() + 1;
     }
 
-    // Adds a state to a machine, pointing at an existing generator. Returns the new object id and the
-    // state id the engine will address it by.
     public static string AddState(string xml, string machineId, string name, string generatorRef,
                                   out string newObjectId, out int newStateId)
     {
@@ -120,17 +140,16 @@ public static class StateEditor
             "            <hkparam name=\"exitNotifyEvents\">null</hkparam>\n" +
             "            <hkparam name=\"transitions\">null</hkparam>\n" +
             $"            <hkparam name=\"generator\">{generatorRef}</hkparam>\n" +
-            $"            <hkparam name=\"name\">{name}</hkparam>\n" +
+            $"            <hkparam name=\"name\">{HkxTextEdit.EscapeXml(name)}</hkparam>\n" +
             $"            <hkparam name=\"stateId\">{newStateId}</hkparam>\n" +
             "            <hkparam name=\"probability\">1.0</hkparam>\n" +
             "            <hkparam name=\"enable\">true</hkparam>";
 
-        xml = HkxTextEdit.AddObject(xml, "hkbStateMachineStateInfo", StateInfoSignature, inner, out newObjectId);
+        xml = HkxTextEdit.AddObject(xml, "hkbStateMachineStateInfo",
+                                    HkxSignatures.Of("hkbStateMachineStateInfo"), inner, out newObjectId);
         return HkxTextEdit.ArrayAppend(xml, machineId, "states", $"                #{newObjectId}");
     }
 
-    // Removing a state also strips every transition that pointed at it, otherwise the graph keeps
-    // edges to a state id that no longer exists.
     public static string RemoveState(string xml, string machineId, string stateObjectId, out int strippedTransitions)
     {
         var model = BehaviourGraphModel.Parse(xml);
@@ -153,8 +172,6 @@ public static class StateEditor
         return HkxTextEdit.ArrayRemoveAt(xml, machineId, "states", position);
     }
 
-    // Adds a transition. Wildcard transitions live on the machine's own array and can fire from any
-    // state; a normal one lives on the source state's array.
     public static string AddTransition(string xml, string machineId, string fromStateObjectId,
                                        int toStateId, int eventId, string effectRef)
     {
@@ -193,13 +210,13 @@ public static class StateEditor
             return HkxTextEdit.ArrayAppend(xml, arrayRef, "transitions", element);
 
         string inner = $"            <hkparam name=\"transitions\" numelements=\"1\">\n{element}\n            </hkparam>";
-        xml = HkxTextEdit.AddObject(xml, "hkbStateMachineTransitionInfoArray", TransitionArraySignature,
-                                    inner, out string arrayId);
+        xml = HkxTextEdit.AddObject(xml, "hkbStateMachineTransitionInfoArray",
+                                    HkxSignatures.Of("hkbStateMachineTransitionInfoArray"), inner, out string arrayId);
         return HkxTextEdit.SetParam(xml, owner, field, "#" + arrayId);
     }
 
     private static string Interval(string name) =>
-        $"                        <hkobject class=\"hkbStateMachineTimeInterval\" name=\"{name}\" signature=\"{TimeIntervalSignature}\">\n" +
+        $"                        <hkobject class=\"hkbStateMachineTimeInterval\" name=\"{name}\" signature=\"{HkxSignatures.Of("hkbStateMachineTimeInterval")}\">\n" +
         "                            <hkparam name=\"enterEventId\">-1</hkparam>\n" +
         "                            <hkparam name=\"exitEventId\">-1</hkparam>\n" +
         "                            <hkparam name=\"enterTime\">0.0</hkparam>\n" +

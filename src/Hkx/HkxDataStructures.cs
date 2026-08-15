@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 
@@ -40,6 +41,23 @@ public class HkxTrackData
     public List<Vector3> Translations { get; set; } = new();
     public List<Quaternion> Rotations { get; set; } = new();
     public List<Vector3> Scales { get; set; } = new();
+
+    public bool[] TranslationAnimated { get; } = new bool[3];
+    public bool[] ScaleAnimated { get; } = new bool[3];
+    public bool RotationAnimated { get; set; }
+
+    public bool AnyTranslationAnimated => TranslationAnimated[0] || TranslationAnimated[1] || TranslationAnimated[2];
+
+    public static bool IsScaled(HkxTrackData track)
+    {
+        foreach (var s in track.Scales)
+            if (Math.Abs(s.X - 1f) > ScaleEpsilon
+             || Math.Abs(s.Y - 1f) > ScaleEpsilon
+             || Math.Abs(s.Z - 1f) > ScaleEpsilon) return true;
+        return false;
+    }
+
+    public const float ScaleEpsilon = 0.0001f;
 }
 
 public class HkxAnnotation
@@ -65,7 +83,27 @@ public class HkxAnimationData
     public string OriginalSkeletonName { get; set; } = "";
     public int BlendHint { get; set; }
 
+    public string AnimationClass { get; set; } = "";
+
+    public static readonly string[] DecodedAnimationClasses =
+    {
+        "hkaSplineCompressedAnimation",
+        "hkaLosslessCompressedAnimation",
+        "hkaInterleavedUncompressedAnimation",
+    };
+
+    public static string SupportedAnimationClasses => string.Join(" and ", DecodedAnimationClasses);
+
+    public bool HasUnsupportedAnimation =>
+        AnimationClass.Length > 0 && Array.IndexOf(DecodedAnimationClasses, AnimationClass) < 0;
+
     public HkxSkeleton? Skeleton { get; set; }
+
+    public int FrameAt(float fraction)
+    {
+        if (NumFrames <= 1) return 0;
+        return (int)Math.Round(Math.Clamp(fraction, 0f, 1f) * (NumFrames - 1));
+    }
 
     public string GetSummary()
     {

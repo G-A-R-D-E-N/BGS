@@ -4,13 +4,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Structural edits for graph variables and their bindings. Everything here works on hkxpack's text
-// form, so a repack is still what writes the .hkx.
 public static class BindingEditor
 {
-    // From a vanilla file that already contains one; hkxpack rejects a wrong signature.
-    private const string BindingSetSignature = "0xe942f339";
-
     public sealed class Binding
     {
         public string SetId = "";
@@ -55,7 +50,6 @@ public static class BindingEditor
         "                    <hkparam name=\"bindingType\">BINDING_TYPE_VARIABLE</hkparam>\n" +
         "                </hkobject>";
 
-    // Adds a binding to the owner, creating the owner's binding set if it has none.
     public static string AddBinding(string xml, string ownerId, string memberPath, int variableIndex)
     {
         if (string.IsNullOrWhiteSpace(memberPath)) throw new ArgumentException("member path is empty");
@@ -71,7 +65,7 @@ public static class BindingEditor
             "            </hkparam>\n" +
             "            <hkparam name=\"indexOfBindingToEnable\">-1</hkparam>";
 
-        xml = HkxTextEdit.AddObject(xml, "hkbVariableBindingSet", BindingSetSignature, inner, out string newId);
+        xml = HkxTextEdit.AddObject(xml, "hkbVariableBindingSet", HkxSignatures.Of("hkbVariableBindingSet"), inner, out string newId);
         return HkxTextEdit.SetParam(xml, ownerId, "variableBindingSet", "#" + newId);
     }
 
@@ -79,8 +73,6 @@ public static class BindingEditor
     {
         xml = HkxTextEdit.ArrayRemoveAt(xml, setId, "bindings", index);
 
-        // A set with no bindings left is dead weight; unhook whoever points at it rather than
-        // leaving the engine to walk an empty set.
         if (CountBindings(xml, setId) == 0)
             foreach (string owner in OwnersOf(xml, setId))
                 xml = HkxTextEdit.SetParam(xml, owner, "variableBindingSet", "null");
@@ -88,10 +80,6 @@ public static class BindingEditor
         return xml;
     }
 
-    // Declares a new float variable and returns its index. Delegates, because a variable has to be
-    // written into three parallel arrays and an earlier version of this silently skipped the type
-    // declaration: it tested Lists for variableInfos, which is a struct list, so the test was always
-    // false and the variable came out with no declared type.
     public static string AddVariable(string xml, string name, out int index) =>
         SymbolEditor.AddVariable(xml, name, SymbolEditor.VariableType.Real, out index);
 

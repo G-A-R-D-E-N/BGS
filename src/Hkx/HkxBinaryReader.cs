@@ -1,36 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Text;
+using OpenCommonwealth.Services;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-/// <summary>
-/// Native C# reader for Fallout 4 Havok 2014 binary packfiles (.hkx).
-/// Matches layout documented in anim_fo4.py and verified against real FO4 files.
-///
-/// hk_2014.1.0-r1 packfile layout (64-bit pointers):
-///   0x00-0x3F  File header (64 bytes)
-///   0x40-0x4F  Padding (16 bytes)
-///   0x50+      3 section headers (0x40 bytes each): __classnames__, __types__, __data__
-///
-/// hkaSplineCompressedAnimation struct offsets (from object start):
-///   +0x10  type (4)
-///   +0x14  duration (float)
-///   +0x18  numberOfTransformTracks (int32)
-///   +0x1C  numberOfFloatTracks (int32)
-///   +0x20  extractedMotion (ptr8)
-///   +0x28  annotationTracks (hkArray - 16 bytes)
-///   +0x38  numFrames (int32)
-///   +0x3C  numBlocks (int32)
-///   +0x40  maxFramesPerBlock (int32)
-///   +0x44  maskAndQuantizationSize (int32)
-///   +0x48  blockDuration (float)
-///   +0x50  frameDuration (float)
-///   +0x58  blockOffsets (hkArray&lt;u32&gt;)
-///   +0x98  data (hkArray&lt;u8&gt;)
-/// </summary>
 public class HkxBinaryReader
 {
     private static readonly byte[] HkxMagic = new byte[] { 0x57, 0xE0, 0xE0, 0x57 };
@@ -109,13 +86,27 @@ public class HkxBinaryReader
 
     public HkxAnimationData ReadAnimation(string filepath)
     {
-        byte[] data = File.ReadAllBytes(filepath);
-        return ParseHkx(data);
+        byte[] data = InputFilePolicy.ReadHkx(filepath);
+        var parsed = ParseHkx(data);
+
+        if (parsed.HasUnsupportedAnimation)
+            throw new NotSupportedException(
+                $"unsupported animation class: {parsed.AnimationClass}. " +
+                $"Only {HkxAnimationData.SupportedAnimationClasses} are decoded, so no frame data was read from " +
+                Path.GetFileName(filepath));
+
+        return parsed;
+    }
+
+    public bool TryReadAnimation(string filepath, out HkxAnimationData data)
+    {
+        data = ParseHkx(InputFilePolicy.ReadHkx(filepath));
+        return !data.HasUnsupportedAnimation;
     }
 
     public HkxSkeleton ReadSkeleton(string filepath)
     {
-        byte[] data = File.ReadAllBytes(filepath);
+        byte[] data = InputFilePolicy.ReadHkx(filepath);
         var anim = ParseHkx(data);
         if (anim.Skeleton != null) return anim.Skeleton;
         throw new InvalidDataException($"No skeleton (hkaSkeleton) found in: {filepath}");
@@ -128,15 +119,16 @@ public class HkxBinaryReader
     private struct SectionInfo
     {
         public int DataStart;
-        public int LocalFixupAbs;   // abs file offset
+        public int LocalFixupAbs;
         public int GlobalFixupAbs;
         public int VirtualFixupAbs;
         public int ExportsAbs;
         public int End;
     }
 
-    private HkxAnimationData ParseHkx(byte[] data)
+    internal HkxAnimationData ParseHkx(byte[] data)
     {
+        InputFilePolicy.EnsureHkx(data.LongLength);
         if (data.Length < 64)
             throw new InvalidDataException("HKX file too small.");
         if (data[0] != HkxMagic[0] || data[1] != HkxMagic[1] ||
@@ -147,7 +139,6 @@ public class HkxBinaryReader
         if (version != 11)
             throw new InvalidDataException($"Unsupported HKX packfile version {version} (expected 11 for FO4).");
 
-        // Section headers start at 0x50 (after 64-byte file header + 16-byte padding)
         const int SecHdrBase = 0x50;
         const int SecHdrStride = 0x40;
 
@@ -182,15 +173,12 @@ public class HkxBinaryReader
         int cnStart = cnSec.DataStart;
         int dataAbs = dataSec.DataStart;
 
-        // ── Build local fixup map (src_rel -> dst_rel within __data__) ──
         var fixups = ParseLocalFixups(data, dataSec);
 
-        // ── Build virtual fixup map (obj_rel -> class_name) ──
         var objectClasses = ParseVirtualFixups(data, dataSec, cnStart);
 
         var result = new HkxAnimationData();
 
-        // ── Parse hkaSkeleton if present (select the skeleton with the most bones to avoid loading the ragdoll skeleton) ──
         var skelOffsets = new List<int>();
         int posSkel = dataSec.VirtualFixupAbs;
         int endSkel = dataSec.ExportsAbs;
@@ -226,17 +214,42 @@ public class HkxBinaryReader
             result.BoneNames = new List<string>(bestSkel.BoneNames);
         }
 
-        // ── Parse hkaSplineCompressedAnimation if present ──
-        if (objectClasses.TryGetValue("hkaSplineCompressedAnimation", out int animRel))
+        var byOffset = ParseObjectOffsets(data, dataSec, cnStart);
+        int animRel = -1;
+
+        if (objectClasses.TryGetValue("hkaAnimationBinding", out int boundRel))
         {
-            ParseSplineAnimation(data, dataAbs, animRel, fixups, result);
-        }
-        else if (result.Skeleton != null)
-        {
-            result.OriginalSkeletonName = result.Skeleton.Name;
+            var pointers = ParseGlobalFixups(data, dataSec);
+            if (pointers.TryGetValue(boundRel + 0x18, out int target) && byOffset.ContainsKey(target))
+                animRel = target;
         }
 
-        // ── Parse hkaAnimationBinding if present ──
+        if (animRel < 0)
+            foreach (string wanted in HkxAnimationData.DecodedAnimationClasses)
+                if (objectClasses.TryGetValue(wanted, out int found)) { animRel = found; break; }
+
+        result.AnimationClass = animRel >= 0 && byOffset.TryGetValue(animRel, out string? bound)
+            ? bound
+            : objectClasses.Keys.FirstOrDefault(
+                  c => c.StartsWith("hka", StringComparison.Ordinal) &&
+                       c.EndsWith("Animation", StringComparison.Ordinal)) ?? "";
+
+        switch (result.AnimationClass)
+        {
+            case "hkaSplineCompressedAnimation":
+                ParseSplineAnimation(data, dataAbs, animRel, fixups, result);
+                break;
+            case "hkaLosslessCompressedAnimation":
+                ParseLosslessAnimation(data, dataAbs, animRel, fixups, result);
+                break;
+            case "hkaInterleavedUncompressedAnimation":
+                ParseInterleavedAnimation(data, dataAbs, animRel, fixups, result);
+                break;
+            default:
+                if (result.Skeleton != null) result.OriginalSkeletonName = result.Skeleton.Name;
+                break;
+        }
+
         if (objectClasses.TryGetValue("hkaAnimationBinding", out int bindRel))
         {
             ParseAnimationBinding(data, dataAbs, bindRel, fixups, result);
@@ -245,7 +258,6 @@ public class HkxBinaryReader
         return result;
     }
 
-    /// <summary>Parse local fixup table: maps src_rel -> dst_rel within __data__.</summary>
     private static Dictionary<int, int> ParseLocalFixups(byte[] data, SectionInfo sec)
     {
         var map = new Dictionary<int, int>();
@@ -262,10 +274,41 @@ public class HkxBinaryReader
         return map;
     }
 
-    /// <summary>Parse virtual fixup table: maps obj_rel -> class_name.</summary>
+    private static Dictionary<int, string> ParseObjectOffsets(byte[] data, SectionInfo sec, int cnStart)
+    {
+        var map = new Dictionary<int, string>();
+        int pos = sec.VirtualFixupAbs;
+        int end = sec.ExportsAbs;
+        while (pos + 12 <= end && pos + 12 <= data.Length)
+        {
+            int src = ReadI32(data, pos);
+            int nameOff = ReadI32(data, pos + 8);
+            if (src == unchecked((int)0xFFFFFFFF)) break;
+            map[src] = ReadNullTermString(data, cnStart + nameOff, 256);
+            pos += 12;
+        }
+        return map;
+    }
+
+    private static Dictionary<int, int> ParseGlobalFixups(byte[] data, SectionInfo sec)
+    {
+        var map = new Dictionary<int, int>();
+        int pos = sec.GlobalFixupAbs;
+        int end = sec.VirtualFixupAbs;
+        while (pos + 12 <= end && pos + 12 <= data.Length)
+        {
+            int src = ReadI32(data, pos);
+            int dst = ReadI32(data, pos + 8);
+            if (src == unchecked((int)0xFFFFFFFF)) { pos += 12; continue; }
+            map[src] = dst;
+            pos += 12;
+        }
+        return map;
+    }
+
     private static Dictionary<string, int> ParseVirtualFixups(byte[] data, SectionInfo sec, int cnStart)
     {
-        // Returns LAST class name to object offset (first wins for duplicates)
+
         var map = new Dictionary<string, int>(StringComparer.Ordinal);
         int pos = sec.VirtualFixupAbs;
         int end = sec.ExportsAbs;
@@ -288,23 +331,15 @@ public class HkxBinaryReader
 
     private static HkxSkeleton? ParseSkeleton(byte[] data, int dataAbs, int skelRel, Dictionary<int, int> fixups)
     {
-        // hkaSkeleton layout (64-bit P=8, hk_2014):
-        //   +0x00  vtable (8)
-        //   +0x08  memSizeAndFlags (8)
-        //   +0x10  name (ptr8 -> string)
-        //   +0x18  parentIndices (hkArray<int16>)  -> ptr(8) + count(4) + cap(4) = 16
-        //   +0x28  bones (hkArray<hkaBone*>)
-        //   +0x38  referencePose (hkArray<hkQsTransform>)
+
         int a = dataAbs + skelRel;
         if (a + 0x50 > data.Length) return null;
 
         var skel = new HkxSkeleton();
 
-        // Name
         if (fixups.TryGetValue(skelRel + 0x10, out int nameRel))
             skel.Name = ReadNullTermString(data, dataAbs + nameRel, 256);
 
-        // Parent indices (hkArray<int16>)
         int parCount = SafeReadI32(data, a + 0x20);
         if (fixups.TryGetValue(skelRel + 0x18, out int parDataRel))
         {
@@ -313,8 +348,6 @@ public class HkxBinaryReader
                 skel.ParentIndices.Add(BitConverter.ToInt16(data, parAbs + i * 2));
         }
 
-        // Bones array (hkArray<hkaBone>)
-        // hkaBone: ptr(8) to name string + lockTranslation(4) + pad(4) = 0x10 bytes
         int boneCount = SafeReadI32(data, a + 0x30);
         if (fixups.TryGetValue(skelRel + 0x28, out int bonesDataRel))
         {
@@ -329,7 +362,6 @@ public class HkxBinaryReader
             }
         }
 
-        // Reference pose (hkArray<hkQsTransform>) — 48 bytes per entry
         int poseCount = SafeReadI32(data, a + 0x40);
         if (fixups.TryGetValue(skelRel + 0x38, out int poseDataRel))
         {
@@ -374,7 +406,6 @@ public class HkxBinaryReader
         if (anim.NumFrames == 0 && anim.FrameDuration > 0 && anim.Duration > 0)
             anim.NumFrames = (int)Math.Round(anim.Duration / anim.FrameDuration) + 1;
 
-        // blockOffsets: hkArray<u32> at anim+0x58
         int blockOffsetsCount = SafeReadI32(data, a + 0x60);
         List<int> blockOffsets = new();
         if (fixups.TryGetValue(animRel + 0x58, out int boRel))
@@ -384,22 +415,69 @@ public class HkxBinaryReader
                 blockOffsets.Add(SafeReadI32(data, boAbs + i * 4));
         }
 
-        // data blob: hkArray<u8> at anim+0x98
         int blobCount = SafeReadI32(data, a + 0xA0);
         int blobAbs = -1;
         if (fixups.TryGetValue(animRel + 0x98, out int blobRel))
             blobAbs = dataAbs + blobRel;
 
-        // Parse annotation track names (bone names) at anim+0x28
         ParseAnnotationTracks(data, dataAbs, animRel + 0x28, fixups, anim);
 
-        // Decompress spline data
         if (blobAbs > 0 && blockOffsets.Count > 0 && anim.NumTracks > 0 && anim.NumFrames > 0)
         {
             DecompressSpline(data, blobAbs, blobCount, anim.NumTracks, anim.NumFrames,
                 anim.NumBlocks, anim.MaxFramesPerBlock, blockOffsets, maskAndQuantSize, anim);
         }
     }
+
+    private static void ParseInterleavedAnimation(byte[] data, int dataAbs, int animRel,
+        Dictionary<int, int> fixups, HkxAnimationData anim)
+    {
+        int a = dataAbs + animRel;
+        if (a + 0x48 > data.Length) return;
+
+        anim.Duration = ReadF32(data, a + 0x14);
+        anim.NumTracks = SafeReadI32(data, a + 0x18);
+
+        int transforms = SafeReadI32(data, a + 0x40);
+        if (anim.NumTracks <= 0 || transforms <= 0) return;
+
+        anim.NumFrames = transforms / anim.NumTracks;
+        anim.NumBlocks = 1;
+        anim.MaxFramesPerBlock = anim.NumFrames;
+        anim.BlockDuration = anim.Duration;
+        if (anim.NumFrames > 1 && anim.Duration > 0)
+            anim.FrameDuration = anim.Duration / (anim.NumFrames - 1);
+
+        ParseAnnotationTracks(data, dataAbs, animRel + 0x28, fixups, anim);
+
+        if (!fixups.TryGetValue(animRel + 0x38, out int runRel)) return;
+        int run = dataAbs + runRel;
+
+        for (int t = 0; t < anim.NumTracks; t++)
+        {
+
+            var track = new HkxTrackData { RotationAnimated = true };
+            for (int c = 0; c < 3; c++)
+            {
+                track.TranslationAnimated[c] = true;
+                track.ScaleAnimated[c] = true;
+            }
+
+            for (int f = 0; f < anim.NumFrames; f++)
+            {
+                int p = run + (f * anim.NumTracks + t) * QsTransformSize;
+                if (p + QsTransformSize > data.Length) break;
+
+                track.Translations.Add(new Vector3(ReadF32(data, p), ReadF32(data, p + 4), ReadF32(data, p + 8)));
+                track.Rotations.Add(new Quaternion(ReadF32(data, p + 16), ReadF32(data, p + 20),
+                                                   ReadF32(data, p + 24), ReadF32(data, p + 28)));
+                track.Scales.Add(new Vector3(ReadF32(data, p + 32), ReadF32(data, p + 36), ReadF32(data, p + 40)));
+            }
+            anim.Tracks.Add(track);
+        }
+    }
+
+    public const int QsTransformSize = 48;
 
     private static void ParseAnnotationTracks(byte[] data, int dataAbs, int arrRel,
         Dictionary<int, int> fixups, HkxAnimationData anim)
@@ -408,7 +486,7 @@ public class HkxBinaryReader
         if (count <= 0) return;
         if (!fixups.TryGetValue(arrRel, out int contentRel)) return;
 
-        const int AnnotTrackStride = 0x18; // ptr(8) + hkArray(16)
+        const int AnnotTrackStride = 0x18;
         for (int i = 0; i < count; i++)
         {
             int trackRel = contentRel + i * AnnotTrackStride;
@@ -417,7 +495,6 @@ public class HkxBinaryReader
                 name = ReadNullTermString(data, dataAbs + nameRel, 256);
             anim.BoneNames.Add(name);
 
-            // Annotation events at trackRel+0x08
             int evtCount = SafeReadI32(data, dataAbs + trackRel + 0x10);
             if (evtCount > 0 && fixups.TryGetValue(trackRel + 0x08, out int evtRel))
             {
@@ -435,11 +512,173 @@ public class HkxBinaryReader
         }
     }
 
+    private const int LosslessDuration = 20, LosslessTransformTracks = 24, LosslessNumFrames = 216;
+
+    private const int AnimationAnnotationTracks = 0x28;
+    private const int LosslessDynamicTranslations = 56, LosslessStaticTranslations = 72, LosslessTranslationWords = 88;
+    private const int LosslessDynamicRotations = 104, LosslessStaticRotations = 120, LosslessRotationWords = 136;
+    private const int LosslessDynamicScales = 152, LosslessStaticScales = 168, LosslessScaleWords = 184;
+
+    private const int TrackClear = 0, TrackStatic = 1, TrackDynamic = 2;
+
+    private static void ParseLosslessAnimation(byte[] data, int dataAbs, int animRel,
+        Dictionary<int, int> fixups, HkxAnimationData anim)
+    {
+        int a = dataAbs + animRel;
+        if (a + LosslessNumFrames + 4 > data.Length) return;
+
+        anim.Duration  = ReadF32(data, a + LosslessDuration);
+        anim.NumTracks = SafeReadI32(data, a + LosslessTransformTracks);
+        anim.NumFrames = SafeReadI32(data, a + LosslessNumFrames);
+        if (anim.NumFrames <= 0 || anim.NumTracks <= 0) return;
+
+        anim.NumBlocks = 1;
+        anim.MaxFramesPerBlock = anim.NumFrames;
+        anim.BlockDuration = anim.Duration;
+        if (anim.NumFrames > 1 && anim.Duration > 0)
+            anim.FrameDuration = anim.Duration / (anim.NumFrames - 1);
+
+        ParseAnnotationTracks(data, dataAbs, animRel + AnimationAnnotationTracks, fixups, anim);
+
+        var dynamicT = ReadFloats(data, dataAbs, animRel + LosslessDynamicTranslations, fixups);
+        var staticT  = ReadFloats(data, dataAbs, animRel + LosslessStaticTranslations, fixups);
+        var wordsT   = ReadWords64(data, dataAbs, animRel + LosslessTranslationWords, fixups);
+        var dynamicR = ReadQuaternions(data, dataAbs, animRel + LosslessDynamicRotations, fixups);
+        var staticR  = ReadQuaternions(data, dataAbs, animRel + LosslessStaticRotations, fixups);
+        var wordsR   = ReadWords16(data, dataAbs, animRel + LosslessRotationWords, fixups);
+        var dynamicS = ReadFloats(data, dataAbs, animRel + LosslessDynamicScales, fixups);
+        var staticS  = ReadFloats(data, dataAbs, animRel + LosslessStaticScales, fixups);
+        var wordsS   = ReadWords64(data, dataAbs, animRel + LosslessScaleWords, fixups);
+
+        int frames = anim.NumFrames;
+
+        int strideT = dynamicT.Count / frames;
+        int strideR = dynamicR.Count / frames;
+        int strideS = dynamicS.Count / frames;
+
+        for (int t = 0; t < anim.NumTracks; t++)
+        {
+            ulong wordT = t < wordsT.Count ? wordsT[t] : 0;
+            ulong wordR = t < wordsR.Count ? wordsR[t] : 0;
+            ulong wordS = t < wordsS.Count ? wordsS[t] : 0;
+
+            var track = new HkxTrackData();
+            for (int c = 0; c < 3; c++)
+            {
+                track.TranslationAnimated[c] = LosslessType(wordT, c) != TrackClear;
+                track.ScaleAnimated[c] = LosslessType(wordS, c) != TrackClear;
+            }
+            track.RotationAnimated = LosslessType(wordR, 0) != TrackClear;
+
+            for (int f = 0; f < frames; f++)
+            {
+                track.Translations.Add(new Vector3(
+                    LosslessValue(wordT, 0, f, strideT, dynamicT, staticT, 0f),
+                    LosslessValue(wordT, 1, f, strideT, dynamicT, staticT, 0f),
+                    LosslessValue(wordT, 2, f, strideT, dynamicT, staticT, 0f)));
+
+                track.Scales.Add(new Vector3(
+                    LosslessValue(wordS, 0, f, strideS, dynamicS, staticS, 1f),
+                    LosslessValue(wordS, 1, f, strideS, dynamicS, staticS, 1f),
+                    LosslessValue(wordS, 2, f, strideS, dynamicS, staticS, 1f)));
+
+                track.Rotations.Add(LosslessRotation(wordR, f, strideR, dynamicR, staticR));
+            }
+            anim.Tracks.Add(track);
+        }
+    }
+
+    public static int LosslessField(ulong word, int component) => (int)((word >> (component * 16)) & 0xFFFF);
+
+    public static int LosslessOffset(ulong word, int component) => (LosslessField(word, component) >> 2) & 0x3FFF;
+
+    public static int LosslessType(ulong word, int component) => LosslessField(word, component) & 3;
+
+    public static float LosslessValue(ulong word, int component, int frame, int stride,
+                                      List<float> dynamic, List<float> constant, float fallback)
+    {
+        int offset = LosslessOffset(word, component);
+
+        switch (LosslessType(word, component))
+        {
+            case TrackStatic:
+                return offset < constant.Count ? constant[offset] : fallback;
+            case TrackDynamic:
+                int index = offset + frame * stride;
+                return index >= 0 && index < dynamic.Count ? dynamic[index] : fallback;
+            default:
+                return fallback;
+        }
+    }
+
+    private static Quaternion LosslessRotation(ulong word, int frame, int stride,
+                                               List<Quaternion> dynamic, List<Quaternion> constant)
+    {
+        int field = LosslessField(word, 0);
+        int offset = (field >> 2) & 0x3FFF;
+
+        switch (field & 3)
+        {
+            case TrackStatic:
+                return offset < constant.Count ? constant[offset] : Quaternion.Identity;
+            case TrackDynamic:
+                int index = offset + frame * stride;
+                return index >= 0 && index < dynamic.Count ? dynamic[index] : Quaternion.Identity;
+            default:
+                return Quaternion.Identity;
+        }
+    }
+
+    private static int ArrayAt(byte[] data, int dataAbs, int memberRel,
+                               Dictionary<int, int> fixups, out int count)
+    {
+        count = SafeReadI32(data, dataAbs + memberRel + 8);
+        if (count <= 0 || !fixups.TryGetValue(memberRel, out int contentRel)) { count = 0; return 0; }
+        return dataAbs + contentRel;
+    }
+
+    private static List<float> ReadFloats(byte[] data, int dataAbs, int memberRel, Dictionary<int, int> fixups)
+    {
+        int at = ArrayAt(data, dataAbs, memberRel, fixups, out int count);
+        var list = new List<float>(count);
+        for (int i = 0; i < count; i++) list.Add(ReadF32(data, at + i * 4));
+        return list;
+    }
+
+    private static List<Quaternion> ReadQuaternions(byte[] data, int dataAbs, int memberRel, Dictionary<int, int> fixups)
+    {
+        int at = ArrayAt(data, dataAbs, memberRel, fixups, out int count);
+        var list = new List<Quaternion>(count);
+        for (int i = 0; i < count; i++)
+        {
+            int p = at + i * 16;
+            list.Add(new Quaternion(ReadF32(data, p), ReadF32(data, p + 4), ReadF32(data, p + 8), ReadF32(data, p + 12)));
+        }
+        return list;
+    }
+
+    private static List<ulong> ReadWords64(byte[] data, int dataAbs, int memberRel, Dictionary<int, int> fixups)
+    {
+        int at = ArrayAt(data, dataAbs, memberRel, fixups, out int count);
+        var list = new List<ulong>(count);
+        for (int i = 0; i < count; i++)
+            list.Add(CanRead(data, at + i * 8, 8) ? BitConverter.ToUInt64(data, at + i * 8) : 0UL);
+        return list;
+    }
+
+    private static List<ulong> ReadWords16(byte[] data, int dataAbs, int memberRel, Dictionary<int, int> fixups)
+    {
+        int at = ArrayAt(data, dataAbs, memberRel, fixups, out int count);
+        var list = new List<ulong>(count);
+        for (int i = 0; i < count; i++)
+            list.Add(CanRead(data, at + i * 2, 2) ? BitConverter.ToUInt16(data, at + i * 2) : (ulong)0);
+        return list;
+    }
+
     private static void ParseAnimationBinding(byte[] data, int dataAbs, int bindRel,
         Dictionary<int, int> fixups, HkxAnimationData anim)
     {
-        // +0x10  originalSkeletonName (ptr)
-        // +0x20  transformTrackToBoneIndices (hkArray<int16>)
+
         if (fixups.TryGetValue(bindRel + 0x10, out int nameRel))
             anim.OriginalSkeletonName = ReadNullTermString(data, dataAbs + nameRel, 256);
 
@@ -470,7 +709,6 @@ public class HkxBinaryReader
             int framesInBlock = (blockIdx == numBlocks - 1) ? (numFrames - firstFrame) : maxFramesPerBlock;
             if (framesInBlock <= 0) continue;
 
-            // Guard: need 4*numTracks bytes for masks
             if (!CanRead(data, blockStart, 4 * numTracks)) continue;
 
             var masks = new TrackMask[numTracks];
@@ -487,7 +725,13 @@ public class HkxBinaryReader
                 var mask  = masks[ti];
                 var track = anim.Tracks[ti];
 
-                // ── POSITION ──
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    if (mask.GetPosType(axis) != "identity") track.TranslationAnimated[axis] = true;
+                    if (mask.GetScaleType(axis) != "identity") track.ScaleAnimated[axis] = true;
+                }
+                if (mask.GetRotType() != "identity") track.RotationAnimated = true;
+
                 var posFrames = new List<Vector3>(framesInBlock);
                 if (mask.HasAnyPosSpline())
                 {
@@ -581,7 +825,6 @@ public class HkxBinaryReader
                 off = Align(off, 4);
                 track.Translations.AddRange(posFrames);
 
-                // ── ROTATION ──
                 var rotFrames = new List<Quaternion>(framesInBlock);
                 string rotType = mask.GetRotType();
                 int qfmt   = mask.RotQuant;
@@ -632,7 +875,6 @@ public class HkxBinaryReader
                 off = Align(off, 4);
                 track.Rotations.AddRange(rotFrames);
 
-                // ── SCALE ──
                 var scaleFrames = new List<Vector3>(framesInBlock);
                 if (mask.HasAnyScaleSpline())
                 {
@@ -823,66 +1065,14 @@ public class HkxBinaryReader
 
     #region B-Spline Evaluation
 
-    private static int FindKnotSpan(int degree, float t, int numCp, float[] knots)
-    {
-        if (numCp <= 0 || knots.Length == 0) return 0;
-        if (t >= knots[numCp]) return numCp - 1;
-        int lo = degree, hi = numCp, mid = (lo + hi) / 2;
-        for (int iter = 0; iter < 100; iter++)
-        {
-            if (t < knots[mid]) hi = mid;
-            else if (t >= knots[mid + 1]) lo = mid;
-            else break;
-            mid = (lo + hi) / 2;
-        }
-        return mid;
-    }
+    private static int FindKnotSpan(int degree, float t, int numCp, float[] knots) =>
+        SplineFormat.FindKnotSpan(degree, t, numCp, knots);
 
-    private static float EvalBSplineScalar(int span, int degree, float t, float[] knots, List<float> cps)
-    {
-        if (cps.Count == 0) return 0;
-        if (cps.Count == 1) return cps[0];
-        float[] N = new float[degree + 1];
-        N[0] = 1f;
-        for (int i = 1; i <= degree; i++)
-            for (int j = i-1; j >= 0; j--)
-            {
-                float d = span+i-j < knots.Length && span-j >= 0
-                    ? knots[span+i-j] - knots[span-j] : 0;
-                float A = d >= 1e-10f ? (t - knots[span-j]) / d : 0;
-                float tmp = N[j] * A;
-                if (j+1 < N.Length) N[j+1] += N[j] - tmp;
-                N[j] = tmp;
-            }
-        float r = 0;
-        for (int i = 0; i <= degree; i++) { int idx = span-i; if (idx >= 0 && idx < cps.Count) r += cps[idx] * N[i]; }
-        return r;
-    }
+    private static float EvalBSplineScalar(int span, int degree, float t, float[] knots, List<float> cps) =>
+        SplineFormat.Evaluate(span, degree, t, knots, cps);
 
-    private static Quaternion EvalBSplineQuat(int span, int degree, float t, float[] knots, List<Quaternion> cps)
-    {
-        if (cps.Count == 0) return Quaternion.Identity;
-        if (cps.Count == 1) return cps[0];
-        float[] N = new float[degree + 1];
-        N[0] = 1f;
-        for (int i = 1; i <= degree; i++)
-            for (int j = i-1; j >= 0; j--)
-            {
-                float d = span+i-j < knots.Length && span-j >= 0
-                    ? knots[span+i-j] - knots[span-j] : 0;
-                float A = d >= 1e-10f ? (t - knots[span-j]) / d : 0;
-                float tmp = N[j] * A;
-                if (j+1 < N.Length) N[j+1] += N[j] - tmp;
-                N[j] = tmp;
-            }
-        Quaternion r = new(0,0,0,0);
-        for (int i = 0; i <= degree; i++)
-        {
-            int idx = span - i;
-            if (idx >= 0 && idx < cps.Count) { var q = cps[idx]; r = new(r.X+q.X*N[i], r.Y+q.Y*N[i], r.Z+q.Z*N[i], r.W+q.W*N[i]); }
-        }
-        return Quaternion.Normalize(r);
-    }
+    private static Quaternion EvalBSplineQuat(int span, int degree, float t, float[] knots, List<Quaternion> cps) =>
+        SplineFormat.Evaluate(span, degree, t, knots, cps);
 
     #endregion
 

@@ -1,0 +1,423 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+
+namespace OpenCommonwealth.Services.Hkx;
+
+public static class SaveVerifier
+{
+    public static void Verify(byte[] sourceBytes, byte[] rebuiltBytes, NativeSave.Plan plan)
+    {
+        PackfileObjects rebuilt;
+        try
+        {
+            rebuilt = new PackfileObjects(PackfileImage.Read(rebuiltBytes));
+        }
+        catch (Exception e)
+        {
+            throw new InvalidDataException("the rebuilt file could not be read: " + e.Message);
+        }
+
+        var mismatched = HavokClassTypes.Shipped.SignatureProblems(rebuilt.ClassNames());
+        if (mismatched.Count > 0)
+            throw new InvalidDataException("rebuilt class signatures do not match: " + mismatched[0]);
+
+        BehaviourGraphModel? model;
+        try
+        {
+            model = NativeGraphModel.From(rebuilt);
+        }
+        catch (Exception e)
+        {
+            throw new InvalidDataException("rebuilt bytes do not model as a graph: " + e.Message);
+        }
+        if (model == null)
+            throw new InvalidDataException("rebuilt bytes do not model as a graph");
+
+        PackfileObjects source;
+        try
+        {
+            source = new PackfileObjects(PackfileImage.Read(sourceBytes));
+        }
+        catch (Exception e)
+        {
+            throw new InvalidDataException("the source file could not be read: " + e.Message);
+        }
+
+        int expected = source.Instances.Count - plan.Gone.Count + plan.Changes.Count(c => c.Added);
+        if (rebuilt.Instances.Count != expected)
+            throw new InvalidDataException(
+                $"rebuilt holds {rebuilt.Instances.Count} objects, expected {expected}");
+
+        var survivorIds = Enumerable.Range(NativeGraphModel.FirstId, source.Instances.Count)
+            .Where(id => !plan.Gone.Contains(id)).ToList();
+        var added = plan.Changes.Where(c => c.Added).ToList();
+
+        int RebuiltIndex(int originalId)
+        {
+            int at = survivorIds.IndexOf(originalId);
+            if (at >= 0) return at;
+            int addedAt = added.FindIndex(c => c.Id == originalId);
+            return addedAt >= 0 ? survivorIds.Count + addedAt : -1;
+        }
+
+        foreach (var change in plan.Changes.Where(c => !c.Added))
+        {
+            int index = RebuiltIndex(change.Id);
+            if (index < 0 || index >= rebuilt.Instances.Count ||
+                rebuilt.Instances[index].ClassName != change.ClassName)
+                throw new InvalidDataException($"{change} has no surviving object in the rebuilt file");
+            if (!IntendedValueLanded(rebuilt, index, change, RebuiltIndex))
+                throw new InvalidDataException($"{change} did not land on the intended object");
+        }
+
+        foreach (var change in added)
+        {
+            int index = RebuiltIndex(change.Id);
+            if (index < 0 || index >= rebuilt.Instances.Count ||
+                rebuilt.Instances[index].ClassName != change.ClassName)
+                throw new InvalidDataException($"added {change} is missing from the rebuilt file");
+        }
+    }
+
+    private static bool IntendedValueLanded(PackfileObjects rebuilt, int index,
+                                            NativeSave.Change change, Func<int, int> rebuiltIndex)
+    {
+        var instance = rebuilt.Instances[index];
+        if (instance.ClassName != change.ClassName) return false;
+
+        int? at = rebuilt.FieldAt(instance, change.Field);
+        if (at is not int offset) return false;
+
+        var member = HavokClasses.Shipped.Field(change.ClassName, change.Field);
+        string type = member?.Type ?? "";
+
+        if (change.Grow)
+        {
+            var array = rebuilt.ArrayAt(offset);
+            return array != null &&
+                   int.TryParse(change.Value, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                                out int wanted) &&
+                   array.Count == wanted;
+        }
+
+        if (change.InElement)
+            return StructElementLanded(rebuilt, offset, change, rebuiltIndex);
+
+        if (change.Array && change.Text)
+            return TextArrayLanded(rebuilt, offset, change);
+
+        if (change.Array && NativeSave.ValueElement(type) is int width and > 0)
+            return ValueArrayLanded(rebuilt, offset, change, type, width);
+
+        if (change.Array)
+            return RefArrayLanded(rebuilt, offset, change, rebuiltIndex);
+
+        if (change.Ref)
+            return RefLanded(rebuilt, offset, change, rebuiltIndex);
+
+        if (change.Text)
+        {
+            string? read = rebuilt.ReadStringAt(offset);
+            return read != null && string.Equals(read, change.Value, StringComparison.Ordinal);
+        }
+
+        if (NativeSave.WideFloats(type) is int floats and > 0)
+            return WideFloatsLanded(rebuilt, offset, change, floats);
+
+        if (NativeSave.IsWideInteger(type))
+            return WideIntLanded(rebuilt, offset, change, type);
+
+        if (type == "real")
+        {
+            return rebuilt.ReadFloatAt(offset) is float read &&
+                   float.TryParse(change.Value, NumberStyles.Float, CultureInfo.InvariantCulture,
+                                  out float wanted) &&
+                   Math.Abs(read - wanted) <= 1e-4f;
+        }
+
+        return NarrowLanded(rebuilt, offset, change, type);
+    }
+
+    private static bool StructElementLanded(PackfileObjects rebuilt, int fieldOffset,
+                                            NativeSave.Change change, Func<int, int> rebuiltIndex)
+    {
+        var types = HavokClassTypes.Shipped;
+        var field = types.Members(change.ClassName).FirstOrDefault(member => member.Name == change.Field);
+        if (field?.CType == null) return false;
+
+        int start;
+        if (field.VType == "TYPE_STRUCT")
+        {
+            if (change.Element != 0) return false;
+            start = fieldOffset;
+        }
+        else if (field.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY" &&
+                 field.VSub == "TYPE_STRUCT")
+        {
+            int stride = types[field.CType]?.Size ?? 0;
+            if (stride <= 0) return false;
+            var array = rebuilt.ArrayAt(fieldOffset, stride);
+            if (array == null || change.Element < 0 || change.Element >= array.Count) return false;
+            start = array.At + change.Element * stride;
+        }
+        else
+        {
+            return false;
+        }
+
+        var nested = StructMember(types, field.CType, change.Member);
+        if (nested == null) return false;
+        int offset = start + nested.Value.Offset;
+
+        if (nested.Value.VType == "TYPE_POINTER")
+        {
+            var read = rebuilt.ReadRefAt(offset, out bool wasNull);
+            if (change.Value == "null") return wasNull;
+            if (read == null) return false;
+            return TargetLanded(rebuilt, read, change.Value, rebuiltIndex) == true;
+        }
+
+        string spelled = Spelled(nested.Value.VType);
+        if (NativeSave.WideFloats(spelled) is int floats and > 0)
+            return WideFloatsLanded(rebuilt, offset, change, floats);
+        if (NativeSave.IsWideInteger(spelled))
+            return WideIntLanded(rebuilt, offset, change, spelled);
+        if (nested.Value.VType == "TYPE_REAL")
+        {
+            return rebuilt.ReadFloatAt(offset) is float read &&
+                   float.TryParse(change.Value, NumberStyles.Float, CultureInfo.InvariantCulture,
+                                  out float wanted) &&
+                   Math.Abs(read - wanted) <= 1e-4f;
+        }
+
+        string scalar = Narrow(nested.Value.VType, nested.Value.VSub);
+        return scalar.Length > 0 && NarrowLanded(rebuilt, offset, change, scalar);
+    }
+
+    private static (int Offset, string VType, string VSub)? StructMember(
+        HavokClassTypes types, string elementClass, string path)
+    {
+        int offset = 0;
+        string owner = elementClass;
+        string[] steps = path.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (steps.Length == 0) return null;
+
+        for (int i = 0; i < steps.Length; i++)
+        {
+            var member = types.Members(owner).FirstOrDefault(value => value.Name == steps[i]);
+            if (member == null) return null;
+            offset += member.Offset;
+
+            if (i == steps.Length - 1)
+                return (offset, member.VType, member.VSub);
+
+            if (member.VType != "TYPE_STRUCT" || member.CType == null) return null;
+            owner = member.CType;
+        }
+
+        return null;
+    }
+
+    private static string Spelled(string vtype) => vtype switch
+    {
+        "TYPE_VECTOR4" => "vector4",
+        "TYPE_QUATERNION" => "quaternion",
+        "TYPE_QSTRANSFORM" => "qstransform",
+        "TYPE_MATRIX3" => "matrix3",
+        "TYPE_ROTATION" => "rotation",
+        "TYPE_TRANSFORM" => "transform",
+        "TYPE_MATRIX4" => "matrix4",
+        "TYPE_UINT64" => "uint64",
+        "TYPE_INT64" => "int64",
+        "TYPE_ULONG" => "ulong",
+        _ => "",
+    };
+
+    private static string Narrow(string vtype, string vsub) => vtype switch
+    {
+        "TYPE_INT32" => "int32",
+        "TYPE_UINT32" => "uint32",
+        "TYPE_INT16" => "int16",
+        "TYPE_UINT16" => "uint16",
+        "TYPE_INT8" or "TYPE_CHAR" => "int8",
+        "TYPE_UINT8" => "uint8",
+        "TYPE_BOOL" => "bool",
+        "TYPE_ENUM" or "TYPE_FLAGS" => vsub switch
+        {
+            "TYPE_INT8" => "int8",
+            "TYPE_UINT8" => "uint8",
+            "TYPE_INT16" => "int16",
+            "TYPE_UINT16" => "uint16",
+            "TYPE_INT32" => "int32",
+            "TYPE_UINT32" => "uint32",
+            _ => "",
+        },
+        _ => "",
+    };
+
+    private static bool WideFloatsLanded(PackfileObjects rebuilt, int offset,
+                                         NativeSave.Change change, int floats)
+    {
+        var read = rebuilt.ReadFloatsAt(offset, floats);
+        var intended = Bracketed(change.Value, floats);
+        if (read == null || intended == null) return false;
+        for (int i = 0; i < floats; i++)
+            if (Math.Abs(read[i] - intended[i]) > 1e-4f) return false;
+        return true;
+    }
+
+    private static bool WideIntLanded(PackfileObjects rebuilt, int offset,
+                                      NativeSave.Change change, string type)
+    {
+        string text = change.Value.Trim();
+        if (type == "int64")
+            return TryParseInt(text) is long n && rebuilt.ReadLongAt(offset) == n;
+        return TryParseUInt(text) is ulong u && rebuilt.ReadULongAt(offset) == u;
+    }
+
+    private static bool NarrowLanded(PackfileObjects rebuilt, int offset,
+                                     NativeSave.Change change, string type)
+    {
+        string storage = NumberCodecs.Underlying(type);
+        int width = storage switch
+        {
+            "int8" or "uint8" or "char" or "bool" or "enum" => 1,
+            "int16" or "uint16" => 2,
+            "int32" or "uint32" => 4,
+            _ => 0,
+        };
+        if (width == 0) return false;
+
+        int? read = rebuilt.ReadNarrowAt(offset, width);
+        if (read == null) return false;
+
+        if (storage == "bool")
+        {
+            string text = change.Value.Trim();
+            if (text is "true" or "1") return read == 1;
+            if (text is "false" or "0") return read == 0;
+            return false;
+        }
+
+        if (TryParseInt(change.Value) is not long n) return false;
+
+        long actual = storage switch
+        {
+            "int8" => (sbyte)(byte)read.Value,
+            "int16" => (short)(ushort)read.Value,
+            "uint32" => (uint)read.Value,
+            _ => read.Value,
+        };
+        return actual == n;
+    }
+
+    private static bool TextArrayLanded(PackfileObjects rebuilt, int offset, NativeSave.Change change)
+    {
+        var intended = change.Value.Length == 0
+            ? Array.Empty<string>()
+            : change.Value.Split('\0');
+        var read = rebuilt.ReadStringArrayAt(offset);
+        if (read == null || read.Count != intended.Length) return false;
+        for (int i = 0; i < intended.Length; i++)
+            if (!string.Equals(read[i], intended[i], StringComparison.Ordinal)) return false;
+        return true;
+    }
+
+    private static bool ValueArrayLanded(PackfileObjects rebuilt, int offset,
+                                         NativeSave.Change change, string type, int width)
+    {
+        var array = rebuilt.ArrayAt(offset);
+        if (array == null) return false;
+
+        string elementType = type[("array of ").Length..];
+        var intended = NumberCodecs.ArrayBytes(change.Value, elementType, width);
+        if (intended == null || array.Count != intended.Length / width) return false;
+        if (array.Count == 0) return true;
+
+        var read = rebuilt.ReadValueArrayAt(offset, width, (data, o) => data.Skip(o).Take(width).ToArray());
+        if (read == null) return false;
+        for (int e = 0; e < array.Count; e++)
+            for (int b = 0; b < width; b++)
+                if (read[e][b] != intended[e * width + b]) return false;
+        return true;
+    }
+
+    private static bool RefArrayLanded(PackfileObjects rebuilt, int offset,
+                                       NativeSave.Change change, Func<int, int> rebuiltIndex)
+    {
+        var array = rebuilt.ArrayAt(offset);
+        if (array == null) return false;
+
+        var intended = change.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (array.Count != intended.Length) return false;
+
+        var read = rebuilt.ReadRefArrayAt(offset);
+        if (read == null) return false;
+        for (int i = 0; i < intended.Length; i++)
+        {
+            bool wantNull = intended[i] == "null";
+            bool isNull = read[i] == null;
+            if (wantNull != isNull) return false;
+            if (wantNull) continue;
+            if (TargetLanded(rebuilt, read[i]!, intended[i], rebuiltIndex) != true) return false;
+        }
+        return true;
+    }
+
+    private static bool RefLanded(PackfileObjects rebuilt, int offset,
+                                  NativeSave.Change change, Func<int, int> rebuiltIndex)
+    {
+        var read = rebuilt.ReadRefAt(offset, out bool wasNull);
+        if (change.Value == "null") return wasNull;
+        if (read == null) return false;
+        return TargetLanded(rebuilt, read, change.Value, rebuiltIndex) == true;
+    }
+
+    private static bool? TargetLanded(PackfileObjects rebuilt, PackfileObjects.Instance read,
+                                      string intendedValue, Func<int, int> rebuiltIndex)
+    {
+        if (intendedValue.Length <= 1 || intendedValue[0] != '#') return null;
+        if (!int.TryParse(intendedValue[1..], NumberStyles.Integer, CultureInfo.InvariantCulture,
+                          out int target)) return null;
+        int targetIndex = rebuiltIndex(target);
+        return targetIndex >= 0 && targetIndex < rebuilt.Instances.Count &&
+               read.Offset == rebuilt.Instances[targetIndex].Offset;
+    }
+
+    private static float[]? Bracketed(string value, int wanted)
+    {
+        var numbers = new List<float>();
+        foreach (string token in value.Replace('(', ' ').Replace(')', ' ')
+                                      .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!float.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out float f) ||
+                float.IsNaN(f) || float.IsInfinity(f))
+                return null;
+            numbers.Add(f);
+        }
+        return numbers.Count == wanted ? numbers.ToArray() : null;
+    }
+
+    private static long? TryParseInt(string value)
+    {
+        string text = value.Trim();
+        if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long n)) return n;
+        return text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+               long.TryParse(text[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out n)
+            ? n
+            : null;
+    }
+
+    private static ulong? TryParseUInt(string value)
+    {
+        string text = value.Trim();
+        if (ulong.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out ulong n)) return n;
+        return text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+               ulong.TryParse(text[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out n)
+            ? n
+            : null;
+    }
+}

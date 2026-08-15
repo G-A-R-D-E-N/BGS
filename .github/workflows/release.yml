@@ -1,0 +1,189 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package ${{ matrix.rid }}
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [linux-x64, win-x64]
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+        with:
+          clean: true
+
+      - name: Verify runner tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          needed="python3"
+          if [ "${{ matrix.rid }}" = "win-x64" ]; then needed="$needed wine"; fi
+          for tool in $needed; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "This self-hosted runner is missing '$tool', which the release needs."
+              exit 1
+            fi
+          done
+
+      - name: Discard archives left by an earlier run
+        shell: bash
+        run: rm -rf release BehaviourGraphStudio-*.zip
+
+      - name: Set up pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.1.0
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
+        with:
+          dotnet-version: 8.0.424
+
+      - name: Verify tag matches application version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' app/BehaviourStudio.csproj | head -1)
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag_version" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match app version ${version}"
+            exit 1
+          fi
+
+      - name: Restore locked release dependencies
+        run: dotnet restore app/BehaviourStudio.csproj --locked-mode
+
+      - name: Publish self-contained application
+        run: dotnet publish app/BehaviourStudio.csproj --configuration Release --runtime "${{ matrix.rid }}" --self-contained true --no-restore --output "release/${{ matrix.rid }}"
+
+      - name: Include release notices
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp CHANGELOG.md LICENSE THIRD_PARTY_NOTICES.md "release/${{ matrix.rid }}/"
+
+      - name: Verify Linux executable
+        if: matrix.rid == 'linux-x64'
+        run: ./release/${{ matrix.rid }}/BehaviourGraphStudio --version
+
+      - name: Verify Windows executable under Wine
+        if: matrix.rid == 'win-x64'
+        shell: bash
+        env:
+          WINEDEBUG: "-all"
+        run: |
+          set -euo pipefail
+          export WINEPREFIX="$PWD/.wineprefix"
+          mkdir -p "$WINEPREFIX"
+          reported=$(wine "release/${{ matrix.rid }}/BehaviourGraphStudio.exe" --version 2>/dev/null | tail -1)
+          echo "$reported"
+          case "$reported" in
+            *win-x64*) ;;
+            *) echo "The packaged Windows executable did not report a win-x64 version."; exit 1 ;;
+          esac
+
+      - name: Archive release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "release/${{ matrix.rid }}" "BehaviourGraphStudio-${GITHUB_REF_NAME}-${{ matrix.rid }}.zip" <<'PY'
+          import os, sys, zipfile
+          source, archive = sys.argv[1], sys.argv[2]
+          with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+              for folder, _, files in os.walk(source):
+                  for name in sorted(files):
+                      full = os.path.join(folder, name)
+                      bundle.write(full, os.path.relpath(full, source))
+          print("wrote " + archive)
+          PY
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.rid }}
+          path: BehaviourGraphStudio-${{ github.ref_name }}-${{ matrix.rid }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs: package
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Verify publish runner tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tool in gh sha256sum; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "This self-hosted runner is missing '$tool', which publishing needs."
+              exit 1
+            fi
+          done
+
+      - name: Discard archives left by an earlier run
+        shell: bash
+        run: rm -rf dist
+
+      - name: Download validated archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum BehaviourGraphStudio-*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Attest release archives
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/BehaviourGraphStudio-*.zip
+
+      - name: Refuse to overwrite an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists. Create a new version instead of replacing it."
+            exit 1
+          fi
+
+      - name: Publish release last
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            dist/BehaviourGraphStudio-*.zip \
+            dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Behaviour Graph Studio ${GITHUB_REF_NAME#v}" \
+            --generate-notes

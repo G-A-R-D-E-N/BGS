@@ -9,8 +9,11 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
-    <Compile Include="Ba2.cs" />
     <Compile Include="Tests.cs" />
-    <Compile Include="../../src/Hkx/*.cs" />
+    <Compile Include="Png.cs" />
+    <Compile Include="GameDefaults.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/BehaviourGraph.Core.csproj" />
   </ItemGroup>
 </Project>

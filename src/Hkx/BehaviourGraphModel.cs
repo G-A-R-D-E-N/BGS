@@ -48,6 +48,10 @@ public sealed class BehaviourGraphModel
     public HkObject? Get(string? id) => id != null && ById.TryGetValue(id, out var o) ? o : null;
     public HkObject? Follow(HkObject? o, string field) => o == null ? null : Get(o.Ref(field));
 
+    internal static string DecodeXml(string value) =>
+        value.Replace("&lt;", "<").Replace("&gt;", ">").Replace("&quot;", "\"")
+             .Replace("&#13;", "\r").Replace("&amp;", "&");
+
     public static BehaviourGraphModel Parse(string xml)
     {
         var model = new BehaviourGraphModel();
@@ -121,7 +125,7 @@ public sealed class BehaviourGraphModel
                         l = new List<string>();
                         obj.Lists[current] = l;
                     }
-                    l.Add(inner);
+                    l.Add(DecodeXml(inner));
                 }
                 continue;
             }
@@ -145,22 +149,23 @@ public sealed class BehaviourGraphModel
                 }
                 if (isArray)
                 {
-                    var items = inner.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).ToList();
+                    var items = inner.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                                     .Select(DecodeXml).ToList();
                     obj.Lists[name] = items;
                 }
                 else if (inner.Length > 0)
                 {
-                    obj.Scalars[name] = inner;
+                    obj.Scalars[name] = DecodeXml(inner);
                     current = "";
                 }
             }
             else if (depth == 1 && element != null)
             {
-                element[name] = inner;
+                element[name] = DecodeXml(inner);
             }
             else if (depth == 1 && current.Length > 0 && obj.Structs.TryGetValue(current, out var st))
             {
-                st[name] = inner;
+                st[name] = DecodeXml(inner);
             }
         }
     }

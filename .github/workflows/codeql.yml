@@ -1,0 +1,71 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+      - nomad
+  pull_request:
+    branches:
+      - main
+      - nomad
+  schedule:
+    - cron: "23 5 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+  packages: read
+
+jobs:
+  analyze:
+    name: Analyze C#
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+
+      - name: Set up pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.1.0
+        with:
+          dotnet-version: 8.0.424
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        with:
+          languages: csharp
+          build-mode: manual
+
+      - name: Restore locked dependencies
+        shell: pwsh
+        run: |
+          $projects = @(
+            "src/BehaviourGraph.Core.csproj",
+            "app/BehaviourStudio.csproj",
+            "tools/symrm/symrm.csproj",
+            "tools/tests/BehaviourGraph.Tests.csproj",
+            "tools/uismoke/uismoke.csproj"
+          )
+          foreach ($project in $projects) {
+            dotnet restore $project --locked-mode
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Build analyzed projects
+        shell: pwsh
+        run: |
+          $projects = @(
+            "app/BehaviourStudio.csproj",
+            "tools/symrm/symrm.csproj",
+            "tools/tests/BehaviourGraph.Tests.csproj",
+            "tools/uismoke/uismoke.csproj"
+          )
+          foreach ($project in $projects) {
+            dotnet build $project --configuration Release --no-restore
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4

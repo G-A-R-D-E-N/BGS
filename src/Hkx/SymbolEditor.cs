@@ -5,26 +5,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Variables and events: their names, their declared types, their initial values, and the parallel
-// arrays that have to stay the same length as each other.
-//
-// A variable lives in up to four places. hkbBehaviorGraphStringData holds the name,
-// hkbBehaviorGraphData holds one variableInfos element and sometimes a variableBounds element, and
-// hkbVariableValueSet holds one value.
-//
-// variableBounds is the awkward one. Across vanilla files it is empty, or the same length as the
-// variable list, or some shorter length with no visible relationship to it: MTBehavior declares 67
-// variables and 19 bounds, and those 19 do not line up by position, with bool variables carrying a
-// max of 300 and a float variable carrying a max of 0. Nothing here edits a partial bounds array,
-// because whatever it means, a positional edit would be a guess.
 public static class SymbolEditor
 {
-    // From PipboyBehavior.hkx: hkbRoleAttribute on a variableInfos element.
-    private const string RoleAttributeSignature = "0xfecef669";
-
-    // From 1HM_MeleeWrappingBehavior.hkx: hkbVariableValue inside a variableBounds element.
-    private const string VariableValueSignature = "0xb99bd6a";
-
     public enum VariableType { Int32, Real, Bool }
 
     private static string TypeName(VariableType type) => type switch
@@ -45,7 +27,7 @@ public static class SymbolEditor
         public int EventInfos;
 
         public bool BoundsAreParallel => Bounds == Names;
-        // Vanilla ships partial bounds arrays, so only an over-long one is actually broken.
+
         public bool VariablesConsistent =>
             Names == Infos && Names == Values && Bounds <= Names;
         public bool EventsConsistent => EventNames == EventInfos;
@@ -86,8 +68,6 @@ public static class SymbolEditor
         return rows.Select(r => r.TryGetValue("value", out var v) ? v : "").ToList();
     }
 
-    // hkbVariableValueSet stores every variable as a 32 bit word, so a float is written as its bit
-    // pattern reinterpreted as an int, not as "0.5".
     public static string EncodeValue(VariableType type, string text)
     {
         switch (type)
@@ -141,7 +121,6 @@ public static class SymbolEditor
         var values = VariableValues(BehaviourGraphModel.Parse(xml));
         if (index < 0 || index >= values.Count) throw new ArgumentOutOfRangeException(nameof(index));
 
-        // Element by element replacement, because every element has the same parameter name.
         xml = HkxTextEdit.ArrayRemoveAt(xml, ids[0], "wordVariableValues", index);
         return HkxTextEdit.ArrayInsertAt(xml, ids[0], "wordVariableValues", index,
             "                <hkobject>\n" +
@@ -149,7 +128,6 @@ public static class SymbolEditor
             "                </hkobject>");
     }
 
-    // Declares a variable in all three places at once and returns its index.
     public static string AddVariable(string xml, string name, VariableType type, out int index)
     {
         var stringIds = HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphStringData");
@@ -165,7 +143,7 @@ public static class SymbolEditor
             xml = HkxTextEdit.ArrayAppend(xml, dataIds[0], "variableInfos",
                 "                <hkobject>\n" +
                 "                    <hkparam name=\"role\">\n" +
-                $"                        <hkobject class=\"hkbRoleAttribute\" name=\"role\" signature=\"{RoleAttributeSignature}\">\n" +
+                $"                        <hkobject class=\"hkbRoleAttribute\" name=\"role\" signature=\"{HkxSignatures.Of("hkbRoleAttribute")}\">\n" +
                 "                            <hkparam name=\"role\">ROLE_DEFAULT</hkparam>\n" +
                 "                            <hkparam name=\"flags\">FLAG_NONE</hkparam>\n" +
                 "                        </hkobject>\n" +
@@ -186,15 +164,50 @@ public static class SymbolEditor
         return xml;
     }
 
-    private static string BoundsElement() =>
+    public static List<(string Min, string Max)> VariableBounds(BehaviourGraphModel model)
+    {
+        var data = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraphData");
+        var bounds = new List<(string, string)>();
+        if (data == null || !data.StructLists.TryGetValue("variableBounds", out var rows)) return bounds;
+
+        foreach (var row in rows)
+            bounds.Add((row.TryGetValue("min", out var lo) ? lo : "",
+                        row.TryGetValue("max", out var hi) ? hi : ""));
+
+        return bounds;
+    }
+
+    public static string SetVariableBounds(string xml, int index, string encodedMin, string encodedMax)
+    {
+        var dataIds = HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphData");
+        if (dataIds.Count == 0)
+            throw new InvalidOperationException("this file has no hkbBehaviorGraphData");
+
+        int variables = VariableNames(BehaviourGraphModel.Parse(xml)).Count;
+        if (index < 0 || index >= variables)
+            throw new ArgumentOutOfRangeException(nameof(index),
+                $"this file declares {variables} variable(s), so there is no variable {index} to bound");
+
+        int have = Audit(BehaviourGraphModel.Parse(xml)).Bounds;
+        for (int i = have; i <= index; i++)
+            xml = HkxTextEdit.ArrayAppend(xml, dataIds[0], "variableBounds", BoundsElement());
+
+        xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], "variableBounds", index);
+        return HkxTextEdit.ArrayInsertAt(xml, dataIds[0], "variableBounds", index,
+                                         BoundsElement(encodedMin, encodedMax));
+    }
+
+    private static string BoundsElement() => BoundsElement("0", "0");
+
+    private static string BoundsElement(string min, string max) =>
         "                <hkobject>\n" +
-        BoundsMember("min", "0") +
-        BoundsMember("max", "0") +
+        BoundsMember("min", min) +
+        BoundsMember("max", max) +
         "                </hkobject>";
 
     private static string BoundsMember(string name, string value) =>
         $"                    <hkparam name=\"{name}\">\n" +
-        $"                        <hkobject class=\"hkbVariableValue\" name=\"{name}\" signature=\"{VariableValueSignature}\">\n" +
+        $"                        <hkobject class=\"hkbVariableValue\" name=\"{name}\" signature=\"{HkxSignatures.Of("hkbVariableValue")}\">\n" +
         $"                            <hkparam name=\"value\">{value}</hkparam>\n" +
         "                        </hkobject>\n" +
         "                    </hkparam>\n";
@@ -219,10 +232,6 @@ public static class SymbolEditor
         return xml;
     }
 
-    // Removing a symbol shifts every index above it, so the parallel arrays and every reference in
-    // the file have to move in the same pass. blockers lists whatever still points at the exact
-    // index being removed; with force those references are left pointing at whatever slides into
-    // the slot, which is nearly always wrong, so the caller should show them first.
     public static string RemoveVariable(string xml, int index, bool force, out List<string> blockers) =>
         Remove(xml, variable: true, index, force, out blockers);
 
@@ -247,7 +256,8 @@ public static class SymbolEditor
         {
             var before = Audit(BehaviourGraphModel.Parse(xml));
             xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], variable ? "variableInfos" : "eventInfos", index);
-            if (variable && before.BoundsAreParallel)
+
+            if (variable && index < before.Bounds)
                 xml = HkxTextEdit.ArrayRemoveAt(xml, dataIds[0], "variableBounds", index);
         }
 
@@ -261,8 +271,6 @@ public static class SymbolEditor
         return SymbolIndexFixup.ShiftDown(xml, events: !variable, index, out _);
     }
 
-    // Renaming is index preserving on purpose. Transitions store an eventId, not a name, so a rename
-    // must not reorder anything or every transition in the file would point somewhere else.
     public static string Rename(string xml, bool variable, int index, string newName)
     {
         var ids = HkxTextEdit.IdsOfClass(xml, "hkbBehaviorGraphStringData");

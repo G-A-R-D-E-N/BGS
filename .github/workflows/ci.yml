@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            rid: linux-x64
+          - os: windows-2022
+            rid: win-x64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+
+      - name: Set up pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.1.0
+        with:
+          dotnet-version: 8.0.424
+
+      - name: Restore locked dependencies
+        shell: pwsh
+        run: |
+          $projects = @(
+            "src/BehaviourGraph.Core.csproj",
+            "app/BehaviourStudio.csproj",
+            "tools/symrm/symrm.csproj",
+            "tools/tests/BehaviourGraph.Tests.csproj",
+            "tools/uismoke/uismoke.csproj"
+          )
+          foreach ($project in $projects) {
+            dotnet restore $project --locked-mode
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Build app
+        run: dotnet build app/BehaviourStudio.csproj --configuration Release --no-restore
+
+      - name: Run native regression harness
+        run: dotnet run --project tools/symrm/symrm.csproj --configuration Release --no-restore -- test
+
+      - name: Run xUnit suite
+        run: dotnet test tools/tests/BehaviourGraph.Tests.csproj --configuration Release --no-restore --logger "console;verbosity=normal"
+
+      - name: Run UI smoke harness
+        run: dotnet run --project tools/uismoke/uismoke.csproj --configuration Release --no-restore
+
+      - name: Publish platform package
+        run: dotnet publish app/BehaviourStudio.csproj --configuration Release --runtime "${{ matrix.rid }}" --self-contained true --no-restore --output publish-check
+
+      - name: Verify Linux executable
+        if: runner.os == 'Linux'
+        run: ./publish-check/BehaviourGraphStudio --version
+
+      - name: Verify Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\publish-check\BehaviourGraphStudio.exe --version

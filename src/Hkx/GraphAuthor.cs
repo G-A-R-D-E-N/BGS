@@ -4,17 +4,10 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
-// Creating a node and hanging it off an existing one.
-//
-// Each parent class holds its children differently, and the wrong shape gives a file hkxpack accepts
-// and the engine cannot read. A state machine does not hold generators, it holds state infos that
-// hold generators; a blender holds weighted child wrappers. Attaching is therefore per class rather
-// than one generic "add to children".
 public static class GraphAuthor
 {
     public static IEnumerable<string> Kinds => GeneratorEditor.Kinds.Keys;
 
-    // Parents that can take a generator, with the wording used in the status line.
     public static string AttachmentFor(string parentClass) => parentClass switch
     {
         "hkbBehaviorGraph" => "root generator",
@@ -57,8 +50,6 @@ public static class GraphAuthor
         }
     }
 
-    // Creates the node and attaches it in one step when a usable parent is given. An unattached node
-    // is still a real object in the file, it just has nothing pointing at it yet.
     public static string AddNode(string xml, string kind, string name, string animation,
                                  string parentId, out string newId, out string note)
     {
@@ -83,35 +74,14 @@ public static class GraphAuthor
         }
     }
 
-    // Objects nothing points at. A file can legitimately contain a few, but after an edit session
-    // these are usually nodes the user meant to hook up and did not.
     public static List<HkObject> Unattached(BehaviourGraphModel model)
     {
-        var referenced = new HashSet<string>();
-        foreach (var obj in model.Objects)
-        {
-            foreach (var value in obj.Scalars.Values)
-                if (value.StartsWith('#')) referenced.Add(value[1..]);
-            foreach (var list in obj.Lists.Values)
-                foreach (string token in list)
-                    if (token.StartsWith('#')) referenced.Add(token[1..]);
-            foreach (var rows in obj.StructLists.Values)
-                foreach (var row in rows)
-                    foreach (var value in row.Values)
-                        if (value.StartsWith('#')) referenced.Add(value[1..]);
-            // Named nested objects, such as an event's payload, hold references too. Missing these
-            // reported every hkbStringEventPayload in a vanilla graph as unreachable.
-            foreach (var members in obj.Structs.Values)
-                foreach (var value in members.Values)
-                    if (value.StartsWith('#')) referenced.Add(value[1..]);
-        }
+
+        var referenced = HkReferences.Targets(model);
 
         return model.Objects.Where(o => !referenced.Contains(o.Id) && IsNode(o.Class)).ToList();
     }
 
-    // Deleting these takes the file with it: the graph header, the symbol tables and the container
-    // everything hangs off. Nothing else is protected, so a node that shipped with the game is as
-    // deletable as one just made.
     private static readonly HashSet<string> Structural = new(StringComparer.Ordinal)
     {
         "hkRootLevelContainer", "hkbBehaviorGraph", "hkbBehaviorGraphData",
@@ -121,9 +91,6 @@ public static class GraphAuthor
 
     public static bool CanDelete(string className) => !Structural.Contains(className);
 
-    // Removes a node and breaks every link into it first, which is what a blueprint editor does.
-    // Refusing while references exist made vanilla nodes undeletable in practice, since almost
-    // everything in a shipped graph is referenced by something.
     public static string DeleteNode(string xml, string id, out string note)
     {
         var model = BehaviourGraphModel.Parse(xml);
@@ -146,8 +113,6 @@ public static class GraphAuthor
             xml = Detach(xml, holder, id);
             cleared.Add($"#{holderId} {holder.Class}");
 
-            // A blender child exists only to hold one generator. Once that is gone it is litter the
-            // validator would report as unreachable, so it goes with it.
             if (holder.Class == "hkbBlenderGeneratorChild")
             {
                 xml = DeleteNode(xml, holderId, out _);
@@ -166,39 +131,33 @@ public static class GraphAuthor
         return xml;
     }
 
-    // Clears every reference to target held by this one object, whichever shape it is in.
     private static string Detach(string xml, HkObject holder, string targetId)
     {
-        string token = "#" + targetId;
+        var sites = HkReferences.In(holder).Where(s => s.Target == targetId).ToList();
 
-        foreach (var (field, value) in holder.Scalars.Where(p => p.Value == token).ToList())
-            xml = HkxTextEdit.SetParam(xml, holder.Id, field, "null");
+        foreach (var site in sites.Where(s => s.How == HkReferences.Held.Scalar))
+            xml = HkxTextEdit.SetParam(xml, holder.Id, site.Field, "null");
 
-        foreach (var (field, list) in holder.Lists)
-        {
-            // Back to front, because removing an element renumbers the ones after it.
-            var indices = list.Select((v, i) => (v, i)).Where(p => p.v == token)
-                              .Select(p => p.i).OrderByDescending(i => i).ToList();
-            foreach (int index in indices)
-                xml = HkxTextEdit.ArrayRemoveAt(xml, holder.Id, field, index);
-        }
+        foreach (var site in sites.Where(s => s.How is HkReferences.Held.StructListMember
+                                                   or HkReferences.Held.StructMember))
+            xml = HkxTextEdit.SetParamAt(xml, holder.Id, site.Path(), "null");
+
+        foreach (var site in sites.Where(s => s.How == HkReferences.Held.ListElement)
+                                  .OrderByDescending(s => s.Index))
+            xml = HkxTextEdit.ArrayRemoveAt(xml, holder.Id, site.Field, site.Index);
 
         return xml;
     }
 
-    // Which objects the canvas should draw, and in which column.
-    //
-    // Walking outwards from the root alone is not enough. Retargeting a link, which is the ordinary
-    // way to change what a node points at, detaches whatever it used to point at along with
-    // everything under it. Those objects are still in the file and still referenced by their own
-    // parents, so they are neither reachable from the root nor unattached, and drawing only the two
-    // makes an entire subtree vanish the moment a link is dragged.
-    //
-    // So every detached subtree gets walked as well, from its own head.
-    public static List<(HkObject Node, int Column)> Layout(BehaviourGraphModel model, int max)
+    public static List<(HkObject Node, int Column, string OwnerId)> Layout(BehaviourGraphModel model, int max) =>
+        Layout(model, max, out _);
+
+    public static List<(HkObject Node, int Column, string OwnerId)> Layout(BehaviourGraphModel model, int max,
+                                                                           out bool truncated)
     {
+        truncated = false;
         var placed = new Dictionary<string, int>();
-        var order = new List<(HkObject, int)>();
+        var order = new List<(HkObject, int, string)>();
 
         var root = model.Objects.FirstOrDefault(o => o.Class == "hkbBehaviorGraph")
                    ?? model.Objects.FirstOrDefault(o => o.Class == "hkbStateMachine")
@@ -214,22 +173,25 @@ public static class GraphAuthor
             deepest = Math.Max(deepest, Walk(model, detached, deepest + 1, placed, order, max));
         }
 
+        truncated = order.Count >= max &&
+                    model.Objects.Any(o => IsNode(o.Class) && !placed.ContainsKey(o.Id));
         return order;
     }
 
     private static int Walk(BehaviourGraphModel model, HkObject from, int column,
-                            Dictionary<string, int> placed, List<(HkObject, int)> order, int max)
+                            Dictionary<string, int> placed, List<(HkObject, int, string)> order, int max)
     {
         var queue = new Queue<(HkObject Node, int Column)>();
         queue.Enqueue((from, column));
         placed[from.Id] = column;
-        order.Add((from, column));
+
+        order.Add((from, column, ""));
         int deepest = column;
 
         while (queue.Count > 0 && order.Count < max)
         {
             var (current, depth) = queue.Dequeue();
-            foreach (string target in Targets(model, current))
+            foreach (string target in PointsAt(model, current))
             {
                 if (placed.ContainsKey(target)) continue;
                 var next = model.Get(target);
@@ -237,7 +199,7 @@ public static class GraphAuthor
 
                 placed[target] = depth + 1;
                 deepest = Math.Max(deepest, depth + 1);
-                order.Add((next, depth + 1));
+                order.Add((next, depth + 1, current.Id));
                 queue.Enqueue((next, depth + 1));
                 if (order.Count >= max) break;
             }
@@ -245,9 +207,7 @@ public static class GraphAuthor
         return deepest;
     }
 
-    // Everything the object points at, including references buried in array elements such as a
-    // transition's blend effect, which the port list does not carry.
-    private static IEnumerable<string> Targets(BehaviourGraphModel model, HkObject obj)
+    public static IEnumerable<string> PointsAt(BehaviourGraphModel model, HkObject obj)
     {
         foreach (var slot in GraphLinks.OutSlots(model, obj))
             foreach (string target in slot.Targets)
@@ -257,11 +217,12 @@ public static class GraphAuthor
             foreach (var row in rows)
                 foreach (string value in row.Values)
                     if (value.StartsWith('#')) yield return value[1..];
+
+        foreach (var fields in obj.Structs.Values)
+            foreach (string value in fields.Values)
+                if (value.StartsWith('#')) yield return value[1..];
     }
 
-    // Only things that produce or shape a pose count. Vanilla ships plenty of unreferenced
-    // hkbStringEventPayload leftovers, and reporting those buries the one node the user forgot to
-    // hook up under sixteen that never mattered.
     public static bool IsNode(string className) =>
         className.EndsWith("Generator", StringComparison.Ordinal)
         || className.EndsWith("Modifier", StringComparison.Ordinal)
