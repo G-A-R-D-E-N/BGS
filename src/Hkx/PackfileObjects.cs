@@ -16,6 +16,7 @@ public sealed class PackfileObjects
     private readonly PackfileSection _data;
     private readonly PackfileSection _classNames;
     private readonly HavokClasses _classes;
+    private readonly HavokClassTypes _types;
     private readonly List<Instance> _instances = new();
 
     private readonly Dictionary<int, int> _pointsAt = new();
@@ -26,9 +27,11 @@ public sealed class PackfileObjects
 
     public IReadOnlyList<Instance> Instances => _instances;
 
-    public PackfileObjects(PackfileImage image, HavokClasses? classes = null)
+    public PackfileObjects(PackfileImage image, HavokClasses? classes = null,
+                           HavokClassTypes? types = null)
     {
         _classes = classes ?? HavokClasses.Shipped;
+        _types = types ?? HavokClassTypes.Shipped;
         _pointer = image.Layout.PointerSize;
         _data = image.Section("__data__")
                 ?? throw new InvalidOperationException("The file has no __data__ section.");
@@ -82,10 +85,9 @@ public sealed class PackfileObjects
         if (_pointer == 8)
             return _classes.Knows(className) ? _classes.Field(className, field)?.Offset : null;
 
-        var types = HavokClassTypes.Shipped;
-        return LayoutWalker.CanPlace(types, className)
-            ? LayoutWalker.Of(types, className, new PointerLayout(_pointer)).OffsetOf(field)
-            : null;
+        // The stored class table is 8-byte, so a 4-byte file's member offsets must come from the
+        // pointer-width walker. Honor the schema the caller supplied, like the 8-byte path does.
+        return LayoutWalker.Active(_types, className, _pointer)?.OffsetOf(field);
     }
 
     public float? ReadFloatAt(int at) =>

@@ -13,8 +13,15 @@ public static class NativeXml
     private const string Header =
         "<?xml version=\"1.0\" encoding=\"ASCII\" standalone=\"no\"?>";
 
-    public static string From(byte[] hkx, HavokClassTypes? types = null) =>
-        From(new PackfileObjects(PackfileImage.Read(hkx)), PackfileImage.Read(hkx), types);
+    public static string From(byte[] hkx, HavokClassTypes? types = null)
+    {
+        var image = PackfileImage.Read(hkx);
+
+        // Thread the supplied schema into the object reader too, or a custom schema would only
+        // affect signatures/enum names while member offsets silently fell back to the shipped
+        // table (which matters at four bytes, where offsets are re-derived per schema).
+        return From(new PackfileObjects(image, types: types), image, types);
+    }
 
     public static string From(PackfileObjects objects, PackfileImage image,
                               HavokClassTypes? types = null)
@@ -68,6 +75,9 @@ public static class NativeXml
     {
         string pad = new(' ', depth * 4);
 
+        var layout = LayoutWalker.Active(types, className, objects.PointerWidth);
+        if (layout == null) return;
+
         foreach (var member in types.Members(className))
         {
 
@@ -81,7 +91,7 @@ public static class NativeXml
                 continue;
             }
 
-            int at = offset + member.Offset;
+            int at = offset + (layout.OffsetOf(member.Name) ?? member.Offset);
 
             if (member.VType == "TYPE_STRUCT")
             {
@@ -136,8 +146,10 @@ public static class NativeXml
     {
         string pad = new(' ', depth * 4);
         int width = member.VSub == "TYPE_STRUCT"
-            ? member.CType != null ? types[member.CType]?.Size ?? 0 : 0
-            : NativeGraphModel.ElementWidth(member.VSub);
+            ? member.CType != null
+                ? LayoutWalker.Active(types, member.CType, objects.PointerWidth)?.Size ?? 0
+                : 0
+            : NativeGraphModel.ElementWidth(member.VSub, objects.PointerWidth);
         var declared = objects.ArrayAt(at);
         var array = width > 0 ? objects.ArrayAt(at, width) : declared;
         int count = width > 0 ? array?.Count ?? 0 : declared?.Count ?? 0;
@@ -184,7 +196,7 @@ public static class NativeXml
 
         if (member.VSub == "TYPE_STRUCT" && member.CType != null && types.Knows(member.CType))
         {
-            int stride = types[member.CType]?.Size ?? 0;
+            int stride = LayoutWalker.Active(types, member.CType, objects.PointerWidth)?.Size ?? 0;
             if (stride > 0 && array != null)
                 for (int e = 0; e < count; e++)
                 {

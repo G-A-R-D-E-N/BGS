@@ -41,10 +41,13 @@ public static class NativeGraphModel
     private static void Fill(PackfileObjects objects, HavokClassTypes types, HkObject obj,
                             int offset, string className, FieldRender.Reference reference)
     {
+        var layout = LayoutWalker.Active(types, className, objects.PointerWidth);
+        if (layout == null) return;
+
         foreach (var member in types.Members(className))
         {
             if (!member.Written) continue;
-            int at = offset + member.Offset;
+            int at = offset + (layout.OffsetOf(member.Name) ?? member.Offset);
 
             if (member.VType == "TYPE_STRUCT")
             {
@@ -82,10 +85,13 @@ public static class NativeGraphModel
     {
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
 
+        var layout = LayoutWalker.Active(types, className, objects.PointerWidth);
+        if (layout == null) return fields;
+
         foreach (var member in types.Members(className))
         {
             if (!member.Written) continue;
-            int at = offset + member.Offset;
+            int at = offset + (layout.OffsetOf(member.Name) ?? member.Offset);
 
             if (member.VType == "TYPE_STRUCT")
             {
@@ -118,13 +124,16 @@ public static class NativeGraphModel
     private static void Leak(PackfileObjects objects, HavokClassTypes types, HkObject obj,
                              int offset, string className, string under)
     {
+        var layout = LayoutWalker.Active(types, className, objects.PointerWidth);
+        if (layout == null) return;
+
         foreach (var member in types.Members(className))
         {
             if (!member.Written) continue;
             if (member.VType is not ("TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")) continue;
             if (member.VSub is not ("TYPE_STRINGPTR" or "TYPE_CSTRING")) continue;
 
-            var values = objects.ReadStringArrayAt(offset + member.Offset);
+            var values = objects.ReadStringArrayAt(offset + (layout.OffsetOf(member.Name) ?? member.Offset));
             if (values == null || values.Count == 0) continue;
 
             if (!obj.Lists.TryGetValue(under, out var list)) obj.Lists[under] = list = new List<string>();
@@ -140,7 +149,7 @@ public static class NativeGraphModel
             obj.Lists[member.Name] = new List<string>();
             if (member.CType == null || !types.Knows(member.CType)) return;
 
-            int stride = types[member.CType]?.Size ?? 0;
+            int stride = LayoutWalker.Active(types, member.CType, objects.PointerWidth)?.Size ?? 0;
             if (stride <= 0) return;
 
             var array = objects.ArrayAt(at, stride);
@@ -187,7 +196,7 @@ public static class NativeGraphModel
             yield break;
         }
 
-        int stride = ElementWidth(member.VSub);
+        int stride = ElementWidth(member.VSub, objects.PointerWidth);
         if (stride <= 0) yield break;
 
         var array = objects.ArrayAt(at, stride);
@@ -235,12 +244,12 @@ public static class NativeGraphModel
     internal static string Escaped(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\r", "&#13;");
 
-    internal static int ElementWidth(string vsub) => vsub switch
+    internal static int ElementWidth(string vsub, int pointer) => vsub switch
     {
         "TYPE_BOOL" or "TYPE_CHAR" or "TYPE_INT8" or "TYPE_UINT8" => 1,
         "TYPE_INT16" or "TYPE_UINT16" or "TYPE_HALF" => 2,
-        "TYPE_INT64" or "TYPE_UINT64" or "TYPE_ULONG" or "TYPE_POINTER"
-            or "TYPE_STRINGPTR" or "TYPE_CSTRING" => 8,
+        "TYPE_INT64" or "TYPE_UINT64" => 8,
+        "TYPE_ULONG" or "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING" => pointer,
         "TYPE_VECTOR4" or "TYPE_QUATERNION" => 16,
         "TYPE_QSTRANSFORM" => 48,
         "TYPE_TRANSFORM" or "TYPE_MATRIX4" => 64,

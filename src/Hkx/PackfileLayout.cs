@@ -11,6 +11,12 @@ public static class PackfileLayout
     {
         public bool IsString => Kind is "string" or "element string";
 
+        // When set, the item is placed at this alignment instead of the kind-based boundary.
+        // The converter uses it to snap relative-array payloads to the 16-byte lines the
+        // FO4-era serializers pad array payloads to; the verify/rewrite tools leave it unset
+        // and keep the plain boundary rules.
+        public int Align;
+
         public override string ToString() => $"{Kind} at 0x{At:x} for {Length}";
     }
 
@@ -38,10 +44,14 @@ public static class PackfileLayout
 
             if (depth > 8) return;
 
-            foreach (var member in types.Members(className).OrderBy(m => m.Offset))
+            var laid = LayoutWalker.Active(types, className, objects.PointerWidth);
+            if (laid == null) return;
+
+            foreach (var member in types.Members(className)
+                                       .OrderBy(m => laid.OffsetOf(m.Name) ?? m.Offset))
             {
                 if (!member.Written) continue;
-                int at = offset + member.Offset;
+                int at = offset + (laid.OffsetOf(member.Name) ?? member.Offset);
 
                 if (member.VType is "TYPE_STRINGPTR" or "TYPE_CSTRING")
                 {
@@ -62,7 +72,7 @@ public static class PackfileLayout
 
                 if (member.VSub == "TYPE_STRUCT" && member.CType != null && types.Knows(member.CType))
                 {
-                    int stride = types[member.CType]?.Size ?? 0;
+                    int stride = LayoutWalker.Active(types, member.CType, objects.PointerWidth)?.Size ?? 0;
                     if (stride <= 0) continue;
 
                     var structArray = objects.ArrayAt(at, stride);
@@ -76,7 +86,9 @@ public static class PackfileLayout
                     continue;
                 }
 
-                int width = HavokClassTypes.Width(member.VSub);
+                int width = member.VSub is "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING" or "TYPE_ULONG"
+                    ? objects.PointerWidth
+                    : HavokClassTypes.Width(member.VSub);
                 if (width <= 0) continue;
 
                 var array = objects.ArrayAt(at, width);
@@ -91,16 +103,17 @@ public static class PackfileLayout
                 if (member.VSub is not ("TYPE_STRINGPTR" or "TYPE_CSTRING")) continue;
 
                 for (int i = 0; i < array.Count; i++)
-                    if (aims.TryGetValue(array.At + i * 8, out int text) && seen.Add(text))
+                    if (aims.TryGetValue(array.At + i * objects.PointerWidth, out int text) && seen.Add(text))
                         items.Add(new Item("element string", text, Zeroed(data.Data, text)));
             }
         }
 
         foreach (var instance in objects.Instances)
         {
-            if (types[instance.ClassName]?.Size is not int size || size <= 0) return null;
+            var laid = LayoutWalker.Active(types, instance.ClassName, objects.PointerWidth);
+            if (laid == null || laid.Size <= 0) return null;
 
-            items.Add(new Item("object", instance.Offset, size));
+            items.Add(new Item("object", instance.Offset, laid.Size));
             Walk(instance.Offset, instance.ClassName, 0);
         }
 
@@ -115,7 +128,7 @@ public static class PackfileLayout
 
         foreach (var item in items)
         {
-            cursor = Align(cursor, Boundary(item.Kind, previous));
+            cursor = Align(cursor, item.Align > 0 ? item.Align : Boundary(item.Kind, previous));
             at.Add(cursor);
             cursor += item.Length;
             previous = item.Kind;
@@ -261,6 +274,12 @@ public static class PackfileLayout
 
     private static int Boundary(string kind, string previous) => kind switch
     {
+        // The default relative-array placement packs payloads right after the object's struct
+        // bytes in member order. It is only a placement policy — the header's stored offset is
+        // authoritative and is rewritten to wherever the payload lands — and the converter
+        // overrides it with 16-byte line alignment via Item.Align when it builds its blocks.
+        "relarray" => 1,
+
         "element string" => 2,
 
         "string" when previous.EndsWith("array", StringComparison.Ordinal) => 1,

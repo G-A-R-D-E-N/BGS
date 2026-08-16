@@ -179,10 +179,13 @@ public static class SymbolIndexFixup
                              string outerClass, string outerParam,
                              bool events, List<Site> found, HashSet<string> unknown)
     {
+        var layout = LayoutWalker.Active(types, walking, objects.PointerWidth);
+        if (layout == null) return;
+
         foreach (var member in types.Members(walking))
         {
             if (!member.Written) continue;
-            int at = offset + member.Offset;
+            int at = offset + (layout.OffsetOf(member.Name) ?? member.Offset);
 
             if (member.VType == "TYPE_STRUCT")
             {
@@ -199,7 +202,7 @@ public static class SymbolIndexFixup
                     continue;
 
                 var array = objects.ArrayAt(at);
-                int stride = types[member.CType]?.Size ?? 0;
+                int stride = LayoutWalker.Active(types, member.CType, objects.PointerWidth)?.Size ?? 0;
                 if (array == null || stride <= 0) continue;
 
                 for (int e = 0; e < array.Count; e++)
@@ -207,6 +210,11 @@ public static class SymbolIndexFixup
                          outerClass, member.Name, events, found, unknown);
                 continue;
             }
+
+            int width = member.VType is "TYPE_ULONG" or "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING"
+                ? objects.PointerWidth
+                : HavokClassTypes.Width(member.VType);
+            if (width <= 0) continue;
 
             for (int e = 0; e < Math.Max(1, member.ArrSize); e++)
             {
@@ -239,8 +247,8 @@ public static class SymbolIndexFixup
                 found.Add(new Site
                 {
                     OwnerId = ownerId,
-                    ByteAt = at + e * Math.Max(1, HavokClassTypes.Width(member.VType)),
-                    ByteWidth = HavokClassTypes.Width(member.VType),
+                    ByteAt = at + e * width,
+                    ByteWidth = width,
                     Value = value,
                     Param = name,
                     OwnerClass = owner,

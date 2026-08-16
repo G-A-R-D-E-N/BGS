@@ -6060,7 +6060,8 @@ public static class Program
         var image = PackfileImage.Read(Path.GetFullPath(argv[1]));
         if (!PackfileConverter.ConvertTo(image, new PointerLayout(bytes)))
         {
-            Console.WriteLine("could not convert: the file holds a class the walker will not vouch for");
+            Console.WriteLine("could not convert: the file holds a class, section or fixup the converter " +
+                              "will not vouch for (see the fail-closed section rules)");
             return 1;
         }
         image.Save(Path.GetFullPath(argv[2]));

@@ -505,10 +505,7 @@ public static class NativeSave
         // supported, but editing one through here would lay 64-bit structures over 32-bit ones.
         // Refuse until the writer is layout-aware, rather than corrupt the file. This is the one
         // chokepoint every native edit and authoring plan passes through.
-        if (image.Layout.PointerSize != 8)
-            throw new NotSupportedException(
-                $"Native editing supports only the 8-byte packfile layout; this file uses a " +
-                $"{image.Layout.PointerSize}-byte layout. Convert it to 8 bytes before editing.");
+        NativeLayout.RequireWritable(image);
 
         var objects = new PackfileObjects(image, classes);
 

@@ -76,6 +76,34 @@ public static class LayoutWalker
         return true;
     }
 
+    // The offsets and size that actually apply to a class in a file of the given pointer
+    // width. The stored class table is laid out for 8-byte pointers, so an 8-byte file reads
+    // the stored offsets directly; a 4-byte file has to re-derive them, because the stored
+    // member.Offset/.Size values describe 64-bit structures. Returns null when the layout
+    // cannot be derived (unknown class, or one the walker cannot reproduce), so walkers can
+    // refuse rather than interpret the bytes with the wrong offsets.
+    public static ObjectLayout? Active(HavokClassTypes types, string className, int pointerSize)
+    {
+        if (pointerSize != 8)
+        {
+            if (pointerSize != 4 || !CanPlace(types, className)) return null;
+            return Of(types, className, new PointerLayout(pointerSize));
+        }
+
+        if (!types.Knows(className)) return null;
+
+        var members = types.Members(className);
+        var offsets = new int[members.Count];
+        var byName = new Dictionary<string, int>(members.Count, StringComparer.Ordinal);
+        for (int i = 0; i < members.Count; i++)
+        {
+            offsets[i] = members[i].Offset;
+            byName[members[i].Name] = members[i].Offset;
+        }
+
+        return new ObjectLayout(offsets, byName, types[className]?.Size ?? 0, 0);
+    }
+
     private static ObjectLayout Lay(HavokClassTypes types, string className, PointerLayout layout,
                                     int extraAlign)
     {
@@ -170,7 +198,11 @@ public static class LayoutWalker
         int p = layout.PointerSize;
         return member.VType switch
         {
-            "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING" or "TYPE_RELARRAY" or "TYPE_ULONG" => p,
+            "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING" or "TYPE_ULONG" => p,
+            // A relative array header is a single four-byte element count at both pointer
+            // widths: the schema's hknpConvexShape.vertices@48 / planes@64, faces@68,
+            // indices@72 prove it four bytes apart even in the eight-byte exe.
+            "TYPE_RELARRAY" => 4,
             "TYPE_VARIANT" => 2 * p,
             "TYPE_SIMPLEARRAY" => p + 4,
             "TYPE_ARRAY" => p + 8,
@@ -187,8 +219,11 @@ public static class LayoutWalker
         int p = layout.PointerSize;
         return member.VType switch
         {
-            "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING" or "TYPE_RELARRAY" or "TYPE_ULONG"
+            "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING" or "TYPE_ULONG"
                 or "TYPE_VARIANT" or "TYPE_SIMPLEARRAY" or "TYPE_ARRAY" => p,
+            // faces@68 following a four-byte planes@64 header shows the header aligns to its
+            // own width, not the pointer width.
+            "TYPE_RELARRAY" => 4,
             "TYPE_ENUM" or "TYPE_FLAGS" => HavokClassTypes.Width(member.VSub),
             "TYPE_VECTOR4" or "TYPE_QUATERNION" or "TYPE_QSTRANSFORM" or "TYPE_MATRIX3"
                 or "TYPE_ROTATION" or "TYPE_TRANSFORM" or "TYPE_MATRIX4" => 16,

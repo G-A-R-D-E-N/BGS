@@ -36,7 +36,7 @@ public static class FieldRender
             return expected == null || long.TryParse(expected, out _) ? printed.ToString() : null;
         }
 
-        if (member.ArrSize > 0) at += element * Width(member.VType);
+        if (member.ArrSize > 0) at += element * Width(member.VType, objects.PointerWidth);
 
         switch (member.VType)
         {
@@ -173,12 +173,12 @@ public static class FieldRender
         _ => 4,
     };
 
-    private static int Width(string vtype) => vtype switch
+    private static int Width(string vtype, int pointer) => vtype switch
     {
         "TYPE_BOOL" or "TYPE_CHAR" or "TYPE_INT8" or "TYPE_UINT8" => 1,
         "TYPE_INT16" or "TYPE_UINT16" or "TYPE_HALF" => 2,
-        "TYPE_INT64" or "TYPE_UINT64" or "TYPE_ULONG" or "TYPE_POINTER"
-            or "TYPE_STRINGPTR" or "TYPE_CSTRING" => 8,
+        "TYPE_INT64" or "TYPE_UINT64" => 8,
+        "TYPE_ULONG" or "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING" => pointer,
         "TYPE_VECTOR4" or "TYPE_QUATERNION" => 16,
         "TYPE_QSTRANSFORM" => 48,
         "TYPE_TRANSFORM" or "TYPE_MATRIX4" => 64,

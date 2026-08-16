@@ -1300,7 +1300,10 @@ public class MainWindow : Window
         _pasteInto.ItemsSource = slots;
         _pasteInto.SelectedItem = slots.Contains(chosen) ? chosen : Unattached;
 
-        _pasteButton.IsEnabled = _clip != null && !_readOnly && _hkxPath.Length > 0;
+        // Paste needs a writable native document actually loaded: _bytes is nulled on every
+        // fresh load, so a rejected (e.g. 4-byte) file must never leave Paste enabled against
+        // the clipboard even though the path was remembered.
+        _pasteButton.IsEnabled = _clip != null && _bytes != null && !_readOnly && _hkxPath.Length > 0;
         _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
         if (_clip != null && _pasteSummary.Text?.Length == 0) SetPasteSummary(Held(_clip), Ux.MetaBrush);
     }
@@ -3762,7 +3765,15 @@ public class MainWindow : Window
         // at the converter rather than display a graph built from the wrong offsets.
         if (NonEightByteLayout(path) is int layoutWidth)
         {
+            // This is a refusal, not an open: finish replacing the previous document model so it
+            // cannot half-survive with the path now naming a file that was never loaded into it.
             _hkxPath = path;
+            _root = null;
+            _objects = new List<HkxBehaviorParser.BehaviorNode>();
+            _classWarning = "";
+            _animation.Clear();
+            _animationData = null;
+            _animationSummary.Text = "";
             RememberRecent(path);
             RefreshRecents();
             RememberSetting("last_path", path, "The file opened");
@@ -3771,6 +3782,8 @@ public class MainWindow : Window
                 "open for editing yet. Convert it to the 8-byte layout first (symrm convert), then open the result.",
                 Ux.WarnBrush);
             BuildClipList(new BehaviourGraphModel());
+            RefreshPasteSlots();
+            RefreshTemplates();
             return;
         }
 
