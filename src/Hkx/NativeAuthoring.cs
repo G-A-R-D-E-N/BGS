@@ -424,10 +424,17 @@ public sealed class BehaviourAuthoringSession
             if (existing != null && int.TryParse(existing, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
             {
                 arrayId = parsed;
-                var array = _model.Get(existing);
-                _transitionCounts[arrayId] = array != null && array.StructLists.TryGetValue("transitions", out var rows)
-                    ? rows.Count
-                    : 0;
+                // Only seed the running count the first time this underlying array is
+                // seen. A second owner that shares the same transition-array object must
+                // not reset a counter we have already advanced, or its transitions would
+                // be planned at indices that collide with the first owner's.
+                if (!_transitionCounts.ContainsKey(arrayId))
+                {
+                    var array = _model.Get(existing);
+                    _transitionCounts[arrayId] = array != null && array.StructLists.TryGetValue("transitions", out var rows)
+                        ? rows.Count
+                        : 0;
+                }
             }
             else
             {

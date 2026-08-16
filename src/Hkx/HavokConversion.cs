@@ -212,7 +212,16 @@ public sealed record HavokConversionResult(
 
 public static class HavokSemanticConverter
 {
-    public static HavokConversionResult Convert(HavokIntermediateDocument source, HavokConversionMap map)
+    public static HavokConversionResult Convert(HavokIntermediateDocument source, HavokConversionMap map) =>
+        Convert(source, map, null);
+
+    /// <param name="targetTypes">
+    /// When supplied, the converted document is validated against this target schema: every
+    /// mapped target type and every written target member must be declared, otherwise an error
+    /// diagnostic is raised. When null, no schema validation is performed (the value-only path).
+    /// </param>
+    public static HavokConversionResult Convert(
+        HavokIntermediateDocument source, HavokConversionMap map, HavokTypeRegistry? targetTypes)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(map);
@@ -221,6 +230,21 @@ public static class HavokSemanticConverter
         var report = new HavokConversionReport();
         var diagnostics = new List<HavokConversionDiagnostic>();
         var rules = new Dictionary<long, HavokConversionMap.TypeRule>();
+
+        // Declared-member lookup for the target schema, resolved lazily. A null result means
+        // the target type itself is unknown; callers below skip member checks in that case
+        // because the type error already stands on its own.
+        var declaredMembers = new Dictionary<string, HashSet<string>?>(StringComparer.Ordinal);
+        HashSet<string>? MembersOf(string typeName)
+        {
+            if (targetTypes == null) return null;
+            if (declaredMembers.TryGetValue(typeName, out var cached)) return cached;
+            HashSet<string>? members = targetTypes.TryGet(typeName, out var definition) && definition != null
+                ? new HashSet<string>(definition.Members.Select(m => m.Name), StringComparer.Ordinal)
+                : null;
+            declaredMembers[typeName] = members;
+            return members;
+        }
 
         foreach (var sourceObject in source.Objects.Values.OrderBy(o => o.Id))
         {
@@ -235,6 +259,13 @@ public static class HavokSemanticConverter
                     $"no conversion rule exists for {sourceObject.TypeName}"));
                 continue;
             }
+
+            if (targetTypes != null && MembersOf(rule.TargetType) == null)
+                diagnostics.Add(new HavokConversionDiagnostic(
+                    HavokConversionDiagnosticLevel.Error,
+                    sourceObject.Id,
+                    "",
+                    $"target type {rule.TargetType} is not declared in the target schema"));
 
             target.Add(sourceObject.Id, rule.TargetType);
             rules[sourceObject.Id] = rule;
@@ -266,6 +297,13 @@ public static class HavokSemanticConverter
                 if (!string.Equals(sourceMember, targetMember, StringComparison.Ordinal))
                     patched = true;
 
+                if (MembersOf(rule.TargetType) is { } known && !known.Contains(targetMember))
+                    diagnostics.Add(new HavokConversionDiagnostic(
+                        HavokConversionDiagnosticLevel.Error,
+                        sourceObject.Id,
+                        targetMember,
+                        $"target type {rule.TargetType} does not declare member {targetMember}"));
+
                 var convertedValue = CloneValue(
                     sourceValue, sourceObject.Id, sourceMember, target, report, diagnostics);
                 if (rule.EnumMappings.TryGetValue(sourceMember, out var enumMapping))
@@ -280,6 +318,12 @@ public static class HavokSemanticConverter
             foreach (var (member, value) in rule.Defaults)
             {
                 if (targetObject.Members.ContainsKey(member)) continue;
+                if (MembersOf(rule.TargetType) is { } known && !known.Contains(member))
+                    diagnostics.Add(new HavokConversionDiagnostic(
+                        HavokConversionDiagnosticLevel.Error,
+                        sourceObject.Id,
+                        member,
+                        $"target type {rule.TargetType} does not declare defaulted member {member}"));
                 targetObject.Members[member] = CloneValue(value, sourceObject.Id, member, target, report, diagnostics);
                 report.DefaultedFields++;
                 patched = true;

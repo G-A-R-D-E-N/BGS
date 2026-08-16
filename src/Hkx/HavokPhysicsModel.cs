@@ -104,10 +104,10 @@ public static class HavokPhysicsValidator
             {
                 if (!shapes.ContainsKey(child))
                     findings.Add(Error($"shape {shape.Id}", $"references missing child shape {child}"));
-                if (child == shape.Id)
-                    findings.Add(Error($"shape {shape.Id}", "cannot contain itself"));
             }
         }
+
+        CheckShapeCycles(shapes, findings);
 
         foreach (var body in model.Bodies)
         {
@@ -120,6 +120,17 @@ public static class HavokPhysicsValidator
                 findings.Add(Error($"body {body.Id}", "center of mass must contain only finite values"));
             if (!Finite(body.Rotation))
                 findings.Add(Error($"body {body.Id}", "rotation must contain only finite values"));
+            else
+            {
+                float norm = MathF.Sqrt(
+                    body.Rotation.X * body.Rotation.X + body.Rotation.Y * body.Rotation.Y +
+                    body.Rotation.Z * body.Rotation.Z + body.Rotation.W * body.Rotation.W);
+                if (norm < RotationNormEpsilon)
+                    findings.Add(Error($"body {body.Id}", "rotation is degenerate (its length is effectively zero)"));
+                else if (MathF.Abs(norm - 1f) > RotationNormTolerance)
+                    findings.Add(Error($"body {body.Id}",
+                        $"rotation is not a unit quaternion (length {norm:0.####}); normalise it before use"));
+            }
             if (body.BoneIndex < -1)
                 findings.Add(Error($"body {body.Id}", "bone index cannot be below -1"));
             if (skeletonBoneCount is int count && body.BoneIndex >= count)
@@ -162,6 +173,51 @@ public static class HavokPhysicsValidator
         }
 
         return findings;
+    }
+
+    // A unit quaternion has length 1. Authored rotations are allowed a small slack for
+    // float round-trips, but a near-zero length is a degenerate rotation, not slack.
+    private const float RotationNormTolerance = 1e-3f;
+    private const float RotationNormEpsilon = 1e-4f;
+
+    // A compound shape may reference child shapes, which may themselves be compounds.
+    // Direct self-reference is only the simplest cycle; an indirect cycle (A -> B -> A)
+    // would make any recursive traversal of the compound tree loop forever. Walk the
+    // whole containment graph with a depth-first colouring and report the first cycle
+    // reachable from each shape.
+    private static void CheckShapeCycles(
+        IReadOnlyDictionary<int, HavokPhysicsShape> shapes,
+        List<HavokPhysicsValidationFinding> findings)
+    {
+        const int visiting = 1;
+        const int done = 2;
+        var state = new Dictionary<int, int>();
+        var reported = new HashSet<int>();
+
+        foreach (var shape in shapes.Values)
+            Visit(shape.Id, new List<int>());
+
+        void Visit(int id, List<int> path)
+        {
+            if (state.GetValueOrDefault(id) == done) return;
+            if (state.GetValueOrDefault(id) == visiting)
+            {
+                int start = path.LastIndexOf(id);
+                var loop = start >= 0 ? path.Skip(start).Append(id) : path.Append(id);
+                if (reported.Add(id))
+                    findings.Add(Error($"shape {id}",
+                        "is part of a containment cycle (" + string.Join(" -> ", loop) + ")"));
+                return;
+            }
+
+            if (!shapes.TryGetValue(id, out var shape)) return;
+            state[id] = visiting;
+            path.Add(id);
+            foreach (int child in shape.Children)
+                Visit(child, path);
+            path.RemoveAt(path.Count - 1);
+            state[id] = done;
+        }
     }
 
     private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);

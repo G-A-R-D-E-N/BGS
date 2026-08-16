@@ -205,6 +205,48 @@ public sealed class NativeAuthoringTests
             transition.EventId == startRun);
     }
 
+    [Fact]
+    public void TwoOwnersSharingOneTransitionArrayDoNotOverwriteEachOther()
+    {
+        byte[] source = Source(
+            "hkbStateMachine",
+            "hkbBehaviorGraphStringData",
+            "hkbBehaviorGraphData");
+        int machineId = NativeGraphModel.FirstId;
+
+        var seed = new BehaviourAuthoringSession(source);
+        int go = seed.AddEvent("Go");
+        int stop = seed.AddEvent("Stop");
+        var a = seed.AddClip("A", "Animations\\A.hkx");
+        var b = seed.AddClip("B", "Animations\\B.hkx");
+        var stateA = seed.AddState(machineId, "A", a.Id);
+        var stateB = seed.AddState(machineId, "B", b.Id);
+        seed.AddTransition(machineId, stateA.ObjectId, stateB.ObjectId, go);
+        byte[] withOne = seed.Build().Bytes;
+
+        // Point state B's transitions at the SAME array object as state A. This shared
+        // ownership is unusual but structurally legal; build it directly so the fixture
+        // itself is not gated on validation.
+        int arrayId = int.Parse(
+            Model(withOne).Get(stateA.ObjectId.ToString())!.Ref("transitions")!,
+            System.Globalization.CultureInfo.InvariantCulture);
+        var rewire = new NativeAuthoringPlan(withOne);
+        rewire.SetReference(stateB.ObjectId, "transitions", arrayId);
+        byte[] shared = NativeSave.Apply(withOne, rewire.ToSavePlan());
+
+        // Add a transition through each owner. The second add (through B) resolves to the
+        // already-advanced array; before the fix it reset the running index back to the
+        // source count and planned on top of the transition added through A.
+        var session = new BehaviourAuthoringSession(shared);
+        session.AddTransition(machineId, stateA.ObjectId, stateB.ObjectId, stop);
+        session.AddTransition(machineId, stateB.ObjectId, stateA.ObjectId, stop);
+        byte[] withThree = session.Build().Bytes;
+
+        var array = Model(withThree).Get(arrayId.ToString())!;
+        Assert.True(array.StructLists.TryGetValue("transitions", out var rows));
+        Assert.Equal(3, rows!.Count);
+    }
+
     private static BehaviourGraphModel Model(byte[] bytes)
     {
         var objects = new PackfileObjects(PackfileImage.Read(bytes), HavokClasses.Shipped);

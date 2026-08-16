@@ -148,6 +148,57 @@ public sealed class HavokConversionTests
     }
 
     [Fact]
+    public void ConversionValidatesAgainstTargetSchemaWhenRegistryIsSupplied()
+    {
+        var source = new HavokIntermediateDocument { RootId = 1 };
+        var root = source.Add(1, "Src");
+        root.Members["old"] = new HavokIntermediateValue.IntegerValue(5);
+        source.Add(2, "Ghost").Members["x"] = new HavokIntermediateValue.IntegerValue(1);
+
+        var map = new HavokConversionMap();
+        map.Map("Src", "Dst").Rename("old", "missing");   // "missing" is not declared on Dst
+        map.Map("Ghost", "Phantom");                       // "Phantom" is not in the registry at all
+
+        var registry = new HavokTypeRegistry();
+        registry.Register(new HavokTypeDefinition("Dst", 8, new[]
+        {
+            new HavokMemberDefinition("new", "TYPE_INT32"),
+        }));
+
+        var result = HavokSemanticConverter.Convert(source, map, registry);
+
+        Assert.Contains(result.Diagnostics, d =>
+            d.Level == HavokConversionDiagnosticLevel.Error && d.ObjectId == 1 &&
+            d.Message.Contains("does not declare member missing"));
+        Assert.Contains(result.Diagnostics, d =>
+            d.Level == HavokConversionDiagnosticLevel.Error && d.ObjectId == 2 &&
+            d.Message.Contains("target type Phantom is not declared"));
+    }
+
+    [Fact]
+    public void ConversionReportsNoSchemaErrorsWhenTargetMembersAreDeclared()
+    {
+        var source = new HavokIntermediateDocument { RootId = 1 };
+        source.Add(1, "Src").Members["old"] = new HavokIntermediateValue.IntegerValue(5);
+
+        var map = new HavokConversionMap();
+        map.Map("Src", "Dst").Rename("old", "new").Default("flag", new HavokIntermediateValue.BoolValue(true));
+
+        var registry = new HavokTypeRegistry();
+        registry.Register(new HavokTypeDefinition("Dst", 12, new[]
+        {
+            new HavokMemberDefinition("new", "TYPE_INT32"),
+            new HavokMemberDefinition("flag", "TYPE_BOOL"),
+        }));
+
+        var result = HavokSemanticConverter.Convert(source, map, registry);
+
+        Assert.DoesNotContain(result.Diagnostics, d => d.Level == HavokConversionDiagnosticLevel.Error);
+        Assert.Equal("Dst", result.Document.Get(1)!.TypeName);
+        Assert.Equal(new HavokIntermediateValue.IntegerValue(5), result.Document.Get(1)!.Members["new"]);
+    }
+
+    [Fact]
     public void UnsupportedReferenceBecomesNullAndIsReportedAsPatched()
     {
         var source = new HavokIntermediateDocument();
