@@ -60,6 +60,7 @@ public static class Tests
         ("RelativeArrayPayloadsRoundTripThroughWidths", RelativeArrayPayloadsRoundTripThroughWidths),
         ("RelativeArrayPayloadsUseStoredRelativeOffsets", RelativeArrayPayloadsUseStoredRelativeOffsets),
         ("RelativeArraysRenderInTheModelAndXml", RelativeArraysRenderInTheModelAndXml),
+        ("GenuineNpSkeletonRelarraysConvertAndRender", GenuineNpSkeletonRelarraysConvertAndRender),
         ("RelativeArrayMalformedHeadersAreRefused", RelativeArrayMalformedHeadersAreRefused),
         ("RelativeArrayPayloadOverlapsObjectRefusesConversion", RelativeArrayPayloadOverlapsObjectRefusesConversion),
         ("OverlappingRelativeArrayPayloadsRefuseConversion", OverlappingRelativeArrayPayloadsRefuseConversion),
@@ -1254,10 +1255,12 @@ public static class Tests
     }
 
     // Builds an eight-byte hknpConvexPolytopeShape whose relative arrays use the real
-    // np-format headers — uint16(size + 1) followed by uint16(payload offset from the struct's
-    // start) — with payloads placed at the given offsets from the struct start. offs is
-    // (planes, faces, indices); counts are 2, 3, 5. The base class's own relative array
-    // (vertices, count 0) is written as a valid empty header.
+    // np-format headers — uint16(size + 1) followed by uint16(payload offset from the member
+    // site) — with payloads placed at member + rel. hkRelArray resolves `this + m_offset` in
+    // the game runtime (CommonLibF4), so the stored offset is measured from the member's own
+    // address, never the struct start. offs is (planes, faces, indices); counts are 2, 3, 5.
+    // The base class's own relative array (vertices, count 0) is written as a valid empty
+    // header.
     private static byte[] PolytopeWithRelativePayloads(int planesRel, int facesRel, int indicesRel,
                                                        int dataLen)
     {
@@ -1283,9 +1286,9 @@ public static class Tests
         Header(faces, 3, facesRel);
         Header(indices, 5, indicesRel);
 
-        for (int e = 0; e < 2; e++) BitConverter.GetBytes(10f + e).CopyTo(data, planesRel + e * 16);
-        for (int e = 0; e < 3; e++) BitConverter.GetBytes((uint)(0xA0 + e)).CopyTo(data, facesRel + e * 4);
-        for (int e = 0; e < 5; e++) data[indicesRel + e] = (byte)(0x50 + e);
+        for (int e = 0; e < 2; e++) BitConverter.GetBytes(10f + e).CopyTo(data, planes + planesRel + e * 16);
+        for (int e = 0; e < 3; e++) BitConverter.GetBytes((uint)(0xA0 + e)).CopyTo(data, faces + facesRel + e * 4);
+        for (int e = 0; e < 5; e++) data[indices + indicesRel + e] = (byte)(0x50 + e);
         return data;
     }
 
@@ -1310,14 +1313,15 @@ public static class Tests
         // 16-byte line and each completed block is padded to the next line — planes at
         // +0x50 (2 x vector4), faces at +0x70 (3 x 4 bytes, then padding to +0x80), indices
         // at +0x80 (5 x uint8). Headers encode count + 1 in the first uint16 and the payload's
-        // offset from the struct start in the second.
+        // offset from the member site in the second — planes@64 + 0x10 = +0x50, faces@68 +
+        // 0x1c = +0x70, indices@72 + 0x20 = +0x80.
         var types = HavokClassTypes.Shipped;
         int size = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte).Size;
         Check("the eight-byte polytope is eighty bytes", 0x50, size);
 
         // The section is sized to the compacted layout (payloads end at 0x85, aligned to
         // 0x90) so the round trip is byte-for-byte comparable.
-        var image = PolytopeImage(PolytopeWithRelativePayloads(0x50, 0x70, 0x80, 0x90));
+        var image = PolytopeImage(PolytopeWithRelativePayloads(0x10, 0x2C, 0x38, 0x90));
         byte[] before = image.Rebuild();
 
         CheckTrue("an eight-byte polytope converts to four bytes",
@@ -1329,8 +1333,8 @@ public static class Tests
                   before.SequenceEqual(image.Rebuild()));
 
         // The round trip restores the canonical line placement, not just the bytes: the
-        // rewritten offsets are exactly the canonical ones, including the line padding between
-        // the faces and indices payloads.
+        // rewritten stored offsets point at the canonical payload positions, including the
+        // line padding between the faces and indices payloads.
         var rebuilt = PackfileImage.Read(image.Rebuild());
         var bytes = rebuilt.Section("__data__")!.Data;
         int base0 = new PackfileObjects(rebuilt).Instances[0].Offset;
@@ -1339,27 +1343,29 @@ public static class Tests
         int indicesH = base0 + LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte).OffsetOf("indices")!.Value;
 
         int Rel(int header) => bytes[header + 2] | bytes[header + 3] << 8;
-        Check("planes payload returns to +0x50", 0x50, Rel(planesH));
-        Check("faces payload returns to +0x70", 0x70, Rel(facesH));
-        Check("indices payload returns to +0x80", 0x80, Rel(indicesH));
-        Check("the payloads are 16-byte line padded", 0x50 + 32, Rel(facesH));
+        Check("planes stores its member-site distance", 0x10, Rel(planesH));
+        Check("faces stores its member-site distance", 0x2C, Rel(facesH));
+        Check("indices stores its member-site distance", 0x38, Rel(indicesH));
+        Check("planes payload returns to +0x50", base0 + 0x50, planesH + Rel(planesH));
+        Check("faces payload returns to +0x70", base0 + 0x70, facesH + Rel(facesH));
+        Check("indices payload returns to +0x80", base0 + 0x80, indicesH + Rel(indicesH));
+        Check("the payloads are 16-byte line padded", base0 + 0x50 + 32, facesH + Rel(facesH));
         CheckTrue("the line padding between payloads is zero",
                   bytes.Skip(base0 + 0x7C).Take(0x80 - 0x7C).All(b => b == 0));
     }
 
     private static void RelativeArrayPayloadsUseStoredRelativeOffsets()
     {
-        // The payloads are deliberately NOT immediately after the object: the 80-byte struct
-        // is followed by sixteen bytes of padding, and the headers point at struct + 0x70.
-        // Only the stored relative offset can find them; a tail-layout model would read the
-        // wrong bytes (or refuse, since the same bytes decode as an absurd count).
+        // The payloads are deliberately NOT immediately after the object: planes sits at
+        // member@64 + 0x70 = +0xB0 (well past the 0x50-byte struct), faces at 0xF8, indices
+        // at 0x10C. Only the stored relative offset can find them; a tail-layout model would
+        // read the wrong bytes (or refuse, since the same bytes decode as an absurd count).
         var types = HavokClassTypes.Shipped;
-        int size8 = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte).Size;
         int size4 = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.FourByte).Size;
         int planes4 = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.FourByte).OffsetOf("planes")!.Value;
 
-        var data = PolytopeWithRelativePayloads(0x70, 0x70 + 32, 0x70 + 44, 176);
-        Check("the fixture really is non-tail", true, 0x70 != size8);
+        var data = PolytopeWithRelativePayloads(0x70, 0x90, 0x9C, 0x120);
+        Check("the fixture really is non-tail", true, 64 + 0x70 != 0x50);
 
         var image = PolytopeImage(data);
         CheckTrue("the non-tail polytope converts to four bytes",
@@ -1376,18 +1382,19 @@ public static class Tests
         Check("the count header is preserved as size + 1", 3, outCount);
 
         // The converter snaps the payload to a 16-byte line and rewrites the stored distance
-        // — never the source's 0x70, and never a tail-model distance computed from the
-        // eight-byte size.
+        // against the relocated member site — never the source's 0x70, and never a
+        // tail-model distance computed from the four-byte size.
+        int planesAt = PackfileLayout.Align(size4, 16);
         Check("the output relative offset points at the relocated payload",
-              PackfileLayout.Align(size4, 16), outRel);
-        CheckTrue("the relocated payload start is 16-byte aligned", (base4 + outRel) % 16 == 0);
+              planesAt - planes4, outRel);
+        CheckTrue("the relocated payload start is 16-byte aligned", (base4 + planes4 + outRel) % 16 == 0);
 
-        float v0 = BitConverter.ToSingle(bytes, base4 + outRel);
-        float v1 = BitConverter.ToSingle(bytes, base4 + outRel + 16);
+        float v0 = BitConverter.ToSingle(bytes, base4 + planes4 + outRel);
+        float v1 = BitConverter.ToSingle(bytes, base4 + planes4 + outRel + 16);
         Check("the first plane vector's x survives", 10f, v0);
         Check("the second plane vector's x survives", 11f, v1);
 
-        int facesAt = PackfileLayout.Align(base4 + outRel + 32, 16);
+        int facesAt = PackfileLayout.Align(planesAt + 32, 16);
         Check("the faces payload follows the planes on a new line", 0xA0u,
               BitConverter.ToUInt32(bytes, facesAt));
         int indicesAt = PackfileLayout.Align(facesAt + 12, 16);
@@ -1398,13 +1405,13 @@ public static class Tests
     private static void RelativeArraysRenderInTheModelAndXml()
     {
         // The model and XML readers must route TYPE_RELARRAY through the real np header
-        // (uint16 size + 1, uint16 relative offset from the containing struct) and locate the
-        // payload at structStart + storedOffset. The payloads here sit at +0x70 / +0x90 /
-        // +0x9C — deliberately NOT immediately after the 0x50-byte object — so only the
+        // (uint16 size + 1, uint16 relative offset from the member site) and locate the
+        // payload at member + storedOffset. The payloads here sit at +0xB0 / +0xF8 /
+        // +0x10C — deliberately NOT immediately after the 0x50-byte object — so only the
         // stored offsets can find them; the pointer-header array path reads count from
         // header + pointerWidth (garbage, or a null backing without a fixup) and renders
         // nothing.
-        var image = PolytopeImage(PolytopeWithRelativePayloads(0x70, 0x90, 0x9C, 176));
+        var image = PolytopeImage(PolytopeWithRelativePayloads(0x70, 0x90, 0x9C, 0x120));
         var objects = new PackfileObjects(image);
 
         var model = NativeGraphModel.From(objects);
@@ -1443,14 +1450,96 @@ public static class Tests
                   xml.Contains("name=\"firstIndex\">161</hkparam>", StringComparison.Ordinal));
     }
 
+    private static void GenuineNpSkeletonRelarraysConvertAndRender()
+    {
+        // A real Fallout 4 Turret standing skeleton — an np physics packfile carrying eight
+        // hknpConvexPolytopeShape instances whose planes/faces/indices (and inherited
+        // vertices) are genuine np relative arrays. This exercises the whole pipeline against
+        // bytes the game actually wrote, not a synthetic fixture: in particular the
+        // member-site offset base, since hkRelArray resolves `this + m_offset` in the game
+        // runtime and this file's payloads only resolve with that base (the box polytope's
+        // vertices sit at member@48 + 0x20, planes at member@64 + 0x90, faces at member@68 +
+        // 0x10C, indices at member@72 + 0x128).
+        string sample = Path.Combine(AppContext.BaseDirectory, "samples", "TurretStandingSkeleton.hkx");
+        if (!File.Exists(sample)) { Check("the genuine sample file is present", true, false); return; }
+
+        var original = PackfileImage.Read(File.ReadAllBytes(sample));
+        Check("the genuine skeleton is an eight-byte packfile", 8, original.Layout.PointerSize);
+
+        void CheckPolytope(PackfileObjects objects, string when)
+        {
+            var model = NativeGraphModel.From(objects);
+            Check($"the {when} file renders into the graph model", true, model != null);
+            if (model == null) return;
+
+            var polys = model.Objects.Where(o => o.Class == "hknpConvexPolytopeShape").ToList();
+            Check($"the {when} file carries all eight polytopes", 8, polys.Count);
+
+            string indices = string.Join(" ",
+                polys.Select(p => string.Join(" ", p.Lists.GetValueOrDefault("indices") ?? new()))
+                     .FirstOrDefault(s => s.Length > 0) ?? "");
+            var box = polys.FirstOrDefault(p =>
+                string.Join(" ", p.Lists.GetValueOrDefault("indices") ?? new()) == indices);
+            Check($"the {when} file renders a polytope with its payloads", true, box != null);
+            if (box == null) return;
+
+            Check($"the {when} vertices payload has seven vector4s", 28, box.Lists["vertices"].Count);
+            Check($"the {when} planes payload has seven vector4s", 28, box.Lists["planes"].Count);
+            Check($"the {when} indices payload matches the game data", indices,
+                  string.Join(" ", box.Lists["indices"]));
+
+            box.StructLists.TryGetValue("faces", out var faces);
+            Check($"the {when} faces struct list has all five faces", 5, faces?.Count ?? 0);
+            if (faces != null && faces.Count == 5)
+            {
+                Check($"the {when} first face's firstIndex is read from its payload", "0",
+                      faces[0]["firstIndex"]);
+                Check($"the {when} last face's firstIndex is read from its payload", "16",
+                      faces[4]["firstIndex"]);
+                Check($"the {when} faces carry their numIndices", "4", faces[0]["numIndices"]);
+            }
+        }
+
+        var objects8 = new PackfileObjects(original);
+        CheckPolytope(objects8, "original eight-byte");
+
+        string xml8 = NativeXml.From(objects8, original);
+        CheckTrue("the XML carries the genuine indices payload",
+                  xml8.Contains("name=\"indices\" numelements=\"23\">0 3 6 1 7 5 2 4 7 4 1 6 0 2 5 3 3 5 7 6 4 2 0</hkparam>",
+                                StringComparison.Ordinal));
+        CheckTrue("the XML emits all five genuine faces",
+                  xml8.Contains("<hkparam name=\"faces\" numelements=\"5\">", StringComparison.Ordinal));
+
+        // Convert to four bytes and back. The relarray payloads are relocated — the converter
+        // packs them at consecutive 16-byte lines, unlike the game's original layout with its
+        // inter-payload gaps — so the round trip is not byte-identical, but every payload
+        // value must survive both directions.
+        var four = PackfileImage.Read(original.Rebuild());
+        CheckTrue("the genuine skeleton converts to four bytes",
+                  PackfileConverter.ConvertTo(four, PointerLayout.FourByte));
+        Check("and is now four-byte", 4, four.Layout.PointerSize);
+
+        var objects4 = new PackfileObjects(PackfileImage.Read(four.Rebuild()));
+        CheckPolytope(objects4, "converted four-byte");
+
+        CheckTrue("and converts back to eight bytes",
+                  PackfileConverter.ConvertTo(four, PointerLayout.EightByte));
+        var objects88 = new PackfileObjects(PackfileImage.Read(four.Rebuild()));
+        CheckPolytope(objects88, "round-tripped eight-byte");
+
+        string xml88 = NativeXml.From(objects88, PackfileImage.Read(four.Rebuild()));
+        CheckTrue("the round-tripped XML still carries the genuine indices payload",
+                  xml88.Contains("name=\"indices\" numelements=\"23\">0 3 6 1 7 5 2 4 7 4 1 6 0 2 5 3 3 5 7 6 4 2 0</hkparam>",
+                                 StringComparison.Ordinal));
+    }
+
     private static void RelativeArrayMalformedHeadersAreRefused()
     {
         var types = HavokClassTypes.Shipped;
-        int size = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte).Size;
         int planes = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte).OffsetOf("planes")!.Value;
 
         // An encoded size of zero means count -1: the header is malformed, not merely empty.
-        var zero = PolytopeWithRelativePayloads(size, size + 32, size + 44, 144);
+        var zero = PolytopeWithRelativePayloads(0x50, 0x70, 0x80, 0x100);
         zero[planes] = 0;
         zero[planes + 1] = 0;
         var zeroImage = PolytopeImage(zero);
@@ -1460,7 +1549,7 @@ public static class Tests
         CheckTrue("and the file is untouched", zeroBefore.SequenceEqual(zeroImage.Rebuild()));
 
         // A relative offset whose payload would run past the end of the section is refused.
-        var overrun = PolytopeWithRelativePayloads(size, size + 32, size + 44, 144);
+        var overrun = PolytopeWithRelativePayloads(0x50, 0x70, 0x80, 0x100);
         overrun[planes + 2] = 0xFD;
         overrun[planes + 3] = 0xFF;
         var overrunImage = PolytopeImage(overrun);
@@ -1470,7 +1559,7 @@ public static class Tests
         CheckTrue("and the file is untouched", overrunBefore.SequenceEqual(overrunImage.Rebuild()));
 
         // A count whose payload cannot fit is refused the same way.
-        var huge = PolytopeWithRelativePayloads(size, size + 32, size + 44, 144);
+        var huge = PolytopeWithRelativePayloads(0x50, 0x70, 0x80, 0x100);
         huge[planes] = 0xFF;
         huge[planes + 1] = 0xFF;
         var hugeImage = PolytopeImage(huge);
@@ -1482,14 +1571,14 @@ public static class Tests
 
     private static void RelativeArrayPayloadOverlapsObjectRefusesConversion()
     {
-        // The first polytope's planes payload (stored offset +0x90) lands inside the second
-        // object's span — a four-byte hknpConvexPolytopeShapeFace at +0x90. Both blocks
-        // individually fit in __data__ and both virtuals are valid, so only the global
+        // The first polytope's planes payload (member@64 + 0x20 = +0x90) lands inside the
+        // second object's span — a four-byte hknpConvexPolytopeShapeFace at +0x90. Both
+        // blocks individually fit in __data__ and both virtuals are valid, so only the global
         // source-range overlap check can catch it; without it the converter relocates both
         // blocks and lets the overlapping source bytes be transcoded into two destinations.
         var types = HavokClassTypes.Shipped;
 
-        var data = PolytopeWithRelativePayloads(0x90, 0x70, 0x80, 0x100);
+        var data = PolytopeWithRelativePayloads(0x50, 0x70, 0x80, 0x100);
 
         var names = new byte[5 + "hknpConvexPolytopeShape".Length + 1
                             + 5 + "hknpConvexPolytopeShapeFace".Length + 1];
@@ -1515,10 +1604,11 @@ public static class Tests
 
     private static void OverlappingRelativeArrayPayloadsRefuseConversion()
     {
-        // planes declares its payload at +0x50 and faces at +0x60: the faces payload
-        // (0x60..0x6C) sits inside the planes payload (0x50..0x70). Each header and span is
-        // individually valid, so only the overlap check can refuse it.
-        var image = PolytopeImage(PolytopeWithRelativePayloads(0x50, 0x60, 0x80, 0x100));
+        // planes declares its payload at member@64 + 0x10 = +0x50 and faces at member@68 +
+        // 0x1C = +0x60: the faces payload (0x60..0x6C) sits inside the planes payload
+        // (0x50..0x70). Each header and span is individually valid, so only the overlap
+        // check can refuse it.
+        var image = PolytopeImage(PolytopeWithRelativePayloads(0x10, 0x1C, 0x80, 0x100));
         RefusedLeavesFileUntouched(image, "two overlapping relative-array payloads");
     }
 

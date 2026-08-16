@@ -352,11 +352,13 @@ public static class PackfileConverter
             if (member.VType == "TYPE_RELARRAY")
             {
                 // The np-era header is two little-endian uint16s: the element count plus one,
-                // then the payload's offset from this struct's start. The stored offset is
-                // authoritative — the payload does not have to sit immediately after the
-                // object — so it is read from the header, never reconstructed. No fixup points
-                // at the header and none is emitted; the payload is relocated as an ordinary
-                // block and bytes 2-3 are rewritten to its new distance during transcoding.
+                // then the payload's offset from the member site itself (hkRelArray resolves
+                // `this + m_offset` in the game runtime; real files place polytope payloads
+                // accordingly). The stored offset is authoritative — the payload does not have
+                // to sit immediately after the object — so it is read from the header, never
+                // reconstructed. No fixup points at the header and none is emitted; the
+                // payload is relocated as an ordinary block and bytes 2-3 are rewritten to its
+                // new distance from the relocated member site during transcoding.
                 int raw = objects.ReadIntAt(at) ?? 0;
                 int sizePlusOne = raw & 0xFFFF;
                 int relOff = (raw >> 16) & 0xFFFF;
@@ -368,7 +370,7 @@ public static class PackfileConverter
                 int tgtElem = RelElementWidth(types, target, member);
                 if (srcElem <= 0 || tgtElem <= 0) return false;
 
-                long payloadAt = (long)offset + relOff;
+                long payloadAt = (long)at + relOff;
                 long payloadLen = (long)count * srcElem;
                 if (payloadAt < 0 || payloadLen <= 0 || payloadLen > dataLength - payloadAt) return false;
 
@@ -623,7 +625,9 @@ public static class PackfileConverter
                     // same value the serializers write for an empty relative array.
                     if (relSites.TryGetValue(s, out int relPayload))
                     {
-                        long rel = (long)relPayload - targetAt;
+                        // The stored distance is measured from the member site, not the struct
+                        // start, so it must be rewritten against the relocated member site too.
+                        long rel = (long)relPayload - t;
                         if (rel < 0 || rel > ushort.MaxValue) return false;
                         Array.Copy(from, s, to, t, 2);
                         BitConverter.GetBytes((ushort)rel).CopyTo(to, t + 2);

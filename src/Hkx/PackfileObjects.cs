@@ -201,9 +201,9 @@ public sealed class PackfileObjects
         return values;
     }
 
-    public IReadOnlyList<Instance?>? ReadRelVariantArrayAt(int structStart, int headerAt)
+    public IReadOnlyList<Instance?>? ReadRelVariantArrayAt(int headerAt)
     {
-        var rel = RelArrayAt(structStart, headerAt, 2 * _pointer);
+        var rel = RelArrayAt(headerAt, 2 * _pointer);
         if (rel == null) return null;
 
         var values = new List<Instance?>(rel.Count);
@@ -271,15 +271,16 @@ public sealed class PackfileObjects
     public sealed record Elements(int At, int Count) : IArraySpan;
 
     // The np-era relative-array header is two little-endian uint16s at the member site: the
-    // element count plus one, then the payload's offset from the containing struct's start.
-    // The stored offset is authoritative — the payload does not have to sit immediately after
-    // the object — so it is read from the header, never reconstructed, and the base is the
-    // struct that contains the member, not the member site itself.
+    // element count plus one, then the payload's offset from the member site itself. The base
+    // is the member's own address — hkRelArray::operator[] resolves `this + m_offset` in the
+    // game runtime (CommonLibF4), and real files place polytope payloads accordingly. The
+    // stored offset is authoritative — the payload does not have to sit immediately after the
+    // object — so it is read from the header, never reconstructed.
     public sealed record RelElements(int At, int Count) : IArraySpan;
 
-    public RelElements? RelArrayAt(int structStart, int headerAt)
+    public RelElements? RelArrayAt(int headerAt)
     {
-        if (structStart < 0 || headerAt < 0 || headerAt + 4 > _data.Data.Length) return null;
+        if (headerAt < 0 || headerAt + 4 > _data.Data.Length) return null;
 
         int raw = BitConverter.ToInt32(_data.Data, headerAt);
         int sizePlusOne = raw & 0xFFFF;
@@ -289,15 +290,15 @@ public sealed class PackfileObjects
         int count = sizePlusOne - 1;
         if (count == 0) return new RelElements(0, 0);
 
-        long payload = (long)structStart + relOff;
+        long payload = (long)headerAt + relOff;
         if (payload < 0 || payload > _data.Data.Length) return null;
         return new RelElements((int)payload, count);
     }
 
-    public RelElements? RelArrayAt(int structStart, int headerAt, int elementWidth)
+    public RelElements? RelArrayAt(int headerAt, int elementWidth)
     {
         if (elementWidth <= 0) return null;
-        var rel = RelArrayAt(structStart, headerAt);
+        var rel = RelArrayAt(headerAt);
         if (rel == null || rel.Count == 0) return rel;
 
         long bytes = (long)rel.Count * elementWidth;
@@ -305,9 +306,9 @@ public sealed class PackfileObjects
         return rel;
     }
 
-    public IReadOnlyList<string?>? ReadRelStringArrayAt(int structStart, int headerAt)
+    public IReadOnlyList<string?>? ReadRelStringArrayAt(int headerAt)
     {
-        var rel = RelArrayAt(structStart, headerAt, _pointer);
+        var rel = RelArrayAt(headerAt, _pointer);
         if (rel == null) return null;
 
         var values = new List<string?>(rel.Count);
@@ -320,9 +321,9 @@ public sealed class PackfileObjects
         return values;
     }
 
-    public IReadOnlyList<Instance?>? ReadRelRefArrayAt(int structStart, int headerAt)
+    public IReadOnlyList<Instance?>? ReadRelRefArrayAt(int headerAt)
     {
-        var rel = RelArrayAt(structStart, headerAt, _pointer);
+        var rel = RelArrayAt(headerAt, _pointer);
         if (rel == null) return null;
 
         var values = new List<Instance?>(rel.Count);

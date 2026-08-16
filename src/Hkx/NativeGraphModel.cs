@@ -62,7 +62,7 @@ public static class NativeGraphModel
 
             if (member.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")
             {
-                Array(objects, types, obj, offset, at, member, reference);
+                Array(objects, types, obj, at, member, reference);
                 continue;
             }
 
@@ -103,7 +103,7 @@ public static class NativeGraphModel
             {
                 fields[member.Name] = member.VSub is "TYPE_STRUCT" or "TYPE_STRINGPTR" or "TYPE_CSTRING"
                     ? ""
-                    : string.Join(" ", Elements(objects, types, offset, at, member, reference));
+                    : string.Join(" ", Elements(objects, types, at, member, reference));
                 continue;
             }
 
@@ -135,7 +135,7 @@ public static class NativeGraphModel
 
             int at = offset + (layout.OffsetOf(member.Name) ?? member.Offset);
             var values = member.VType == "TYPE_RELARRAY"
-                ? objects.ReadRelStringArrayAt(offset, at)
+                ? objects.ReadRelStringArrayAt(at)
                 : objects.ReadStringArrayAt(at);
             if (values == null || values.Count == 0) continue;
 
@@ -144,9 +144,8 @@ public static class NativeGraphModel
         }
     }
 
-    private static void Array(PackfileObjects objects, HavokClassTypes types, HkObject obj,
-                              int structStart, int at, HavokClassTypes.Member member,
-                              FieldRender.Reference reference)
+    private static void Array(PackfileObjects objects, HavokClassTypes types, HkObject obj, int at,
+                              HavokClassTypes.Member member, FieldRender.Reference reference)
     {
         if (member.VSub == "TYPE_STRUCT")
         {
@@ -157,7 +156,7 @@ public static class NativeGraphModel
             if (stride <= 0) return;
 
             PackfileObjects.IArraySpan? array = member.VType == "TYPE_RELARRAY"
-                ? objects.RelArrayAt(structStart, at, stride)
+                ? objects.RelArrayAt(at, stride)
                 : objects.ArrayAt(at, stride);
             if (array == null || array.Count == 0) return;
 
@@ -176,33 +175,30 @@ public static class NativeGraphModel
         if (member.VSub is "TYPE_STRINGPTR" or "TYPE_CSTRING")
         {
 
-            var values = member.VType == "TYPE_RELARRAY"
-                ? objects.ReadRelStringArrayAt(structStart, at)
-                : objects.ReadStringArrayAt(at);
+            var values = objects.ReadStringArrayAt(at);
             obj.Lists[member.Name] = values == null
                 ? new List<string>()
                 : values.Select(v => Trimmed(Escaped(v ?? ""))).ToList();
             return;
         }
 
-        string joined = string.Join(" ", Elements(objects, types, structStart, at, member, reference));
+        string joined = string.Join(" ", Elements(objects, types, at, member, reference));
         obj.Lists[member.Name] = joined
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .ToList();
     }
 
-    internal static IEnumerable<string> Elements(PackfileObjects objects, HavokClassTypes types,
-                                                 int structStart, int at,
+    internal static IEnumerable<string> Elements(PackfileObjects objects, HavokClassTypes types, int at,
                                                  HavokClassTypes.Member member,
                                                  FieldRender.Reference reference)
     {
         if (member.VType == "TYPE_RELARRAY")
         {
             // Relative arrays are read through their own uint16(size+1)+uint16(relative-offset)
-            // header; the payload sits at structStart + storedOffset, never behind a fixup.
+            // header; the payload sits at the member site + storedOffset, never behind a fixup.
             if (member.VSub == "TYPE_POINTER")
             {
-                var targets = objects.ReadRelRefArrayAt(structStart, at);
+                var targets = objects.ReadRelRefArrayAt(at);
                 if (targets == null) yield break;
 
                 foreach (var target in targets) yield return reference(target, target == null);
@@ -211,7 +207,7 @@ public static class NativeGraphModel
 
             if (member.VSub == "TYPE_VARIANT")
             {
-                var targets = objects.ReadRelVariantArrayAt(structStart, at);
+                var targets = objects.ReadRelVariantArrayAt(at);
                 if (targets == null) yield break;
 
                 foreach (var target in targets) yield return reference(target, target == null);
@@ -221,7 +217,7 @@ public static class NativeGraphModel
             int relStride = RelElementWidth(types, objects.PointerWidth, member);
             if (relStride <= 0) yield break;
 
-            var rel = objects.RelArrayAt(structStart, at, relStride);
+            var rel = objects.RelArrayAt(at, relStride);
             if (rel == null) yield break;
 
             var relElement = new HavokClassTypes.Member { Name = member.Name, VType = member.VSub };

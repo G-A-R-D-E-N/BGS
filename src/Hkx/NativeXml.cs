@@ -115,7 +115,7 @@ public static class NativeXml
 
             if (member.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")
             {
-                Array(text, objects, types, member, offset, at, reference, depth);
+                Array(text, objects, types, member, at, reference, depth);
                 continue;
             }
 
@@ -141,7 +141,7 @@ public static class NativeXml
     }
 
     private static void Array(StringBuilder text, PackfileObjects objects, HavokClassTypes types,
-                              HavokClassTypes.Member member, int structStart, int at,
+                              HavokClassTypes.Member member, int at,
                               FieldRender.Reference reference, int depth)
     {
         string pad = new(' ', depth * 4);
@@ -155,7 +155,7 @@ public static class NativeXml
                 : NativeGraphModel.ElementWidth(member.VSub, objects.PointerWidth);
         var declared = rel ? null : objects.ArrayAt(at);
         PackfileObjects.IArraySpan? array = width > 0
-            ? rel ? objects.RelArrayAt(structStart, at, width) : objects.ArrayAt(at, width)
+            ? rel ? objects.RelArrayAt(at, width) : objects.ArrayAt(at, width)
             : declared;
         int count = width > 0 ? array?.Count ?? 0 : declared?.Count ?? 0;
 
@@ -169,7 +169,7 @@ public static class NativeXml
 
         if (!pointers && member.VSub is not ("TYPE_STRUCT" or "TYPE_STRINGPTR" or "TYPE_CSTRING"))
         {
-            var values = NativeGraphModel.Elements(objects, types, structStart, at, member, reference).ToList();
+            var values = NativeGraphModel.Elements(objects, types, at, member, reference).ToList();
             string all = string.Join(" ", values);
 
             if (all.Length <= Wrap)
@@ -214,7 +214,7 @@ public static class NativeXml
         else if (member.VSub is "TYPE_STRINGPTR" or "TYPE_CSTRING")
         {
             var values = rel
-                ? objects.ReadRelStringArrayAt(structStart, at)
+                ? objects.ReadRelStringArrayAt(at)
                 : objects.ReadStringArrayAt(at);
             foreach (string? value in values ?? new List<string?>())
                 text.Append($"{pad}    <hkcstring>{NativeGraphModel.Escaped(value ?? "")}</hkcstring>\n");
@@ -222,7 +222,7 @@ public static class NativeXml
         else
         {
 
-            foreach (string token in NativeGraphModel.Elements(objects, types, structStart, at, member, reference))
+            foreach (string token in NativeGraphModel.Elements(objects, types, at, member, reference))
                 text.Append(token).Append('\n');
 
             text.Append("</hkparam>\n");
