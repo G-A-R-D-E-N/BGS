@@ -199,6 +199,79 @@ public sealed class HavokConversionTests
     }
 
     [Fact]
+    public void ConversionRejectsAMemberValueOfTheWrongKind()
+    {
+        var source = new HavokIntermediateDocument { RootId = 1 };
+        source.Add(1, "Src").Members["old"] = new HavokIntermediateValue.StringValue("not a number");
+
+        var map = new HavokConversionMap();
+        map.Map("Src", "Dst").Rename("old", "count");
+
+        var registry = new HavokTypeRegistry();
+        registry.Register(new HavokTypeDefinition("Dst", 4, new[]
+        {
+            new HavokMemberDefinition("count", "TYPE_INT32"),
+        }));
+
+        var result = HavokSemanticConverter.Convert(source, map, registry);
+
+        Assert.Contains(result.Diagnostics, d =>
+            d.Level == HavokConversionDiagnosticLevel.Error && d.ObjectId == 1 &&
+            d.Message.Contains("holds a string") && d.Message.Contains("TYPE_INT32"));
+    }
+
+    [Fact]
+    public void ConversionRejectsAReferenceToTheWrongTargetClass()
+    {
+        var source = new HavokIntermediateDocument { RootId = 1 };
+        source.Add(1, "Owner").Members["link"] = new HavokIntermediateValue.ReferenceValue(2);
+        source.Add(2, "WrongThing");
+
+        var map = new HavokConversionMap().AllowIdentity("Owner", "WrongThing");
+
+        var registry = new HavokTypeRegistry();
+        registry.Register(new HavokTypeDefinition("Owner", 8, new[]
+        {
+            new HavokMemberDefinition("link", "TYPE_POINTER", "Foo"),
+        }));
+        registry.Register(new HavokTypeDefinition("WrongThing", 8, new HavokMemberDefinition[0]));
+
+        var result = HavokSemanticConverter.Convert(source, map, registry);
+
+        Assert.Contains(result.Diagnostics, d =>
+            d.Level == HavokConversionDiagnosticLevel.Error && d.ObjectId == 1 &&
+            d.Message.Contains("references a WrongThing") && d.Message.Contains("Foo"));
+    }
+
+    [Fact]
+    public void ConversionValidatesMembersAddedByASpecialConverter()
+    {
+        var source = new HavokIntermediateDocument { RootId = 1 };
+        source.Add(1, "Src").Members["keep"] = new HavokIntermediateValue.IntegerValue(1);
+
+        var map = new HavokConversionMap();
+        map.Map("Src", "Dst")
+            .Rename("keep", "kept")
+            .ConvertWith((_, _, targetObject) =>
+                targetObject.Members["sneaky"] = new HavokIntermediateValue.IntegerValue(9));
+
+        var registry = new HavokTypeRegistry();
+        registry.Register(new HavokTypeDefinition("Dst", 8, new[]
+        {
+            new HavokMemberDefinition("kept", "TYPE_INT32"),
+        }));
+
+        var result = HavokSemanticConverter.Convert(source, map, registry);
+
+        // The member a special converter added after the per-member copy is still validated.
+        Assert.Contains(result.Diagnostics, d =>
+            d.Level == HavokConversionDiagnosticLevel.Error && d.ObjectId == 1 &&
+            d.Message.Contains("does not declare member sneaky"));
+        Assert.DoesNotContain(result.Diagnostics, d =>
+            d.Level == HavokConversionDiagnosticLevel.Error && d.Message.Contains("member kept"));
+    }
+
+    [Fact]
     public void UnsupportedReferenceBecomesNullAndIsReportedAsPatched()
     {
         var source = new HavokIntermediateDocument();

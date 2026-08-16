@@ -231,21 +231,6 @@ public static class HavokSemanticConverter
         var diagnostics = new List<HavokConversionDiagnostic>();
         var rules = new Dictionary<long, HavokConversionMap.TypeRule>();
 
-        // Declared-member lookup for the target schema, resolved lazily. A null result means
-        // the target type itself is unknown; callers below skip member checks in that case
-        // because the type error already stands on its own.
-        var declaredMembers = new Dictionary<string, HashSet<string>?>(StringComparer.Ordinal);
-        HashSet<string>? MembersOf(string typeName)
-        {
-            if (targetTypes == null) return null;
-            if (declaredMembers.TryGetValue(typeName, out var cached)) return cached;
-            HashSet<string>? members = targetTypes.TryGet(typeName, out var definition) && definition != null
-                ? new HashSet<string>(definition.Members.Select(m => m.Name), StringComparer.Ordinal)
-                : null;
-            declaredMembers[typeName] = members;
-            return members;
-        }
-
         foreach (var sourceObject in source.Objects.Values.OrderBy(o => o.Id))
         {
             var rule = map.Resolve(sourceObject.TypeName);
@@ -259,13 +244,6 @@ public static class HavokSemanticConverter
                     $"no conversion rule exists for {sourceObject.TypeName}"));
                 continue;
             }
-
-            if (targetTypes != null && MembersOf(rule.TargetType) == null)
-                diagnostics.Add(new HavokConversionDiagnostic(
-                    HavokConversionDiagnosticLevel.Error,
-                    sourceObject.Id,
-                    "",
-                    $"target type {rule.TargetType} is not declared in the target schema"));
 
             target.Add(sourceObject.Id, rule.TargetType);
             rules[sourceObject.Id] = rule;
@@ -297,13 +275,6 @@ public static class HavokSemanticConverter
                 if (!string.Equals(sourceMember, targetMember, StringComparison.Ordinal))
                     patched = true;
 
-                if (MembersOf(rule.TargetType) is { } known && !known.Contains(targetMember))
-                    diagnostics.Add(new HavokConversionDiagnostic(
-                        HavokConversionDiagnosticLevel.Error,
-                        sourceObject.Id,
-                        targetMember,
-                        $"target type {rule.TargetType} does not declare member {targetMember}"));
-
                 var convertedValue = CloneValue(
                     sourceValue, sourceObject.Id, sourceMember, target, report, diagnostics);
                 if (rule.EnumMappings.TryGetValue(sourceMember, out var enumMapping))
@@ -318,12 +289,6 @@ public static class HavokSemanticConverter
             foreach (var (member, value) in rule.Defaults)
             {
                 if (targetObject.Members.ContainsKey(member)) continue;
-                if (MembersOf(rule.TargetType) is { } known && !known.Contains(member))
-                    diagnostics.Add(new HavokConversionDiagnostic(
-                        HavokConversionDiagnosticLevel.Error,
-                        sourceObject.Id,
-                        member,
-                        $"target type {rule.TargetType} does not declare defaulted member {member}"));
                 targetObject.Members[member] = CloneValue(value, sourceObject.Id, member, target, report, diagnostics);
                 report.DefaultedFields++;
                 patched = true;
@@ -347,6 +312,12 @@ public static class HavokSemanticConverter
             else report.ExactObjects++;
         }
 
+        // Validate the finished document as a final pass rather than while copying fields. This
+        // runs after any ConvertWith callback, so a special converter cannot change the object
+        // type or introduce undeclared/mistyped members without being caught.
+        if (targetTypes != null)
+            ValidateAgainstSchema(target, targetTypes, diagnostics);
+
         if (source.RootId is long root)
         {
             if (target.Get(root) != null) target.RootId = root;
@@ -359,6 +330,111 @@ public static class HavokSemanticConverter
 
         return new HavokConversionResult(target, report, diagnostics);
     }
+
+    private static void ValidateAgainstSchema(HavokIntermediateDocument target, HavokTypeRegistry registry,
+                                              List<HavokConversionDiagnostic> diagnostics)
+    {
+        foreach (var obj in target.Objects.Values)
+        {
+            if (!registry.TryGet(obj.TypeName, out var definition) || definition == null)
+            {
+                diagnostics.Add(new HavokConversionDiagnostic(
+                    HavokConversionDiagnosticLevel.Error, obj.Id, "",
+                    $"target type {obj.TypeName} is not declared in the target schema"));
+                continue;
+            }
+
+            var declared = definition.Members.ToDictionary(m => m.Name, m => m, StringComparer.Ordinal);
+            foreach (var (name, value) in obj.Members)
+            {
+                if (!declared.TryGetValue(name, out var member))
+                {
+                    diagnostics.Add(new HavokConversionDiagnostic(
+                        HavokConversionDiagnosticLevel.Error, obj.Id, name,
+                        $"target type {obj.TypeName} does not declare member {name}"));
+                    continue;
+                }
+                ValidateValue(obj.Id, name, value, member, target, registry, diagnostics);
+            }
+        }
+    }
+
+    private static void ValidateValue(long objId, string path, HavokIntermediateValue value,
+                                      HavokMemberDefinition member, HavokIntermediateDocument target,
+                                      HavokTypeRegistry registry, List<HavokConversionDiagnostic> diagnostics)
+    {
+        // A null value stands in for "unset" and is accepted for any member.
+        if (value is HavokIntermediateValue.NullValue) return;
+
+        if (!KindMatches(member.ValueType, value))
+        {
+            diagnostics.Add(new HavokConversionDiagnostic(
+                HavokConversionDiagnosticLevel.Error, objId, path,
+                $"member {path} holds a {KindName(value)} but target type declares {member.ValueType}"));
+            return;
+        }
+
+        // A reference must point at an object of the declared target class.
+        if (value is HavokIntermediateValue.ReferenceValue reference && reference.TargetId is long id &&
+            member.TargetType != null && target.Get(id) is { } referenced &&
+            !string.Equals(referenced.TypeName, member.TargetType, StringComparison.Ordinal))
+            diagnostics.Add(new HavokConversionDiagnostic(
+                HavokConversionDiagnosticLevel.Error, objId, path,
+                $"member {path} references a {referenced.TypeName} but target type declares {member.TargetType}"));
+
+        // Recurse into a struct member whose element type is itself declared.
+        if (value is HavokIntermediateValue.StructValue structure && member.TargetType != null &&
+            registry.TryGet(member.TargetType, out var structDef) && structDef != null)
+        {
+            var declared = structDef.Members.ToDictionary(m => m.Name, m => m, StringComparer.Ordinal);
+            foreach (var (name, sub) in structure.Members)
+            {
+                if (!declared.TryGetValue(name, out var subMember))
+                    diagnostics.Add(new HavokConversionDiagnostic(
+                        HavokConversionDiagnosticLevel.Error, objId, path + "." + name,
+                        $"struct type {member.TargetType} does not declare member {name}"));
+                else
+                    ValidateValue(objId, path + "." + name, sub, subMember, target, registry, diagnostics);
+            }
+        }
+
+        // Recurse into array elements when the element type is a declared struct.
+        if (value is HavokIntermediateValue.ArrayValue array && member.TargetType != null &&
+            registry.TryGet(member.TargetType, out _))
+            for (int i = 0; i < array.Values.Count; i++)
+                if (array.Values[i] is HavokIntermediateValue.StructValue)
+                    ValidateValue(objId, $"{path}[{i}]", array.Values[i],
+                        new HavokMemberDefinition(member.Name, "TYPE_STRUCT", member.TargetType),
+                        target, registry, diagnostics);
+    }
+
+    private static bool KindMatches(string valueType, HavokIntermediateValue value) => valueType switch
+    {
+        "TYPE_BOOL" => value is HavokIntermediateValue.BoolValue,
+        "TYPE_INT8" or "TYPE_UINT8" or "TYPE_INT16" or "TYPE_UINT16" or "TYPE_INT32" or "TYPE_UINT32"
+            or "TYPE_INT64" or "TYPE_UINT64" or "TYPE_ULONG" or "TYPE_CHAR" or "TYPE_ENUM" or "TYPE_FLAGS"
+            => value is HavokIntermediateValue.IntegerValue,
+        "TYPE_REAL" or "TYPE_HALF" => value is HavokIntermediateValue.RealValue,
+        "TYPE_STRING" or "TYPE_STRINGPTR" or "TYPE_CSTRING" => value is HavokIntermediateValue.StringValue,
+        "TYPE_POINTER" => value is HavokIntermediateValue.ReferenceValue,
+        "TYPE_STRUCT" => value is HavokIntermediateValue.StructValue,
+        "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY" => value is HavokIntermediateValue.ArrayValue,
+        "TYPE_VARIANT" => value is HavokIntermediateValue.ReferenceValue or HavokIntermediateValue.StructValue,
+        // An unrecognised declared type cannot be judged, so do not raise a false mismatch.
+        _ => true,
+    };
+
+    private static string KindName(HavokIntermediateValue value) => value switch
+    {
+        HavokIntermediateValue.BoolValue => "boolean",
+        HavokIntermediateValue.IntegerValue => "integer",
+        HavokIntermediateValue.RealValue => "real",
+        HavokIntermediateValue.StringValue => "string",
+        HavokIntermediateValue.ReferenceValue => "reference",
+        HavokIntermediateValue.ArrayValue => "array",
+        HavokIntermediateValue.StructValue => "struct",
+        _ => "value",
+    };
 
     private static HavokIntermediateValue ConvertEnum(
         HavokIntermediateValue sourceValue,
