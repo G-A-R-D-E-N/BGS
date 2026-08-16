@@ -28,8 +28,12 @@ public static class PackfileConverter
         var source = image.Layout;
         if (source.PointerSize == target.PointerSize)
         {
-            image.LayoutRules = Rules(target);
-            return true;
+            // Same pointer width means no relayout is needed. Only restamp a header that
+            // already matches the target rules; if the non-pointer packing differs, the bytes
+            // were laid out under rules we did not reproduce, and relabelling them would make
+            // the header lie about the file. Refuse rather than silently canonicalise.
+            var want = Rules(target);
+            return image.LayoutRules.Length >= 4 && image.LayoutRules.AsSpan(0, 4).SequenceEqual(want);
         }
 
         PackfileObjects objects;
@@ -71,12 +75,21 @@ public static class PackfileConverter
                     baseMap[block.SourceAt + e * block.SourceElemWidth] = block.TargetAt + e * block.TargetElemWidth;
         }
 
+        // The root object may move during relayout, so its header offset has to move with it.
+        // Resolve the new offset now (failing if it does not correspond to a relocated block),
+        // but only write it back once the whole conversion has committed.
+        int contentsOffset = image.ContentsSectionOffset;
+        if (image.ContentsSectionIndex == self &&
+            !baseMap.TryGetValue(image.ContentsSectionOffset, out contentsOffset))
+            return false;
+
         int end = blocks.Count == 0 ? 0 : blocks[^1].TargetAt + blocks[^1].TargetLen;
         var written = new byte[PackfileLayout.Align(end, NativeAppend.Alignment)];
         var siteMap = new Dictionary<int, int>();
 
         foreach (var block in blocks)
-            Transcode(types, source, target, data.Data, written, block, siteMap);
+            if (!Transcode(types, source, target, data.Data, written, block, siteMap))
+                return false;
 
         if (!Remap(data, image, self, siteMap, baseMap, out var locals, out var globals, out var virtuals))
             return false;
@@ -85,6 +98,7 @@ public static class PackfileConverter
         data.SetLocals(locals);
         data.SetGlobals(globals);
         data.SetVirtuals(virtuals);
+        image.ContentsSectionOffset = contentsOffset;
         image.LayoutRules = Rules(target);
         return true;
     }
@@ -113,7 +127,12 @@ public static class PackfileConverter
             if (member.VType == "TYPE_STRUCT")
             {
                 if (member.CType != null && types.Knows(member.CType))
-                    Discover(types, objects, source, target, aims, at, member.CType, blocks, seen, depth + 1);
+                {
+                    int stride = LayoutWalker.Of(types, member.CType, source).Size;
+                    for (int e = 0; e < Math.Max(1, member.ArrSize); e++)
+                        Discover(types, objects, source, target, aims, at + e * stride, member.CType,
+                                 blocks, seen, depth + 1);
+                }
                 continue;
             }
 
@@ -180,41 +199,42 @@ public static class PackfileConverter
     private static Block StringBlock(PackfileObjects objects, int at, string kind = "string") =>
         new() { SourceAt = at, Kind = kind, TargetLen = objects.RunToNull(at) };
 
-    private static void Transcode(HavokClassTypes types, PointerLayout source, PointerLayout target,
+    private static bool Transcode(HavokClassTypes types, PointerLayout source, PointerLayout target,
                                   byte[] from, byte[] to, Block block, Dictionary<int, int> siteMap)
     {
         switch (block.Kind)
         {
             case "object":
-                TranscodeObject(types, source, target, from, to, block.SourceAt, block.TargetAt,
-                                block.ClassName!, siteMap);
-                break;
+                return TranscodeObject(types, source, target, from, to, block.SourceAt, block.TargetAt,
+                                       block.ClassName!, siteMap);
 
             case "struct array":
                 for (int e = 0; e < block.Count; e++)
-                    TranscodeObject(types, source, target, from, to,
-                                    block.SourceAt + e * block.SourceElemWidth,
-                                    block.TargetAt + e * block.TargetElemWidth, block.ClassName!, siteMap);
-                break;
+                    if (!TranscodeObject(types, source, target, from, to,
+                                         block.SourceAt + e * block.SourceElemWidth,
+                                         block.TargetAt + e * block.TargetElemWidth, block.ClassName!, siteMap))
+                        return false;
+                return true;
 
             case "pointer array":
             case "string array":
                 for (int e = 0; e < block.Count; e++)
                     siteMap[block.SourceAt + e * block.SourceElemWidth] = block.TargetAt + e * block.TargetElemWidth;
-                break;
+                return true;
 
             case "value array":
                 Array.Copy(from, block.SourceAt, to, block.TargetAt, block.Count * block.SourceElemWidth);
-                break;
+                return true;
 
             case "string":
             case "element string":
                 Array.Copy(from, block.SourceAt, to, block.TargetAt, block.TargetLen);
-                break;
+                return true;
         }
+        return true;
     }
 
-    private static void TranscodeObject(HavokClassTypes types, PointerLayout source, PointerLayout target,
+    private static bool TranscodeObject(HavokClassTypes types, PointerLayout source, PointerLayout target,
                                         byte[] from, byte[] to, int sourceAt, int targetAt, string className,
                                         Dictionary<int, int> siteMap)
     {
@@ -227,39 +247,83 @@ public static class PackfileConverter
             var member = members[i];
             int s = sourceAt + src.Offsets[i];
             int t = targetAt + dst.Offsets[i];
+            int count = Math.Max(1, member.ArrSize);
 
             switch (member.VType)
             {
                 case "TYPE_POINTER":
                 case "TYPE_STRINGPTR":
                 case "TYPE_CSTRING":
-                    siteMap[s] = t;
+                    for (int e = 0; e < count; e++)
+                        siteMap[s + e * source.PointerSize] = t + e * target.PointerSize;
+                    break;
+
+                case "TYPE_VARIANT":
+                    // Two pointer-sized slots per element (object pointer, then type pointer).
+                    // Register both as relocation sites and copy nothing: copying the source's
+                    // wider bytes into the narrower destination would overrun the next field and
+                    // strand the fixups.
+                    for (int e = 0; e < count; e++)
+                    {
+                        int vs = s + e * 2 * source.PointerSize;
+                        int vt = t + e * 2 * target.PointerSize;
+                        siteMap[vs] = vt;
+                        siteMap[vs + source.PointerSize] = vt + target.PointerSize;
+                    }
                     break;
 
                 case "TYPE_ARRAY":
                 case "TYPE_SIMPLEARRAY":
-                    siteMap[s] = t;
+                {
                     int ints = member.VType == "TYPE_ARRAY" ? 8 : 4;
-                    Array.Copy(from, s + source.PointerSize, to, t + target.PointerSize, ints);
+                    int srcWidth = source.PointerSize + ints;
+                    int tgtWidth = target.PointerSize + ints;
+                    for (int e = 0; e < count; e++)
+                    {
+                        int es = s + e * srcWidth;
+                        int et = t + e * tgtWidth;
+                        siteMap[es] = et;
+                        Array.Copy(from, es + source.PointerSize, to, et + target.PointerSize, ints);
+                    }
                     break;
+                }
 
                 case "TYPE_ULONG":
-                    Array.Copy(from, s, to, t, Math.Min(source.PointerSize, target.PointerSize));
+                    for (int e = 0; e < count; e++)
+                    {
+                        int es = s + e * source.PointerSize;
+                        int et = t + e * target.PointerSize;
+                        // Narrowing must not silently drop a value that does not fit. If any high
+                        // byte is set, the 64-bit value cannot be represented at 32 bits: fail the
+                        // conversion instead of truncating.
+                        if (source.PointerSize > target.PointerSize)
+                            for (int k = target.PointerSize; k < source.PointerSize; k++)
+                                if (from[es + k] != 0) return false;
+                        Array.Copy(from, es, to, et, Math.Min(source.PointerSize, target.PointerSize));
+                    }
                     break;
 
                 case "TYPE_STRUCT":
                     if (member.CType != null && types.Knows(member.CType))
-                        TranscodeObject(types, source, target, from, to, s, t, member.CType, siteMap);
+                    {
+                        int srcStride = LayoutWalker.Of(types, member.CType, source).Size;
+                        int tgtStride = LayoutWalker.Of(types, member.CType, target).Size;
+                        for (int e = 0; e < count; e++)
+                            if (!TranscodeObject(types, source, target, from, to,
+                                                 s + e * srcStride, t + e * tgtStride, member.CType, siteMap))
+                                return false;
+                    }
                     break;
 
                 default:
                     int unit = member.VType is "TYPE_ENUM" or "TYPE_FLAGS"
                         ? HavokClassTypes.Width(member.VSub)
                         : HavokClassTypes.Width(member.VType);
-                    Array.Copy(from, s, to, t, unit * Math.Max(1, member.ArrSize));
+                    Array.Copy(from, s, to, t, unit * count);
                     break;
             }
         }
+        return true;
     }
 
     private static bool Remap(PackfileSection data, PackfileImage image, int self,

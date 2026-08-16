@@ -106,6 +106,19 @@ public sealed class PackfileObjects
     public ulong? ReadULongAt(int at) =>
         at < 0 || at + 8 > _data.Data.Length ? null : BitConverter.ToUInt64(_data.Data, at);
 
+    // The pointer width of the file being read. A TYPE_ULONG (hkUlong) is pointer-sized, so
+    // callers must read it at this width, not always eight bytes.
+    public int PointerWidth => _pointer;
+
+    public ulong? ReadUnsignedAt(int at, int width)
+    {
+        if (at < 0 || width <= 0 || width > 8 || at + width > _data.Data.Length) return null;
+
+        ulong value = 0;
+        for (int b = 0; b < width; b++) value |= (ulong)_data.Data[at + b] << (8 * b);
+        return value;
+    }
+
     public long? ReadLongAt(int at) =>
         at < 0 || at + 8 > _data.Data.Length ? null : BitConverter.ToInt64(_data.Data, at);
 
@@ -182,7 +195,7 @@ public sealed class PackfileObjects
         FieldAt(instance, field) is { } at ? ReadIntAt(at) : null;
 
     public ulong? ReadULong(Instance instance, string field) =>
-        FieldAt(instance, field) is { } at ? ReadULongAt(at) : null;
+        FieldAt(instance, field) is { } at ? ReadUnsignedAt(at, _pointer) : null;
 
     public float[]? ReadFloats(Instance instance, string field, int count) =>
         FieldAt(instance, field) is { } at ? ReadFloatsAt(at, count) : null;

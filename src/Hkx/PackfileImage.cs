@@ -66,6 +66,16 @@ public sealed class PackfileImage
         if (image.LayoutRules[0] != 4 && image.LayoutRules[0] != 8)
             throw new InvalidDataException(
                 $"Unsupported pointer size {image.LayoutRules[0]}; only 4-byte and 8-byte layouts are handled.");
+        // The layout walker reproduces one packing: reuse-padding off, empty-base-class on
+        // (the Fallout 4 "8 1 0 1" rules and their 4-byte analogue). Any other combination
+        // packs structs differently, so reading it as if it were the canonical layout would
+        // misplace every later member. Refuse it by name rather than guessing.
+        if (image.LayoutRules[2] != 0)
+            throw new InvalidDataException(
+                $"Unsupported layout rule: reuse-padding optimisation is {image.LayoutRules[2]}, only 0 is reproduced.");
+        if (image.LayoutRules[3] != 1)
+            throw new InvalidDataException(
+                $"Unsupported layout rule: empty-base-class optimisation is {image.LayoutRules[3]}, only 1 is reproduced.");
 
         int sectionCount = I32(bytes, 0x14);
         if (sectionCount < 0)

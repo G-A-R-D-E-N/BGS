@@ -22,6 +22,11 @@ public static class Tests
         ("BigEndianPackfilesAreRefused", BigEndianPackfilesAreRefused),
         ("PointerSizedIntegersHalveAtFourBytes", PointerSizedIntegersHalveAtFourBytes),
         ("ConvertingToFourBytesKeepsTheGraph", ConvertingToFourBytesKeepsTheGraph),
+        ("RoundTrippingPointerWidthKeepsReadableValues", RoundTrippingPointerWidthKeepsReadableValues),
+        ("NarrowingAnOversizedUlongIsRefused", NarrowingAnOversizedUlongIsRefused),
+        ("UnsupportedLayoutRulesAreRefused", UnsupportedLayoutRulesAreRefused),
+        ("RootOffsetMovesWithTheRootObject", RootOffsetMovesWithTheRootObject),
+        ("FourByteUlongFieldsDoNotBleedIntoTheNextField", FourByteUlongFieldsDoNotBleedIntoTheNextField),
         ("ArraysAreReadAtTheFilesPointerWidth", ArraysAreReadAtTheFilesPointerWidth),
         ("FieldOffsetsFollowTheFilesPointerWidth", FieldOffsetsFollowTheFilesPointerWidth),
         ("DetachedSubtreeStaysDrawn", DetachedSubtreeStaysDrawn),
@@ -386,6 +391,123 @@ public static class Tests
         Check("object count is unchanged", before.Instances.Count, after.Instances.Count);
         CheckTrue("class names are unchanged in order",
             before.Instances.Select(i => i.ClassName).SequenceEqual(after.Instances.Select(i => i.ClassName)));
+    }
+
+    private static void RoundTrippingPointerWidthKeepsReadableValues()
+    {
+        var classes = HavokClasses.Shipped;
+        int userData = classes.Field("hkbClipGenerator", "userData")!.Offset;
+
+        var original = ClipInAPackfile("Idle.hkx", out _);
+        BitConverter.GetBytes(0xABCDUL).CopyTo(original.Section("__data__")!.Data, userData);
+        byte[] eight = original.Rebuild();
+
+        var before = new PackfileObjects(PackfileImage.Read(eight));
+        Check("eight-byte speed", 2.5f, before.ReadFloat(before.Instances[0], "playbackSpeed"));
+        Check("eight-byte name", "Idle.hkx", before.ReadString(before.Instances[0], "animationName"));
+        Check("eight-byte userData", (ulong)0xABCD, before.ReadULong(before.Instances[0], "userData"));
+
+        var four = PackfileImage.Read(eight);
+        CheckTrue("eight to four succeeds", PackfileConverter.ConvertTo(four, PointerLayout.FourByte));
+        var mid = new PackfileObjects(PackfileImage.Read(four.Rebuild()));
+        Check("four-byte speed survives", 2.5f, mid.ReadFloat(mid.Instances[0], "playbackSpeed"));
+        Check("four-byte name survives", "Idle.hkx", mid.ReadString(mid.Instances[0], "animationName"));
+        Check("four-byte userData survives at pointer width", (ulong)0xABCD,
+              mid.ReadULong(mid.Instances[0], "userData"));
+
+        var back = PackfileImage.Read(four.Rebuild());
+        CheckTrue("four to eight succeeds", PackfileConverter.ConvertTo(back, PointerLayout.EightByte));
+        var after = new PackfileObjects(PackfileImage.Read(back.Rebuild()));
+        Check("round-trip speed", 2.5f, after.ReadFloat(after.Instances[0], "playbackSpeed"));
+        Check("round-trip name", "Idle.hkx", after.ReadString(after.Instances[0], "animationName"));
+        Check("round-trip userData", (ulong)0xABCD, after.ReadULong(after.Instances[0], "userData"));
+    }
+
+    private static void NarrowingAnOversizedUlongIsRefused()
+    {
+        var classes = HavokClasses.Shipped;
+        int userData = classes.Field("hkbClipGenerator", "userData")!.Offset;
+
+        var big = ClipInAPackfile("A.hkx", out _);
+        BitConverter.GetBytes(0x1_0000_0000UL).CopyTo(big.Section("__data__")!.Data, userData);
+        var bigImage = PackfileImage.Read(big.Rebuild());
+        CheckTrue("narrowing a value that needs more than 32 bits is refused",
+                  !PackfileConverter.ConvertTo(bigImage, PointerLayout.FourByte));
+
+        var ok = ClipInAPackfile("A.hkx", out _);
+        BitConverter.GetBytes(0xDEADBEEFUL).CopyTo(ok.Section("__data__")!.Data, userData);
+        var okImage = PackfileImage.Read(ok.Rebuild());
+        CheckTrue("narrowing a value that fits succeeds",
+                  PackfileConverter.ConvertTo(okImage, PointerLayout.FourByte));
+        var after = new PackfileObjects(PackfileImage.Read(okImage.Rebuild()));
+        Check("the fitting value survives narrowing", (ulong)0xDEADBEEF,
+              after.ReadULong(after.Instances[0], "userData"));
+    }
+
+    private static void UnsupportedLayoutRulesAreRefused()
+    {
+        var image = new PackfileImage { Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__data__"), Data = new byte[16] });
+        byte[] bytes = image.Rebuild();
+
+        var reusePadding = (byte[])bytes.Clone();
+        reusePadding[0x12] = 1;
+        CheckThrows<InvalidDataException>("a reuse-padding header is refused",
+            () => PackfileImage.Read(reusePadding));
+
+        var noEmptyBase = (byte[])bytes.Clone();
+        noEmptyBase[0x13] = 0;
+        CheckThrows<InvalidDataException>("an empty-base-off header is refused",
+            () => PackfileImage.Read(noEmptyBase));
+
+        var same = PackfileImage.Read(bytes);
+        CheckTrue("converting eight-byte to eight-byte is a no-op success",
+                  PackfileConverter.ConvertTo(same, PointerLayout.EightByte));
+    }
+
+    private static void RootOffsetMovesWithTheRootObject()
+    {
+        int size = HavokClasses.Shipped["hkbClipGenerator"]!.Size;
+        int second = (size + 15) / 16 * 16;
+
+        var image = TwoClipsOnePointingAtTheOther(out _);
+        image.ContentsSectionIndex = image.Sections.IndexOf(image.Section("__data__")!);
+        image.ContentsSectionOffset = second;
+
+        CheckTrue("eight to four succeeds", PackfileConverter.ConvertTo(image, PointerLayout.FourByte));
+
+        var after = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        Check("both objects remain", 2, after.Instances.Count);
+        Check("the root offset now points at the relocated second object",
+              after.Instances[1].Offset, image.ContentsSectionOffset);
+        CheckTrue("and it is no longer the stale eight-byte offset", image.ContentsSectionOffset != second);
+    }
+
+    private static void FourByteUlongFieldsDoNotBleedIntoTheNextField()
+    {
+        var types = HavokClassTypes.Shipped;
+        int userData = LayoutWalker.Of(types, "hkbClipGenerator", PointerLayout.FourByte).OffsetOf("userData")!.Value;
+
+        var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
+
+        int size = LayoutWalker.Of(types, "hkbClipGenerator", PointerLayout.FourByte).Size;
+        var data = new byte[size + 16];
+        BitConverter.GetBytes(0x11223344u).CopyTo(data, userData);       // the ulong itself
+        BitConverter.GetBytes(0x55667788u).CopyTo(data, userData + 4);   // a sentinel in the next four bytes
+
+        var image = new PackfileImage { LayoutRules = new byte[] { 4, 1, 0, 1 }, Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data, VirtualFixups = Triple(0, 0, 5),
+        });
+
+        var objects = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        Check("a four-byte ulong is read as four bytes, not eight", (ulong)0x11223344,
+              objects.ReadULong(objects.Instances[0], "userData"));
     }
 
     private static void BigEndianPackfilesAreRefused()

@@ -35,30 +35,43 @@ public sealed class ObjectLayout
 
 public static class LayoutWalker
 {
-    private static readonly Dictionary<(int Pointer, string Class), ObjectLayout> Cache = new();
-    private static readonly Dictionary<string, int> ExtraAlign = new(StringComparer.Ordinal);
-    private static readonly Dictionary<string, bool> Reproduces = new(StringComparer.Ordinal);
+    // Layout results depend on the class table that produced them: two HavokClassTypes
+    // instances can define the same class name differently. Scope every cache to the
+    // specific schema instance rather than sharing it process-wide keyed by name only.
+    private sealed class SchemaCache
+    {
+        public readonly Dictionary<(int Pointer, string Class), ObjectLayout> Layouts = new();
+        public readonly Dictionary<string, int> ExtraAlign = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, bool> Reproduces = new(StringComparer.Ordinal);
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<HavokClassTypes, SchemaCache> Caches = new();
+
+    private static SchemaCache CacheFor(HavokClassTypes types) =>
+        Caches.GetValue(types, _ => new SchemaCache());
 
     public static ObjectLayout Of(HavokClassTypes types, string className, PointerLayout layout)
     {
+        var cache = CacheFor(types);
         var key = (layout.PointerSize, className);
-        if (Cache.TryGetValue(key, out var hit)) return hit;
+        if (cache.Layouts.TryGetValue(key, out var hit)) return hit;
 
         int extra = ExtraAlignment(types, className);
         var result = Lay(types, className, layout, extra);
-        Cache[key] = result;
+        cache.Layouts[key] = result;
         return result;
     }
 
     public static bool CanPlace(HavokClassTypes types, string className)
     {
+        var cache = CacheFor(types);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (string? at = className; at != null; at = types[at]?.Parent)
         {
             if (!seen.Add(at)) return false;
             if (!types.Knows(at)) return false;
             ExtraAlignment(types, at);
-            if (Reproduces.TryGetValue(at, out bool ok) && !ok) return false;
+            if (cache.Reproduces.TryGetValue(at, out bool ok) && !ok) return false;
         }
         return true;
     }
@@ -110,8 +123,9 @@ public static class LayoutWalker
 
     private static int ExtraAlignment(HavokClassTypes types, string className)
     {
-        if (ExtraAlign.TryGetValue(className, out int cached)) return cached;
-        ExtraAlign[className] = 0;
+        var cache = CacheFor(types);
+        if (cache.ExtraAlign.TryGetValue(className, out int cached)) return cached;
+        cache.ExtraAlign[className] = 0;
 
         int natural = NaturalAlign(types, className, PointerLayout.EightByte);
         int extra = 0;
@@ -134,8 +148,8 @@ public static class LayoutWalker
             }
         }
 
-        ExtraAlign[className] = extra;
-        Reproduces[className] = reproduces;
+        cache.ExtraAlign[className] = extra;
+        cache.Reproduces[className] = reproduces;
         return extra;
     }
 

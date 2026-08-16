@@ -51,7 +51,7 @@ public static class FieldRender
 
                 return Narrow(objects.ReadNarrowAt(at, Bytes(member.VType)), member.VType);
 
-            case "TYPE_ULONG":
+            case "TYPE_ULONG": return objects.ReadUnsignedAt(at, objects.PointerWidth)?.ToString();
             case "TYPE_UINT64": return objects.ReadULongAt(at)?.ToString();
             case "TYPE_INT64": return objects.ReadLongAt(at)?.ToString();
 
