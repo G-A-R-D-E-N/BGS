@@ -59,6 +59,10 @@ public static class Tests
         ("RelativeArrayPayloadsRoundTripThroughWidths", RelativeArrayPayloadsRoundTripThroughWidths),
         ("RelativeArrayPayloadsUseStoredRelativeOffsets", RelativeArrayPayloadsUseStoredRelativeOffsets),
         ("RelativeArrayMalformedHeadersAreRefused", RelativeArrayMalformedHeadersAreRefused),
+        ("RelativeArrayPayloadOverlapsObjectRefusesConversion", RelativeArrayPayloadOverlapsObjectRefusesConversion),
+        ("OverlappingRelativeArrayPayloadsRefuseConversion", OverlappingRelativeArrayPayloadsRefuseConversion),
+        ("NonEmptyArrayWithoutFixupRefusesConversion", NonEmptyArrayWithoutFixupRefusesConversion),
+        ("ClassNamesFixupsRefuseConversion", ClassNamesFixupsRefuseConversion),
         ("ConvertedArrayCapacityMatchesTheCopiedCount", ConvertedArrayCapacityMatchesTheCopiedCount),
         ("PointerArraysRenderIdenticallyAtBothWidths", PointerArraysRenderIdenticallyAtBothWidths),
         ("ArraysAreReadAtTheFilesPointerWidth", ArraysAreReadAtTheFilesPointerWidth),
@@ -1321,6 +1325,94 @@ public static class Tests
         CheckTrue("a count whose payload does not fit is refused",
                   !PackfileConverter.ConvertTo(hugeImage, PointerLayout.FourByte));
         CheckTrue("and the file is untouched", hugeBefore.SequenceEqual(hugeImage.Rebuild()));
+    }
+
+    private static void RelativeArrayPayloadOverlapsObjectRefusesConversion()
+    {
+        // The first polytope's planes payload (stored offset +0x90) lands inside the second
+        // object's span — a four-byte hknpConvexPolytopeShapeFace at +0x90. Both blocks
+        // individually fit in __data__ and both virtuals are valid, so only the global
+        // source-range overlap check can catch it; without it the converter relocates both
+        // blocks and lets the overlapping source bytes be transcoded into two destinations.
+        var types = HavokClassTypes.Shipped;
+
+        var data = PolytopeWithRelativePayloads(0x90, 0x70, 0x80, 0x100);
+
+        var names = new byte[5 + "hknpConvexPolytopeShape".Length + 1
+                            + 5 + "hknpConvexPolytopeShapeFace".Length + 1];
+        BitConverter.GetBytes(types["hknpConvexPolytopeShape"]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hknpConvexPolytopeShape").CopyTo(names, 5);
+        int nameAt = 5 + "hknpConvexPolytopeShape".Length + 1;
+        BitConverter.GetBytes(types["hknpConvexPolytopeShapeFace"]!.Signature).CopyTo(names, nameAt);
+        names[nameAt + 4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hknpConvexPolytopeShapeFace").CopyTo(names, nameAt + 5);
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data,
+            VirtualFixups = Triple(0, 0, 5).Concat(Triple(0x90, 0, nameAt + 5)).ToArray(),
+        });
+        image.ContentsSectionIndex = 1;
+
+        RefusedLeavesFileUntouched(image, "a relative-array payload overlapping another object");
+    }
+
+    private static void OverlappingRelativeArrayPayloadsRefuseConversion()
+    {
+        // planes declares its payload at +0x50 and faces at +0x60: the faces payload
+        // (0x60..0x6C) sits inside the planes payload (0x50..0x70). Each header and span is
+        // individually valid, so only the overlap check can refuse it.
+        var image = PolytopeImage(PolytopeWithRelativePayloads(0x50, 0x60, 0x80, 0x100));
+        RefusedLeavesFileUntouched(image, "two overlapping relative-array payloads");
+    }
+
+    private static void NonEmptyArrayWithoutFixupRefusesConversion()
+    {
+        // hkbStateMachine.states declares two elements but its pointer site has no local or
+        // global fixup anywhere in the file. ArrayAt cannot resolve a backing store, and
+        // copying the nonzero header anyway would emit a converted file whose array
+        // advertises elements but whose backing pointer was silently dropped.
+        var types = HavokClassTypes.Shipped;
+        int states8 = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte).OffsetOf("states")!.Value;
+        int size8 = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte).Size;
+
+        var data = new byte[size8];
+        BitConverter.GetBytes(2).CopyTo(data, states8 + 8);   // count, with no fixup anywhere
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbStateMachine"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data, VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+
+        RefusedLeavesFileUntouched(image, "a non-empty array without its backing fixup");
+    }
+
+    private static void ClassNamesFixupsRefuseConversion()
+    {
+        // __classnames__ bytes are opaque/raw data, but a fixup table in that section still
+        // carries offsets that the width change would leave unremapped.
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbClipGenerator"),
+            LocalFixups = Pair(0, 8),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = new byte[0x200], VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+
+        RefusedLeavesFileUntouched(image, "a fixup inside __classnames__");
     }
 
     // An eight-byte packfile holding one hkbStateMachine that converts cleanly, with the root

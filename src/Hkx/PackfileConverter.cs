@@ -103,6 +103,31 @@ public static class PackfileConverter
                 return false;
         }
 
+        // Every relocated block claims a source byte range, and the converter would transcode
+        // each one independently into its own destination. Two blocks claiming the same bytes —
+        // a relative-array payload overlapping an object, two payloads sharing storage, an
+        // array backing store aliasing a string — would therefore produce fixups attached to
+        // the wrong relocated copy. Relative-array payloads are especially important because
+        // their source addresses come from the stored relative offset. Refuse any overlap,
+        // including same-start aliases: exact aliasing is only safe with alias semantics that
+        // are not implemented.
+        var spans = new List<(long Start, long End)>();
+        foreach (var block in blocks)
+        {
+            int len = block.Kind switch
+            {
+                "object" => LayoutWalker.Of(types, block.ClassName!, source).Size,
+                "string" or "element string" => block.TargetLen,
+                _ => block.Count * block.SourceElemWidth,
+            };
+            if (len <= 0) continue;
+            spans.Add(((long)block.SourceAt, (long)block.SourceAt + len));
+        }
+        spans.Sort();
+        for (int i = 1; i < spans.Count; i++)
+            if (spans[i].Start < spans[i - 1].End || spans[i].Start == spans[i - 1].Start)
+                return false;
+
         // Relative-array payloads are placed on 16-byte lines, matching the FO4-era writer
         // (hkxpack snaps deferred array payloads to 0x10 and pads each completed block to the
         // next line). The placement is still just a policy: the header's stored offset is
@@ -169,6 +194,16 @@ public static class PackfileConverter
         // Exports and imports have offset semantics the converter does not remap. Refuse any in
         // any section, __data__ included.
         if (image.Sections.Any(s => s.Exports.Length > 0 || s.Imports.Length > 0)) return false;
+
+        // __classnames__ bytes are treated as opaque/raw data, but its fixup tables are still
+        // offset-bearing: the file-wide pointer layout is changing, and none of them would be
+        // remapped. Data is allowed; every fixup kind in it is forbidden.
+        if (classNames >= 0)
+        {
+            var names = image.Sections[classNames];
+            if (names.Locals().Any() || names.Globals().Any() || names.Virtuals().Any())
+                return false;
+        }
 
         for (int i = 0; i < image.Sections.Count; i++)
         {
@@ -365,8 +400,14 @@ public static class PackfileConverter
 
             if (member.VType is not ("TYPE_ARRAY" or "TYPE_SIMPLEARRAY")) continue;
 
+            // ArrayAt returns null exactly when the declared count is nonzero but its pointer
+            // site has no resolvable fixup (or the count or backing span is out of range); an
+            // empty array without a fixup still resolves to Elements(0, 0). Copying a nonzero
+            // header anyway would emit a converted file whose array advertises elements but
+            // whose backing pointer was silently dropped by Remap. Fail closed instead.
             var array = objects.ArrayAt(at);
-            if (array == null || array.Count == 0 || !aims.ContainsKey(at)) continue;
+            if (array == null) return false;
+            if (array.Count == 0 || !aims.ContainsKey(at)) continue;
 
             if (member.VSub == "TYPE_STRUCT" && member.CType != null && types.Knows(member.CType))
             {
