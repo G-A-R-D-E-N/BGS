@@ -209,6 +209,15 @@ public static class NativeGraphModel
                 yield break;
             }
 
+            if (member.VSub == "TYPE_VARIANT")
+            {
+                var targets = objects.ReadRelVariantArrayAt(structStart, at);
+                if (targets == null) yield break;
+
+                foreach (var target in targets) yield return reference(target, target == null);
+                yield break;
+            }
+
             int relStride = RelElementWidth(types, objects.PointerWidth, member);
             if (relStride <= 0) yield break;
 
@@ -225,6 +234,15 @@ public static class NativeGraphModel
         if (member.VSub == "TYPE_POINTER")
         {
             var targets = objects.ReadRefArrayAt(at);
+            if (targets == null) yield break;
+
+            foreach (var target in targets) yield return reference(target, target == null);
+            yield break;
+        }
+
+        if (member.VSub == "TYPE_VARIANT")
+        {
+            var targets = objects.ReadVariantArrayAt(at);
             if (targets == null) yield break;
 
             foreach (var target in targets) yield return reference(target, target == null);
@@ -301,6 +319,7 @@ public static class NativeGraphModel
         "TYPE_INT16" or "TYPE_UINT16" or "TYPE_HALF" => 2,
         "TYPE_INT64" or "TYPE_UINT64" => 8,
         "TYPE_ULONG" or "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING" => pointer,
+        "TYPE_VARIANT" => 2 * pointer,
         "TYPE_VECTOR4" or "TYPE_QUATERNION" => 16,
         "TYPE_QSTRANSFORM" => 48,
         "TYPE_TRANSFORM" or "TYPE_MATRIX4" => 64,

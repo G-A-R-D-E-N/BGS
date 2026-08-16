@@ -179,6 +179,47 @@ public sealed class PackfileObjects
         return values;
     }
 
+    public IReadOnlyList<Instance?>? ReadVariantArrayAt(int at)
+    {
+        // A variant element is two pointer-sized slots (object pointer, then type pointer),
+        // so it strides at twice the pointer width. Only the object pointer is resolved here;
+        // the type pointer is not part of the object graph.
+        var array = ArrayAt(at, 2 * _pointer);
+        if (array == null) return null;
+
+        var values = new List<Instance?>(array.Count);
+        for (int i = 0; i < array.Count; i++)
+        {
+            int slot = array.At + i * 2 * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
+
+            int? destination = Aim(slot);
+            values.Add(destination != null && _startsAt.TryGetValue(destination.Value, out var target)
+                           ? target
+                           : null);
+        }
+        return values;
+    }
+
+    public IReadOnlyList<Instance?>? ReadRelVariantArrayAt(int structStart, int headerAt)
+    {
+        var rel = RelArrayAt(structStart, headerAt, 2 * _pointer);
+        if (rel == null) return null;
+
+        var values = new List<Instance?>(rel.Count);
+        for (int i = 0; i < rel.Count; i++)
+        {
+            int slot = rel.At + i * 2 * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
+
+            int? destination = Aim(slot);
+            values.Add(destination != null && _startsAt.TryGetValue(destination.Value, out var target)
+                           ? target
+                           : null);
+        }
+        return values;
+    }
+
     public IReadOnlyList<T>? ReadValueArrayAt<T>(int at, int width, Func<byte[], int, T> read)
     {
         if (width <= 0) return null;

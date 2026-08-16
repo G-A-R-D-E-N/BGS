@@ -137,6 +137,16 @@ public static class FieldRender
                 return Listed(objects.ReadValueArrayAt(at, 8, BitConverter.ToInt64));
             case "TYPE_UINT64":
                 return Listed(objects.ReadValueArrayAt(at, 8, BitConverter.ToUInt64));
+            case "TYPE_ULONG":
+                // hkUlong elements are pointer-sized, so they stride at the active pointer
+                // width rather than the shipped eight-byte width.
+                return Listed(objects.ReadValueArrayAt(
+                    at, objects.PointerWidth, (b, o) => objects.ReadUnsignedAt(o, objects.PointerWidth) ?? 0));
+            case "TYPE_VARIANT":
+            {
+                var targets = objects.ReadVariantArrayAt(at);
+                return targets == null ? null : List(targets.Count, targets.Select(t => reference(t, t == null)));
+            }
 
             default: return null;
         }

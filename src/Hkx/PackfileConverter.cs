@@ -430,13 +430,28 @@ public static class PackfileConverter
                 continue;
             }
 
-            bool pointerElements = member.VSub is "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING";
-            int srcWidth = pointerElements ? source.PointerSize : HavokClassTypes.Width(member.VSub);
-            int tgtWidth = pointerElements ? target.PointerSize : HavokClassTypes.Width(member.VSub);
-            if (srcWidth <= 0) continue;
+            // Pointer, hkUlong and variant elements are pointer-width dependent, so the active
+            // layout — not the fixed shipped-table width — sizes the backing block and its
+            // sites: an hkUlong array strides at four bytes per element in a four-byte file,
+            // and a variant is two pointers (object, then type) at any width. RelElementWidth
+            // applies the same rule the walker and relative arrays use.
+            // Pointer, hkUlong and variant elements are pointer-width dependent, so the active
+            // layout — not the fixed shipped-table width — sizes the backing block and its
+            // sites: an hkUlong array strides at four bytes per element in a four-byte file,
+            // and a variant is two pointers (object, then type) at any width. RelElementWidth
+            // applies the same rule the walker and relative arrays use.
+            int srcWidth = RelElementWidth(types, source, member);
+            int tgtWidth = RelElementWidth(types, target, member);
+            if (srcWidth <= 0 || tgtWidth <= 0) continue;
 
-            string kind = member.VSub == "TYPE_POINTER" ? "pointer array"
-                        : pointerElements ? "string array" : "value array";
+            string kind = member.VSub switch
+            {
+                "TYPE_POINTER" => "pointer array",
+                "TYPE_STRINGPTR" or "TYPE_CSTRING" => "string array",
+                "TYPE_VARIANT" => "variant array",
+                "TYPE_ULONG" => "ulong array",
+                _ => "value array",
+            };
 
             if (seen.Add(array.At))
                 blocks.Add(new Block
@@ -520,6 +535,32 @@ public static class PackfileConverter
             case "string array":
                 for (int e = 0; e < block.Count; e++)
                     siteMap[block.SourceAt + e * block.SourceElemWidth] = block.TargetAt + e * block.TargetElemWidth;
+                return true;
+
+            case "variant array":
+                // Two pointer-sized slots per element (object pointer, then type pointer);
+                // both move with the layout width and both must be remapped.
+                for (int e = 0; e < block.Count; e++)
+                {
+                    int s = block.SourceAt + e * block.SourceElemWidth;
+                    int t = block.TargetAt + e * block.TargetElemWidth;
+                    siteMap[s] = t;
+                    siteMap[s + block.SourceElemWidth / 2] = t + block.TargetElemWidth / 2;
+                }
+                return true;
+
+            case "ulong array":
+                // hkUlong values are pointer-sized: narrow with an overflow check when the
+                // target is narrower, exactly like a single TYPE_ULONG member.
+                for (int e = 0; e < block.Count; e++)
+                {
+                    int s = block.SourceAt + e * block.SourceElemWidth;
+                    int t = block.TargetAt + e * block.TargetElemWidth;
+                    if (block.SourceElemWidth > block.TargetElemWidth)
+                        for (int k = block.TargetElemWidth; k < block.SourceElemWidth; k++)
+                            if (from[s + k] != 0) return false;
+                    Array.Copy(from, s, to, t, Math.Min(block.SourceElemWidth, block.TargetElemWidth));
+                }
                 return true;
 
             case "value array":

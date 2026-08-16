@@ -86,9 +86,12 @@ public static class PackfileLayout
                     continue;
                 }
 
-                int width = member.VSub is "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING" or "TYPE_ULONG"
-                    ? objects.PointerWidth
-                    : HavokClassTypes.Width(member.VSub);
+                // hkUlong elements are pointer-sized and variants are two pointers, so both
+                // arrays stride at the active pointer width, not the shipped eight-byte width.
+                int width = member.VSub == "TYPE_VARIANT" ? 2 * objects.PointerWidth
+                          : member.VSub is "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING" or "TYPE_ULONG"
+                              ? objects.PointerWidth
+                              : HavokClassTypes.Width(member.VSub);
                 if (width <= 0) continue;
 
                 var array = objects.ArrayAt(at, width);
@@ -96,6 +99,7 @@ public static class PackfileLayout
 
                 string kind = member.VSub == "TYPE_POINTER" ? "pointer array"
                             : member.VSub is "TYPE_STRINGPTR" or "TYPE_CSTRING" ? "string array"
+                            : member.VSub == "TYPE_VARIANT" ? "variant array"
                             : "value array";
 
                 if (seen.Add(array.At)) items.Add(new Item(kind, array.At, array.Count * width));

@@ -37,6 +37,7 @@ public static class Tests
         ("FourByteFilesAreModeledAtTheActiveLayout", FourByteFilesAreModeledAtTheActiveLayout),
         ("FourByteConvertedFilesRenderAtTheActiveLayout", FourByteConvertedFilesRenderAtTheActiveLayout),
         ("FixedUlongArraysRenderAtPointerWidth", FixedUlongArraysRenderAtPointerWidth),
+        ("WidthSensitiveDynamicArraysUseActiveLayouts", WidthSensitiveDynamicArraysUseActiveLayouts),
         ("SignatureMismatchesRefuseConversion", SignatureMismatchesRefuseConversion),
         ("SignatureMismatchAlsoRefusesSameWidth", SignatureMismatchAlsoRefusesSameWidth),
         ("NonDataPayloadRefusesConversion", NonDataPayloadRefusesConversion),
@@ -868,6 +869,107 @@ public static class Tests
         CheckTrue("the XML reads the second fixed ulong at pointer width",
                   xml.Contains("name=\"a2\">34</hkparam>", StringComparison.Ordinal));
         CheckTrue("and the third", xml.Contains("name=\"a3\">51</hkparam>", StringComparison.Ordinal));
+    }
+
+    private static void WidthSensitiveDynamicArraysUseActiveLayouts()
+    {
+        static System.IO.Stream Json(string text) =>
+            new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
+
+        // Foo holds an ordinary TYPE_ARRAY of three hkUlong and an ordinary TYPE_ARRAY of two
+        // variants, then an int. Eight-byte layout: ulongs@0 (ptr+count+capacity = 16),
+        // variants@16 (16), tail@32, size 40. Four-byte layout: ulongs@0 (12), variants@12
+        // (12), tail@24, size 28. hkUlong elements are pointer-sized and variants are two
+        // pointers, so both arrays stride differently at four bytes — the fixed shipped-table
+        // widths (8 and 16) must not size the backing store.
+        var custom = HavokClassTypes.Parse(Json(
+            "{\"classes\":{\"Foo\":{\"parent\":null,\"signature\":\"0x1\",\"size\":40," +
+            "\"members\":[" +
+            "{\"name\":\"ulongs\",\"offset\":0,\"vtype\":\"TYPE_ARRAY\",\"vsub\":\"TYPE_ULONG\",\"arrsize\":0}," +
+            "{\"name\":\"variants\",\"offset\":16,\"vtype\":\"TYPE_ARRAY\",\"vsub\":\"TYPE_VARIANT\",\"arrsize\":0}," +
+            "{\"name\":\"tail\",\"offset\":32,\"vtype\":\"TYPE_INT32\",\"vsub\":\"TYPE_VOID\",\"arrsize\":0}]}}}"));
+
+        // The fixture uses the converter's canonical eight-byte placement — object 0..40,
+        // hkUlong backing 48..72, variant backing 80..112 — so the 8 -> 4 -> 8 round trip
+        // restores the exact bytes. The variant backing is zeroed: its pointers are carried
+        // entirely by fixups, exactly as the converter writes them.
+        var data = new byte[112];
+        // ulongs header @0: pointer fixup -> 48, count 3, capacity 3.
+        BitConverter.GetBytes(3).CopyTo(data, 8);
+        BitConverter.GetBytes(3).CopyTo(data, 12);
+        // variants header @16: pointer fixup -> 80, count 2, capacity 2.
+        BitConverter.GetBytes(2).CopyTo(data, 24);
+        BitConverter.GetBytes(2).CopyTo(data, 28);
+        // tail @32.
+        BitConverter.GetBytes(0x99).CopyTo(data, 32);
+        // ulongs backing @48: three eight-byte values.
+        BitConverter.GetBytes(0x11UL).CopyTo(data, 48);
+        BitConverter.GetBytes(0x22UL).CopyTo(data, 56);
+        BitConverter.GetBytes(0x33UL).CopyTo(data, 64);
+        // variants backing @80: two elements of two pointers each; all four point back at
+        // the object itself.
+
+        var names = new byte[5 + "Foo".Length + 1];
+        BitConverter.GetBytes(0x1u).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("Foo").CopyTo(names, 5);
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data, VirtualFixups = Triple(0, 0, 5),
+        });
+        image.Section("__data__")!.SetLocals(new[]
+        {
+            (0, 48), (16, 80), (80, 0), (88, 0), (96, 0), (104, 0),
+        });
+        image.ContentsSectionIndex = 1;
+
+        void CheckModel(PackfileObjects objects, string when)
+        {
+            var model = NativeGraphModel.From(objects, custom);
+            Check($"the {when} model is built from the custom schema", true, model != null);
+            if (model == null) return;
+
+            var obj = model.Objects.Single(o => o.Class == "Foo");
+            Check($"the {when} model reads the hkUlong array at pointer width", "17 34 51",
+                  string.Join(" ", obj.Lists["ulongs"]));
+            Check($"the {when} model reads the variant array at two-pointer stride", "#90 #90",
+                  string.Join(" ", obj.Lists["variants"]));
+            Check($"the {when} model reads the field after the arrays", "153", obj.Scalars["tail"]);
+        }
+
+        byte[] before = image.Rebuild();
+        var objects8 = new PackfileObjects(PackfileImage.Read(before), types: custom);
+        CheckModel(objects8, "eight-byte");
+
+        string xml8 = NativeXml.From(objects8, PackfileImage.Read(before), custom);
+        CheckTrue("the eight-byte XML carries the hkUlong values",
+                  xml8.Contains("name=\"ulongs\" numelements=\"3\">17 34 51</hkparam>", StringComparison.Ordinal));
+        CheckTrue("the eight-byte XML carries the variant references",
+                  xml8.Contains("name=\"variants\" numelements=\"2\">#90 #90</hkparam>", StringComparison.Ordinal));
+
+        // Convert to four bytes: the backing stores must shrink to the active-layout widths
+        // (3 x 4 bytes for the hkUlongs, 2 x 8 for the variants). Reading the converted file
+        // back at the four-byte layout is what proves the width change actually happened —
+        // an 8-byte-strided hkUlong backing reads back as 17 34 0, and a variant array
+        // sized at the fixed width renders nothing at all.
+        var four = PackfileImage.Read(before);
+        CheckTrue("eight to four succeeds", PackfileConverter.ConvertTo(four, PointerLayout.FourByte, custom));
+        var objects4 = new PackfileObjects(PackfileImage.Read(four.Rebuild()), types: custom);
+        CheckModel(objects4, "four-byte");
+
+        string xml4 = NativeXml.From(objects4, PackfileImage.Read(four.Rebuild()), custom);
+        CheckTrue("the four-byte XML carries the hkUlong values at pointer width",
+                  xml4.Contains("name=\"ulongs\" numelements=\"3\">17 34 51</hkparam>", StringComparison.Ordinal));
+        CheckTrue("the four-byte XML carries the variant references",
+                  xml4.Contains("name=\"variants\" numelements=\"2\">#90 #90</hkparam>", StringComparison.Ordinal));
+
+        CheckTrue("four back to eight succeeds",
+                  PackfileConverter.ConvertTo(four, PointerLayout.EightByte, custom));
+        CheckTrue("the 8 -> 4 -> 8 round trip restores the exact bytes",
+                  before.SequenceEqual(four.Rebuild()));
     }
 
     private static void SignatureMismatchesRefuseConversion()
