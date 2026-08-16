@@ -3756,6 +3756,24 @@ public class MainWindow : Window
         _readOnly = false;
         _readOnlyWhy = "";
 
+        // BGS reads and edits the 8-byte (64-bit) layout Fallout 4 ships. A 4-byte file can be
+        // parsed at the low level, but the editor's decode paths and the native writer are still
+        // 8-byte only, so opening one here would show and save the wrong bytes. Refuse it and point
+        // at the converter rather than display a graph built from the wrong offsets.
+        if (NonEightByteLayout(path) is int layoutWidth)
+        {
+            _hkxPath = path;
+            RememberRecent(path);
+            RefreshRecents();
+            RememberSetting("last_path", path, "The file opened");
+            SetSummary(
+                $"{Path.GetFileName(path)}   uses the {layoutWidth}-byte pointer layout, which BGS cannot " +
+                "open for editing yet. Convert it to the 8-byte layout first (symrm convert), then open the result.",
+                Ux.WarnBrush);
+            BuildClipList(new BehaviourGraphModel());
+            return;
+        }
+
         bool isAnimation = BuildAnimation(path);
 
         var root = HkxBehaviorParser.ParseBehavior(path);
@@ -3836,6 +3854,21 @@ public class MainWindow : Window
 
         if (_animationData != null) LoadPose(path, Path.GetFileName(path));
         if (settingsWarning != null) SetStatus(settingsWarning, Ux.WarnBrush);
+    }
+
+    // Returns the file's pointer width when it is a readable packfile that is not 8-byte, or null
+    // when it is 8-byte or not a packfile we can read (the normal open path then reports that).
+    private static int? NonEightByteLayout(string path)
+    {
+        try
+        {
+            int size = PackfileImage.Read(path).Layout.PointerSize;
+            return size == 8 ? null : size;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private BehaviourGraphModel Model() =>
