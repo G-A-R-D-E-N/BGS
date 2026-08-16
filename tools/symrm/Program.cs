@@ -6017,20 +6017,51 @@ public static class Program
         var a = PackfileImage.Read(Path.GetFullPath(argv[1]));
         var b = PackfileImage.Read(Path.GetFullPath(argv[2]));
 
+        var lines = new List<string>();
+        int total = CompareImages(a, b, lines);
+
+        foreach (var line in lines) Console.WriteLine(line);
+        Console.WriteLine(total == 0 ? "identical" : "differs");
+        return total == 0 ? 0 : 1;
+    }
+
+    // The number of differing regions between two packfiles, with a human line per difference.
+    // "identical" means every loading-critical field agrees: the whole header (layout rules,
+    // predicates, root and class-name root pointers, flags and version), the complete section
+    // set (a section present in only one file is a difference), and for each common section
+    // its data, every fixup table, and its exports and imports.
+    internal static int CompareImages(PackfileImage a, PackfileImage b, List<string> lines)
+    {
         int total = 0;
-        foreach (var tag in new[] { "__classnames__", "__data__" })
+
+        if (a.UserTag != b.UserTag) { lines.Add("header: user tag differs"); total++; }
+        if (a.FileVersion != b.FileVersion) { lines.Add("header: file version differs"); total++; }
+        if (!a.LayoutRules.SequenceEqual(b.LayoutRules)) { lines.Add("header: layout rules differ"); total++; }
+        if (a.ContentsSectionIndex != b.ContentsSectionIndex) { lines.Add("header: root section differs"); total++; }
+        if (a.ContentsSectionOffset != b.ContentsSectionOffset) { lines.Add("header: root offset differs"); total++; }
+        if (a.ContentsClassNameSectionIndex != b.ContentsClassNameSectionIndex)
+        { lines.Add("header: class-name root section differs"); total++; }
+        if (a.ContentsClassNameSectionOffset != b.ContentsClassNameSectionOffset)
+        { lines.Add("header: class-name root offset differs"); total++; }
+        if (!a.ContentsVersion.SequenceEqual(b.ContentsVersion)) { lines.Add("header: contents version differs"); total++; }
+        if (a.Flags != b.Flags) { lines.Add("header: flags differ"); total++; }
+        if (a.MaxPredicate != b.MaxPredicate) { lines.Add("header: predicate count differs"); total++; }
+        if (!a.Predicates.SequenceEqual(b.Predicates)) { lines.Add("header: predicates differ"); total++; }
+
+        var tags = a.Sections.Select(s => s.Tag).Concat(b.Sections.Select(s => s.Tag))
+                    .Distinct().OrderBy(t => t, StringComparer.Ordinal).ToList();
+        foreach (var tag in tags)
         {
             var sa = a.Section(tag);
             var sb = b.Section(tag);
-            if (sa == null || sb == null) { Console.WriteLine($"{tag}: present in only one file"); total++; continue; }
+            if (sa == null || sb == null) { lines.Add($"{tag}: present in only one file"); total++; continue; }
 
             string detail = "";
             int diffs = SectionDiff(sa, sb, ref detail);
-            Console.WriteLine($"{tag}: {(diffs == 0 ? "identical" : diffs + " differing regions" + detail)}");
+            lines.Add($"{tag}: {(diffs == 0 ? "identical" : diffs + " differing regions" + detail)}");
             total += diffs;
         }
-        Console.WriteLine(total == 0 ? "identical" : "differs");
-        return total == 0 ? 0 : 1;
+        return total;
     }
 
     private static int SectionDiff(PackfileSection a, PackfileSection b, ref string detail)
@@ -6040,6 +6071,8 @@ public static class Program
         diffs += ByteDiff("local", a.LocalFixups, b.LocalFixups, ref detail);
         diffs += ByteDiff("global", a.GlobalFixups, b.GlobalFixups, ref detail);
         diffs += ByteDiff("virtual", a.VirtualFixups, b.VirtualFixups, ref detail);
+        diffs += ByteDiff("export", a.Exports, b.Exports, ref detail);
+        diffs += ByteDiff("import", a.Imports, b.Imports, ref detail);
         return diffs;
     }
 
@@ -6078,8 +6111,26 @@ public static class Program
         var data = image.Section("__data__");
         if (data == null) { Console.WriteLine("the reference file has no __data__ section"); return 1; }
 
-        var objects = new PackfileObjects(image);
-        var layout = image.Layout;
+        var (placed, refused, objects, reference, predicted, unexplained) = GroundPrediction(image, types);
+
+        Console.WriteLine($"reference layout {image.Layout.PointerSize}-byte, {objects} objects " +
+                          $"({placed} placed, {refused} the walker will not vouch for)");
+        Console.WriteLine($"reference pointer fixups: {reference}, walker predicted sites: {predicted}");
+        Console.WriteLine($"fixups the walker did not predict: {unexplained.Count}");
+        foreach (int at in unexplained.Take(25))
+            Console.WriteLine($"  0x{at:x}: the reference has a pointer here, the walker placed none");
+
+        return unexplained.Count == 0 ? 0 : 1;
+    }
+
+    // Every pointer-sized fixup site a placeable object graph should carry, compared against
+    // the file's own fixup sources. The walker must predict each fixed-array element slot and
+    // both slots of every TYPE_VARIANT, not just the first.
+    internal static (int Placed, int Refused, int Objects, int ReferenceSites, int PredictedSites, List<int> Unexplained)
+        GroundPrediction(PackfileImage image, HavokClassTypes types)
+    {
+        var data = image.Section("__data__")!;
+        var objects = new PackfileObjects(image, types: types);
 
         var referenceSites = new SortedSet<int>();
         foreach (var (source, _) in data.Locals()) referenceSites.Add(source);
@@ -6091,19 +6142,11 @@ public static class Program
         {
             if (!LayoutWalker.CanPlace(types, instance.ClassName)) { refused++; continue; }
             placed++;
-            CollectSites(types, objects, layout, instance.Offset, instance.ClassName, predicted, 0);
+            CollectSites(types, objects, image.Layout, instance.Offset, instance.ClassName, predicted, 0);
         }
 
         var unexplained = referenceSites.Where(s => !predicted.Contains(s)).ToList();
-
-        Console.WriteLine($"reference layout {layout.PointerSize}-byte, {objects.Instances.Count} objects " +
-                          $"({placed} placed, {refused} the walker will not vouch for)");
-        Console.WriteLine($"reference pointer fixups: {referenceSites.Count}, walker predicted sites: {predicted.Count}");
-        Console.WriteLine($"fixups the walker did not predict: {unexplained.Count}");
-        foreach (int at in unexplained.Take(25))
-            Console.WriteLine($"  0x{at:x}: the reference has a pointer here, the walker placed none");
-
-        return unexplained.Count == 0 ? 0 : 1;
+        return (placed, refused, objects.Instances.Count, referenceSites.Count, predicted.Count, unexplained);
     }
 
     private static int Offsets(string[] argv)
@@ -6180,17 +6223,36 @@ public static class Program
             var member = members[i];
             if (!member.Written) continue;
             int at = offset + laid.Offsets[i];
+            int count = Math.Max(1, member.ArrSize);
 
+            // Fixed arrays are inline: every element is its own pointer site, at pointer stride.
             if (member.VType is "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING")
             {
-                sites.Add(at);
+                for (int e = 0; e < count; e++) sites.Add(at + e * p);
+                continue;
+            }
+
+            // A variant holds two pointer-sized slots per element: the object pointer and the
+            // class-name pointer.
+            if (member.VType == "TYPE_VARIANT")
+            {
+                for (int e = 0; e < count; e++)
+                {
+                    sites.Add(at + e * 2 * p);
+                    sites.Add(at + e * 2 * p + p);
+                }
                 continue;
             }
 
             if (member.VType == "TYPE_STRUCT")
             {
                 if (member.CType != null && types.Knows(member.CType))
-                    CollectSites(types, objects, layout, at, member.CType, sites, depth + 1);
+                {
+                    int stride = LayoutWalker.Of(types, member.CType, layout).Size;
+                    if (stride <= 0) continue;
+                    for (int e = 0; e < count; e++)
+                        CollectSites(types, objects, layout, at + e * stride, member.CType, sites, depth + 1);
+                }
                 continue;
             }
 

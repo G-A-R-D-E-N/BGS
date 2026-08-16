@@ -63,6 +63,8 @@ public static class Tests
         ("OverlappingRelativeArrayPayloadsRefuseConversion", OverlappingRelativeArrayPayloadsRefuseConversion),
         ("NonEmptyArrayWithoutFixupRefusesConversion", NonEmptyArrayWithoutFixupRefusesConversion),
         ("ClassNamesFixupsRefuseConversion", ClassNamesFixupsRefuseConversion),
+        ("CompareCatchesHeaderAndSectionDifferences", CompareCatchesHeaderAndSectionDifferences),
+        ("GroundPredictsEveryFixedArrayAndVariantSlot", GroundPredictsEveryFixedArrayAndVariantSlot),
         ("ConvertedArrayCapacityMatchesTheCopiedCount", ConvertedArrayCapacityMatchesTheCopiedCount),
         ("PointerArraysRenderIdenticallyAtBothWidths", PointerArraysRenderIdenticallyAtBothWidths),
         ("ArraysAreReadAtTheFilesPointerWidth", ArraysAreReadAtTheFilesPointerWidth),
@@ -1413,6 +1415,94 @@ public static class Tests
         image.ContentsSectionIndex = 1;
 
         RefusedLeavesFileUntouched(image, "a fixup inside __classnames__");
+    }
+
+    private static void CompareCatchesHeaderAndSectionDifferences()
+    {
+        PackfileImage Base()
+        {
+            var image = new PackfileImage();
+            image.Sections.Add(new PackfileSection
+            {
+                TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbClipGenerator"),
+            });
+            image.Sections.Add(new PackfileSection
+            {
+                TagBytes = MakeTag("__data__"), Data = new byte[0x200], VirtualFixups = Triple(0, 0, 5),
+            });
+            image.ContentsSectionIndex = 1;
+            return image;
+        }
+
+        int Diffs(PackfileImage other) =>
+            Program.CompareImages(Base(), other, new List<string>());
+
+        Check("identical packfiles compare clean", 0, Diffs(Base()));
+
+        // Each variant mutates a fresh base; the comparison must flag the field in question.
+        var rules = Base();
+        rules.LayoutRules = new byte[] { 4, 1, 0, 1 };
+        CheckTrue("differing layout rules are caught", Diffs(rules) > 0);
+
+        var root = Base();
+        root.ContentsSectionOffset = 0x10;
+        CheckTrue("differing root offsets are caught", Diffs(root) > 0);
+
+        var predicates = Base();
+        predicates.Predicates = new byte[] { 1, 2, 3 };
+        CheckTrue("differing predicates are caught", Diffs(predicates) > 0);
+
+        var extra = Base();
+        extra.Sections.Add(new PackfileSection { TagBytes = MakeTag("__types__"), Data = new byte[4] });
+        CheckTrue("a section present in only one file is caught", Diffs(extra) > 0);
+
+        var exported = Base();
+        exported.Sections[1].Exports = new byte[8];
+        CheckTrue("differing exports are caught", Diffs(exported) > 0);
+    }
+
+    private static void GroundPredictsEveryFixedArrayAndVariantSlot()
+    {
+        // A custom class with a fixed array of three pointers and one TYPE_VARIANT (two
+        // pointer-sized slots: the object pointer and the class-name pointer). The reference
+        // file carries fixups at all five sites, so ground must predict every slot, not just
+        // the first pointer and nothing for the variant.
+        static System.IO.Stream Json(string text) =>
+            new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
+
+        var custom = HavokClassTypes.Parse(Json(
+            "{\"classes\":{\"Lod\":{\"parent\":null,\"signature\":\"0x1\",\"size\":40,\"members\":[" +
+            "{\"name\":\"shapes\",\"offset\":0,\"vtype\":\"TYPE_POINTER\",\"vsub\":\"TYPE_VOID\",\"arrsize\":3}," +
+            "{\"name\":\"value\",\"offset\":24,\"vtype\":\"TYPE_VARIANT\",\"vsub\":\"TYPE_VOID\",\"arrsize\":0}]}}}"));
+
+        var names = new byte[5 + 3 + 1];
+        BitConverter.GetBytes(0x1u).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("Lod").CopyTo(names, 5);
+
+        var fixups = new byte[0];
+        foreach (int at in new[] { 0, 8, 16, 24, 32 })
+            fixups = fixups.Concat(Pair(at, 0x100)).ToArray();
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = new byte[0x200],
+            LocalFixups = fixups, VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+
+        var read = PackfileImage.Read(image.Rebuild());
+        var (placed, refused, objects, reference, predicted, unexplained) =
+            Program.GroundPrediction(read, custom);
+
+        Check("the custom class is placeable", 1, placed);
+        Check("and nothing is refused", 0, refused);
+        Check("the file has one object", 1, objects);
+        Check("the reference carries all five pointer sites", 5, reference);
+        Check("ground predicts every fixed-array and variant slot", 5, predicted);
+        Check("nothing is unexplained", 0, unexplained.Count);
     }
 
     // An eight-byte packfile holding one hkbStateMachine that converts cleanly, with the root
