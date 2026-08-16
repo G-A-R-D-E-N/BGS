@@ -221,7 +221,82 @@ public sealed class PackfileObjects
 
     private int? Aim(int at) => _pointsAt.TryGetValue(at, out int destination) ? destination : null;
 
-    public sealed record Elements(int At, int Count);
+    public interface IArraySpan
+    {
+        int At { get; }
+        int Count { get; }
+    }
+
+    public sealed record Elements(int At, int Count) : IArraySpan;
+
+    // The np-era relative-array header is two little-endian uint16s at the member site: the
+    // element count plus one, then the payload's offset from the containing struct's start.
+    // The stored offset is authoritative — the payload does not have to sit immediately after
+    // the object — so it is read from the header, never reconstructed, and the base is the
+    // struct that contains the member, not the member site itself.
+    public sealed record RelElements(int At, int Count) : IArraySpan;
+
+    public RelElements? RelArrayAt(int structStart, int headerAt)
+    {
+        if (structStart < 0 || headerAt < 0 || headerAt + 4 > _data.Data.Length) return null;
+
+        int raw = BitConverter.ToInt32(_data.Data, headerAt);
+        int sizePlusOne = raw & 0xFFFF;
+        int relOff = (raw >> 16) & 0xFFFF;
+        if (sizePlusOne == 0) return null;
+
+        int count = sizePlusOne - 1;
+        if (count == 0) return new RelElements(0, 0);
+
+        long payload = (long)structStart + relOff;
+        if (payload < 0 || payload > _data.Data.Length) return null;
+        return new RelElements((int)payload, count);
+    }
+
+    public RelElements? RelArrayAt(int structStart, int headerAt, int elementWidth)
+    {
+        if (elementWidth <= 0) return null;
+        var rel = RelArrayAt(structStart, headerAt);
+        if (rel == null || rel.Count == 0) return rel;
+
+        long bytes = (long)rel.Count * elementWidth;
+        if (bytes > _data.Data.Length - rel.At) return null;
+        return rel;
+    }
+
+    public IReadOnlyList<string?>? ReadRelStringArrayAt(int structStart, int headerAt)
+    {
+        var rel = RelArrayAt(structStart, headerAt, _pointer);
+        if (rel == null) return null;
+
+        var values = new List<string?>(rel.Count);
+        for (int i = 0; i < rel.Count; i++)
+        {
+            int slot = rel.At + i * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
+            values.Add(TextAt(Aim(slot)));
+        }
+        return values;
+    }
+
+    public IReadOnlyList<Instance?>? ReadRelRefArrayAt(int structStart, int headerAt)
+    {
+        var rel = RelArrayAt(structStart, headerAt, _pointer);
+        if (rel == null) return null;
+
+        var values = new List<Instance?>(rel.Count);
+        for (int i = 0; i < rel.Count; i++)
+        {
+            int slot = rel.At + i * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
+
+            int? destination = Aim(slot);
+            values.Add(destination != null && _startsAt.TryGetValue(destination.Value, out var target)
+                           ? target
+                           : null);
+        }
+        return values;
+    }
 
     public Elements? ReadArray(Instance instance, string field)
     {

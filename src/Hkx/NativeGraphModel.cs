@@ -62,7 +62,7 @@ public static class NativeGraphModel
 
             if (member.VType is "TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")
             {
-                Array(objects, types, obj, at, member, reference);
+                Array(objects, types, obj, offset, at, member, reference);
                 continue;
             }
 
@@ -103,7 +103,7 @@ public static class NativeGraphModel
             {
                 fields[member.Name] = member.VSub is "TYPE_STRUCT" or "TYPE_STRINGPTR" or "TYPE_CSTRING"
                     ? ""
-                    : string.Join(" ", Elements(objects, types, at, member, reference));
+                    : string.Join(" ", Elements(objects, types, offset, at, member, reference));
                 continue;
             }
 
@@ -133,7 +133,10 @@ public static class NativeGraphModel
             if (member.VType is not ("TYPE_ARRAY" or "TYPE_SIMPLEARRAY" or "TYPE_RELARRAY")) continue;
             if (member.VSub is not ("TYPE_STRINGPTR" or "TYPE_CSTRING")) continue;
 
-            var values = objects.ReadStringArrayAt(offset + (layout.OffsetOf(member.Name) ?? member.Offset));
+            int at = offset + (layout.OffsetOf(member.Name) ?? member.Offset);
+            var values = member.VType == "TYPE_RELARRAY"
+                ? objects.ReadRelStringArrayAt(offset, at)
+                : objects.ReadStringArrayAt(at);
             if (values == null || values.Count == 0) continue;
 
             if (!obj.Lists.TryGetValue(under, out var list)) obj.Lists[under] = list = new List<string>();
@@ -141,8 +144,9 @@ public static class NativeGraphModel
         }
     }
 
-    private static void Array(PackfileObjects objects, HavokClassTypes types, HkObject obj, int at,
-                              HavokClassTypes.Member member, FieldRender.Reference reference)
+    private static void Array(PackfileObjects objects, HavokClassTypes types, HkObject obj,
+                              int structStart, int at, HavokClassTypes.Member member,
+                              FieldRender.Reference reference)
     {
         if (member.VSub == "TYPE_STRUCT")
         {
@@ -152,7 +156,9 @@ public static class NativeGraphModel
             int stride = LayoutWalker.Active(types, member.CType, objects.PointerWidth)?.Size ?? 0;
             if (stride <= 0) return;
 
-            var array = objects.ArrayAt(at, stride);
+            PackfileObjects.IArraySpan? array = member.VType == "TYPE_RELARRAY"
+                ? objects.RelArrayAt(structStart, at, stride)
+                : objects.ArrayAt(at, stride);
             if (array == null || array.Count == 0) return;
 
             var elements = new List<Dictionary<string, string>>(array.Count);
@@ -170,23 +176,52 @@ public static class NativeGraphModel
         if (member.VSub is "TYPE_STRINGPTR" or "TYPE_CSTRING")
         {
 
-            var values = objects.ReadStringArrayAt(at);
+            var values = member.VType == "TYPE_RELARRAY"
+                ? objects.ReadRelStringArrayAt(structStart, at)
+                : objects.ReadStringArrayAt(at);
             obj.Lists[member.Name] = values == null
                 ? new List<string>()
                 : values.Select(v => Trimmed(Escaped(v ?? ""))).ToList();
             return;
         }
 
-        string joined = string.Join(" ", Elements(objects, types, at, member, reference));
+        string joined = string.Join(" ", Elements(objects, types, structStart, at, member, reference));
         obj.Lists[member.Name] = joined
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .ToList();
     }
 
-    internal static IEnumerable<string> Elements(PackfileObjects objects, HavokClassTypes types, int at,
+    internal static IEnumerable<string> Elements(PackfileObjects objects, HavokClassTypes types,
+                                                 int structStart, int at,
                                                  HavokClassTypes.Member member,
                                                  FieldRender.Reference reference)
     {
+        if (member.VType == "TYPE_RELARRAY")
+        {
+            // Relative arrays are read through their own uint16(size+1)+uint16(relative-offset)
+            // header; the payload sits at structStart + storedOffset, never behind a fixup.
+            if (member.VSub == "TYPE_POINTER")
+            {
+                var targets = objects.ReadRelRefArrayAt(structStart, at);
+                if (targets == null) yield break;
+
+                foreach (var target in targets) yield return reference(target, target == null);
+                yield break;
+            }
+
+            int relStride = RelElementWidth(types, objects.PointerWidth, member);
+            if (relStride <= 0) yield break;
+
+            var rel = objects.RelArrayAt(structStart, at, relStride);
+            if (rel == null) yield break;
+
+            var relElement = new HavokClassTypes.Member { Name = member.Name, VType = member.VSub };
+            for (int e = 0; e < rel.Count; e++)
+                yield return FieldRender.Render(objects, rel.At + e * relStride, "", relElement, reference,
+                                                null, 0, types, FieldRender.ReferenceText) ?? "";
+            yield break;
+        }
+
         if (member.VSub == "TYPE_POINTER")
         {
             var targets = objects.ReadRefArrayAt(at);
@@ -243,6 +278,22 @@ public static class NativeGraphModel
 
     internal static string Escaped(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\r", "&#13;");
+
+    // The element width of a relative array's payload at a pointer width, mirroring the
+    // converter's RelElementWidth: pointers, strings and hkUlong are pointer-sized, variants
+    // are two pointers, and structs use their laid-out size.
+    internal static int RelElementWidth(HavokClassTypes types, int pointer,
+                                        HavokClassTypes.Member member)
+    {
+        if (member.VSub is "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING") return pointer;
+        if (member.VSub == "TYPE_VARIANT") return 2 * pointer;
+        if (member.VSub == "TYPE_ULONG") return pointer;
+        if (member.VSub == "TYPE_STRUCT")
+            return member.CType != null && types.Knows(member.CType)
+                ? LayoutWalker.Active(types, member.CType, pointer)?.Size ?? 0
+                : 0;
+        return HavokClassTypes.Width(member.VSub);
+    }
 
     internal static int ElementWidth(string vsub, int pointer) => vsub switch
     {

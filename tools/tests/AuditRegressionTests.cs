@@ -106,7 +106,7 @@ public sealed class AuditRegressionTests
         var member = new HavokClassTypes.Member { Name = "data", VSub = "TYPE_UINT8" };
 
         int rendered = NativeGraphModel.Elements(
-            objects, HavokClassTypes.Shipped, 0, member, (_, _) => "null").Count();
+            objects, HavokClassTypes.Shipped, 0, 0, member, (_, _) => "null").Count();
 
         Assert.Equal(count, rendered);
     }

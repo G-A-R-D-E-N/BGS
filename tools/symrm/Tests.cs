@@ -58,6 +58,7 @@ public static class Tests
         ("RelativeArraysLayOutFourBytesAtBothWidths", RelativeArraysLayOutFourBytesAtBothWidths),
         ("RelativeArrayPayloadsRoundTripThroughWidths", RelativeArrayPayloadsRoundTripThroughWidths),
         ("RelativeArrayPayloadsUseStoredRelativeOffsets", RelativeArrayPayloadsUseStoredRelativeOffsets),
+        ("RelativeArraysRenderInTheModelAndXml", RelativeArraysRenderInTheModelAndXml),
         ("RelativeArrayMalformedHeadersAreRefused", RelativeArrayMalformedHeadersAreRefused),
         ("RelativeArrayPayloadOverlapsObjectRefusesConversion", RelativeArrayPayloadOverlapsObjectRefusesConversion),
         ("OverlappingRelativeArrayPayloadsRefuseConversion", OverlappingRelativeArrayPayloadsRefuseConversion),
@@ -1290,6 +1291,54 @@ public static class Tests
         int indicesAt = PackfileLayout.Align(facesAt + 12, 16);
         Check("the indices payload follows the faces on a new line", (byte)0x50, bytes[indicesAt]);
         Check("the last index survives", (byte)0x54, bytes[indicesAt + 4]);
+    }
+
+    private static void RelativeArraysRenderInTheModelAndXml()
+    {
+        // The model and XML readers must route TYPE_RELARRAY through the real np header
+        // (uint16 size + 1, uint16 relative offset from the containing struct) and locate the
+        // payload at structStart + storedOffset. The payloads here sit at +0x70 / +0x90 /
+        // +0x9C — deliberately NOT immediately after the 0x50-byte object — so only the
+        // stored offsets can find them; the pointer-header array path reads count from
+        // header + pointerWidth (garbage, or a null backing without a fixup) and renders
+        // nothing.
+        var image = PolytopeImage(PolytopeWithRelativePayloads(0x70, 0x90, 0x9C, 176));
+        var objects = new PackfileObjects(image);
+
+        var model = NativeGraphModel.From(objects);
+        Check("the polytope renders into the graph model", true, model != null);
+        if (model != null)
+        {
+            var obj = model.Objects.Single(o => o.Class == "hknpConvexPolytopeShape");
+
+            Check("the planes list carries both vector4s from the stored offset",
+                  "(10.0 0.0 0.0 0.0) (11.0 0.0 0.0 0.0)", string.Join(" ", obj.Lists["planes"]));
+            Check("the indices list carries all five bytes from the stored offset",
+                  "80 81 82 83 84", string.Join(" ", obj.Lists["indices"]));
+
+            obj.StructLists.TryGetValue("faces", out var faces);
+            Check("the faces struct list has all three faces", 3, faces?.Count ?? 0);
+            if (faces != null && faces.Count == 3)
+            {
+                Check("the first face is read from its own payload", "160", faces[0]["firstIndex"]);
+                Check("the second face follows at the struct stride", "161", faces[1]["firstIndex"]);
+                Check("the third face follows at the struct stride", "162", faces[2]["firstIndex"]);
+            }
+        }
+
+        string xml = NativeXml.From(objects, image);
+        CheckTrue("the XML carries the planes payload values",
+                  xml.Contains("name=\"planes\" numelements=\"2\">(10.0 0.0 0.0 0.0) (11.0 0.0 0.0 0.0)</hkparam>",
+                               StringComparison.Ordinal));
+        CheckTrue("the XML carries the indices payload values",
+                  xml.Contains("name=\"indices\" numelements=\"5\">80 81 82 83 84</hkparam>",
+                               StringComparison.Ordinal));
+        CheckTrue("the XML emits all three faces as structs",
+                  xml.Contains("<hkparam name=\"faces\" numelements=\"3\">", StringComparison.Ordinal));
+        CheckTrue("the XML renders the first face's fields",
+                  xml.Contains("name=\"firstIndex\">160</hkparam>", StringComparison.Ordinal));
+        CheckTrue("and the second face's fields",
+                  xml.Contains("name=\"firstIndex\">161</hkparam>", StringComparison.Ordinal));
     }
 
     private static void RelativeArrayMalformedHeadersAreRefused()
