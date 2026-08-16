@@ -22,6 +22,11 @@ public static class PackfileConverter
     {
         types ??= HavokClassTypes.Shipped;
 
+        // Only the 4- and 8-byte layouts can actually be read back (PackfileImage.Read enforces
+        // the same set). A default-initialised PointerLayout has PointerSize 0, so guard here
+        // rather than trust the caller to pass a representable width.
+        if (target.PointerSize != 4 && target.PointerSize != 8) return false;
+
         var data = image.Section("__data__");
         if (data == null) return false;
 

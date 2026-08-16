@@ -27,6 +27,11 @@ public static class Tests
         ("UnsupportedLayoutRulesAreRefused", UnsupportedLayoutRulesAreRefused),
         ("RootOffsetMovesWithTheRootObject", RootOffsetMovesWithTheRootObject),
         ("FourByteUlongFieldsDoNotBleedIntoTheNextField", FourByteUlongFieldsDoNotBleedIntoTheNextField),
+        ("FixedStructArraysConvertEveryElement", FixedStructArraysConvertEveryElement),
+        ("PopulatedVariantsRelocateTheirPointer", PopulatedVariantsRelocateTheirPointer),
+        ("LayoutCachesAreScopedPerClassTable", LayoutCachesAreScopedPerClassTable),
+        ("ConvertToRejectsNonsensicalTargetWidths", ConvertToRejectsNonsensicalTargetWidths),
+        ("NativeEditingRefusesNonEightByteFiles", NativeEditingRefusesNonEightByteFiles),
         ("ArraysAreReadAtTheFilesPointerWidth", ArraysAreReadAtTheFilesPointerWidth),
         ("FieldOffsetsFollowTheFilesPointerWidth", FieldOffsetsFollowTheFilesPointerWidth),
         ("DetachedSubtreeStaysDrawn", DetachedSubtreeStaysDrawn),
@@ -508,6 +513,125 @@ public static class Tests
         var objects = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
         Check("a four-byte ulong is read as four bytes, not eight", (ulong)0x11223344,
               objects.ReadULong(objects.Instances[0], "userData"));
+    }
+
+    private static byte[] ClassNamesBlob(string className)
+    {
+        var blob = new byte[5 + className.Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped[className]!.Signature).CopyTo(blob, 0);
+        blob[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes(className).CopyTo(blob, 5);
+        return blob;
+    }
+
+    private static void FixedStructArraysConvertEveryElement()
+    {
+        // hkbGeneratorSyncInfo.syncPoints is an inline TYPE_STRUCT[16] of
+        // hkbGeneratorSyncInfoSyncPoint (id:int32 @0, time:real @4, 8 bytes, no pointers).
+        // The old converter transcoded only element 0 and left 1..15 zero-filled.
+        int size = LayoutWalker.Of(HavokClassTypes.Shipped, "hkbGeneratorSyncInfo",
+                                   PointerLayout.EightByte).Size;
+        var data = new byte[size];
+        for (int e = 0; e < 16; e++)
+        {
+            BitConverter.GetBytes(1000 + e).CopyTo(data, e * 8);
+            BitConverter.GetBytes(e + 0.5f).CopyTo(data, e * 8 + 4);
+        }
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbGeneratorSyncInfo"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data, VirtualFixups = Triple(0, 0, 5),
+        });
+
+        var four = PackfileImage.Read(image.Rebuild());
+        CheckTrue("eight to four succeeds", PackfileConverter.ConvertTo(four, PointerLayout.FourByte));
+
+        var objects = new PackfileObjects(PackfileImage.Read(four.Rebuild()));
+        int at = objects.Instances[0].Offset;
+        bool all = true;
+        for (int e = 0; e < 16; e++)
+            if (objects.ReadIntAt(at + e * 8) != 1000 + e) all = false;
+        CheckTrue("every fixed struct-array element survives, not just the first", all);
+        Check("the sixteenth element survives", 1015, objects.ReadIntAt(at + 15 * 8));
+    }
+
+    private static void PopulatedVariantsRelocateTheirPointer()
+    {
+        // hkCustomAttributesAttribute has a TYPE_VARIANT member 'value' (two pointer slots).
+        // Point its object slot at a second instance and convert: the old converter copied the
+        // 16-byte variant over the next field and never registered the fixup, so remapping
+        // failed. The fix registers both slots and relocates the pointer.
+        var data = new byte[64];
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkCustomAttributesAttribute"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            GlobalFixups = Triple(8, 1, 32),   // value's object pointer (offset 8) -> instance at 32
+            VirtualFixups = Triple(0, 0, 5).Concat(Triple(32, 0, 5)).ToArray(),
+        });
+
+        var four = PackfileImage.Read(image.Rebuild());
+        CheckTrue("eight to four succeeds with a populated variant",
+                  PackfileConverter.ConvertTo(four, PointerLayout.FourByte));
+
+        var objects = new PackfileObjects(PackfileImage.Read(four.Rebuild()));
+        Check("both instances remain", 2, objects.Instances.Count);
+        var target = objects.ReadRefAt(objects.Instances[0].Offset + 4, out bool wasNull);
+        CheckTrue("the variant pointer is not null after conversion", !wasNull);
+        Check("the variant pointer relocated to the second instance",
+              objects.Instances[1].Offset, target?.Offset);
+    }
+
+    private static void LayoutCachesAreScopedPerClassTable()
+    {
+        static System.IO.Stream Json(string text) =>
+            new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
+
+        var small = HavokClassTypes.Parse(Json(
+            "{\"classes\":{\"Foo\":{\"signature\":\"0x1\",\"size\":4," +
+            "\"members\":[{\"name\":\"a\",\"offset\":0,\"vtype\":\"TYPE_INT32\"}]}}}"));
+        var big = HavokClassTypes.Parse(Json(
+            "{\"classes\":{\"Foo\":{\"signature\":\"0x1\",\"size\":8," +
+            "\"members\":[{\"name\":\"a\",\"offset\":0,\"vtype\":\"TYPE_INT32\"}," +
+            "{\"name\":\"b\",\"offset\":4,\"vtype\":\"TYPE_INT32\"}]}}}"));
+
+        Check("Foo is four bytes in the small schema", 4,
+              LayoutWalker.Of(small, "Foo", PointerLayout.EightByte).Size);
+        Check("Foo is eight bytes in the big schema, same class name", 8,
+              LayoutWalker.Of(big, "Foo", PointerLayout.EightByte).Size);
+        Check("the small schema is not poisoned by the big one", 4,
+              LayoutWalker.Of(small, "Foo", PointerLayout.EightByte).Size);
+    }
+
+    private static void ConvertToRejectsNonsensicalTargetWidths()
+    {
+        var image = PackfileImage.Read(ClipInAPackfile("A.hkx", out _).Rebuild());
+        CheckTrue("a three-byte target is refused",
+                  !PackfileConverter.ConvertTo(image, new PointerLayout(3)));
+        CheckTrue("a default (zero) target is refused",
+                  !PackfileConverter.ConvertTo(image, default));
+        Check("the file is untouched after a refused conversion", 8, image.Layout.PointerSize);
+    }
+
+    private static void NativeEditingRefusesNonEightByteFiles()
+    {
+        var image = new PackfileImage { LayoutRules = new byte[] { 4, 1, 0, 1 }, Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__data__"), Data = new byte[16] });
+        byte[] fourByte = image.Rebuild();
+
+        var plan = new NativeSave.Plan(new System.Collections.Generic.List<NativeSave.Change>(), null);
+        CheckThrows<NotSupportedException>("native save refuses a four-byte file",
+            () => NativeSave.Apply(fourByte, plan));
     }
 
     private static void BigEndianPackfilesAreRefused()
