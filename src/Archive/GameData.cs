@@ -22,8 +22,18 @@ public sealed class GameData : IDisposable
     public string? PluginsPath { get; }
 
 
+    /// <summary>
+    /// One weapon animation type (the folder under Animations\Weapon\) and the path
+    /// prefixes the engine searches, in fallback order, when a weapon subgraph plays a
+    /// generic clip: e.g. 44Pistol resolves against "Animations\Weapon\44Pistol\Player",
+    /// then "Animations\Weapon\44Pistol", then "Animations\Weapon\Pistol", and so on.
+    /// Derived from the race AnimationSetData in the game's master plugin.
+    /// </summary>
+    public sealed record WeaponTypeSet(string Type, IReadOnlyList<string> Prefixes);
+
     private readonly Dictionary<string, Ba2> _opened = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, HashSet<string>> _names = new(StringComparer.OrdinalIgnoreCase);
+    private List<WeaponTypeSet>? _weaponSets;
 
     private GameData(string dataFolder, List<string> archivePaths, string? pluginsPath)
     {
@@ -170,6 +180,18 @@ public sealed class GameData : IDisposable
     }
 
     /// <summary>
+    /// Every entry of every archive, in load order, with the archive it came from. The
+    /// subgraph index uses this to read the engine's AnimTextData manifests without
+    /// duplicating load-order handling.
+    /// </summary>
+    public IEnumerable<(string ArchivePath, Ba2.Entry Entry)> EnumerateEntries()
+    {
+        foreach (string archive in ArchivePaths)
+            foreach (var entry in Entries(archive))
+                yield return (archive, entry);
+    }
+
+    /// <summary>
     /// The subfolders that exist under a virtual folder, e.g. the weapon types under
     /// "Animations/Weapon", from both loose files under the project root and archive entries.
     /// </summary>
@@ -308,6 +330,74 @@ public sealed class GameData : IDisposable
         int dash = name.IndexOf(" - ", StringComparison.Ordinal);
         string core = dash >= 0 ? name[..dash] : name;
         return string.Equals(core, pluginBase, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The weapon animation types the engine will actually resolve, derived from the
+    /// AnimationSetData on the race records of the game's master plugin (Fallout4.esm).
+    /// Empty when no master is present or it cannot be read, in which case callers fall
+    /// back to inferring weapon types from the subgraph itself.
+    /// </summary>
+    public IReadOnlyList<WeaponTypeSet> WeaponTypeSets
+    {
+        get
+        {
+            if (_weaponSets != null) return _weaponSets;
+            _weaponSets = BuildWeaponTypeSets();
+            return _weaponSets;
+        }
+    }
+
+    private List<WeaponTypeSet> BuildWeaponTypeSets()
+    {
+        var sets = new List<WeaponTypeSet>();
+        string master = Path.Combine(DataFolder, "Fallout4.esm");
+        if (!File.Exists(master)) return sets;
+
+        List<EsPlugin.AnimSet> animSets;
+        try { animSets = EsPlugin.RaceAnimationSets(master); }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            return sets;
+        }
+
+        var byType = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var set in animSets)
+        {
+            string behavior = Path.GetFileNameWithoutExtension(set.Behavior);
+            if (!behavior.Contains("Weapon", StringComparison.OrdinalIgnoreCase)) continue;
+
+            // each set is one weapon archetype: its first Animations\Weapon\ path names the
+            // type, and every path in the set is the fallback chain that type searches.
+            // The set paths are data-relative, e.g. Actors\Character\Animations\Weapon\
+            // 44Pistol\Player; the project root for a character sits at Actors\Character,
+            // so the declared path is the suffix after that prefix.
+            string? type = null;
+            var prefixes = new List<string>();
+            foreach (string path in set.Paths)
+            {
+                int at = path.IndexOf("Animations\\Weapon\\", StringComparison.OrdinalIgnoreCase);
+                if (at <= 0) continue;
+                string relative = path[at..];
+                int typeEnd = relative.IndexOf('\\', "Animations\\Weapon\\".Length);
+                string folder = typeEnd > 0
+                    ? relative["Animations\\Weapon\\".Length..typeEnd]
+                    : relative["Animations\\Weapon\\".Length..];
+                if (folder.Length == 0) continue;
+
+                type ??= folder;
+                prefixes.Add(relative);
+            }
+            if (type == null) continue;
+
+            if (!byType.TryGetValue(type, out var known))
+                byType[type] = known = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string prefix in prefixes) known.Add(prefix);
+        }
+
+        foreach (var pair in byType.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+            sets.Add(new WeaponTypeSet(pair.Key, pair.Value.ToList()));
+        return sets;
     }
 
     private static string? FindPluginsFile()

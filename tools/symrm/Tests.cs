@@ -134,6 +134,10 @@ public static class Tests
         ("GameDataCollapsesBorrowedPaths", GameDataCollapsesBorrowedPaths),
         ("PackedAnimationsAndSkeletonsPlayBackFromArchives", PackedAnimationsAndSkeletonsPlayBackFromArchives),
         ("WeaponSubgraphPerWeaponCoverageIsReportedOnce", WeaponSubgraphPerWeaponCoverageIsReportedOnce),
+        ("CrashHashResolvesToTheNamedSubgraph", CrashHashResolvesToTheNamedSubgraph),
+        ("CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile", CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile),
+        ("LooseManifestOverridesTheArchiveCopy", LooseManifestOverridesTheArchiveCopy),
+        ("CrashLogFileYieldsTheHash", CrashLogFileYieldsTheHash),
         ("ProjectFilesAreSelectedByContent", ProjectFilesAreSelectedByContent),
         ("MissingClipAnimationIsReported", MissingClipAnimationIsReported),
         ("RepackDriftNamesWhatMoved", RepackDriftNamesWhatMoved),
@@ -3096,6 +3100,130 @@ public static class Tests
                   findings.Count(f => f.What.Contains("not on disk")));
         }
         finally { Directory.Delete(data, true); }
+    }
+
+    private static byte[] OffsetFile(string behaviorPath, byte[] junk)
+    {
+        var path = System.Text.Encoding.UTF8.GetBytes(behaviorPath);
+        var head = new List<byte>();
+        head.AddRange(System.Text.Encoding.UTF8.GetBytes("V4\n"));
+        head.Add((byte)(path.Length + 1));
+        head.AddRange(path);
+        head.Add(0);
+        head.AddRange(junk);
+        return head.ToArray();
+    }
+
+    private static void CrashHashResolvesToTheNamedSubgraph()
+    {
+        Console.WriteLine("\na crash-log hash resolves to the subgraph the game data names");
+
+        string data = Directory.CreateTempSubdirectory("bgs-crash").FullName;
+        try
+        {
+            const string manifest =
+                "3\n1\n10448007347639226270\n3\n" +
+                "Actors\\Character\\Behaviors\\SyncedAnimBehavior.hkx\n" +
+                "Actors\\Character\\Animations\\WPNReload.hkx\n" +
+                "Actors\\Character\\Animations\\Gone.hkx\n";
+            WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                "Meshes/AnimTextData/AnimationFileData/10448007347639226270.txt",
+                System.Text.Encoding.UTF8.GetBytes(manifest));
+            WriteSingleEntryArchive(Path.Combine(data, "DLCRobot - Main.ba2"),
+                "Meshes/Actors/Character/Animations/WPNReload.hkx", new byte[] { 1, 2, 3 });
+
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+            var index = OpenCommonwealth.Services.Archive.SubgraphIndex.Discover(gameData);
+
+            var sub = index.Find(10448007347639226270UL);
+            Check("the hash resolves to a manifest", true, sub != null);
+            if (sub == null) return;
+            Check("the subgraph behavior is named",
+                  "Actors\\Character\\Behaviors\\SyncedAnimBehavior.hkx", sub.PrimaryBehavior);
+            Check("the manifest counts its animations", 2, sub.AnimationPaths.Count);
+            Check("the packed animation is present", true,
+                  gameData.ContainsAnimation(Path.Combine(data, "Meshes"), sub.AnimationPaths[0]));
+            Check("the absent animation is missing", false,
+                  gameData.ContainsAnimation(Path.Combine(data, "Meshes"), sub.AnimationPaths[1]));
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static void CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile()
+    {
+        Console.WriteLine("\nan id with only offset data still reports the offset file and its path hint");
+
+        string data = Directory.CreateTempSubdirectory("bgs-offsets").FullName;
+        try
+        {
+            WriteSingleEntryArchive(Path.Combine(data, "DLCRobot - Main.ba2"),
+                "Meshes/AnimTextData/AnimationOffsets/123456789012345.txt",
+                OffsetFile("Actors\\Character\\Behaviors\\WeaponBehavior.hkx", new byte[] { 1, 2, 3, 4 }));
+
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+            var index = OpenCommonwealth.Services.Archive.SubgraphIndex.Discover(gameData);
+
+            Check("no named manifest exists", null, index.Find(123456789012345UL));
+            var off = index.FindOffsetData(123456789012345UL);
+            Check("the offset file is found", true, off != null);
+            Check("its embedded behavior path is read as a hint",
+                  "Actors\\Character\\Behaviors\\WeaponBehavior.hkx", off!.FirstPathHint);
+            Check("the offset file is attributed to its archive", true,
+                  off.Source.Contains("DLCRobot"));
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static void LooseManifestOverridesTheArchiveCopy()
+    {
+        Console.WriteLine("\na loose AnimTextData manifest overrides the archive entry for the same id");
+
+        string data = Directory.CreateTempSubdirectory("bgs-loose").FullName;
+        try
+        {
+            const string packed =
+                "3\n1\n99\n2\n" +
+                "Actors\\Character\\Behaviors\\PackedBehavior.hkx\n" +
+                "Actors\\Character\\Animations\\A.hkx\n";
+            WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                "Meshes/AnimTextData/AnimationFileData/99.txt",
+                System.Text.Encoding.UTF8.GetBytes(packed));
+
+            string looseDir = Path.Combine(data, "Meshes", "AnimTextData", "AnimationFileData");
+            Directory.CreateDirectory(looseDir);
+            File.WriteAllText(Path.Combine(looseDir, "99.txt"),
+                "3\n1\n99\n2\n" +
+                "Actors\\Character\\Behaviors\\LooseBehavior.hkx\n" +
+                "Actors\\Character\\Animations\\B.hkx\n");
+
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+            var index = OpenCommonwealth.Services.Archive.SubgraphIndex.Discover(gameData);
+
+            var sub = index.Find(99UL);
+            Check("the loose manifest wins over the archive", true, sub != null);
+            Check("its behavior is the loose one",
+                  "Actors\\Character\\Behaviors\\LooseBehavior.hkx", sub!.PrimaryBehavior);
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static void CrashLogFileYieldsTheHash()
+    {
+        Console.WriteLine("\ncrash logs and bare hashes both feed the resolver");
+
+        string dir = Directory.CreateTempSubdirectory("bgs-log").FullName;
+        try
+        {
+            string log = Path.Combine(dir, "crash.txt");
+            File.WriteAllText(log,
+                "... EXCEPTION_ACCESS_VIOLATION reading AnimTextData\\AnimationOffsets\\10448007347639226270.txt ...");
+            Check("the log's AnimationOffsets hash is extracted", 10448007347639226270UL,
+                  Program.ExtractSubgraphHash(log));
+            Check("a bare hash is accepted", 10448007347639226270UL,
+                  Program.ExtractSubgraphHash("10448007347639226270"));
+            Check("garbage is rejected", null, Program.ExtractSubgraphHash("not a hash at all"));
+        }
+        finally { Directory.Delete(dir, true); }
     }
 
     private static void RepackDriftNamesWhatMoved()

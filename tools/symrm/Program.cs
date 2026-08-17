@@ -48,6 +48,7 @@ public static class Program
             case "savedelete": return SaveDelete(argv);
             case "classcheck": return ClassCheck(argv);
             case "chain": return Chain(argv);
+            case "crash": return Crash(argv);
             case "notes": return Notes(argv);
             case "saveevent": return SaveEvent(argv);
             case "savewide": return SaveWide(argv);
@@ -84,6 +85,11 @@ public static class Program
 
           lifecycle <hkxDir | file.hkx>
               Native open, edit, save, reload, validate, and render gate for supported files.
+
+          crash <hash | crashlog.txt> --data <Data folder>
+              Resolve an AnimTextData subgraph hash (e.g. 10448007347639226270) to the
+              subgraph it names, using the AnimationFileData manifests the game ships in its
+              archives, and report which of the subgraph's animations are missing.
 
           test
               Regression checks that use native code only.
@@ -4070,6 +4076,115 @@ public static class Program
         Console.WriteLine($"checked {checkResult.Files.Count} behaviour file(s), {unread} unread, " +
                           $"{checkResult.Errors} error(s), {checkResult.Warnings} warning(s)");
         return chain.Links.Count == 0 || unread > 0 || checkResult.Errors > 0 ? 1 : 0;
+    }
+
+    private static int Crash(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string input = argv[1];
+        string? dataFolder = null;
+        for (int i = 2; i < argv.Length; i++)
+        {
+            if (argv[i] == "--data" && i + 1 < argv.Length) dataFolder = argv[i + 1];
+        }
+        if (dataFolder == null)
+        {
+            Console.Error.WriteLine("crash needs --data <game Data folder> to read the AnimTextData manifests");
+            return 1;
+        }
+
+        // Accept either a bare hash or a crash log naming the file.
+        ulong? id = ExtractSubgraphHash(input);
+        if (id == null)
+        {
+            Console.Error.WriteLine($"no AnimTextData hash found in {input}");
+            return 1;
+        }
+
+        dataFolder = Path.GetFullPath(dataFolder);
+        if (!Directory.Exists(dataFolder))
+        {
+            Console.Error.WriteLine($"--data folder not found: {dataFolder}");
+            return 1;
+        }
+
+        using var data = OpenCommonwealth.Services.Archive.GameData.Discover(dataFolder);
+        var index = OpenCommonwealth.Services.Archive.SubgraphIndex.Discover(data);
+        int manifestCount = index.Subgraphs.Count;
+
+        var sub = index.Find(id.Value);
+        Console.WriteLine($"subgraph {id.Value}");
+        Console.WriteLine($"  manifests   {manifestCount} AnimationFileData file(s) under {dataFolder}" +
+                          $" ({data.ArchivePaths.Count} archive(s))");
+
+        if (sub != null)
+        {
+            Console.WriteLine($"  behavior    {sub.PrimaryBehavior}");
+            if (sub.BehaviorPaths.Count > 1)
+                Console.WriteLine($"  references  {sub.BehaviorPaths.Count - 1} more behavior graph(s): " +
+                                  string.Join(", ", sub.BehaviorPaths.Skip(1).Select(p => Path.GetFileName(p))));
+            Console.WriteLine($"  animations  {sub.AnimationPaths.Count} animation file(s) from manifest {sub.EntryName}");
+            Console.WriteLine($"  source      {sub.Source}");
+
+            var missing = new List<string>();
+            int present = 0;
+            string? projectRoot = Path.Combine(dataFolder, "Meshes");
+            foreach (string declared in sub.AnimationPaths)
+            {
+                if (data.ContainsAnimation(projectRoot, declared)) present++;
+                else missing.Add(declared);
+            }
+            Console.WriteLine($"  presence    {present} present (loose or packed), {missing.Count} MISSING");
+            foreach (string m in missing.Take(20))
+                Console.WriteLine($"    MISSING {m}");
+            if (missing.Count > 20)
+                Console.WriteLine($"    ... and {missing.Count - 20} more");
+        }
+        else
+        {
+            Console.WriteLine("  behavior    (no AnimationFileData manifest for this id)");
+        }
+
+        var off = index.FindOffsetData(id.Value);
+        if (off != null)
+        {
+            Console.WriteLine($"  offset data AnimationOffsets\\{id.Value}.txt exists ({off.Bytes} bytes, {off.Source})");
+            if (off.FirstPathHint != null)
+                Console.WriteLine($"    first embedded path (hint): {off.FirstPathHint}");
+        }
+        else
+        {
+            Console.WriteLine("  offset data (no AnimationOffsets file for this id in the game data)");
+        }
+
+        return sub == null ? 1 : 0;
+    }
+
+    /// <summary>
+    /// Read a bare hash or a crash log and return the AnimTextData subgraph hash it names.
+    /// Prefers the AnimationOffsets\&lt;id&gt;.txt pattern, then the longest digit run.
+    /// </summary>
+    internal static ulong? ExtractSubgraphHash(string input)
+    {
+        string text = input;
+        if (File.Exists(input))
+        {
+            try { text = File.ReadAllText(input); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        }
+
+        var patterns = new[]
+        {
+            new System.Text.RegularExpressions.Regex(@"AnimationOffsets[\\/](\d+)\.txt"),
+            new System.Text.RegularExpressions.Regex(@"(\d{9,20})"),
+        };
+        foreach (var re in patterns)
+        {
+            var m = re.Match(text);
+            if (m.Success && ulong.TryParse(m.Groups[1].Value, out ulong id)) return id;
+        }
+        return null;
     }
 
     private static int Lifecycle(string[] argv)

@@ -4,6 +4,21 @@ Changes that affect Behaviour Graph Studio users are documented here.
 
 New to BGS? See the [Getting Started Guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
 
+## 1.0.6
+
+August 17, 2026
+
+<details>
+<summary><strong>Crash Log Diagnosis</strong></summary>
+<br>
+
+* `symrm crash <hash | crashlog.txt> --data <Data folder>` now resolves an AnimTextData subgraph hash (the `AnimationOffsets\<id>.txt` name a crash log complains about) to the subgraph it names.
+* The resolver reads the game's own `AnimationFileData\<id>.txt` manifests from the .ba2 archives (loose files win), so no hash algorithm is reimplemented — the engine's ground truth is used.
+* It reports the subgraph's behavior graph(s), the archive the manifest came from, whether its offset-data file exists, and which of the subgraph's animations are missing from the game data.
+* Loose manifest overrides (e.g. a merged AnimTextData mod) are honored, matching how the engine resolves the tree.
+
+</details>
+
 ## 1.0.5
 
 August 15, 2026

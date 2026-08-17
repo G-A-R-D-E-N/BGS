@@ -433,11 +433,12 @@ public static class GraphValidator
     /// <summary>
     /// The per-weapon half of animation checking. A behavior that plays clips under
     /// Animations\Weapon\&lt;Type&gt;\ is a weapon subgraph: the engine resolves its generic
-    /// Animations\&lt;clip&gt; references per weapon through Animations\Weapon\&lt;Type&gt;\&lt;clip&gt;.
-    /// Exactly which weapon types need which clips is the ARMA/animation-set mapping, which the
-    /// file format does not carry, so this reports a single bounded warning per subgraph: the
-    /// weapon types it references and how many of its generic clips have no per-weapon copy
-    /// there (the engine falls back to the generic file, so a gap is not itself the crash).
+    /// Animations\&lt;clip&gt; references per weapon through the animation-set fallback chains
+    /// on the race record (AnimationSetData), whose paths are Animations\Weapon\&lt;Type&gt;\...
+    /// GameData derives that map from the game's master plugin, so a generic clip counts as
+    /// covered for a weapon type when a copy exists under any of that type's chains. Without
+    /// the master (no game data folder), the older bounded heuristic is kept: the weapon types
+    /// the subgraph names itself, and the generic clips that have a per-weapon copy somewhere.
     /// </summary>
     private static void CheckWeaponSubgraphClips(BehaviourGraphModel model, ProjectChain chain,
                                                  List<Finding> found)
@@ -456,9 +457,6 @@ public static class GraphValidator
         }
         if (referencedTypes.Count == 0) return;
 
-        var weaponFolders = chain.Data.Subfolders(chain.Root, "Animations/Weapon");
-        if (weaponFolders.Count == 0) return;
-
         // the generic clips this subgraph plays from the Animations root, one level deep
         var generic = clips
             .Select(clip => clip.Str("animationName").Replace('\\', '/'))
@@ -468,13 +466,23 @@ public static class GraphValidator
             .ToList();
         if (generic.Count == 0) return;
 
+        var sets = chain.Data.WeaponTypeSets;
+        if (sets.Count > 0)
+        {
+            CheckWeaponSubgraphAgainstMap(model, chain, generic, sets, found);
+            return;
+        }
+
+        var weaponFolders = chain.Data.Subfolders(chain.Root, "Animations/Weapon");
+        if (weaponFolders.Count == 0) return;
+
         // a clip is per-weapon when a copy exists under some weapon folder in the data
         var perWeapon = generic.Where(leaf =>
             weaponFolders.Any(type => ProjectChain.AnimationExists(
                 chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data))).ToList();
         if (perWeapon.Count == 0) return;
 
-        var gaps = new List<string>();
+        var heuristic = new List<string>();
         string? example = null;
         foreach (string type in referencedTypes)
         {
@@ -482,19 +490,61 @@ public static class GraphValidator
                 chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data));
             if (missing == 0) continue;
 
-            gaps.Add($"'{type}' lacks {missing} of {perWeapon.Count}");
+            heuristic.Add($"'{type}' lacks {missing} of {perWeapon.Count}");
             example ??= perWeapon.First(leaf => !ProjectChain.AnimationExists(
                 chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data));
+        }
+        if (heuristic.Count == 0) return;
+
+        string heuristicTypes = string.Join(", ", heuristic.Take(4));
+        if (heuristic.Count > 4) heuristicTypes += $", and {heuristic.Count - 4} more";
+        Add(found, Level.Warning, "weapon subgraph",
+            $"per-weapon coverage of {perWeapon.Count} generic clip(s): {heuristicTypes} " +
+            $"(e.g. {example}); the engine falls back to the generic copy where it exists, " +
+            $"and not every weapon needs every clip, so a gap is only a crash when the generic " +
+            $"copy is missing too");
+    }
+
+    /// <summary>
+    /// The precise form of the per-weapon check: each weapon type carries the fallback chain
+    /// of animation paths the engine searches, from the race AnimationSetData. A generic clip
+    /// is covered for a type when it exists under any prefix of that type's chain, so a type
+    /// that deliberately lacks a clip (because an earlier prefix in its own chain holds it, or
+    /// because the game never asks that type for it) is not flagged. Vanilla resolves every
+    /// clip this way, so a clean install reports nothing; only genuinely missing copies are
+    /// named.
+    /// </summary>
+    private static void CheckWeaponSubgraphAgainstMap(BehaviourGraphModel model, ProjectChain chain,
+                                                      List<string> generic,
+                                                      IReadOnlyList<OpenCommonwealth.Services.Archive.GameData.WeaponTypeSet> sets,
+                                                      List<Finding> found)
+    {
+        // the engine searches the type's fallback chain first and falls back to the generic
+        // Animations\<clip> file, so a clip is covered for the type when either holds it;
+        // only a clip absent from both is a real gap for that weapon type.
+        var gaps = new List<string>();
+        string? example = null;
+        foreach (var set in sets)
+        {
+            bool Covered(string leaf) =>
+                set.Prefixes.Any(prefix =>
+                    ProjectChain.AnimationExists(chain.Root, prefix + "\\" + leaf, chain.Data)) ||
+                ProjectChain.AnimationExists(chain.Root, "Animations\\" + leaf, chain.Data);
+
+            var missing = generic.Where(leaf => !Covered(leaf)).ToList();
+            if (missing.Count == 0) continue;
+
+            gaps.Add($"'{set.Type}' lacks {missing.Count} of {generic.Count}");
+            example ??= missing[0];
         }
         if (gaps.Count == 0) return;
 
         string types = string.Join(", ", gaps.Take(4));
         if (gaps.Count > 4) types += $", and {gaps.Count - 4} more";
         Add(found, Level.Warning, "weapon subgraph",
-            $"per-weapon coverage of {perWeapon.Count} generic clip(s): {types} " +
-            $"(e.g. {example}); the engine falls back to the generic copy where it exists, " +
-            $"and not every weapon needs every clip, so a gap is only a crash when the generic " +
-            $"copy is missing too");
+            $"per-weapon coverage of {generic.Count} generic clip(s): {types} " +
+            $"(e.g. {example}); the missing copy would be a crash when the weapon actually " +
+            $"plays that clip, so extract the named animations under Animations\\Weapon");
     }
 
     private static void CheckUnattached(BehaviourGraphModel model, List<Finding> found)
