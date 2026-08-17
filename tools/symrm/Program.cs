@@ -49,6 +49,7 @@ public static class Program
             case "classcheck": return ClassCheck(argv);
             case "chain": return Chain(argv);
             case "crash": return Crash(argv);
+            case "hash": return Hash(argv);
             case "notes": return Notes(argv);
             case "saveevent": return SaveEvent(argv);
             case "savewide": return SaveWide(argv);
@@ -90,6 +91,13 @@ public static class Program
               Resolve an AnimTextData subgraph hash (e.g. 10448007347639226270) to the
               subgraph it names, using the AnimationFileData manifests the game ships in its
               archives, and report which of the subgraph's animations are missing.
+
+          hash <behavior.hkx> [<sapt> ...]
+              Compute the AnimTextData subgraph id for a behavior graph and its animation
+              folder prefixes: raw CRC-32 (init 0, no xorout) of the lowercased prefix
+              list joined by '|' in the high half, and of the lowercased behavior path in
+              the low half. The result names the AnimationOffsets cache file the engine
+              writes for that subgraph.
 
           test
               Regression checks that use native code only.
@@ -4076,6 +4084,33 @@ public static class Program
         Console.WriteLine($"checked {checkResult.Files.Count} behaviour file(s), {unread} unread, " +
                           $"{checkResult.Errors} error(s), {checkResult.Warnings} warning(s)");
         return chain.Links.Count == 0 || unread > 0 || checkResult.Errors > 0 ? 1 : 0;
+    }
+
+    private static int Hash(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        string behavior = argv[1];
+        var sapt = argv.Skip(2).ToArray();
+        if (sapt.Length == 0)
+        {
+            Console.Error.WriteLine("hash <behavior.hkx> <sapt> [...] — give at least one animation folder prefix");
+            return 1;
+        }
+
+        ulong id = OpenCommonwealth.Services.Archive.SubgraphHash.Compute(behavior, sapt);
+        uint lo = OpenCommonwealth.Services.Archive.SubgraphHash.BehaviorHalf(behavior);
+        string joined = string.Join('|', sapt);
+        uint hi = OpenCommonwealth.Services.Archive.SubgraphHash.RawCrc32(
+            System.Text.Encoding.UTF8.GetBytes(joined.Replace('/', '\\').ToLowerInvariant()));
+
+        Console.WriteLine($"behavior   {behavior.Replace('/', '\\').ToLowerInvariant()}");
+        Console.WriteLine($"prefixes   {joined.Replace('/', '\\').ToLowerInvariant()}");
+        Console.WriteLine($"low  (CRC of behavior)   {lo:x8}");
+        Console.WriteLine($"high (CRC of prefixes)   {hi:x8}");
+        Console.WriteLine($"subgraph id              {id}  (0x{id:x16})");
+        Console.WriteLine($"offset cache file        Meshes\\AnimTextData\\AnimationOffsets\\{id}.txt");
+        return 0;
     }
 
     private static int Crash(string[] argv)

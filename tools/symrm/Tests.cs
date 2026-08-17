@@ -137,6 +137,9 @@ public static class Tests
         ("CrashHashResolvesToTheNamedSubgraph", CrashHashResolvesToTheNamedSubgraph),
         ("CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile", CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile),
         ("LooseManifestOverridesTheArchiveCopy", LooseManifestOverridesTheArchiveCopy),
+        ("SubgraphHashMatchesKnownGameValues", SubgraphHashMatchesKnownGameValues),
+        ("SubgraphHashLowHalfIsTheBehaviorPath", SubgraphHashLowHalfIsTheBehaviorPath),
+        ("SubgraphHashNormalizesCaseAndSlashes", SubgraphHashNormalizesCaseAndSlashes),
         ("CrashLogFileYieldsTheHash", CrashLogFileYieldsTheHash),
         ("ProjectFilesAreSelectedByContent", ProjectFilesAreSelectedByContent),
         ("MissingClipAnimationIsReported", MissingClipAnimationIsReported),
@@ -3147,6 +3150,78 @@ public static class Tests
                   gameData.ContainsAnimation(Path.Combine(data, "Meshes"), sub.AnimationPaths[1]));
         }
         finally { Directory.Delete(data, true); }
+    }
+
+    private static void SubgraphHashMatchesKnownGameValues()
+    {
+        Console.WriteLine("\nthe subgraph id recomputes exactly from the behavior and its prefixes");
+
+        // (id, behavior, prefixes) triples taken from the game's own archives: each id is
+        // the AnimationFileData/AnimationOffsets file name the engine shipped, and the
+        // behavior/prefixes are the matching race record's SGNM/SAPT subrecords.
+        var known = new (ulong Id, string Behavior, string[] Sapt)[]
+        {
+            (10063049680076617785UL, @"Actors\Shared\Behaviors\BloodbugSharedCoreWrappingBehavior.hkx",
+                new[] { @"Actors\Mosquito\Animations\Injured", @"Actors\Mosquito\Animations" }),
+            (10121085405136975821UL, @"Actors\Character\Behaviors\MTBehavior.hkx",
+                new[] { @"Actors\Character\Animations\MT\Injured\Right", @"Actors\Character\Animations\MT\Player",
+                        @"Actors\Character\Animations\MT\Neutral", @"Actors\Character\Animations",
+                        @"actors\Character\Animations\Furniture\Water" }),
+            (10669390995239814013UL, @"Actors\Vertibird\Behaviors\FlightBehavior.hkx",
+                new[] { @"Actors\Vertibird\Animations\InjuredLeftWing", @"Actors\Vertibird\Animations" }),
+            (10715738121632629791UL, @"Actors\Shared\Behaviors\MirelurkQueenCoreWrappingBehavior.hkx",
+                new[] { @"Actors\MirelurkQueen\Animations\Injured\RightLegs",
+                        @"Actors\MirelurkQueen\Animations\Injured\Arms\LeftArm", @"Actors\MirelurkQueen\Animations" }),
+            (11081849303742838364UL, @"Actors\Character\Behaviors\LeftArmInjuredMeleeWrappingBehavior.hkx",
+                new[] { @"Actors\Character\Animations\H2H", @"Actors\Character\Animations\1HM",
+                        @"Actors\Character\Animations\Paired", @"Actors\Character\Animations" }),
+        };
+        foreach (var (id, behavior, sapt) in known)
+        {
+            ulong computed = OpenCommonwealth.Services.Archive.SubgraphHash.Compute(behavior, sapt);
+            Check($"{behavior.Split('\\').Last()} recomputes its shipped id", id, computed);
+        }
+    }
+
+    private static void SubgraphHashLowHalfIsTheBehaviorPath()
+    {
+        Console.WriteLine("\nthe low half of a subgraph id is the CRC of the lowercased behavior path");
+
+        // The crash-log hash 10448007347639226270 = 0x90fec753a6b50f9e; the low half
+        // 0xa6b50f9e is the CRC of the weapon behavior path, confirmed against the
+        // AnimationOffsets file the game ships for that id.
+        Check("crash hash low half is the weapon behavior path", 0xa6b50f9eu,
+              OpenCommonwealth.Services.Archive.SubgraphHash.BehaviorHalf(
+                  @"Actors\Character\Behaviors\WeaponBehavior.hkx"));
+        Check("right-arm wrapping behavior", 0x7eff6266u,
+              OpenCommonwealth.Services.Archive.SubgraphHash.BehaviorHalf(
+                  @"Actors\Character\Behaviors\RightArmInjuredWeaponWrappingBehavior.hkx"));
+        Check("both-arm wrapping behavior", 0x85c72449u,
+              OpenCommonwealth.Services.Archive.SubgraphHash.BehaviorHalf(
+                  @"Actors\Character\Behaviors\BothArmInjuredWeaponWrappingBehavior.hkx"));
+        Check("left-arm wrapping behavior", 0x8b1f2debu,
+              OpenCommonwealth.Services.Archive.SubgraphHash.BehaviorHalf(
+                  @"Actors\Character\Behaviors\LeftArmInjuredWeaponWrappingBehavior.hkx"));
+    }
+
+    private static void SubgraphHashNormalizesCaseAndSlashes()
+    {
+        Console.WriteLine("\nthe subgraph id ignores case and forward slashes in its inputs");
+
+        const string behavior = @"Actors\Character\Behaviors\WeaponBehavior.hkx";
+        string[] sapt = { @"Actors\Character\Animations\Weapon\44Pistol", @"Actors\Character\Animations\Weapon\Pistol" };
+        ulong canonical = OpenCommonwealth.Services.Archive.SubgraphHash.Compute(behavior, sapt);
+        ulong mixedCase = OpenCommonwealth.Services.Archive.SubgraphHash.Compute(
+            "Actors\\Character\\Behaviors\\WeaponBehavior.HKX",
+            new[] { "Actors\\Character\\Animations\\Weapon\\44Pistol", "Actors\\Character\\Animations\\Weapon\\PISTOL" });
+        ulong forwardSlashes = OpenCommonwealth.Services.Archive.SubgraphHash.Compute(
+            "Actors/Character/Behaviors/WeaponBehavior.hkx",
+            new[] { "Actors/Character/Animations/Weapon/44Pistol", "Actors/Character/Animations/Weapon/Pistol" });
+        Check("case does not change the id", canonical, mixedCase);
+        Check("forward slashes do not change the id", canonical, forwardSlashes);
+        Check("the normalized join is lowercased with backslashes", canonical,
+              OpenCommonwealth.Services.Archive.SubgraphHash.Compute(behavior.ToLowerInvariant(),
+                  new[] { sapt[0].ToLowerInvariant(), sapt[1].ToLowerInvariant() }));
     }
 
     private static void CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile()
