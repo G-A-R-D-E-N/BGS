@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
+using OpenCommonwealth.Services.Hkx;
 
 namespace OpenCommonwealth.Services.Archive;
 
@@ -135,6 +137,60 @@ public sealed class SubgraphIndex
     {
         try { return Ba2.Open(archivePath).Read(entry); }
         catch (Exception e) when (e is IOException or InvalidDataException) { return Array.Empty<byte>(); }
+    }
+
+    public static (bool WeaponSubgraph, List<GraphValidator.Finding> Gaps) WeaponGapFindings(
+        GameData data, IEnumerable<string> behaviorPaths)
+    {
+        bool weaponSubgraph = false;
+        var gaps = new List<GraphValidator.Finding>();
+        foreach (string behavior in behaviorPaths)
+        {
+            string norm = behavior.Replace('/', '\\');
+            int at = norm.LastIndexOf("\\Behaviors\\", StringComparison.OrdinalIgnoreCase);
+            if (at < 0) continue;
+
+            string root = Path.Combine(data.DataFolder, "Meshes", norm[..at]);
+            var read = data.ReadAnimation(root, norm[(at + 1)..]);
+            if (read == null) continue;
+
+            string xml;
+            try { xml = NativeXml.From(read.Bytes); }
+            catch { continue; }
+            if (xml.Length == 0) continue;
+
+            if (xml.IndexOf(@"Animations\Weapon\", StringComparison.OrdinalIgnoreCase) >= 0)
+                weaponSubgraph = true;
+
+            var chain = new ProjectChain { Root = root, Data = data };
+            List<GraphValidator.Finding> findings;
+            try { findings = GraphValidator.Check(xml, chain); }
+            catch { continue; }
+            gaps.AddRange(findings.Where(f => f.Where == "weapon subgraph"));
+        }
+        return (weaponSubgraph, gaps);
+    }
+
+    public static ulong? ExtractSubgraphHash(string input)
+    {
+        string text = input;
+        if (File.Exists(input))
+        {
+            try { text = File.ReadAllText(input); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        }
+
+        var patterns = new[]
+        {
+            new Regex(@"AnimationOffsets[\\/](\d+)\.txt"),
+            new Regex(@"(\d{9,20})"),
+        };
+        foreach (var re in patterns)
+        {
+            var m = re.Match(text);
+            if (m.Success && ulong.TryParse(m.Groups[1].Value, out ulong id)) return id;
+        }
+        return null;
     }
 
     internal static string? FirstPathHint(byte[] bytes)

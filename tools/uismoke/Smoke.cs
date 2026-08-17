@@ -1518,6 +1518,7 @@ public static class Smoke
 
         ChainTabAttachesGameData();
         ChainTabShowsPerWeaponGaps();
+        ChainTabResolvesCrashHashToTheMissingClip();
         PlaybackReadsPackedClipsFromArchives();
         ArchiveBrowserBuilds();
 
@@ -1610,6 +1611,57 @@ public static class Smoke
                           rows.Any(t => t.Contains(@"Animations\Weapon\Pistol", StringComparison.Ordinal)));
                 CheckTrue("it names the missing clip", rows.Any(t => t.Contains("WPNReload", StringComparison.Ordinal)));
                 CheckTrue("it states the generic fallback status", rows.Any(t => t.Contains("generic", StringComparison.Ordinal)));
+                CloseForTest(window);
+            }
+            finally { Directory.Delete(data, true); }
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    private static void ChainTabResolvesCrashHashToTheMissingClip()
+    {
+        Console.WriteLine("\nthe Chain tab resolves a pasted crash hash to the missing per-weapon clip");
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-chain-crash-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        try
+        {
+            string data = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                                 $"bgs-chain-crash-data-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(data);
+            try
+            {
+                const string manifest =
+                    "3\n1\n10448007347639226270\n1\n" +
+                    "Actors\\Character\\Behaviors\\WeaponBehavior.hkx\n";
+                WriteArchive(System.IO.Path.Combine(data, "Fallout4 - Animations.ba2"), new[]
+                {
+                    ("Meshes/AnimTextData/AnimationFileData/10448007347639226270.txt",
+                        System.Text.Encoding.UTF8.GetBytes(manifest)),
+                    ("Meshes/Actors/Character/Behaviors/WeaponBehavior.hkx", WeaponSubgraphBytes()),
+                    ("Meshes/Actors/Character/Animations/Weapon/44Pistol/WPNReload.hkx", new byte[] { 1 }),
+                });
+                Settings.TrySet("gameDataFolder", data, out _);
+
+                var window = new MainWindow();
+                window.Show();
+                window.Open(path);
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                SelectTab(window, "Chain");
+
+                window.CrashHashField.Text = "10448007347639226270";
+                window.ResolveCrashHashForTest();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                var rows = Find<TextBlock>(window.ChainGrid).Select(t => t.Text).ToList();
+                CheckTrue("the summary names the resolved behavior",
+                          window.CrashHashSummary.Contains("WeaponBehavior", StringComparison.Ordinal));
+                CheckTrue("the chain tab names the per-weapon gap",
+                          rows.Any(t => t.Contains("per-weapon coverage", StringComparison.Ordinal)));
+                CheckTrue("it names the weapon type", rows.Any(t => t.Contains("'Pistol'")));
+                CheckTrue("it names the missing clip",
+                          rows.Any(t => t.Contains("WPNReload", StringComparison.Ordinal)));
+                CheckTrue("it names the failing search path",
+                          rows.Any(t => t.Contains(@"Animations\Weapon\Pistol", StringComparison.Ordinal)));
                 CloseForTest(window);
             }
             finally { Directory.Delete(data, true); }

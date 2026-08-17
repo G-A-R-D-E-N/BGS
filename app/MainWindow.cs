@@ -244,6 +244,8 @@ public class MainWindow : Window
     private GameData? _gameData;
     private readonly TextBox _dataField = Ux.Field("Path to the game Data folder, e.g. .../Fallout 4/Data", 220);
     private readonly TextBlock _dataSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private readonly TextBox _crashField = Ux.Field("AnimTextData crash hash, e.g. 10448007347639226270", 220);
+    private readonly TextBlock _crashSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
     private string _selectedId = "";
     private readonly List<Action> _fieldCommits = new();
     private bool _dirty;
@@ -4169,6 +4171,9 @@ public class MainWindow : Window
     public HkGrid TreeGrid => _tree;
     public HkGrid ChainGrid => _chain;
     public string GameDataSummary => _dataSummary.Text ?? "";
+    public TextBox CrashHashField => _crashField;
+    public string CrashHashSummary => _crashSummary.Text ?? "";
+    public void ResolveCrashHashForTest() => ResolveCrashHash();
 
     private static bool Matches(HkxBehaviorParser.BehaviorNode o, string needle) =>
         o.ClassName.Contains(needle, StringComparison.OrdinalIgnoreCase)
@@ -4784,9 +4789,22 @@ public class MainWindow : Window
 
         _dataSummary.Text = "no game data attached";
         var bar = Bar(_dataField, browse, Ux.Pill(_dataSummary));
+
+        _crashField.KeyDown += (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter) ResolveCrashHash();
+        };
+        var resolve = Ux.Secondary("Resolve");
+        resolve.Click += (_, _) => ResolveCrashHash();
+        _crashSummary.Text = "paste a hash and press Resolve";
+        var crashBar = Bar(_crashField, resolve, Ux.Pill(_crashSummary));
+
         var panel = new DockPanel();
         DockPanel.SetDock(bar, Dock.Top);
         bar.Margin = new Thickness(0, 0, 0, 8);
+        DockPanel.SetDock(crashBar, Dock.Top);
+        crashBar.Margin = new Thickness(0, 0, 0, 8);
+        panel.Children.Add(crashBar);
         panel.Children.Add(bar);
         panel.Children.Add(_chain);
         return panel;
@@ -4827,6 +4845,74 @@ public class MainWindow : Window
 
         if (_hkxPath.Length > 0) BuildChain();
     }
+
+    private void ResolveCrashHash()
+    {
+        string input = (_crashField.Text ?? "").Trim();
+        if (input.Length == 0) return;
+
+        var data = _gameData;
+        if (data == null)
+        {
+            _crashSummary.Text = "set a Game Data folder first";
+            return;
+        }
+
+        ulong? id = OpenCommonwealth.Services.Archive.SubgraphIndex.ExtractSubgraphHash(input);
+        if (id == null)
+        {
+            _crashSummary.Text = "no AnimTextData hash in that input";
+            return;
+        }
+
+        var index = OpenCommonwealth.Services.Archive.SubgraphIndex.Discover(data);
+        var sub = index.Find(id.Value);
+        var off = index.FindOffsetData(id.Value);
+        if (sub == null && off == null)
+        {
+            _crashSummary.Text = $"{id.Value}: no manifest or offset data in the game data";
+            return;
+        }
+
+        if (_crashResolved && _hkxPath.Length > 0) BuildChain();
+        _crashResolved = true;
+
+        string primary = sub != null ? sub.PrimaryBehavior : off!.FirstPathHint ?? "";
+        _crashSummary.Text = $"{id.Value} -> {Path.GetFileName(primary)}";
+        var head = _chain.Add(null, "crash hash", $"{id.Value} -> {primary}")
+                         .Colour(0, Ux.MutedBrush).Colour(1, Ux.TitleBrush);
+
+        if (sub != null)
+        {
+            foreach (string behavior in sub.BehaviorPaths.Take(4))
+                _chain.Add(head, "behavior", behavior).Colour(1, Ux.CodeBrush);
+
+            int present = sub.AnimationPaths.Count(path =>
+                data.ContainsAnimation(Path.Combine(data.DataFolder, "Meshes"), path));
+            _chain.Add(head, "animations", $"{present} present, {sub.AnimationPaths.Count - present} missing")
+                   .Colour(1, present == sub.AnimationPaths.Count ? Ux.MetaBrush : Ux.BadBrush);
+        }
+        if (off != null)
+            _chain.Add(head, "offset data", $"exists ({off.Bytes} bytes), hint: {off.FirstPathHint}")
+                   .Colour(1, Ux.MetaBrush);
+
+        var behaviorPaths = new List<string>();
+        if (sub != null) behaviorPaths.AddRange(sub.BehaviorPaths);
+        if (off?.FirstPathHint != null &&
+            !behaviorPaths.Contains(off.FirstPathHint, StringComparer.OrdinalIgnoreCase))
+            behaviorPaths.Add(off.FirstPathHint);
+
+        var (weaponSubgraph, gaps) = OpenCommonwealth.Services.Archive.SubgraphIndex.WeaponGapFindings(data, behaviorPaths);
+        if (!weaponSubgraph)
+            _chain.Add(head, "per-weapon", "not a weapon subgraph").Colour(1, Ux.MetaBrush);
+        else if (gaps.Count == 0)
+            _chain.Add(head, "per-weapon", "every clip resolves for every weapon type").Colour(1, Ux.MetaBrush);
+        else
+            foreach (var f in gaps.Take(6))
+                _chain.Add(head, "per-weapon", f.What).Colour(1, Ux.WarnBrush);
+    }
+
+    private bool _crashResolved;
 
     private void BuildChain()
     {

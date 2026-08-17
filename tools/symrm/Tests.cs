@@ -3288,7 +3288,7 @@ public static class Tests
                 !paths.Contains(off.FirstPathHint, StringComparer.OrdinalIgnoreCase))
                 paths.Add(off.FirstPathHint);
 
-            var (weaponSubgraph, gaps) = Program.WeaponGapFindings(gameData, paths);
+            var (weaponSubgraph, gaps) = OpenCommonwealth.Services.Archive.SubgraphIndex.WeaponGapFindings(gameData, paths);
             Check("the weapon subgraph is found through the offset hint", true, weaponSubgraph);
             Check("the engine search resolves one missing clip", 1, gaps.Count);
             CheckTrue("it names the weapon type", gaps[0].What.Contains("'Pistol'"));
@@ -3488,10 +3488,10 @@ public static class Tests
             File.WriteAllText(log,
                 "... EXCEPTION_ACCESS_VIOLATION reading AnimTextData\\AnimationOffsets\\10448007347639226270.txt ...");
             Check("the log's AnimationOffsets hash is extracted", 10448007347639226270UL,
-                  Program.ExtractSubgraphHash(log));
+                  OpenCommonwealth.Services.Archive.SubgraphIndex.ExtractSubgraphHash(log));
             Check("a bare hash is accepted", 10448007347639226270UL,
-                  Program.ExtractSubgraphHash("10448007347639226270"));
-            Check("garbage is rejected", null, Program.ExtractSubgraphHash("not a hash at all"));
+                  OpenCommonwealth.Services.Archive.SubgraphIndex.ExtractSubgraphHash("10448007347639226270"));
+            Check("garbage is rejected", null, OpenCommonwealth.Services.Archive.SubgraphIndex.ExtractSubgraphHash("not a hash at all"));
         }
         finally { Directory.Delete(dir, true); }
     }

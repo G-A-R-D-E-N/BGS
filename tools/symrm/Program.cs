@@ -4129,7 +4129,7 @@ public static class Program
             return 1;
         }
 
-        ulong? id = ExtractSubgraphHash(input);
+        ulong? id = OpenCommonwealth.Services.Archive.SubgraphIndex.ExtractSubgraphHash(input);
         if (id == null)
         {
             Console.Error.WriteLine($"no AnimTextData hash found in {input}");
@@ -4200,7 +4200,7 @@ public static class Program
 
         if (behaviorPaths.Count > 0)
         {
-            var (weaponSubgraph, gaps) = WeaponGapFindings(data, behaviorPaths);
+            var (weaponSubgraph, gaps) = OpenCommonwealth.Services.Archive.SubgraphIndex.WeaponGapFindings(data, behaviorPaths);
             if (!weaponSubgraph)
                 Console.WriteLine("  per-weapon  not a weapon subgraph (no Animations\\Weapon\\ clips)");
             else if (gaps.Count == 0)
@@ -4217,61 +4217,6 @@ public static class Program
         }
 
         return sub == null ? 1 : 0;
-    }
-
-    internal static (bool WeaponSubgraph, List<GraphValidator.Finding> Gaps) WeaponGapFindings(
-        OpenCommonwealth.Services.Archive.GameData data,
-        IEnumerable<string> behaviorPaths)
-    {
-        bool weaponSubgraph = false;
-        var gaps = new List<GraphValidator.Finding>();
-        foreach (string behavior in behaviorPaths)
-        {
-            string norm = behavior.Replace('/', '\\');
-            int at = norm.LastIndexOf("\\Behaviors\\", StringComparison.OrdinalIgnoreCase);
-            if (at < 0) continue;
-
-            string root = Path.Combine(data.DataFolder, "Meshes", norm[..at]);
-            var read = data.ReadAnimation(root, norm[(at + 1)..]);
-            if (read == null) continue;
-
-            string xml;
-            try { xml = OpenCommonwealth.Services.Hkx.NativeXml.From(read.Bytes); }
-            catch { continue; }
-            if (xml.Length == 0) continue;
-
-            if (xml.IndexOf(@"Animations\Weapon\", StringComparison.OrdinalIgnoreCase) >= 0)
-                weaponSubgraph = true;
-
-            var chain = new ProjectChain { Root = root, Data = data };
-            List<GraphValidator.Finding> findings;
-            try { findings = GraphValidator.Check(xml, chain); }
-            catch { continue; }
-            gaps.AddRange(findings.Where(f => f.Where == "weapon subgraph"));
-        }
-        return (weaponSubgraph, gaps);
-    }
-
-    internal static ulong? ExtractSubgraphHash(string input)
-    {
-        string text = input;
-        if (File.Exists(input))
-        {
-            try { text = File.ReadAllText(input); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
-        }
-
-        var patterns = new[]
-        {
-            new System.Text.RegularExpressions.Regex(@"AnimationOffsets[\\/](\d+)\.txt"),
-            new System.Text.RegularExpressions.Regex(@"(\d{9,20})"),
-        };
-        foreach (var re in patterns)
-        {
-            var m = re.Match(text);
-            if (m.Success && ulong.TryParse(m.Groups[1].Value, out ulong id)) return id;
-        }
-        return null;
     }
 
     private static int Lifecycle(string[] argv)
