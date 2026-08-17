@@ -1517,6 +1517,7 @@ public static class Smoke
         StandaloneAnimationSkeletonSearchesFromAnimationsRoot();
 
         ChainTabAttachesGameData();
+        ChainTabShowsPerWeaponGaps();
         PlaybackReadsPackedClipsFromArchives();
         ArchiveBrowserBuilds();
 
@@ -1573,6 +1574,45 @@ public static class Smoke
                 }
                 finally { Directory.Delete(data, true); }
             });
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    private static void ChainTabShowsPerWeaponGaps()
+    {
+        Console.WriteLine("\nthe Chain tab shows a per-weapon clip gap with game data attached");
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-chain-weapon-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path, WeaponSubgraphBytes());
+        try
+        {
+            string data = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                                 $"bgs-chain-weapon-data-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(data);
+            try
+            {
+                // a per-weapon copy of the generic reload clip exists under 44Pistol only;
+                // the subgraph plays it through the Pistol weapon type, which lacks it
+                WriteArchive(System.IO.Path.Combine(data, "Fallout4 - Animations.ba2"),
+                             new[] { "Meshes/Actors/Test/Animations/Weapon/44Pistol/WPNReload.hkx" });
+                Settings.TrySet("gameDataFolder", data, out _);
+
+                var window = new MainWindow();
+                window.Show();
+                window.Open(path);
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                SelectTab(window, "Chain");
+
+                var rows = Find<TextBlock>(window.ChainGrid).Select(t => t.Text).ToList();
+                CheckTrue("the chain tab names the per-weapon gap",
+                          rows.Any(t => t.Contains("per-weapon coverage", StringComparison.Ordinal)));
+                CheckTrue("it names the weapon type with the gap", rows.Any(t => t.Contains("'Pistol'")));
+                CheckTrue("it names the failing search path",
+                          rows.Any(t => t.Contains(@"Animations\Weapon\Pistol", StringComparison.Ordinal)));
+                CheckTrue("it names the missing clip", rows.Any(t => t.Contains("WPNReload", StringComparison.Ordinal)));
+                CheckTrue("it states the generic fallback status", rows.Any(t => t.Contains("generic", StringComparison.Ordinal)));
+                CloseForTest(window);
+            }
+            finally { Directory.Delete(data, true); }
         }
         finally { System.IO.File.Delete(path); }
     }
@@ -2924,6 +2964,60 @@ public static class Smoke
             Data = data,
             LocalFixups = BitConverter.GetBytes(nameField).Concat(BitConverter.GetBytes(size)).ToArray(),
             VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+        return image.Rebuild();
+    }
+
+    private static byte[] WeaponSubgraphBytes()
+    {
+        var classes = OpenCommonwealth.Services.Hkx.HavokClasses.Shipped;
+        int size = classes["hkbClipGenerator"]!.Size;
+        int nameField = classes.Field("hkbClipGenerator", "animationName")!.Offset;
+
+        var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        BitConverter.GetBytes(OpenCommonwealth.Services.Hkx.HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature)
+                    .CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
+
+        string perWeapon = @"Animations\Weapon\Pistol\WPNAssemblyPose.hkt";
+        string generic = @"Animations\WPNReload.hkt";
+        byte[] perWeaponBytes = System.Text.Encoding.UTF8.GetBytes(perWeapon);
+        byte[] genericBytes = System.Text.Encoding.UTF8.GetBytes(generic);
+        int string0At = size;
+        int object1At = size + perWeaponBytes.Length + 1;
+        int string1At = object1At + size;
+
+        var data = new byte[string1At + genericBytes.Length + 1];
+        perWeaponBytes.CopyTo(data, string0At);
+        genericBytes.CopyTo(data, string1At);
+
+        var locals = new List<byte>();
+        void Local(int at, int target)
+        {
+            locals.AddRange(BitConverter.GetBytes(at));
+            locals.AddRange(BitConverter.GetBytes(target));
+        }
+        Local(nameField, string0At);
+        Local(object1At + nameField, string1At);
+
+        var virtuals = new List<byte>();
+        virtuals.AddRange(Triple(0, 0, 5));
+        virtuals.AddRange(Triple(object1At, 0, 5));
+
+        var image = new OpenCommonwealth.Services.Hkx.PackfileImage();
+        image.Sections.Add(new OpenCommonwealth.Services.Hkx.PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"),
+            Data = names,
+        });
+        image.Sections.Add(new OpenCommonwealth.Services.Hkx.PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            LocalFixups = locals.ToArray(),
+            VirtualFixups = virtuals.ToArray(),
         });
         image.ContentsSectionIndex = 1;
         return image.Rebuild();

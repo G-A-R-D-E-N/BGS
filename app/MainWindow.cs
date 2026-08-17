@@ -4874,6 +4874,25 @@ public class MainWindow : Window
 
         foreach (string problem in chain.Problems)
             _chain.Add(null, "problem", problem).Colour(0, Ux.BadBrush).Colour(1, Ux.BadBrush);
+
+        AddWeaponGaps(chain);
+    }
+
+    private void AddWeaponGaps(ProjectChain chain)
+    {
+        if (chain.Data == null || _reading == null) return;
+
+        var gaps = GraphValidator.Check(_reading, chain)
+                                 .Where(f => f.Where == "weapon subgraph")
+                                 .ToList();
+        if (gaps.Count == 0) return;
+
+        var head = _chain.Add(null, "weapon clips",
+                              $"{gaps.Count} per-weapon gap{(gaps.Count == 1 ? "" : "s")} in this behaviour")
+                         .Colour(0, Ux.MutedBrush).Colour(1, Ux.WarnBrush);
+        foreach (var f in gaps)
+            _chain.Add(head, "weapon subgraph", f.What)
+                  .Colour(1, f.Level == GraphValidator.Level.Error ? Ux.BadBrush : Ux.WarnBrush);
     }
 
     private void AddChainAnimations(ProjectChain chain)
