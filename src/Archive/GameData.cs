@@ -41,6 +41,7 @@ public sealed class GameData : IDisposable
 
     private readonly Dictionary<string, Ba2> _opened = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, HashSet<string>> _names = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string>? _modLooseIndex;
     private List<WeaponTypeSet>? _weaponSets;
 
     private GameData(string dataFolder, List<string> archivePaths, string? pluginsPath, List<string> modRoots)
@@ -153,15 +154,10 @@ public sealed class GameData : IDisposable
     {
         string loose = ResolveLoose(projectRoot, declared);
         string? rel = DataRelativePath(loose);
-        if (rel != null)
+        if (rel != null && ModLooseIndex().TryGetValue(Normalize(rel), out string? modLoose))
         {
-            for (int i = ModRoots.Count - 1; i >= 0; i--)
-            {
-                string? modLoose = LooseUnder(ModRoots[i], rel);
-                if (modLoose == null) continue;
-                try { return new AnimationRead(File.ReadAllBytes(modLoose), "loose", null); }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
-            }
+            try { return new AnimationRead(File.ReadAllBytes(modLoose), "loose", null); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
         }
         string? baseLoose = CaseInsensitivePath(loose) ?? CaseInsensitivePath(Path.ChangeExtension(loose, ".hkx"));
         if (baseLoose != null)
@@ -182,12 +178,25 @@ public sealed class GameData : IDisposable
         return Path.GetRelativePath(DataFolder, fullPath);
     }
 
-    private static string? LooseUnder(string modRoot, string rel)
+    private Dictionary<string, string> ModLooseIndex()
     {
-        string full = Path.Combine(modRoot, rel);
-        string? hit = CaseInsensitivePath(full);
-        if (hit != null) return hit;
-        return CaseInsensitivePath(Path.ChangeExtension(full, ".hkx"));
+        if (_modLooseIndex != null) return _modLooseIndex;
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string root in ModRoots)
+        {
+            if (!Directory.Exists(Path.Combine(root, "Meshes"))) continue;
+            try
+            {
+                foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    string rel = Path.GetRelativePath(root, file);
+                    map[Normalize(rel)] = file;
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+        _modLooseIndex = map;
+        return _modLooseIndex;
     }
 
     /// <summary>

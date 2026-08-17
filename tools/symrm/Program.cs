@@ -50,6 +50,7 @@ public static class Program
             case "chain": return Chain(argv);
             case "crash": return Crash(argv);
             case "hash": return Hash(argv);
+            case "sweep": return Sweep(argv);
             case "notes": return Notes(argv);
             case "saveevent": return SaveEvent(argv);
             case "savewide": return SaveWide(argv);
@@ -101,6 +102,11 @@ public static class Program
               list joined by '|' in the high half, and of the lowercased behavior path in
               the low half. The result names the AnimationOffsets cache file the engine
               writes for that subgraph.
+
+          sweep --data <Data folder> [--mods <MO2 mods folder> [--profile <name>]]
+              Regression sweep: run the crash resolution across every shipped subgraph
+              hash and report any that resolve to a per-weapon clip gap, so a broken
+              weapon animation is caught across the whole load order at once.
 
           test
               Regression checks that use native code only.
@@ -4249,6 +4255,97 @@ public static class Program
         }
 
         return sub == null ? 1 : 0;
+    }
+
+    internal static int Sweep(string[] argv)
+    {
+        string? dataFolder = null;
+        string? modsFolder = null;
+        string? profile = null;
+        for (int i = 1; i < argv.Length; i++)
+        {
+            if (argv[i] == "--data" && i + 1 < argv.Length) dataFolder = argv[i + 1];
+            if (argv[i] == "--mods" && i + 1 < argv.Length) modsFolder = argv[i + 1];
+            if (argv[i] == "--profile" && i + 1 < argv.Length) profile = argv[i + 1];
+        }
+        if (dataFolder == null)
+        {
+            Console.Error.WriteLine("sweep needs --data <game Data folder> to read the AnimTextData manifests");
+            return 1;
+        }
+        dataFolder = Path.GetFullPath(dataFolder);
+        if (!Directory.Exists(dataFolder))
+        {
+            Console.Error.WriteLine($"--data folder not found: {dataFolder}");
+            return 1;
+        }
+        if (modsFolder != null)
+        {
+            modsFolder = Path.GetFullPath(modsFolder);
+            if (!Directory.Exists(modsFolder))
+            {
+                Console.Error.WriteLine($"--mods folder not found: {modsFolder}");
+                return 1;
+            }
+        }
+
+        using var data = modsFolder != null
+            ? OpenCommonwealth.Services.Archive.GameData.DiscoverModded(dataFolder, modsFolder, profile)
+            : OpenCommonwealth.Services.Archive.GameData.Discover(dataFolder);
+        var index = OpenCommonwealth.Services.Archive.SubgraphIndex.Discover(data);
+
+        Console.WriteLine($"sweep: {index.Subgraphs.Count} AnimationFileData manifest(s), " +
+                          $"{data.ArchivePaths.Count} archive(s)" +
+                          (data.ModRoots.Count > 0 ? $", {data.ModRoots.Count} mod root(s)" : ""));
+
+        var behaviorCache = new Dictionary<string, (bool Weapon, List<GraphValidator.Finding> Gaps)>(
+            StringComparer.OrdinalIgnoreCase);
+        int checkedCount = 0;
+        var failing = new List<(ulong Id, string Behavior, List<GraphValidator.Finding> Gaps)>();
+
+        foreach (var (id, sub) in index.Subgraphs.OrderBy(kv => kv.Key))
+        {
+            var paths = new List<string>(sub.BehaviorPaths);
+            var off = index.FindOffsetData(id);
+            if (off?.FirstPathHint != null &&
+                !paths.Contains(off.FirstPathHint, StringComparer.OrdinalIgnoreCase))
+                paths.Add(off.FirstPathHint);
+
+            bool weapon = false;
+            var gaps = new List<GraphValidator.Finding>();
+            foreach (string path in paths)
+            {
+                if (!behaviorCache.TryGetValue(path, out var cached))
+                {
+                    cached = OpenCommonwealth.Services.Archive.SubgraphIndex.WeaponGapFindings(data, new[] { path });
+                    behaviorCache[path] = cached;
+                }
+                weapon |= cached.Weapon;
+                gaps.AddRange(cached.Gaps);
+            }
+            if (!weapon) continue;
+            checkedCount++;
+            if (gaps.Count > 0) failing.Add((id, sub.PrimaryBehavior, gaps));
+        }
+
+        Console.WriteLine($"  weapon subgraphs checked   {checkedCount}");
+        Console.WriteLine($"  with per-weapon gaps       {failing.Count}");
+
+        if (failing.Count > 0)
+        {
+            foreach (var (id, behavior, gaps) in failing)
+            {
+                Console.WriteLine($"FAIL {id} ({Path.GetFileName(behavior)}): {gaps.Count} gap(s)");
+                foreach (var f in gaps.Take(6))
+                    Console.WriteLine($"    {f.What}");
+                if (gaps.Count > 6)
+                    Console.WriteLine($"    ... and {gaps.Count - 6} more");
+            }
+            return 1;
+        }
+
+        Console.WriteLine("  all clean: every clip resolves through a fallback chain or the generic copy");
+        return 0;
     }
 
     private static int Lifecycle(string[] argv)

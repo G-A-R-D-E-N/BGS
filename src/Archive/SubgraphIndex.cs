@@ -154,7 +154,8 @@ public sealed class SubgraphIndex
             int at = norm.LastIndexOf("\\Behaviors\\", StringComparison.OrdinalIgnoreCase);
             if (at < 0) continue;
 
-            string root = Path.Combine(data.DataFolder, "Meshes", norm[..at]);
+            string root = Path.Combine(data.DataFolder, "Meshes",
+                                       norm[..at].Replace('\\', Path.DirectorySeparatorChar));
             var read = data.ReadAnimation(root, norm[(at + 1)..]);
             if (read == null) continue;
 

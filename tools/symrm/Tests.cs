@@ -141,6 +141,8 @@ public static class Tests
         ("LooseManifestOverridesTheArchiveCopy", LooseManifestOverridesTheArchiveCopy),
         ("ModdedMergedManifestsResolveInTheCrashLookup", ModdedMergedManifestsResolveInTheCrashLookup),
         ("ModLooseAndPackedAnimationsLayerOverTheBaseGame", ModLooseAndPackedAnimationsLayerOverTheBaseGame),
+        ("SweepReportsEveryShippedSubgraphCleanOnVanilla", SweepReportsEveryShippedSubgraphCleanOnVanilla),
+        ("SweepFlagsModdedMergedGaps", SweepFlagsModdedMergedGaps),
         ("SubgraphHashMatchesKnownGameValues", SubgraphHashMatchesKnownGameValues),
         ("SubgraphHashLowHalfIsTheBehaviorPath", SubgraphHashLowHalfIsTheBehaviorPath),
         ("SubgraphHashNormalizesCaseAndSlashes", SubgraphHashNormalizesCaseAndSlashes),
@@ -3301,8 +3303,15 @@ public static class Tests
         finally { Directory.Delete(data, true); }
     }
 
-    private static byte[] WeaponSubgraphBytes()
+    private static byte[] WeaponSubgraphBytes(params string[] clips)
     {
+        if (clips.Length == 0)
+            clips = new[]
+            {
+                @"Animations\Weapon\44Pistol\WPNAssemblyPose.hkt",
+                @"Animations\WPNReload.hkt",
+            };
+
         var classes = HavokClasses.Shipped;
         int size = classes["hkbClipGenerator"]!.Size;
         int nameField = classes.Field("hkbClipGenerator", "animationName")!.Offset;
@@ -3313,30 +3322,21 @@ public static class Tests
         names[4] = 0x09;
         System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
 
-        string perWeapon = @"Animations\Weapon\44Pistol\WPNAssemblyPose.hkt";
-        string generic = @"Animations\WPNReload.hkt";
-        byte[] perWeaponBytes = System.Text.Encoding.UTF8.GetBytes(perWeapon);
-        byte[] genericBytes = System.Text.Encoding.UTF8.GetBytes(generic);
-        int string0At = size;
-        int object1At = size + perWeaponBytes.Length + 1;
-        int string1At = object1At + size;
-
-        var data = new byte[string1At + genericBytes.Length + 1];
-        perWeaponBytes.CopyTo(data, string0At);
-        genericBytes.CopyTo(data, string1At);
-
+        var data = new List<byte>();
         var locals = new List<byte>();
-        void Local(int at, int target)
-        {
-            locals.AddRange(BitConverter.GetBytes(at));
-            locals.AddRange(BitConverter.GetBytes(target));
-        }
-        Local(nameField, string0At);
-        Local(object1At + nameField, string1At);
-
         var virtuals = new List<byte>();
-        virtuals.AddRange(Triple(0, 0, 5));
-        virtuals.AddRange(Triple(object1At, 0, 5));
+        foreach (string clip in clips)
+        {
+            byte[] text = System.Text.Encoding.UTF8.GetBytes(clip);
+            int at = data.Count;
+            data.AddRange(new byte[size]);
+            int strAt = data.Count;
+            data.AddRange(text);
+            data.Add(0);
+            locals.AddRange(BitConverter.GetBytes(at + nameField));
+            locals.AddRange(BitConverter.GetBytes(strAt));
+            virtuals.AddRange(Triple(at, 0, 5));
+        }
 
         var image = new PackfileImage();
         image.Sections.Add(new PackfileSection
@@ -3347,7 +3347,7 @@ public static class Tests
         image.Sections.Add(new PackfileSection
         {
             TagBytes = MakeTag("__data__"),
-            Data = data,
+            Data = data.ToArray(),
             LocalFixups = locals.ToArray(),
             VirtualFixups = virtuals.ToArray(),
         });
@@ -3581,6 +3581,73 @@ public static class Tests
                   (int)(gameData.ReadAnimation(projectRoot, @"Actors\Character\Animations\LooseOnly.hkx")?.Bytes[0] ?? -1));
         }
         finally { Directory.Delete(data, true); Directory.Delete(mods, true); }
+    }
+
+    private static void SweepReportsEveryShippedSubgraphCleanOnVanilla()
+    {
+        Console.WriteLine("\nthe sweep resolves every shipped subgraph without a per-weapon gap on vanilla data");
+
+        string data = Directory.CreateTempSubdirectory("bgs-sweep-clean").FullName;
+        try
+        {
+            WriteSweepVanillaData(data);
+            Check("the sweep over vanilla data is clean", 0,
+                  Program.Sweep(new[] { "sweep", "--data", data }));
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static void SweepFlagsModdedMergedGaps()
+    {
+        Console.WriteLine("\nthe sweep flags per-weapon gaps the modded merged manifests introduce");
+
+        string data = Directory.CreateTempSubdirectory("bgs-sweep-mods-data").FullName;
+        string mods = Directory.CreateTempSubdirectory("bgs-sweep-mods").FullName;
+        try
+        {
+            WriteSweepVanillaData(data);
+
+            File.WriteAllText(Path.Combine(mods, "modlist.txt"), "+AnimTextData Merge\n");
+            string merge = Path.Combine(mods, "mods", "AnimTextData Merge");
+            string fileData = Path.Combine(merge, "Meshes", "AnimTextData", "AnimationFileData");
+            Directory.CreateDirectory(fileData);
+            File.WriteAllText(Path.Combine(fileData, "8806872131610908823.txt"),
+                "3\n1\n8806872131610908823\n1\n" +
+                @"Actors\Character\Behaviors\WeaponOverhaulBehavior.hkx" + "\n");
+            string behaviors = Path.Combine(merge, "Meshes", "Actors", "Character", "Behaviors");
+            Directory.CreateDirectory(behaviors);
+            File.WriteAllBytes(Path.Combine(behaviors, "WeaponOverhaulBehavior.hkx"),
+                WeaponSubgraphBytes(@"Animations\Weapon\44Pistol\WPNAssemblyPose.hkt",
+                                    @"Animations\OverhaulClip.hkt"));
+
+            Check("without --mods the sweep never sees the merged manifest", 0,
+                  Program.Sweep(new[] { "sweep", "--data", data }));
+            Check("with --mods the sweep flags the merged subgraph's missing clip", 1,
+                  Program.Sweep(new[] { "sweep", "--data", data, "--mods", mods }));
+        }
+        finally { Directory.Delete(data, true); Directory.Delete(mods, true); }
+    }
+
+    private static void WriteSweepVanillaData(string data)
+    {
+        const string manifest =
+            "3\n1\n10448007347639226270\n1\n" +
+            @"Actors\Character\Behaviors\WeaponBehavior.hkx" + "\n";
+        WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+            "Meshes/AnimTextData/AnimationFileData/10448007347639226270.txt",
+            System.Text.Encoding.UTF8.GetBytes(manifest));
+        WriteTestArchive(Path.Combine(data, "WeaponClips.ba2"),
+            ("Meshes/Actors/Character/Behaviors/WeaponBehavior.hkx", WeaponSubgraphBytes()),
+            ("Meshes/Actors/Character/Animations/Weapon/44Pistol/Player/WPNReload.hkx", new byte[] { 1 }),
+            ("Meshes/Actors/Character/Animations/WPNReload.hkx", new byte[] { 2 }));
+        File.WriteAllBytes(Path.Combine(data, "Fallout4.esm"), WeaponEsm(
+            WeaponSet(1, @"Actors\Character\Behaviors\WeaponBehavior.hkx",
+                      @"Actors\Character\Animations\Weapon\44Pistol\Player",
+                      @"Actors\Character\Animations\Weapon\44Pistol",
+                      @"Actors\Character\Animations\Weapon\Pistol"),
+            WeaponSet(2, @"Actors\Character\Behaviors\WeaponBehavior.hkx",
+                      @"Actors\Character\Animations\Weapon\Pistol\Player",
+                      @"Actors\Character\Animations\Weapon\Pistol")));
     }
 
     private static void CrashLogFileYieldsTheHash()
