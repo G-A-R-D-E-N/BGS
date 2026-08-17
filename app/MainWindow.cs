@@ -250,6 +250,8 @@ public class MainWindow : Window
     private Border? _crashPanel;
     private readonly StackPanel _crashPanelBody = new() { Spacing = 6 };
     private readonly TextBlock _crashPanelTitle = new() { Foreground = Ux.TitleBrush, FontSize = 13 };
+    private readonly TextBlock _sweepSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private bool _sweeping;
     private string _selectedId = "";
     private readonly List<Action> _fieldCommits = new();
     private bool _dirty;
@@ -4184,6 +4186,13 @@ public class MainWindow : Window
     public bool CrashPanelVisible => _crashPanel?.IsVisible == true;
     public string CrashPanelTitle => _crashPanelTitle.Text ?? "";
     public string CrashPanelBodyText => string.Join("\n", FindPanelTexts(_crashPanelBody));
+    public string SweepSummary => _sweepSummary.Text ?? "";
+    public void RunSweepForTest()
+    {
+        var data = _gameData;
+        if (data == null) return;
+        RenderSweep(OpenCommonwealth.Services.Archive.SubgraphIndex.Sweep(data));
+    }
     private static IEnumerable<string> FindPanelTexts(Visual root)
     {
         foreach (var child in root.GetVisualChildren())
@@ -4817,11 +4826,20 @@ public class MainWindow : Window
         _crashSummary.Text = "paste a hash and press Resolve";
         var crashBar = Bar(_crashField, resolve, Ux.Pill(_crashSummary));
 
+        var sweep = Ux.Secondary("Sweep all subgraphs");
+        sweep.Click += (_, _) => RunSweep();
+        ToolTip.SetTip(sweep, "Run the whole-load-order per-weapon check across every AnimationFileData manifest");
+        _sweepSummary.Text = "one-click whole-load-order per-weapon check";
+        var sweepBar = Bar(sweep, Ux.Pill(_sweepSummary));
+
         var panel = new DockPanel();
         DockPanel.SetDock(bar, Dock.Top);
         bar.Margin = new Thickness(0, 0, 0, 8);
         DockPanel.SetDock(crashBar, Dock.Top);
         crashBar.Margin = new Thickness(0, 0, 0, 8);
+        DockPanel.SetDock(sweepBar, Dock.Top);
+        sweepBar.Margin = new Thickness(0, 0, 0, 8);
+        panel.Children.Add(sweepBar);
         panel.Children.Add(crashBar);
         panel.Children.Add(bar);
         panel.Children.Add(_chain);
@@ -4941,6 +4959,63 @@ public class MainWindow : Window
                 _chain.Add(head, "per-weapon", f.What).Colour(1, Ux.WarnBrush);
             ShowCrashPanel(id.Value, primary, behaviorPaths, present, total, gaps);
         }
+    }
+
+    private async void RunSweep()
+    {
+        var data = _gameData;
+        if (data == null)
+        {
+            _sweepSummary.Text = "set a Game Data folder first";
+            return;
+        }
+        if (_sweeping) return;
+        _sweeping = true;
+        _sweepSummary.Text = "sweeping every subgraph…";
+        try
+        {
+            var result = await Task.Run(() =>
+                OpenCommonwealth.Services.Archive.SubgraphIndex.Sweep(data,
+                    n => Dispatcher.UIThread.Post(() => _sweepSummary.Text = n)));
+            RenderSweep(result);
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException)
+        {
+            _sweepSummary.Text = "the sweep could not read the game data";
+        }
+        finally
+        {
+            _sweeping = false;
+        }
+    }
+
+    private void RenderSweep(OpenCommonwealth.Services.Archive.SubgraphIndex.SweepResult result)
+    {
+        _sweepSummary.Text = result.Failures.Count == 0
+            ? $"{result.ManifestCount} manifests, {result.WeaponSubgraphsChecked} weapon subgraphs, all clean"
+            : $"{result.Failures.Count} subgraph(s) with per-weapon gaps across {result.ManifestCount} manifests";
+
+        var head = _chain.Add(null, "sweep",
+            $"{result.ManifestCount} manifests, {result.ArchiveCount} archives" +
+            (result.ModRootCount > 0 ? $", {result.ModRootCount} mod roots" : ""),
+            $"{result.WeaponSubgraphsChecked} weapon subgraphs checked, {result.Failures.Count} with gaps")
+            .Colour(0, Ux.MutedBrush).Colour(1, Ux.TitleBrush)
+            .Colour(2, result.Failures.Count == 0 ? Ux.MetaBrush : Ux.BadBrush);
+
+        foreach (var fail in result.Failures.Take(20))
+        {
+            var row = _chain.Add(head, "FAIL", $"{fail.Id} ({Path.GetFileName(fail.Behavior)})",
+                                 $"{fail.Gaps.Count} gap(s)")
+                .Colour(0, Ux.BadBrush).Colour(1, Ux.WarnBrush).Colour(2, Ux.BadBrush);
+            foreach (var f in fail.Gaps.Take(6))
+                _chain.Add(row, "per-weapon", f.What).Colour(1, Ux.WarnBrush);
+            if (fail.Gaps.Count > 6)
+                _chain.Add(row, "per-weapon", $"... and {fail.Gaps.Count - 6} more")
+                       .Colour(1, Ux.MutedBrush);
+        }
+        if (result.Failures.Count > 20)
+            _chain.Add(head, "sweep", $"... and {result.Failures.Count - 20} more failing subgraphs")
+                   .Colour(1, Ux.MutedBrush);
     }
 
     private Border BuildCrashPanel()

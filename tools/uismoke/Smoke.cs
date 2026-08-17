@@ -1520,6 +1520,7 @@ public static class Smoke
         ChainTabShowsPerWeaponGaps();
         ChainTabResolvesCrashHashToTheMissingClip();
         CrashPanelJumpsToTheMissingClipOnTheGraph();
+        ChainTabSweepFlagsGapsAcrossTheLoadOrder();
         PlaybackReadsPackedClipsFromArchives();
         ArchiveBrowserBuilds();
 
@@ -1722,6 +1723,73 @@ public static class Smoke
 
                     Check("the graph selects the clip node", clipId, window.Canvas.SelectedId);
                 }
+                CloseForTest(window);
+            }
+            finally { Directory.Delete(data, true); }
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    private static void ChainTabSweepFlagsGapsAcrossTheLoadOrder()
+    {
+        Console.WriteLine("\nthe Chain tab sweep flags per-weapon gaps across every shipped subgraph");
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-sweep-tab-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path,
+            WeaponSubgraphBytes(@"Animations\Weapon\44Pistol\WPNAssemblyPose.hkt",
+                                @"Animations\WPNReload.hkt"));
+        try
+        {
+            string data = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                                 $"bgs-sweep-tab-data-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(data);
+            try
+            {
+                const string failingManifest =
+                    "3\n1\n10448007347639226270\n1\n" +
+                    "Actors\\Character\\Behaviors\\WeaponBehavior.hkx\n";
+                const string cleanManifest =
+                    "3\n1\n2000000000000000000\n1\n" +
+                    "Actors\\Character\\Behaviors\\CleanBehavior.hkx\n";
+                WriteArchive(System.IO.Path.Combine(data, "Fallout4 - Animations.ba2"), new[]
+                {
+                    ("Meshes/AnimTextData/AnimationFileData/10448007347639226270.txt",
+                        System.Text.Encoding.UTF8.GetBytes(failingManifest)),
+                    ("Meshes/AnimTextData/AnimationFileData/2000000000000000000.txt",
+                        System.Text.Encoding.UTF8.GetBytes(cleanManifest)),
+                    ("Meshes/Actors/Character/Behaviors/WeaponBehavior.hkx",
+                        WeaponSubgraphBytes(@"Animations\Weapon\Pistol\WPNAssemblyPose.hkt",
+                                            @"Animations\WPNReload.hkt")),
+                    ("Meshes/Actors/Character/Behaviors/CleanBehavior.hkx",
+                        WeaponSubgraphBytes(@"Animations\Weapon\44Pistol\WPNAssemblyPose.hkt",
+                                            @"Animations\WPNReload.hkt")),
+                    ("Meshes/Actors/Character/Animations/Weapon/44Pistol/WPNReload.hkx", new byte[] { 2 }),
+                });
+                Settings.TrySet("gameDataFolder", data, out _);
+
+                var window = new MainWindow();
+                window.Show();
+                window.Open(path);
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                SelectTab(window, "Chain");
+
+                window.RunSweepForTest();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                CheckTrue("the sweep summary counts the failing subgraph",
+                          window.SweepSummary.Contains("1 subgraph", StringComparison.Ordinal) &&
+                          window.SweepSummary.Contains("2 manifests", StringComparison.Ordinal));
+                var rows = Find<TextBlock>(window.ChainGrid).Select(t => t.Text).ToList();
+                CheckTrue("the sweep group counts the checked subgraphs",
+                          rows.Any(t => t.Contains("2 weapon subgraphs checked, 1 with gaps",
+                                                    StringComparison.Ordinal)));
+                CheckTrue("it names the failing subgraph id",
+                          rows.Any(t => t.Contains("10448007347639226270", StringComparison.Ordinal)));
+                CheckTrue("it names the failing behavior",
+                          rows.Any(t => t.Contains("WeaponBehavior.hkx", StringComparison.Ordinal)));
+                CheckTrue("it names the missing clip",
+                          rows.Any(t => t.Contains("WPNReload", StringComparison.Ordinal)));
+                CheckTrue("the clean subgraph is not flagged",
+                          !rows.Any(t => t.Contains("FAIL 2000000000000000000", StringComparison.Ordinal)));
                 CloseForTest(window);
             }
             finally { Directory.Delete(data, true); }
@@ -3081,8 +3149,15 @@ public static class Smoke
         return image.Rebuild();
     }
 
-    private static byte[] WeaponSubgraphBytes()
+    private static byte[] WeaponSubgraphBytes(params string[] clips)
     {
+        if (clips.Length == 0)
+            clips = new[]
+            {
+                @"Animations\Weapon\Pistol\WPNAssemblyPose.hkt",
+                @"Animations\WPNReload.hkt",
+            };
+
         var classes = OpenCommonwealth.Services.Hkx.HavokClasses.Shipped;
         int size = classes["hkbClipGenerator"]!.Size;
         int nameField = classes.Field("hkbClipGenerator", "animationName")!.Offset;
@@ -3093,30 +3168,21 @@ public static class Smoke
         names[4] = 0x09;
         System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
 
-        string perWeapon = @"Animations\Weapon\Pistol\WPNAssemblyPose.hkt";
-        string generic = @"Animations\WPNReload.hkt";
-        byte[] perWeaponBytes = System.Text.Encoding.UTF8.GetBytes(perWeapon);
-        byte[] genericBytes = System.Text.Encoding.UTF8.GetBytes(generic);
-        int string0At = size;
-        int object1At = size + perWeaponBytes.Length + 1;
-        int string1At = object1At + size;
-
-        var data = new byte[string1At + genericBytes.Length + 1];
-        perWeaponBytes.CopyTo(data, string0At);
-        genericBytes.CopyTo(data, string1At);
-
+        var data = new List<byte>();
         var locals = new List<byte>();
-        void Local(int at, int target)
-        {
-            locals.AddRange(BitConverter.GetBytes(at));
-            locals.AddRange(BitConverter.GetBytes(target));
-        }
-        Local(nameField, string0At);
-        Local(object1At + nameField, string1At);
-
         var virtuals = new List<byte>();
-        virtuals.AddRange(Triple(0, 0, 5));
-        virtuals.AddRange(Triple(object1At, 0, 5));
+        foreach (string clip in clips)
+        {
+            byte[] text = System.Text.Encoding.UTF8.GetBytes(clip);
+            int at = data.Count;
+            data.AddRange(new byte[size]);
+            int strAt = data.Count;
+            data.AddRange(text);
+            data.Add(0);
+            locals.AddRange(BitConverter.GetBytes(at + nameField));
+            locals.AddRange(BitConverter.GetBytes(strAt));
+            virtuals.AddRange(Triple(at, 0, 5));
+        }
 
         var image = new OpenCommonwealth.Services.Hkx.PackfileImage();
         image.Sections.Add(new OpenCommonwealth.Services.Hkx.PackfileSection
@@ -3127,7 +3193,7 @@ public static class Smoke
         image.Sections.Add(new OpenCommonwealth.Services.Hkx.PackfileSection
         {
             TagBytes = MakeTag("__data__"),
-            Data = data,
+            Data = data.ToArray(),
             LocalFixups = locals.ToArray(),
             VirtualFixups = virtuals.ToArray(),
         });

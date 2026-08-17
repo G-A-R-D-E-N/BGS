@@ -4292,54 +4292,23 @@ public static class Program
         using var data = modsFolder != null
             ? OpenCommonwealth.Services.Archive.GameData.DiscoverModded(dataFolder, modsFolder, profile)
             : OpenCommonwealth.Services.Archive.GameData.Discover(dataFolder);
-        var index = OpenCommonwealth.Services.Archive.SubgraphIndex.Discover(data);
+        var sweep = OpenCommonwealth.Services.Archive.SubgraphIndex.Sweep(data);
 
-        Console.WriteLine($"sweep: {index.Subgraphs.Count} AnimationFileData manifest(s), " +
-                          $"{data.ArchivePaths.Count} archive(s)" +
-                          (data.ModRoots.Count > 0 ? $", {data.ModRoots.Count} mod root(s)" : ""));
+        Console.WriteLine($"sweep: {sweep.ManifestCount} AnimationFileData manifest(s), " +
+                          $"{sweep.ArchiveCount} archive(s)" +
+                          (sweep.ModRootCount > 0 ? $", {sweep.ModRootCount} mod root(s)" : ""));
+        Console.WriteLine($"  weapon subgraphs checked   {sweep.WeaponSubgraphsChecked}");
+        Console.WriteLine($"  with per-weapon gaps       {sweep.Failures.Count}");
 
-        var behaviorCache = new Dictionary<string, (bool Weapon, List<GraphValidator.Finding> Gaps)>(
-            StringComparer.OrdinalIgnoreCase);
-        int checkedCount = 0;
-        var failing = new List<(ulong Id, string Behavior, List<GraphValidator.Finding> Gaps)>();
-
-        foreach (var (id, sub) in index.Subgraphs.OrderBy(kv => kv.Key))
+        if (sweep.Failures.Count > 0)
         {
-            var paths = new List<string>(sub.BehaviorPaths);
-            var off = index.FindOffsetData(id);
-            if (off?.FirstPathHint != null &&
-                !paths.Contains(off.FirstPathHint, StringComparer.OrdinalIgnoreCase))
-                paths.Add(off.FirstPathHint);
-
-            bool weapon = false;
-            var gaps = new List<GraphValidator.Finding>();
-            foreach (string path in paths)
+            foreach (var fail in sweep.Failures)
             {
-                if (!behaviorCache.TryGetValue(path, out var cached))
-                {
-                    cached = OpenCommonwealth.Services.Archive.SubgraphIndex.WeaponGapFindings(data, new[] { path });
-                    behaviorCache[path] = cached;
-                }
-                weapon |= cached.Weapon;
-                gaps.AddRange(cached.Gaps);
-            }
-            if (!weapon) continue;
-            checkedCount++;
-            if (gaps.Count > 0) failing.Add((id, sub.PrimaryBehavior, gaps));
-        }
-
-        Console.WriteLine($"  weapon subgraphs checked   {checkedCount}");
-        Console.WriteLine($"  with per-weapon gaps       {failing.Count}");
-
-        if (failing.Count > 0)
-        {
-            foreach (var (id, behavior, gaps) in failing)
-            {
-                Console.WriteLine($"FAIL {id} ({Path.GetFileName(behavior)}): {gaps.Count} gap(s)");
-                foreach (var f in gaps.Take(6))
+                Console.WriteLine($"FAIL {fail.Id} ({Path.GetFileName(fail.Behavior)}): {fail.Gaps.Count} gap(s)");
+                foreach (var f in fail.Gaps.Take(6))
                     Console.WriteLine($"    {f.What}");
-                if (gaps.Count > 6)
-                    Console.WriteLine($"    ... and {gaps.Count - 6} more");
+                if (fail.Gaps.Count > 6)
+                    Console.WriteLine($"    ... and {fail.Gaps.Count - 6} more");
             }
             return 1;
         }

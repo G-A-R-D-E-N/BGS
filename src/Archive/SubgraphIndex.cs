@@ -21,6 +21,15 @@ public sealed class SubgraphIndex
 
     public sealed record OffsetData(ulong Id, string Source, string EntryName, int Bytes, string? FirstPathHint);
 
+    public sealed record SweepFailure(ulong Id, string Behavior, IReadOnlyList<GraphValidator.Finding> Gaps);
+
+    public sealed record SweepResult(
+        int ManifestCount,
+        int ArchiveCount,
+        int ModRootCount,
+        int WeaponSubgraphsChecked,
+        IReadOnlyList<SweepFailure> Failures);
+
     private readonly Dictionary<ulong, Subgraph> _byId;
     private readonly Dictionary<ulong, OffsetData> _offsets;
 
@@ -141,6 +150,48 @@ public sealed class SubgraphIndex
     {
         try { return Ba2.Open(archivePath).Read(entry); }
         catch (Exception e) when (e is IOException or InvalidDataException) { return Array.Empty<byte>(); }
+    }
+
+    public static SweepResult Sweep(GameData data, Action<string>? progress = null)
+    {
+        var index = Discover(data);
+        var behaviorCache = new Dictionary<string, (bool Weapon, List<GraphValidator.Finding> Gaps)>(
+            StringComparer.OrdinalIgnoreCase);
+        int checkedCount = 0;
+        var failing = new List<SweepFailure>();
+        int done = 0;
+
+        foreach (var (id, sub) in index.Subgraphs.OrderBy(kv => kv.Key))
+        {
+            done++;
+            if (progress != null && done % 250 == 0)
+                progress($"sweeping {done} of {index.Subgraphs.Count} subgraphs");
+
+            var paths = new List<string>(sub.BehaviorPaths);
+            var off = index.FindOffsetData(id);
+            if (off?.FirstPathHint != null &&
+                !paths.Contains(off.FirstPathHint, StringComparer.OrdinalIgnoreCase))
+                paths.Add(off.FirstPathHint);
+
+            bool weapon = false;
+            var gaps = new List<GraphValidator.Finding>();
+            foreach (string path in paths)
+            {
+                if (!behaviorCache.TryGetValue(path, out var cached))
+                {
+                    cached = WeaponGapFindings(data, new[] { path });
+                    behaviorCache[path] = cached;
+                }
+                weapon |= cached.Weapon;
+                gaps.AddRange(cached.Gaps);
+            }
+            if (!weapon) continue;
+            checkedCount++;
+            if (gaps.Count > 0) failing.Add(new SweepFailure(id, sub.PrimaryBehavior, gaps));
+        }
+
+        return new SweepResult(index.Subgraphs.Count, data.ArchivePaths.Count, data.ModRoots.Count,
+                               checkedCount, failing);
     }
 
     public static (bool WeaponSubgraph, List<GraphValidator.Finding> Gaps) WeaponGapFindings(
