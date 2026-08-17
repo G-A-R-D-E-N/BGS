@@ -135,6 +135,7 @@ public static class Tests
         ("PackedAnimationsAndSkeletonsPlayBackFromArchives", PackedAnimationsAndSkeletonsPlayBackFromArchives),
         ("WeaponSubgraphPerWeaponCoverageIsReportedOnce", WeaponSubgraphPerWeaponCoverageIsReportedOnce),
         ("WeaponSubgraphGapNamesTheExactEngineSearch", WeaponSubgraphGapNamesTheExactEngineSearch),
+        ("MergedSaptPathIsTruncatedToTheValidPrefix", MergedSaptPathIsTruncatedToTheValidPrefix),
         ("CrashHashResolvesToTheNamedSubgraph", CrashHashResolvesToTheNamedSubgraph),
         ("CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile", CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile),
         ("LooseManifestOverridesTheArchiveCopy", LooseManifestOverridesTheArchiveCopy),
@@ -3158,6 +3159,33 @@ public static class Tests
             var findings2 = GraphValidator.Check(BehaviourGraphModel.Parse(WeaponSubgraph()), chain2);
             Check("the generic fallback removes the per-weapon gap", 0,
                   findings2.Count(f => f.What.Contains("per-weapon coverage")));
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static void MergedSaptPathIsTruncatedToTheValidPrefix()
+    {
+        Console.WriteLine("\na SAPT entry that concatenates two paths keeps only the leading valid prefix");
+
+        string data = Directory.CreateTempSubdirectory("bgs-sapt-merge").FullName;
+        try
+        {
+            File.WriteAllBytes(Path.Combine(data, "Fallout4.esm"), WeaponEsm(
+                WeaponSet(1, @"Actors\Character\Behaviors\WeaponBehavior.hkx",
+                          @"Actors\Character\Animations\Weapon\44Pistol",
+                          @"Actors\Character\Animations\Weapon\44PistolActors\Character\Animations\Weapon\Pistol\Injured\Right")));
+
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+
+            var set = gameData.WeaponTypeSets.FirstOrDefault(s =>
+                s.Type.Equals("44Pistol", StringComparison.OrdinalIgnoreCase));
+            CheckTrue("the weapon type is 44Pistol, not the concatenation artifact", set != null);
+            CheckTrue("no prefix carries an embedded Actors\\ path",
+                      set!.Prefixes.All(p => p.IndexOf("Actors\\", StringComparison.OrdinalIgnoreCase) < 0));
+            CheckTrue("the valid leading prefix is kept",
+                      set.Prefixes.Any(p => p.Equals(@"Animations\Weapon\44Pistol", StringComparison.OrdinalIgnoreCase)));
+            Check("no bogus 44PistolActors weapon type is created", 0,
+                  gameData.WeaponTypeSets.Count(s => s.Type.Contains("Actors", StringComparison.OrdinalIgnoreCase)));
         }
         finally { Directory.Delete(data, true); }
     }
