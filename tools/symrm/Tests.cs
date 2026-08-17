@@ -2853,6 +2853,8 @@ public static class Tests
             File.WriteAllBytes(Path.Combine(root, "CharacterAssets", "Skeleton.hkx"), Array.Empty<byte>());
             File.WriteAllBytes(Path.Combine(root, "TestProject.hkx"), Array.Empty<byte>());
             File.WriteAllBytes(Path.Combine(root, "Characters", "TestCharacter.hkx"), Array.Empty<byte>());
+            Directory.CreateDirectory(Path.Combine(root, "Animations"));
+            File.WriteAllBytes(Path.Combine(root, "Animations", "Loose.hkx"), Array.Empty<byte>());
             WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
                 "Meshes/Actors/Test/Animations/Attack1.hkx", new byte[] { 1, 2, 3 });
 
@@ -2870,8 +2872,9 @@ public static class Tests
                 BehaviourGraphModel.Parse($"""
                     <hkpackfile><hksection name="__data__">
                       <hkobject class="hkbCharacterStringData" name="#1">
-                        <hkparam name="animationNames" numelements="2">
+                        <hkparam name="animationNames" numelements="3">
                           <hkcstring>Animations\Attack1.HKT</hkcstring>
+                          <hkcstring>Animations\Loose.HKT</hkcstring>
                           <hkcstring>Animations\Gone.hkt</hkcstring>
                         </hkparam>
                         <hkparam name="behaviorFilename">Behaviors\Behavior00.hkx</hkparam>
@@ -2884,11 +2887,17 @@ public static class Tests
             var chain = ProjectChain.Resolve(Path.Combine(root, "Behaviors", "input.hkx"),
                                              path => models[path], gameData);
 
-            Check("both declared animations are listed", 2, chain.Animations.Count);
+            Check("all three declared animations are listed", 3, chain.Animations.Count);
             Check("only the absent one is a problem", 1, chain.Problems.Count);
             CheckTrue("the absent one is named and the archived one is not",
                       chain.Problems[0].Contains("Gone.hkt") &&
                       !chain.Problems[0].Contains("Attack1"));
+            Check("the packed one reports its archive", "Fallout4 - Animations.ba2",
+                  chain.AnimationSources[@"Animations\Attack1.HKT"]);
+            Check("the loose one reports loose", "loose",
+                  chain.AnimationSources[@"Animations\Loose.HKT"]);
+            Check("the absent one reports nothing", "",
+                  chain.AnimationSources[@"Animations\Gone.hkt"]);
         }
         finally { Directory.Delete(work, true); }
     }

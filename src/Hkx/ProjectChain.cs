@@ -23,6 +23,9 @@ public sealed class ProjectChain
     public readonly List<string> Bones = new();
     public readonly List<string> Problems = new();
 
+    /// <summary>Where each declared animation resolved from: "loose", a .ba2 file name, or empty.</summary>
+    public readonly Dictionary<string, string> AnimationSources = new(StringComparer.OrdinalIgnoreCase);
+
     public HkxSkeleton? Skeleton;
     public string SkeletonPath = "";
 
@@ -127,7 +130,10 @@ public sealed class ProjectChain
         foreach (string anim in DeclaredAnimations(strings))
         {
             chain.Animations.Add(anim);
-            if (AnimationExists(chain.Root, anim, data)) continue;
+            string? source = data?.ResolveAnimation(chain.Root, anim);
+            if (source == null && File.Exists(ResolvePath(chain.Root, anim))) source = "loose";
+            chain.AnimationSources[anim] = source ?? "";
+            if (source != null) continue;
 
             string? lender = BorrowedFrom(anim);
             chain.Problems.Add(lender != null

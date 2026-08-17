@@ -53,13 +53,20 @@ public sealed class GameData : IDisposable
     /// The declared extension does not matter (.hkt resolves to .hkx, as the game treats them
     /// as the same file).
     /// </summary>
-    public bool ContainsAnimation(string projectRoot, string declared)
+    public bool ContainsAnimation(string projectRoot, string declared) =>
+        ResolveAnimation(projectRoot, declared) != null;
+
+    /// <summary>
+    /// Where the declared animation resolves from: "loose" when a file sits under the project
+    /// root, the archive's file name when it is packed, or null when it is absent everywhere.
+    /// </summary>
+    public string? ResolveAnimation(string projectRoot, string declared)
     {
         string loose = ResolveLoose(projectRoot, declared);
-        if (File.Exists(loose)) return true;
+        if (File.Exists(loose)) return "loose";
 
         string key = Normalize(declared);
-        if (key.Length == 0) return false;
+        if (key.Length == 0) return null;
 
         // the declared path may traverse up out of the project root (..\PowerArmor\... borrows
         // another actor's animations), so resolve it against the root before matching archives
@@ -85,15 +92,16 @@ public sealed class GameData : IDisposable
         foreach (string archive in ArchivePaths)
         {
             var names = Names(archive);
-            if (prefixed != null && names.Contains(prefixed)) return true;
+            if (prefixed != null && names.Contains(prefixed)) return Path.GetFileName(archive);
 
             if (prefixed == null)
             {
                 foreach (string name in names)
-                    if (name.EndsWith("/" + key, StringComparison.Ordinal)) return true;
+                    if (name.EndsWith("/" + key, StringComparison.Ordinal))
+                        return Path.GetFileName(archive);
             }
         }
-        return false;
+        return null;
     }
 
     /// <summary>
