@@ -30,6 +30,15 @@ public sealed class SubgraphIndex
         int WeaponSubgraphsChecked,
         IReadOnlyList<SweepFailure> Failures);
 
+    public sealed record CoverageDiff(
+        int VanillaManifests,
+        int ModdedManifests,
+        IReadOnlyList<ulong> NewIds,
+        IReadOnlyList<ulong> GoneIds,
+        IReadOnlyList<string> NewBehaviorPaths,
+        IReadOnlyDictionary<string, int> NewManifestsPerBehavior,
+        IReadOnlyList<string> NewWeaponBehaviors);
+
     private readonly Dictionary<ulong, Subgraph> _byId;
     private readonly Dictionary<ulong, OffsetData> _offsets;
 
@@ -150,6 +159,55 @@ public sealed class SubgraphIndex
     {
         try { return Ba2.Open(archivePath).Read(entry); }
         catch (Exception e) when (e is IOException or InvalidDataException) { return Array.Empty<byte>(); }
+    }
+
+    public static CoverageDiff CompareCoverage(GameData vanilla, GameData modded)
+    {
+        var v = Discover(vanilla);
+        var m = Discover(modded);
+        var vIds = v.Subgraphs.Keys.ToHashSet();
+        var mIds = m.Subgraphs.Keys.ToHashSet();
+        var newIds = mIds.Except(vIds).OrderBy(id => id).ToList();
+        var goneIds = vIds.Except(mIds).OrderBy(id => id).ToList();
+
+        var vBehaviors = v.Subgraphs.Values.SelectMany(s => s.BehaviorPaths)
+            .Select(Norm)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var mBehaviors = m.Subgraphs.Values.SelectMany(s => s.BehaviorPaths)
+            .Select(Norm)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var newBehaviors = mBehaviors.Except(vBehaviors)
+            .OrderBy(b => b, StringComparer.OrdinalIgnoreCase).ToList();
+
+        var cluster = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, sub) in m.Subgraphs)
+        {
+            if (!newIds.Contains(id)) continue;
+            string behavior = Norm(sub.PrimaryBehavior);
+            cluster[behavior] = cluster.TryGetValue(behavior, out int c) ? c + 1 : 1;
+        }
+
+        var weapon = new List<string>();
+        foreach (string behavior in newBehaviors)
+        {
+            string norm = behavior.Replace('/', '\\');
+            int at = norm.LastIndexOf("\\Behaviors\\", StringComparison.OrdinalIgnoreCase);
+            if (at < 0) continue;
+            string root = Path.Combine(modded.DataFolder, "Meshes",
+                                       norm[..at].Replace('\\', Path.DirectorySeparatorChar));
+            var read = modded.ReadAnimation(root, norm[(at + 1)..]);
+            if (read == null) continue;
+            string xml;
+            try { xml = NativeXml.From(read.Bytes); }
+            catch { continue; }
+            if (xml.IndexOf(@"Animations\Weapon\", StringComparison.OrdinalIgnoreCase) >= 0)
+                weapon.Add(behavior);
+        }
+
+        return new CoverageDiff(v.Subgraphs.Count, m.Subgraphs.Count, newIds, goneIds,
+                                newBehaviors, cluster, weapon);
+
+        static string Norm(string path) => path.Replace('/', '\\');
     }
 
     public static SweepResult Sweep(GameData data, Action<string>? progress = null)

@@ -51,6 +51,7 @@ public static class Program
             case "crash": return Crash(argv);
             case "hash": return Hash(argv);
             case "sweep": return Sweep(argv);
+            case "diff": return Diff(argv);
             case "notes": return Notes(argv);
             case "saveevent": return SaveEvent(argv);
             case "savewide": return SaveWide(argv);
@@ -107,6 +108,11 @@ public static class Program
               Regression sweep: run the crash resolution across every shipped subgraph
               hash and report any that resolve to a per-weapon clip gap, so a broken
               weapon animation is caught across the whole load order at once.
+
+          diff --data <Data folder> --mods <MO2 mods folder> [--profile <name>]
+              Compare the vanilla and modded subgraph coverage side by side: which
+              AnimationFileData manifests and behavior paths the modlist adds (or drops),
+              and which of the new behaviors are weapon subgraphs.
 
           test
               Regression checks that use native code only.
@@ -4255,6 +4261,61 @@ public static class Program
         }
 
         return sub == null ? 1 : 0;
+    }
+
+    internal static int Diff(string[] argv)
+    {
+        string? dataFolder = null;
+        string? modsFolder = null;
+        string? profile = null;
+        for (int i = 1; i < argv.Length; i++)
+        {
+            if (argv[i] == "--data" && i + 1 < argv.Length) dataFolder = argv[i + 1];
+            if (argv[i] == "--mods" && i + 1 < argv.Length) modsFolder = argv[i + 1];
+            if (argv[i] == "--profile" && i + 1 < argv.Length) profile = argv[i + 1];
+        }
+        if (dataFolder == null || modsFolder == null)
+        {
+            Console.Error.WriteLine("diff needs --data <game Data folder> and --mods <MO2 mods folder>");
+            return 1;
+        }
+        dataFolder = Path.GetFullPath(dataFolder);
+        modsFolder = Path.GetFullPath(modsFolder);
+        if (!Directory.Exists(dataFolder))
+        {
+            Console.Error.WriteLine($"--data folder not found: {dataFolder}");
+            return 1;
+        }
+        if (!Directory.Exists(modsFolder))
+        {
+            Console.Error.WriteLine($"--mods folder not found: {modsFolder}");
+            return 1;
+        }
+
+        using var vanilla = OpenCommonwealth.Services.Archive.GameData.Discover(dataFolder);
+        using var modded = OpenCommonwealth.Services.Archive.GameData.DiscoverModded(dataFolder, modsFolder, profile);
+        var diff = OpenCommonwealth.Services.Archive.SubgraphIndex.CompareCoverage(vanilla, modded);
+
+        Console.WriteLine($"diff: {diff.VanillaManifests} vanilla manifest(s) -> " +
+                          $"{diff.ModdedManifests} modded manifest(s)");
+        Console.WriteLine($"  new manifest ids   {diff.NewIds.Count}");
+        Console.WriteLine($"  gone from modded   {diff.GoneIds.Count}");
+
+        Console.WriteLine($"  new behavior paths {diff.NewBehaviorPaths.Count}");
+        foreach (string behavior in diff.NewBehaviorPaths)
+            Console.WriteLine($"    {behavior}");
+
+        if (diff.NewManifestsPerBehavior.Count > 0)
+        {
+            Console.WriteLine($"  new manifests reference {diff.NewManifestsPerBehavior.Count} distinct behavior(s):");
+            foreach (var kv in diff.NewManifestsPerBehavior.OrderByDescending(kv => kv.Value))
+                Console.WriteLine($"    {kv.Value,5} new manifest(s) -> {kv.Key}");
+        }
+
+        Console.WriteLine($"  new weapon behaviors {diff.NewWeaponBehaviors.Count}");
+        foreach (string behavior in diff.NewWeaponBehaviors)
+            Console.WriteLine($"    {behavior}");
+        return 0;
     }
 
     internal static int Sweep(string[] argv)

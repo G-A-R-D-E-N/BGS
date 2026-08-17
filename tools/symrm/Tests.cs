@@ -143,6 +143,7 @@ public static class Tests
         ("ModLooseAndPackedAnimationsLayerOverTheBaseGame", ModLooseAndPackedAnimationsLayerOverTheBaseGame),
         ("SweepReportsEveryShippedSubgraphCleanOnVanilla", SweepReportsEveryShippedSubgraphCleanOnVanilla),
         ("SweepFlagsModdedMergedGaps", SweepFlagsModdedMergedGaps),
+        ("DiffReportsNewManifestsAndWeaponBehaviors", DiffReportsNewManifestsAndWeaponBehaviors),
         ("SubgraphHashMatchesKnownGameValues", SubgraphHashMatchesKnownGameValues),
         ("SubgraphHashLowHalfIsTheBehaviorPath", SubgraphHashLowHalfIsTheBehaviorPath),
         ("SubgraphHashNormalizesCaseAndSlashes", SubgraphHashNormalizesCaseAndSlashes),
@@ -3624,6 +3625,54 @@ public static class Tests
                   Program.Sweep(new[] { "sweep", "--data", data }));
             Check("with --mods the sweep flags the merged subgraph's missing clip", 1,
                   Program.Sweep(new[] { "sweep", "--data", data, "--mods", mods }));
+        }
+        finally { Directory.Delete(data, true); Directory.Delete(mods, true); }
+    }
+
+    private static void DiffReportsNewManifestsAndWeaponBehaviors()
+    {
+        Console.WriteLine("\nthe coverage diff names what the modlist adds to the load order");
+
+        string data = Directory.CreateTempSubdirectory("bgs-diff-data").FullName;
+        string mods = Directory.CreateTempSubdirectory("bgs-diff-mods").FullName;
+        try
+        {
+            const string baseManifest =
+                "3\n1\n10448007347639226270\n1\n" +
+                @"Actors\Character\Behaviors\WeaponBehavior.hkx" + "\n";
+            WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                "Meshes/AnimTextData/AnimationFileData/10448007347639226270.txt",
+                System.Text.Encoding.UTF8.GetBytes(baseManifest));
+
+            File.WriteAllText(Path.Combine(mods, "modlist.txt"), "+AnimTextData Merge\n");
+            string merge = Path.Combine(mods, "mods", "AnimTextData Merge");
+            string fileData = Path.Combine(merge, "Meshes", "AnimTextData", "AnimationFileData");
+            Directory.CreateDirectory(fileData);
+            File.WriteAllText(Path.Combine(fileData, "8806872131610908823.txt"),
+                "3\n1\n8806872131610908823\n1\n" +
+                @"Actors\Character\Behaviors\NewOverhaulBehavior.hkx" + "\n");
+            string behaviors = Path.Combine(merge, "Meshes", "Actors", "Character", "Behaviors");
+            Directory.CreateDirectory(behaviors);
+            File.WriteAllBytes(Path.Combine(behaviors, "NewOverhaulBehavior.hkx"),
+                WeaponSubgraphBytes(@"Animations\Weapon\44Pistol\WPNAssemblyPose.hkt",
+                                    @"Animations\WPNReload.hkt"));
+
+            using var vanilla = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+            using var modded = OpenCommonwealth.Services.Archive.GameData.DiscoverModded(data, mods);
+            var diff = OpenCommonwealth.Services.Archive.SubgraphIndex.CompareCoverage(vanilla, modded);
+
+            Check("the modded index adds one manifest", 2, diff.ModdedManifests);
+            Check("exactly the merged id is new", 1, diff.NewIds.Count);
+            Check("the new id is the merged one", 8806872131610908823UL, diff.NewIds[0]);
+            Check("nothing is gone from the modded load order", 0, diff.GoneIds.Count);
+            Check("the new behavior path is named", 1, diff.NewBehaviorPaths.Count);
+            Check("it is the overhaul behavior",
+                  @"Actors\Character\Behaviors\NewOverhaulBehavior.hkx",
+                  diff.NewBehaviorPaths[0]);
+            Check("the new manifest is attributed to that behavior", 1,
+                  diff.NewManifestsPerBehavior[@"Actors\Character\Behaviors\NewOverhaulBehavior.hkx"]);
+            Check("the new behavior is classified as a weapon subgraph", 1,
+                  diff.NewWeaponBehaviors.Count);
         }
         finally { Directory.Delete(data, true); Directory.Delete(mods, true); }
     }
