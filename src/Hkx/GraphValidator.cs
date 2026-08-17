@@ -52,9 +52,12 @@ public static class GraphValidator
     }
 
     private static void Add(List<Finding> found, Level level, string where, string what,
-                            bool blocksSave = false) =>
-        found.Add(new Finding { Level = level, Where = where, What = what, ObjectId = LeadingId(where),
+                            string objectId = "", bool blocksSave = false)
+    {
+        string id = objectId.Length > 0 ? objectId : LeadingId(where);
+        found.Add(new Finding { Level = level, Where = where, What = what, ObjectId = id,
                                 BlocksSave = blocksSave });
+    }
 
     private static string LeadingId(string where)
     {
@@ -449,18 +452,21 @@ public static class GraphValidator
         }
         if (referencedTypes.Count == 0) return;
 
-        var generic = clips
-            .Select(clip => clip.Str("animationName").Replace('\\', '/'))
-            .Where(a => a.Split('/').Length == 2 && a.StartsWith("Animations/", StringComparison.OrdinalIgnoreCase))
-            .Select(a => a[(a.LastIndexOf('/') + 1)..])
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var leafToId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var clip in clips)
+        {
+            string anim = clip.Str("animationName").Replace('\\', '/');
+            if (anim.Split('/').Length != 2 ||
+                !anim.StartsWith("Animations/", StringComparison.OrdinalIgnoreCase)) continue;
+            leafToId[anim[(anim.LastIndexOf('/') + 1)..]] = clip.Id;
+        }
+        var generic = leafToId.Keys.ToList();
         if (generic.Count == 0) return;
 
         var sets = chain.Data.WeaponTypeSets;
         if (sets.Count > 0)
         {
-            CheckWeaponSubgraphAgainstMap(model, chain, generic, sets, found);
+            CheckWeaponSubgraphAgainstMap(chain, generic, leafToId, sets, found);
             return;
         }
 
@@ -472,7 +478,7 @@ public static class GraphValidator
                 chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data))).ToList();
         if (perWeapon.Count == 0) return;
 
-        var messages = new List<string>();
+        var messages = new List<(string Leaf, string What)>();
         foreach (string type in referencedTypes)
         {
             foreach (string leaf in perWeapon)
@@ -481,24 +487,25 @@ public static class GraphValidator
                     continue;
 
                 bool genericExists = ProjectChain.AnimationExists(chain.Root, "Animations\\" + leaf, chain.Data);
-                messages.Add(genericExists
+                messages.Add((leaf, genericExists
                     ? $"per-weapon coverage: '{type}' lacks {leaf} under Animations\\Weapon\\{type}; " +
                       $"the generic Animations\\{leaf} copy exists, so the engine falls back and the clip " +
                       "still plays (extract a per-weapon copy to override it)"
                     : $"per-weapon coverage: '{type}' lacks {leaf} under Animations\\Weapon\\{type}, and no " +
                       $"generic Animations\\{leaf} copy exists either — playing this clip for this weapon " +
-                      $"type is a crash (extract the animation under Animations\\Weapon\\{type})");
+                      $"type is a crash (extract the animation under Animations\\Weapon\\{type})"));
             }
         }
-        ReportWeaponGaps(found, messages);
+        ReportWeaponGaps(found, messages, leafToId);
     }
 
-    private static void CheckWeaponSubgraphAgainstMap(BehaviourGraphModel model, ProjectChain chain,
+    private static void CheckWeaponSubgraphAgainstMap(ProjectChain chain,
                                                       List<string> generic,
+                                                      IReadOnlyDictionary<string, string> leafToId,
                                                       IReadOnlyList<OpenCommonwealth.Services.Archive.GameData.WeaponTypeSet> sets,
                                                       List<Finding> found)
     {
-        var messages = new List<string>();
+        var messages = new List<(string Leaf, string What)>();
         foreach (var set in sets)
         {
             if (set.Prefixes.Count == 0) continue;
@@ -511,21 +518,23 @@ public static class GraphValidator
 
                 if (ProjectChain.AnimationExists(chain.Root, "Animations\\" + leaf, chain.Data)) continue;
 
-                messages.Add($"per-weapon coverage: '{set.Type}' cannot resolve {leaf}: the engine searched " +
-                             $"its {set.Prefixes.Count}-prefix chain starting at {set.Prefixes[0]}\\{leaf} and " +
-                             $"found no copy, and no generic Animations\\{leaf} fallback exists either — " +
-                             "playing this clip for this weapon type is a crash");
+                messages.Add((leaf, $"per-weapon coverage: '{set.Type}' cannot resolve {leaf}: the engine searched " +
+                                    $"its {set.Prefixes.Count}-prefix chain starting at {set.Prefixes[0]}\\{leaf} and " +
+                                    $"found no copy, and no generic Animations\\{leaf} fallback exists either — " +
+                                    "playing this clip for this weapon type is a crash"));
             }
         }
-        ReportWeaponGaps(found, messages);
+        ReportWeaponGaps(found, messages, leafToId);
     }
 
-    private static void ReportWeaponGaps(List<Finding> found, List<string> messages)
+    private static void ReportWeaponGaps(List<Finding> found, List<(string Leaf, string What)> messages,
+                                         IReadOnlyDictionary<string, string> leafToId)
     {
         if (messages.Count == 0) return;
 
-        foreach (string message in messages.Take(MaxPerWeaponFindings))
-            Add(found, Level.Warning, "weapon subgraph", message);
+        foreach (var (leaf, message) in messages.Take(MaxPerWeaponFindings))
+            Add(found, Level.Warning, "weapon subgraph", message,
+                leafToId.TryGetValue(leaf, out var id) ? id : "");
         if (messages.Count > MaxPerWeaponFindings)
             Add(found, Level.Warning, "weapon subgraph",
                 $"per-weapon coverage: {messages.Count - MaxPerWeaponFindings} more missing clip(s) for " +

@@ -1519,6 +1519,7 @@ public static class Smoke
         ChainTabAttachesGameData();
         ChainTabShowsPerWeaponGaps();
         ChainTabResolvesCrashHashToTheMissingClip();
+        CrashPanelJumpsToTheMissingClipOnTheGraph();
         PlaybackReadsPackedClipsFromArchives();
         ArchiveBrowserBuilds();
 
@@ -1662,6 +1663,65 @@ public static class Smoke
                           rows.Any(t => t.Contains("WPNReload", StringComparison.Ordinal)));
                 CheckTrue("it names the failing search path",
                           rows.Any(t => t.Contains(@"Animations\Weapon\Pistol", StringComparison.Ordinal)));
+                CloseForTest(window);
+            }
+            finally { Directory.Delete(data, true); }
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    private static void CrashPanelJumpsToTheMissingClipOnTheGraph()
+    {
+        Console.WriteLine("\nthe floating crash panel jumps to the missing clip on the graph canvas");
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-panel-jump-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path, WeaponSubgraphBytes());
+        try
+        {
+            string data = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                                 $"bgs-panel-jump-data-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(data);
+            try
+            {
+                const string manifest =
+                    "3\n1\n10448007347639226270\n1\n" +
+                    "Actors\\Character\\Behaviors\\WeaponBehavior.hkx\n";
+                WriteArchive(System.IO.Path.Combine(data, "Fallout4 - Animations.ba2"), new[]
+                {
+                    ("Meshes/AnimTextData/AnimationFileData/10448007347639226270.txt",
+                        System.Text.Encoding.UTF8.GetBytes(manifest)),
+                    ("Meshes/Actors/Character/Behaviors/WeaponBehavior.hkx", WeaponSubgraphBytes()),
+                    ("Meshes/Actors/Character/Animations/Weapon/44Pistol/WPNReload.hkx", new byte[] { 1 }),
+                });
+                Settings.TrySet("gameDataFolder", data, out _);
+
+                var window = new MainWindow();
+                window.Show();
+                window.Open(path);
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                SelectTab(window, "Chain");
+
+                window.CrashHashField.Text = "10448007347639226270";
+                window.ResolveCrashHashForTest();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();                CheckTrue("the crash panel floats over the graph canvas", window.CrashPanelVisible);
+                CheckTrue("its title names the subgraph behavior",
+                          window.CrashPanelTitle.Contains("WeaponBehavior", StringComparison.Ordinal));
+                CheckTrue("the panel names the missing clip",
+                          window.CrashPanelBodyText.Contains("WPNReload", StringComparison.Ordinal));
+
+                SelectTab(window, "Graph");
+                var jumps = Find<Button>(window)
+                    .Where(b => b.Content?.ToString() == "Jump" && b.IsEnabled)
+                    .ToList();
+                Check("the panel offers one enabled jump for the missing clip", 1, jumps.Count);
+                if (jumps.Count == 1)
+                {
+                    string clipId = (string)jumps[0].Tag;
+                    CheckTrue("the jump targets the clip object", clipId.Length > 0);
+                    Click(jumps[0]);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                    Check("the graph selects the clip node", clipId, window.Canvas.SelectedId);
+                }
                 CloseForTest(window);
             }
             finally { Directory.Delete(data, true); }

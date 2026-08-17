@@ -9,6 +9,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using OpenCommonwealth.Services.Archive;
 using OpenCommonwealth.Services.Hkx;
 using OpenCommonwealth.Services.Nif;
@@ -246,6 +247,9 @@ public class MainWindow : Window
     private readonly TextBlock _dataSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
     private readonly TextBox _crashField = Ux.Field("AnimTextData crash hash, e.g. 10448007347639226270", 220);
     private readonly TextBlock _crashSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private Border? _crashPanel;
+    private readonly StackPanel _crashPanelBody = new() { Spacing = 6 };
+    private readonly TextBlock _crashPanelTitle = new() { Foreground = Ux.TitleBrush, FontSize = 13 };
     private string _selectedId = "";
     private readonly List<Action> _fieldCommits = new();
     private bool _dirty;
@@ -1012,7 +1016,10 @@ public class MainWindow : Window
         workspace.ColumnDefinitions.Add(_graphCenterColumn);
         workspace.ColumnDefinitions.Add(_graphRightSplitterColumn);
         workspace.ColumnDefinitions.Add(_graphRightColumn);
-        _graphCanvasHost = Framed(_graph);
+        var canvasLayer = new Grid();
+        canvasLayer.Children.Add(_graph);
+        canvasLayer.Children.Add(BuildCrashPanel());
+        _graphCanvasHost = Framed(canvasLayer);
         _graphCanvasHost.ClipToBounds = true;
         Grid.SetColumn(_graphCanvasHost, 0);
         Grid.SetColumn(_graphRightSplitter, 1);
@@ -4174,6 +4181,17 @@ public class MainWindow : Window
     public TextBox CrashHashField => _crashField;
     public string CrashHashSummary => _crashSummary.Text ?? "";
     public void ResolveCrashHashForTest() => ResolveCrashHash();
+    public bool CrashPanelVisible => _crashPanel?.IsVisible == true;
+    public string CrashPanelTitle => _crashPanelTitle.Text ?? "";
+    public string CrashPanelBodyText => string.Join("\n", FindPanelTexts(_crashPanelBody));
+    private static IEnumerable<string> FindPanelTexts(Visual root)
+    {
+        foreach (var child in root.GetVisualChildren())
+        {
+            if (child is TextBlock t && t.Text != null) yield return t.Text;
+            foreach (string s in FindPanelTexts(child)) yield return s;
+        }
+    }
 
     private static bool Matches(HkxBehaviorParser.BehaviorNode o, string needle) =>
         o.ClassName.Contains(needle, StringComparison.OrdinalIgnoreCase)
@@ -4882,15 +4900,17 @@ public class MainWindow : Window
         var head = _chain.Add(null, "crash hash", $"{id.Value} -> {primary}")
                          .Colour(0, Ux.MutedBrush).Colour(1, Ux.TitleBrush);
 
+        int present = 0, total = 0;
         if (sub != null)
         {
             foreach (string behavior in sub.BehaviorPaths.Take(4))
                 _chain.Add(head, "behavior", behavior).Colour(1, Ux.CodeBrush);
 
-            int present = sub.AnimationPaths.Count(path =>
+            total = sub.AnimationPaths.Count;
+            present = sub.AnimationPaths.Count(path =>
                 data.ContainsAnimation(Path.Combine(data.DataFolder, "Meshes"), path));
-            _chain.Add(head, "animations", $"{present} present, {sub.AnimationPaths.Count - present} missing")
-                   .Colour(1, present == sub.AnimationPaths.Count ? Ux.MetaBrush : Ux.BadBrush);
+            _chain.Add(head, "animations", $"{present} present, {total - present} missing")
+                   .Colour(1, present == total ? Ux.MetaBrush : Ux.BadBrush);
         }
         if (off != null)
             _chain.Add(head, "offset data", $"exists ({off.Bytes} bytes), hint: {off.FirstPathHint}")
@@ -4904,12 +4924,140 @@ public class MainWindow : Window
 
         var (weaponSubgraph, gaps) = OpenCommonwealth.Services.Archive.SubgraphIndex.WeaponGapFindings(data, behaviorPaths);
         if (!weaponSubgraph)
+        {
             _chain.Add(head, "per-weapon", "not a weapon subgraph").Colour(1, Ux.MetaBrush);
+            ShowCrashPanel(id.Value, primary, behaviorPaths, present, total,
+                           new List<GraphValidator.Finding>());
+        }
         else if (gaps.Count == 0)
+        {
             _chain.Add(head, "per-weapon", "every clip resolves for every weapon type").Colour(1, Ux.MetaBrush);
+            ShowCrashPanel(id.Value, primary, behaviorPaths, present, total,
+                           new List<GraphValidator.Finding>());
+        }
         else
+        {
             foreach (var f in gaps.Take(6))
                 _chain.Add(head, "per-weapon", f.What).Colour(1, Ux.WarnBrush);
+            ShowCrashPanel(id.Value, primary, behaviorPaths, present, total, gaps);
+        }
+    }
+
+    private Border BuildCrashPanel()
+    {
+        var close = Ux.Secondary("Close");
+        close.Click += (_, _) => _crashPanel!.IsVisible = false;
+
+        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        head.Children.Add(_crashPanelTitle);
+        head.Children.Add(close);
+
+        var root = new StackPanel { Spacing = 6 };
+        root.Children.Add(head);
+        root.Children.Add(new ScrollViewer
+        {
+            MaxHeight = 280,
+            Content = _crashPanelBody,
+        });
+
+        return _crashPanel = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(240, Ux.Card.R, Ux.Card.G, Ux.Card.B)),
+            BorderBrush = Ux.BorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10),
+            MaxWidth = 480,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 10, 10, 0),
+            IsVisible = false,
+            Child = root,
+        };
+    }
+
+    private void ShowCrashPanel(ulong id, string primary, List<string> behaviors,
+                                int present, int total, List<GraphValidator.Finding> gaps)
+    {
+        _crashPanelBody.Children.Clear();
+        _crashPanelTitle.Text = $"crash {id} -> {Path.GetFileName(primary)}";
+
+        var lines = new StackPanel { Spacing = 2 };
+        foreach (string behavior in behaviors.Take(4))
+            lines.Children.Add(new TextBlock
+            {
+                Text = behavior,
+                Foreground = Ux.CodeBrush,
+                FontSize = 11,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+        lines.Children.Add(new TextBlock
+        {
+            Text = $"{present} of {total} animations present",
+            Foreground = present == total ? Ux.MetaBrush : Ux.BadBrush,
+            FontSize = 11,
+        });
+
+        if (gaps.Count == 0)
+        {
+            lines.Children.Add(new TextBlock
+            {
+                Text = "every clip resolves for every weapon type",
+                Foreground = Ux.MetaBrush,
+                FontSize = 11,
+            });
+        }
+        else
+        {
+            lines.Children.Add(new TextBlock
+            {
+                Text = $"{gaps.Count} missing clip(s) — jump to each on the graph",
+                Foreground = Ux.WarnBrush,
+                FontSize = 11,
+            });
+            foreach (var gap in gaps.Take(6))
+                lines.Children.Add(CrashGapRow(gap));
+        }
+
+        _crashPanelBody.Children.Add(lines);
+        _crashPanel!.IsVisible = true;
+    }
+
+    private Control CrashGapRow(GraphValidator.Finding gap)
+    {
+        var text = new TextBlock
+        {
+            Text = gap.What,
+            Foreground = Ux.WarnBrush,
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 330,
+        };
+        var jump = Ux.Secondary(gap.ObjectId.Length > 0 ? "Jump" : "—");
+        jump.IsEnabled = gap.ObjectId.Length > 0;
+        jump.Tag = gap.ObjectId;
+        jump.Click += (_, _) => JumpToClip(gap.ObjectId);
+        ToolTip.SetTip(jump, gap.What);
+        var row = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(jump, Dock.Right);
+        row.Children.Add(jump);
+        row.Children.Add(text);
+        return row;
+    }
+
+    private void JumpToClip(string objectId)
+    {
+        if (objectId.Length == 0) return;
+        GoToTab("Graph");
+        if (_graph.FocusOn(objectId))
+        {
+            SelectObjectId(objectId);
+            HighlightPaths(objectId);
+        }
+        else
+        {
+            SetStatus($"clip #{objectId} is not on the current graph", Ux.MutedBrush);
+        }
     }
 
     private bool _crashResolved;

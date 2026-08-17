@@ -21,6 +21,7 @@ August 17, 2026
 * `symrm crash --mods <MO2 mods folder> [--profile <name>]` resolves the same hash against modded game data: enabled mods from the modlist (or `profiles/<name>/modlist.txt`) are layered over the base game the way the engine loads them — loose mod files and mod .ba2 archives override base data, the profile overwrite folder wins, and merged AnimTextData manifests shipped loose in a mod are honored.
 * New `symrm sweep --data <Data folder> [--mods ...]` runs the crash resolution across every shipped subgraph hash and reports any that resolve to a per-weapon clip gap, as a regression sweep (the base game ships clean: 3401 manifests / 2238 weapon subgraphs, zero gaps).
 * Modded data lookups are indexed once, so per-file checks stay O(1) no matter how many mod roots are layered on.
+* Resolving a crash hash on the Chain tab now floats a panel over the graph canvas: it names the subgraph's behaviors, the animation presence, and every per-weapon gap, and each gap has a **Jump** button that selects and centres the missing clip's node on the graph.
 
 </details>
 
