@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using OpenCommonwealth.Services.Archive;
 
 namespace OpenCommonwealth.Services.Hkx;
 
@@ -25,10 +26,14 @@ public sealed class ProjectChain
     public HkxSkeleton? Skeleton;
     public string SkeletonPath = "";
 
+    /// <summary>The game data tree (loose files plus .ba2 archives) animations resolve against.</summary>
+    public GameData? Data;
+
     public static ProjectChain Resolve(
-        string anyHkxPath, Func<string, BehaviourGraphModel?>? modelReader = null)
+        string anyHkxPath, Func<string, BehaviourGraphModel?>? modelReader = null,
+        GameData? data = null)
     {
-        var chain = new ProjectChain();
+        var chain = new ProjectChain { Data = data };
         BehaviourGraphModel? ReadModel(string path) =>
             modelReader == null ? Read(path, chain) : Read(path, chain, modelReader);
         string dir = Path.GetDirectoryName(Path.GetFullPath(anyHkxPath)) ?? "";
@@ -122,16 +127,33 @@ public sealed class ProjectChain
         foreach (string anim in DeclaredAnimations(strings))
         {
             chain.Animations.Add(anim);
-            if (File.Exists(ResolvePath(chain.Root, anim))) continue;
+            if (AnimationExists(chain.Root, anim, data)) continue;
 
             string? lender = BorrowedFrom(anim);
             chain.Problems.Add(lender != null
                 ? $"missing animation, borrowed from {lender}: {anim}. Extract {lender} alongside " +
                   "this character and it resolves."
-                : "missing animation: " + anim);
+                : MissingAnimation(chain, anim, data));
         }
 
         return chain;
+    }
+
+    /// <summary>
+    /// True when the declared animation is loose under the project root or, when a game data
+    /// tree is attached, present inside one of its .ba2 archives.
+    /// </summary>
+    public static bool AnimationExists(string root, string declared, GameData? data)
+    {
+        if (data != null && data.ContainsAnimation(root, declared)) return true;
+        return File.Exists(ResolvePath(root, declared));
+    }
+
+    private static string MissingAnimation(ProjectChain chain, string anim, GameData? data)
+    {
+        if (data == null) return "missing animation: " + anim;
+        return $"missing animation: {anim}. It is not loose under {chain.Root} nor inside any " +
+               $".ba2 under {data.DataFolder}.";
     }
 
     public static string? BorrowedFrom(string animation)

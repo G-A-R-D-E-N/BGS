@@ -4015,7 +4015,31 @@ public static class Program
         if (argv.Length < 2) { Usage(); return 1; }
 
         string file = Path.GetFullPath(argv[1]);
-        var chain = ProjectChain.Resolve(file);
+        string? dataFolder = null;
+        string? plugins = null;
+        for (int i = 2; i < argv.Length; i++)
+        {
+            if (argv[i] == "--data" && i + 1 < argv.Length) dataFolder = argv[i + 1];
+            if (argv[i] == "--plugins" && i + 1 < argv.Length) plugins = argv[i + 1];
+        }
+
+        OpenCommonwealth.Services.Archive.GameData? data = null;
+        if (dataFolder != null)
+        {
+            dataFolder = Path.GetFullPath(dataFolder);
+            if (!Directory.Exists(dataFolder))
+            {
+                Console.Error.WriteLine($"--data folder not found: {dataFolder}");
+                return 1;
+            }
+            data = OpenCommonwealth.Services.Archive.GameData.Discover(dataFolder, plugins);
+            Console.WriteLine($"game data: {data.ArchivePaths.Count} .ba2 archive(s) under {dataFolder}" +
+                              (data.PluginsPath != null
+                                  ? $", ordered by {Path.GetFileName(data.PluginsPath)}"
+                                  : ""));
+        }
+
+        var chain = ProjectChain.Resolve(file, data: data);
 
         foreach (var link in chain.Links)
             Console.WriteLine($"  {link.Role,-12} {(link.Exists ? "found  " : "MISSING")} {link.Declared}");
@@ -4031,10 +4055,21 @@ public static class Program
         foreach (var unreadable in checkResult.Files.Where(f => f.Error.Length > 0).Take(5))
             Console.WriteLine($"  unread: {unreadable.Name}, {unreadable.Error}");
 
+        var shown = new List<string>();
+        foreach (var result in checkResult.Files)
+            foreach (var finding in result.Findings)
+            {
+                string line = $"{result.Name}: {finding}";
+                if (shown.Count < 12) shown.Add(line);
+            }
+        foreach (string line in shown) Console.WriteLine("  check: " + line);
+        if (checkResult.Errors + checkResult.Warnings > shown.Count)
+            Console.WriteLine($"  ... and {checkResult.Errors + checkResult.Warnings - shown.Count} more");
+
         Console.WriteLine($"\n{chain.Links.Count} link(s), {chain.Problems.Count} problem(s)");
         Console.WriteLine($"checked {checkResult.Files.Count} behaviour file(s), {unread} unread, " +
                           $"{checkResult.Errors} error(s), {checkResult.Warnings} warning(s)");
-        return chain.Links.Count == 0 || unread > 0 ? 1 : 0;
+        return chain.Links.Count == 0 || unread > 0 || checkResult.Errors > 0 ? 1 : 0;
     }
 
     private static int Lifecycle(string[] argv)
@@ -6922,14 +6957,59 @@ public static class Program
     {
         if (argv.Length < 2) { Usage(); return 1; }
 
-        var files = Directory.GetFiles(argv[1], "*.xml").OrderBy(f => f).ToList();
+        string target = Path.GetFullPath(argv[1]);
+        string? dataFolder = null;
+        string? plugins = null;
+        for (int i = 2; i < argv.Length; i++)
+        {
+            if (argv[i] == "--data" && i + 1 < argv.Length) dataFolder = argv[i + 1];
+            if (argv[i] == "--plugins" && i + 1 < argv.Length) plugins = argv[i + 1];
+        }
+
+        OpenCommonwealth.Services.Archive.GameData? data = null;
+        if (dataFolder != null)
+        {
+            dataFolder = Path.GetFullPath(dataFolder);
+            if (!Directory.Exists(dataFolder))
+            {
+                Console.Error.WriteLine($"--data folder not found: {dataFolder}");
+                return 1;
+            }
+            data = OpenCommonwealth.Services.Archive.GameData.Discover(dataFolder, plugins);
+            Console.WriteLine($"game data: {data.ArchivePaths.Count} .ba2 archive(s) under {dataFolder}");
+        }
+
+        var files = Directory.Exists(target)
+            ? Directory.EnumerateFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .Concat(Directory.EnumerateFiles(target, "*.xml", SearchOption.AllDirectories))
+                       .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList()
+            : new List<string> { target };
         int clean = 0, broken = 0, errorCount = 0, warningCount = 0;
         var byKind = new Dictionary<string, int>();
 
         foreach (string file in files)
         {
+            ProjectChain? chain = null;
+            string xml;
+            try
+            {
+                if (file.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                    xml = HkxTextEdit.ReadXml(file);
+                else
+                {
+                    xml = HkxTextEdit.TextOf(file);
+                    chain = ProjectChain.Resolve(file, data: data);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  THREW {Path.GetFileName(file)}: {ex.Message.Split('\n')[0]}");
+                broken++;
+                continue;
+            }
+
             List<GraphValidator.Finding> findings;
-            try { findings = GraphValidator.Check(HkxTextEdit.ReadXml(file)); }
+            try { findings = GraphValidator.Check(xml, chain); }
             catch (Exception ex) { Console.WriteLine($"  THREW {Path.GetFileName(file)}: {ex.Message.Split('\n')[0]}"); broken++; continue; }
 
             var errors = findings.Where(f => f.Level == GraphValidator.Level.Error).ToList();

@@ -46,6 +46,17 @@ August 15, 2026
 
 </details>
 
+<details>
+<summary><strong>Game Data Aware Validation</strong></summary>
+<br>
+
+* `symrm chain` and `symrm check` now accept `--data <Data folder>` and resolve every animation against the game's `.ba2` archives (loose files first, archives in plugin load order), so vanilla animations are no longer reported missing just because they are packed.
+* With game data attached, an animation that is genuinely absent anywhere becomes an error instead of a warning.
+* Weapon subgraphs (behaviors that play `Animations\Weapon\...` clips) get a single per-weapon coverage note naming the weapon types that lack per-weapon copies, with the generic-copy fallback explained.
+* Borrowed `..\` animation paths (for example into `PowerArmor`) resolve correctly against the archives.
+
+</details>
+
 ## 1.0.4
 
 <details>

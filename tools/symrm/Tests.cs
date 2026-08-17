@@ -128,6 +128,11 @@ public static class Tests
         ("StructuralObjectsAreProtected", StructuralObjectsAreProtected),
         ("PortTypesRefuseNonsense", PortTypesRefuseNonsense),
         ("Fo4CharacterListsItsAnimations", Fo4CharacterListsItsAnimations),
+        ("GameDataResolvesAnimationsInsideArchives", GameDataResolvesAnimationsInsideArchives),
+        ("ProjectChainResolvesAnimationsThroughGameData", ProjectChainResolvesAnimationsThroughGameData),
+        ("GameDataLoadOrderFollowsPlugins", GameDataLoadOrderFollowsPlugins),
+        ("GameDataCollapsesBorrowedPaths", GameDataCollapsesBorrowedPaths),
+        ("WeaponSubgraphPerWeaponCoverageIsReportedOnce", WeaponSubgraphPerWeaponCoverageIsReportedOnce),
         ("ProjectFilesAreSelectedByContent", ProjectFilesAreSelectedByContent),
         ("MissingClipAnimationIsReported", MissingClipAnimationIsReported),
         ("RepackDriftNamesWhatMoved", RepackDriftNamesWhatMoved),
@@ -2771,6 +2776,253 @@ public static class Tests
         {
             Directory.Delete(root, true);
         }
+    }
+
+    private static void WriteSingleEntryArchive(string path, string entryName, byte[] payload)
+    {
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+        long headerEnd = 24 + 36;
+        long nameTableAt = headerEnd + payload.Length;
+
+        writer.Write(new[] { 'B', 'T', 'D', 'X' });
+        writer.Write(1u);
+        writer.Write(new[] { 'G', 'N', 'R', 'L' });
+        writer.Write(1u);
+        writer.Write((ulong)nameTableAt);
+
+        writer.Write(0u); writer.Write(0u); writer.Write(0u); writer.Write(0u);
+        writer.Write((ulong)headerEnd);
+        writer.Write(0u);
+        writer.Write((uint)payload.Length);
+        writer.Write(0u);
+
+        writer.Write(payload);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(entryName.Replace('/', '\\'));
+        writer.Write((ushort)bytes.Length);
+        writer.Write(bytes);
+    }
+
+    private static void GameDataResolvesAnimationsInsideArchives()
+    {
+        Console.WriteLine("\nan animation that lives inside a .ba2 is not missing once game data is attached");
+
+        string data = Directory.CreateTempSubdirectory("bgs-gamedata").FullName;
+        try
+        {
+            string projectRoot = Path.Combine(data, "Meshes", "Actors", "Test");
+            Directory.CreateDirectory(projectRoot);
+            WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                "Meshes/Actors/Test/Animations/Attack1.hkx", new byte[] { 1, 2, 3 });
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+
+            var chain = new ProjectChain { Root = projectRoot, Data = gameData };
+            chain.Animations.AddRange(new[] { @"Animations\Attack1.HKT", @"Animations\Gone.hkt" });
+
+            var findings = GraphValidator.Check(
+                    SmallGraph().Replace("a.hkx", @"Animations\Attack1.HKT")
+                                .Replace("b.hkx", @"Animations\Gone.hkt")
+                                .Replace("spare.hkx", @"Animations\Attack1.hkx"), chain)
+                .Where(f => f.What.Contains("not on disk")).ToList();
+
+            Check("the archived animation is not reported missing", 1, findings.Count);
+            var gone = findings.FirstOrDefault(f => f.What.Contains("Gone.hkt"));
+            CheckTrue("only the truly absent one is named", gone != null);
+            CheckTrue("the case- and extension-flexible declaration resolves",
+                      !findings.Any(f => f.What.Contains("Attack1")));
+            Check("with game data attached a missing animation is an error",
+                  GraphValidator.Level.Error, gone?.Level);
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static void ProjectChainResolvesAnimationsThroughGameData()
+    {
+        Console.WriteLine("\nthe chain's declared animations resolve through the game data archives");
+
+        string work = Directory.CreateTempSubdirectory("bgs-chaindata").FullName;
+        try
+        {
+            string data = Path.Combine(work, "Data");
+            string root = Path.Combine(data, "Meshes", "Actors", "Test");
+            Directory.CreateDirectory(Path.Combine(root, "Behaviors"));
+            Directory.CreateDirectory(Path.Combine(root, "Characters"));
+            Directory.CreateDirectory(Path.Combine(root, "CharacterAssets"));
+            File.WriteAllBytes(Path.Combine(root, "Behaviors", "input.hkx"), Array.Empty<byte>());
+            File.WriteAllBytes(Path.Combine(root, "Behaviors", "Behavior00.hkx"), Array.Empty<byte>());
+            File.WriteAllBytes(Path.Combine(root, "CharacterAssets", "Skeleton.hkx"), Array.Empty<byte>());
+            File.WriteAllBytes(Path.Combine(root, "TestProject.hkx"), Array.Empty<byte>());
+            File.WriteAllBytes(Path.Combine(root, "Characters", "TestCharacter.hkx"), Array.Empty<byte>());
+            WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                "Meshes/Actors/Test/Animations/Attack1.hkx", new byte[] { 1, 2, 3 });
+
+            var models = new Dictionary<string, BehaviourGraphModel>(StringComparer.OrdinalIgnoreCase);
+            models[Path.Combine(root, "TestProject.hkx")] = BehaviourGraphModel.Parse($"""
+                <hkpackfile><hksection name="__data__">
+                  <hkobject class="hkbProjectStringData" name="#1">
+                    <hkparam name="characterFilenames" numelements="1">
+                      <hkcstring>Characters\TestCharacter.hkx</hkcstring>
+                    </hkparam>
+                  </hkobject>
+                </hksection></hkpackfile>
+                """);
+            models[Path.Combine(root, "Characters", "TestCharacter.hkx")] =
+                BehaviourGraphModel.Parse($"""
+                    <hkpackfile><hksection name="__data__">
+                      <hkobject class="hkbCharacterStringData" name="#1">
+                        <hkparam name="animationNames" numelements="2">
+                          <hkcstring>Animations\Attack1.HKT</hkcstring>
+                          <hkcstring>Animations\Gone.hkt</hkcstring>
+                        </hkparam>
+                        <hkparam name="behaviorFilename">Behaviors\Behavior00.hkx</hkparam>
+                        <hkparam name="rigName">CharacterAssets\Skeleton.HKT</hkparam>
+                      </hkobject>
+                    </hksection></hkpackfile>
+                    """);
+
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+            var chain = ProjectChain.Resolve(Path.Combine(root, "Behaviors", "input.hkx"),
+                                             path => models[path], gameData);
+
+            Check("both declared animations are listed", 2, chain.Animations.Count);
+            Check("only the absent one is a problem", 1, chain.Problems.Count);
+            CheckTrue("the absent one is named and the archived one is not",
+                      chain.Problems[0].Contains("Gone.hkt") &&
+                      !chain.Problems[0].Contains("Attack1"));
+        }
+        finally { Directory.Delete(work, true); }
+    }
+
+    private static void GameDataLoadOrderFollowsPlugins()
+    {
+        Console.WriteLine("\ngame data orders archives by the plugin load order, not alphabetically");
+
+        string data = Directory.CreateTempSubdirectory("bgs-plugins").FullName;
+        try
+        {
+            WriteSingleEntryArchive(Path.Combine(data, "A - Animations.ba2"), "a.hkx", new byte[] { 1 });
+            WriteSingleEntryArchive(Path.Combine(data, "B - Animations.ba2"), "b.hkx", new byte[] { 2 });
+            WriteSingleEntryArchive(Path.Combine(data, "C - Animations.ba2"), "c.hkx", new byte[] { 3 });
+            string plugins = Path.Combine(data, "plugins.txt");
+            File.WriteAllLines(plugins, new[] { "*C.esm", "*B.esm", "*A.esm" });
+
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data, plugins);
+            Check("three archives indexed", 3, gameData.ArchivePaths.Count);
+            Check("the highest-priority plugin's archive first", "C - Animations.ba2",
+                  Path.GetFileName(gameData.ArchivePaths[0]));
+            Check("the second plugin's archive next", "B - Animations.ba2",
+                  Path.GetFileName(gameData.ArchivePaths[1]));
+            Check("the lowest-priority plugin's archive last", "A - Animations.ba2",
+                  Path.GetFileName(gameData.ArchivePaths[2]));
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static void WriteTestArchive(string path, params (string Name, byte[] Payload)[] entries)
+    {
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+        long headerEnd = 24 + 36L * entries.Length;
+        long cursor = headerEnd;
+        var offsets = new long[entries.Length];
+        for (int i = 0; i < entries.Length; i++)
+        {
+            offsets[i] = cursor;
+            cursor += entries[i].Payload.Length;
+        }
+
+        writer.Write(new[] { 'B', 'T', 'D', 'X' });
+        writer.Write(1u);
+        writer.Write(new[] { 'G', 'N', 'R', 'L' });
+        writer.Write((uint)entries.Length);
+        writer.Write((ulong)cursor);
+
+        for (int i = 0; i < entries.Length; i++)
+        {
+            writer.Write(0u); writer.Write(0u); writer.Write(0u); writer.Write(0u);
+            writer.Write((ulong)offsets[i]);
+            writer.Write(0u);
+            writer.Write((uint)entries[i].Payload.Length);
+            writer.Write(0u);
+        }
+        foreach (var entry in entries) writer.Write(entry.Payload);
+        foreach (var entry in entries)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(entry.Name.Replace('/', '\\'));
+            writer.Write((ushort)bytes.Length);
+            writer.Write(bytes);
+        }
+    }
+
+    private static void GameDataCollapsesBorrowedPaths()
+    {
+        Console.WriteLine("\na borrowed ..\\ path resolves inside the archives");
+
+        string data = Directory.CreateTempSubdirectory("bgs-borrowed").FullName;
+        try
+        {
+            string projectRoot = Path.Combine(data, "Meshes", "Actors", "Character");
+            Directory.CreateDirectory(projectRoot);
+            WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                "Meshes/Actors/PowerArmor/Animations/1HM/SprintPainTrain.hkx", new byte[] { 1 });
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+
+            CheckTrue("the borrowed path resolves through the archive",
+                gameData.ContainsAnimation(projectRoot,
+                                           @"..\PowerArmor\Animations\1HM\SprintPainTrain.HKT"));
+            CheckTrue("a genuinely absent borrowed path does not",
+                !gameData.ContainsAnimation(projectRoot,
+                                            @"..\PowerArmor\Animations\1HM\Nope.HKT"));
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static string WeaponSubgraph() => """
+        <hkpackfile><hksection name="__data__">
+          <hkobject class="hkbClipGenerator" name="#1">
+            <hkparam name="name">PoseA</hkparam>
+            <hkparam name="animationName">Animations\Weapon\44Pistol\WPNAssemblyPose.hkt</hkparam>
+          </hkobject>
+          <hkobject class="hkbClipGenerator" name="#2">
+            <hkparam name="name">PoseB</hkparam>
+            <hkparam name="animationName">Animations\Weapon\Pistol\WPNAssemblyPose.hkt</hkparam>
+          </hkobject>
+          <hkobject class="hkbClipGenerator" name="#3">
+            <hkparam name="name">Reload</hkparam>
+            <hkparam name="animationName">Animations\WPNReload.hkt</hkparam>
+          </hkobject>
+        </hksection></hkpackfile>
+        """;
+
+    private static void WeaponSubgraphPerWeaponCoverageIsReportedOnce()
+    {
+        Console.WriteLine("\na weapon subgraph reports per-weapon coverage as one bounded warning");
+
+        string data = Directory.CreateTempSubdirectory("bgs-weapon").FullName;
+        try
+        {
+            string projectRoot = Path.Combine(data, "Meshes", "Actors", "Test");
+            Directory.CreateDirectory(projectRoot);
+            WriteTestArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                ("Meshes/Actors/Test/Animations/Weapon/44Pistol/WPNAssemblyPose.hkx", new byte[] { 1 }),
+                ("Meshes/Actors/Test/Animations/Weapon/44Pistol/WPNReload.hkx", new byte[] { 2 }),
+                ("Meshes/Actors/Test/Animations/WPNReload.hkx", new byte[] { 4 }));
+            // the Pistol type lacks a per-weapon WPNReload, but the generic copy exists
+            WriteTestArchive(Path.Combine(data, "PistolMod - Animations.ba2"),
+                ("Meshes/Actors/Test/Animations/Weapon/Pistol/WPNAssemblyPose.hkx", new byte[] { 3 }));
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+
+            var chain = new ProjectChain { Root = projectRoot, Data = gameData };
+            var findings = GraphValidator.Check(BehaviourGraphModel.Parse(WeaponSubgraph()), chain);
+
+            var weapon = findings.Where(f => f.What.Contains("per-weapon coverage")).ToList();
+            Check("one aggregate warning for the subgraph", 1, weapon.Count);
+            CheckTrue("it names the type with the gap", weapon[0].What.Contains("Pistol"));
+            CheckTrue("it names an example clip", weapon[0].What.Contains("WPNReload"));
+            Check("no clip is reported missing when the generic copy exists", 0,
+                  findings.Count(f => f.What.Contains("not on disk")));
+        }
+        finally { Directory.Delete(data, true); }
     }
 
     private static void RepackDriftNamesWhatMoved()
