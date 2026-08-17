@@ -134,6 +134,7 @@ public static class Tests
         ("GameDataCollapsesBorrowedPaths", GameDataCollapsesBorrowedPaths),
         ("PackedAnimationsAndSkeletonsPlayBackFromArchives", PackedAnimationsAndSkeletonsPlayBackFromArchives),
         ("WeaponSubgraphPerWeaponCoverageIsReportedOnce", WeaponSubgraphPerWeaponCoverageIsReportedOnce),
+        ("WeaponSubgraphGapNamesTheExactEngineSearch", WeaponSubgraphGapNamesTheExactEngineSearch),
         ("CrashHashResolvesToTheNamedSubgraph", CrashHashResolvesToTheNamedSubgraph),
         ("CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile", CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile),
         ("LooseManifestOverridesTheArchiveCopy", LooseManifestOverridesTheArchiveCopy),
@@ -3076,7 +3077,7 @@ public static class Tests
 
     private static void WeaponSubgraphPerWeaponCoverageIsReportedOnce()
     {
-        Console.WriteLine("\na weapon subgraph reports per-weapon coverage as one bounded warning");
+        Console.WriteLine("\na per-weapon gap resolves each missing clip to the engine search");
 
         string data = Directory.CreateTempSubdirectory("bgs-weapon").FullName;
         try
@@ -3096,13 +3097,109 @@ public static class Tests
             var findings = GraphValidator.Check(BehaviourGraphModel.Parse(WeaponSubgraph()), chain);
 
             var weapon = findings.Where(f => f.What.Contains("per-weapon coverage")).ToList();
-            Check("one aggregate warning for the subgraph", 1, weapon.Count);
-            CheckTrue("it names the type with the gap", weapon[0].What.Contains("Pistol"));
-            CheckTrue("it names an example clip", weapon[0].What.Contains("WPNReload"));
+            Check("one finding per missing per-weapon clip", 1, weapon.Count);
+            CheckTrue("it names the type with the gap", weapon[0].What.Contains("'Pistol'"));
+            CheckTrue("it names the failing search path", weapon[0].What.Contains(@"Animations\Weapon\Pistol"));
+            CheckTrue("it names the generic fallback status", weapon[0].What.Contains("generic"));
+            CheckTrue("it says the generic copy plays the clip", weapon[0].What.Contains("falls back"));
             Check("no clip is reported missing when the generic copy exists", 0,
                   findings.Count(f => f.What.Contains("not on disk")));
         }
         finally { Directory.Delete(data, true); }
+    }
+
+    private static void WeaponSubgraphGapNamesTheExactEngineSearch()
+    {
+        Console.WriteLine("\na map-driven per-weapon gap names the failing chain prefix and the missing generic fallback");
+
+        string data = Directory.CreateTempSubdirectory("bgs-weapon-map").FullName;
+        try
+        {
+            string projectRoot = Path.Combine(data, "Meshes", "Actors", "Test");
+            Directory.CreateDirectory(projectRoot);
+
+            // two weapon archetypes from a synthetic master: 44Pistol falls back through its own
+            // folder then Pistol's; Pistol falls back through its own folder then the generic copy
+            File.WriteAllBytes(Path.Combine(data, "Fallout4.esm"), WeaponEsm(
+                WeaponSet(1, @"Actors\Character\Behaviors\WeaponBehavior.hkx",
+                          @"Actors\Character\Animations\Weapon\44Pistol\Player",
+                          @"Actors\Character\Animations\Weapon\44Pistol",
+                          @"Actors\Character\Animations\Weapon\Pistol"),
+                WeaponSet(2, @"Actors\Character\Behaviors\WeaponBehavior.hkx",
+                          @"Actors\Character\Animations\Weapon\Pistol\Player",
+                          @"Actors\Character\Animations\Weapon\Pistol")));
+
+            // 44Pistol resolves WPNReload through its own chain; nothing resolves it for Pistol
+            WriteTestArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                ("Meshes/Actors/Test/Animations/Weapon/44Pistol/Player/WPNReload.hkx", new byte[] { 1 }),
+                ("Meshes/Actors/Test/Animations/Weapon/44Pistol/WPNAssemblyPose.hkx", new byte[] { 2 }),
+                ("Meshes/Actors/Test/Animations/Weapon/Pistol/WPNAssemblyPose.hkx", new byte[] { 3 }));
+
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+            Check("the synthetic master yields the weapon-type map", 2, gameData.WeaponTypeSets.Count);
+
+            var chain = new ProjectChain { Root = projectRoot, Data = gameData };
+            var findings = GraphValidator.Check(BehaviourGraphModel.Parse(WeaponSubgraph()), chain);
+
+            var weapon = findings.Where(f => f.What.Contains("per-weapon coverage")).ToList();
+            Check("the missing per-weapon clip is one finding", 1, weapon.Count);
+            CheckTrue("it names the weapon type", weapon[0].What.Contains("'Pistol'"));
+            CheckTrue("it names the failing chain prefix", weapon[0].What.Contains(@"Animations\Weapon\Pistol\Player"));
+            CheckTrue("it names the clip", weapon[0].What.Contains("WPNReload"));
+            CheckTrue("it states no generic fallback exists", weapon[0].What.Contains("no generic"));
+            CheckTrue("it marks the clip as a crash", weapon[0].What.Contains("crash"));
+            CheckTrue("44Pistol resolves through its chain and is not named", !weapon[0].What.Contains("44Pistol"));
+
+            // adding the generic copy removes the gap: the engine's final fallback plays it
+            WriteTestArchive(Path.Combine(data, "Generic - Animations.ba2"),
+                ("Meshes/Actors/Test/Animations/WPNReload.hkx", new byte[] { 4 }));
+            using var gameData2 = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+            var chain2 = new ProjectChain { Root = projectRoot, Data = gameData2 };
+            var findings2 = GraphValidator.Check(BehaviourGraphModel.Parse(WeaponSubgraph()), chain2);
+            Check("the generic fallback removes the per-weapon gap", 0,
+                  findings2.Count(f => f.What.Contains("per-weapon coverage")));
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static byte[] WeaponEsm(params byte[][] sets)
+    {
+        byte[] race = Record("RACE", sets.SelectMany(s => s).ToArray());
+        return Record("GRUP", race);
+    }
+
+    private static byte[] WeaponSet(uint id, string behavior, params string[] sapt)
+    {
+        var payload = new List<byte>();
+        void Sub(string tag, byte[] data)
+        {
+            payload.AddRange(System.Text.Encoding.ASCII.GetBytes(tag));
+            payload.Add((byte)(data.Length & 0xFF));
+            payload.Add((byte)((data.Length >> 8) & 0xFF));
+            payload.AddRange(data);
+        }
+        Sub("SAKD", BitConverter.GetBytes(id));
+        Sub("SGNM", System.Text.Encoding.UTF8.GetBytes(behavior + "\0"));
+        foreach (string path in sapt)
+            Sub("SAPT", System.Text.Encoding.UTF8.GetBytes(path + "\0"));
+        Sub("SRAF", BitConverter.GetBytes(0u));
+        return payload.ToArray();
+    }
+
+    private static byte[] Record(string type, byte[] payload)
+    {
+        // a GRUP's size field covers its own 24-byte header plus everything inside it
+        uint size = type == "GRUP" ? (uint)payload.Length + 24 : (uint)payload.Length;
+        var record = new List<byte>();
+        record.AddRange(System.Text.Encoding.ASCII.GetBytes(type));
+        record.AddRange(BitConverter.GetBytes(size));
+        record.AddRange(BitConverter.GetBytes(0u));
+        record.AddRange(BitConverter.GetBytes(0x00000800u));
+        record.AddRange(BitConverter.GetBytes(0u));
+        record.AddRange(BitConverter.GetBytes((ushort)0));
+        record.AddRange(BitConverter.GetBytes((ushort)0));
+        record.AddRange(payload);
+        return record.ToArray();
     }
 
     private static byte[] OffsetFile(string behaviorPath, byte[] junk)

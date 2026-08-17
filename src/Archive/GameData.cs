@@ -361,7 +361,10 @@ public sealed class GameData : IDisposable
             return sets;
         }
 
-        var byType = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+        // insertion order is the engine's fallback order: each set lists its prefixes from the
+        // most specific (Animations\Weapon\<Type>\Player) down through the generic weapon folders,
+        // and a later set only adds prefixes its type did not already inherit.
+        var byType = new Dictionary<string, (List<string> Prefixes, HashSet<string> Seen)>(StringComparer.OrdinalIgnoreCase);
         foreach (var set in animSets)
         {
             string behavior = Path.GetFileNameWithoutExtension(set.Behavior);
@@ -391,12 +394,13 @@ public sealed class GameData : IDisposable
             if (type == null) continue;
 
             if (!byType.TryGetValue(type, out var known))
-                byType[type] = known = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string prefix in prefixes) known.Add(prefix);
+                byType[type] = known = (new List<string>(), new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            foreach (string prefix in prefixes)
+                if (known.Seen.Add(prefix)) known.Prefixes.Add(prefix);
         }
 
         foreach (var pair in byType.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
-            sets.Add(new WeaponTypeSet(pair.Key, pair.Value.ToList()));
+            sets.Add(new WeaponTypeSet(pair.Key, pair.Value.Prefixes.ToList()));
         return sets;
     }
 

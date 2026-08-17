@@ -6,6 +6,8 @@ namespace OpenCommonwealth.Services.Hkx;
 
 public static class GraphValidator
 {
+    private const int MaxPerWeaponFindings = 6;
+
     public enum Level { Error, Warning }
 
     public sealed class Finding
@@ -435,10 +437,11 @@ public static class GraphValidator
     /// Animations\Weapon\&lt;Type&gt;\ is a weapon subgraph: the engine resolves its generic
     /// Animations\&lt;clip&gt; references per weapon through the animation-set fallback chains
     /// on the race record (AnimationSetData), whose paths are Animations\Weapon\&lt;Type&gt;\...
-    /// GameData derives that map from the game's master plugin, so a generic clip counts as
-    /// covered for a weapon type when a copy exists under any of that type's chains. Without
-    /// the master (no game data folder), the older bounded heuristic is kept: the weapon types
-    /// the subgraph names itself, and the generic clips that have a per-weapon copy somewhere.
+    /// GameData derives that map from the game's master plugin, so each missing clip is
+    /// resolved to the exact engine search: the failing chain prefix, and whether the generic
+    /// Animations\&lt;clip&gt; fallback exists. Without the master (no game data folder), the
+    /// older bounded heuristic is kept: the weapon types the subgraph names itself, and the
+    /// generic clips that have a per-weapon copy somewhere.
     /// </summary>
     private static void CheckWeaponSubgraphClips(BehaviourGraphModel model, ProjectChain chain,
                                                  List<Finding> found)
@@ -482,37 +485,39 @@ public static class GraphValidator
                 chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data))).ToList();
         if (perWeapon.Count == 0) return;
 
-        var heuristic = new List<string>();
-        string? example = null;
+        // without the master the weapon types are the folders the subgraph names itself, and
+        // every per-weapon clip missing for a type is reported with the failing search path and
+        // whether the engine's generic fallback still plays it.
+        var messages = new List<string>();
         foreach (string type in referencedTypes)
         {
-            int missing = perWeapon.Count(leaf => !ProjectChain.AnimationExists(
-                chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data));
-            if (missing == 0) continue;
+            foreach (string leaf in perWeapon)
+            {
+                if (ProjectChain.AnimationExists(chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data))
+                    continue;
 
-            heuristic.Add($"'{type}' lacks {missing} of {perWeapon.Count}");
-            example ??= perWeapon.First(leaf => !ProjectChain.AnimationExists(
-                chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data));
+                bool genericExists = ProjectChain.AnimationExists(chain.Root, "Animations\\" + leaf, chain.Data);
+                messages.Add(genericExists
+                    ? $"per-weapon coverage: '{type}' lacks {leaf} under Animations\\Weapon\\{type}; " +
+                      $"the generic Animations\\{leaf} copy exists, so the engine falls back and the clip " +
+                      "still plays (extract a per-weapon copy to override it)"
+                    : $"per-weapon coverage: '{type}' lacks {leaf} under Animations\\Weapon\\{type}, and no " +
+                      $"generic Animations\\{leaf} copy exists either — playing this clip for this weapon " +
+                      $"type is a crash (extract the animation under Animations\\Weapon\\{type})");
+            }
         }
-        if (heuristic.Count == 0) return;
-
-        string heuristicTypes = string.Join(", ", heuristic.Take(4));
-        if (heuristic.Count > 4) heuristicTypes += $", and {heuristic.Count - 4} more";
-        Add(found, Level.Warning, "weapon subgraph",
-            $"per-weapon coverage of {perWeapon.Count} generic clip(s): {heuristicTypes} " +
-            $"(e.g. {example}); the engine falls back to the generic copy where it exists, " +
-            $"and not every weapon needs every clip, so a gap is only a crash when the generic " +
-            $"copy is missing too");
+        ReportWeaponGaps(found, messages);
     }
 
     /// <summary>
     /// The precise form of the per-weapon check: each weapon type carries the fallback chain
     /// of animation paths the engine searches, from the race AnimationSetData. A generic clip
-    /// is covered for a type when it exists under any prefix of that type's chain, so a type
-    /// that deliberately lacks a clip (because an earlier prefix in its own chain holds it, or
-    /// because the game never asks that type for it) is not flagged. Vanilla resolves every
-    /// clip this way, so a clean install reports nothing; only genuinely missing copies are
-    /// named.
+    /// is covered for a type when it exists under any prefix of that type's chain, or as the
+    /// generic Animations\&lt;clip&gt; fallback the engine falls back to after the chain. Every
+    /// genuinely missing clip is reported with the exact engine search that failed: the chain
+    /// prefix where the copy should be, and the fact that no generic fallback exists (the crash
+    /// condition). Vanilla resolves every clip this way, so a clean install reports nothing;
+    /// only truly missing copies are named.
     /// </summary>
     private static void CheckWeaponSubgraphAgainstMap(BehaviourGraphModel model, ProjectChain chain,
                                                       List<string> generic,
@@ -521,30 +526,41 @@ public static class GraphValidator
     {
         // the engine searches the type's fallback chain first and falls back to the generic
         // Animations\<clip> file, so a clip is covered for the type when either holds it;
-        // only a clip absent from both is a real gap for that weapon type.
-        var gaps = new List<string>();
-        string? example = null;
+        // only a clip absent from both is a real gap, and the warning names the exact search.
+        var messages = new List<string>();
         foreach (var set in sets)
         {
-            bool Covered(string leaf) =>
-                set.Prefixes.Any(prefix =>
-                    ProjectChain.AnimationExists(chain.Root, prefix + "\\" + leaf, chain.Data)) ||
-                ProjectChain.AnimationExists(chain.Root, "Animations\\" + leaf, chain.Data);
+            if (set.Prefixes.Count == 0) continue;
 
-            var missing = generic.Where(leaf => !Covered(leaf)).ToList();
-            if (missing.Count == 0) continue;
+            foreach (string leaf in generic)
+            {
+                bool inChain = set.Prefixes.Any(prefix =>
+                    ProjectChain.AnimationExists(chain.Root, prefix + "\\" + leaf, chain.Data));
+                if (inChain) continue;
 
-            gaps.Add($"'{set.Type}' lacks {missing.Count} of {generic.Count}");
-            example ??= missing[0];
+                // the engine's final fallback is the generic copy; when it exists the clip plays
+                if (ProjectChain.AnimationExists(chain.Root, "Animations\\" + leaf, chain.Data)) continue;
+
+                messages.Add($"per-weapon coverage: '{set.Type}' cannot resolve {leaf}: the engine searched " +
+                             $"its {set.Prefixes.Count}-prefix chain starting at {set.Prefixes[0]}\\{leaf} and " +
+                             $"found no copy, and no generic Animations\\{leaf} fallback exists either — " +
+                             "playing this clip for this weapon type is a crash");
+            }
         }
-        if (gaps.Count == 0) return;
+        ReportWeaponGaps(found, messages);
+    }
 
-        string types = string.Join(", ", gaps.Take(4));
-        if (gaps.Count > 4) types += $", and {gaps.Count - 4} more";
-        Add(found, Level.Warning, "weapon subgraph",
-            $"per-weapon coverage of {generic.Count} generic clip(s): {types} " +
-            $"(e.g. {example}); the missing copy would be a crash when the weapon actually " +
-            $"plays that clip, so extract the named animations under Animations\\Weapon");
+    /// <summary>Emit the per-clip findings, bounded so one subgraph cannot flood the list.</summary>
+    private static void ReportWeaponGaps(List<Finding> found, List<string> messages)
+    {
+        if (messages.Count == 0) return;
+
+        foreach (string message in messages.Take(MaxPerWeaponFindings))
+            Add(found, Level.Warning, "weapon subgraph", message);
+        if (messages.Count > MaxPerWeaponFindings)
+            Add(found, Level.Warning, "weapon subgraph",
+                $"per-weapon coverage: {messages.Count - MaxPerWeaponFindings} more missing clip(s) for " +
+                "other weapon types (extract the named animations under Animations\\Weapon)");
     }
 
     private static void CheckUnattached(BehaviourGraphModel model, List<Finding> found)
