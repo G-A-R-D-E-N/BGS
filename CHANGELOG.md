@@ -17,6 +17,7 @@ August 17, 2026
 * It reports the subgraph's behavior graph(s), the archive the manifest came from, whether its offset-data file exists, and which of the subgraph's animations are missing from the game data.
 * Loose manifest overrides (e.g. a merged AnimTextData mod) are honored, matching how the engine resolves the tree.
 * New `symrm hash <behavior.hkx> <sapt> [...]` computes the subgraph id itself from a race record's behavior graph and animation folder prefixes. The algorithm was reverse-engineered from the game binary and validated against the game's shipped ids: it is CRC-32 (reflected 0xEDB88320 table, init 0, no final xor) of the lowercased prefix list joined by `|` in the high half, and of the lowercased behavior path in the low half. Every base-game subgraph id recomputes exactly from its race record.
+* `symrm crash` then resolves the subgraph to the specific per-weapon clip that is missing: it opens each behavior the manifest names (plus the behavior its `AnimationOffsets` file hints at) and runs the engine-search check, reporting the failing weapon chain prefix and whether a generic `Animations\<clip>` fallback exists for every unresolved clip.
 
 </details>
 

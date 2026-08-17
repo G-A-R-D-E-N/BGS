@@ -136,6 +136,7 @@ public static class Tests
         ("WeaponSubgraphPerWeaponCoverageIsReportedOnce", WeaponSubgraphPerWeaponCoverageIsReportedOnce),
         ("WeaponSubgraphGapNamesTheExactEngineSearch", WeaponSubgraphGapNamesTheExactEngineSearch),
         ("CrashHashResolvesToTheNamedSubgraph", CrashHashResolvesToTheNamedSubgraph),
+        ("CrashResolvesToTheMissingPerWeaponClip", CrashResolvesToTheMissingPerWeaponClip),
         ("CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile", CrashHashWithOnlyOffsetDataFallsBackToTheOffsetFile),
         ("LooseManifestOverridesTheArchiveCopy", LooseManifestOverridesTheArchiveCopy),
         ("SubgraphHashMatchesKnownGameValues", SubgraphHashMatchesKnownGameValues),
@@ -3242,6 +3243,114 @@ public static class Tests
                   gameData.ContainsAnimation(Path.Combine(data, "Meshes"), sub.AnimationPaths[1]));
         }
         finally { Directory.Delete(data, true); }
+    }
+
+    private static void CrashResolvesToTheMissingPerWeaponClip()
+    {
+        Console.WriteLine("\nthe crash hash resolves to the per-weapon clip the engine search cannot cover");
+
+        string data = Directory.CreateTempSubdirectory("bgs-crash-weapon").FullName;
+        try
+        {
+            const string manifest =
+                "3\n1\n10448007347639226270\n1\n" +
+                "Actors\\Character\\Behaviors\\SyncedAnimBehavior.hkx\n";
+            WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                "Meshes/AnimTextData/AnimationFileData/10448007347639226270.txt",
+                System.Text.Encoding.UTF8.GetBytes(manifest));
+            WriteSingleEntryArchive(Path.Combine(data, "DLCRobot - Main.ba2"),
+                "Meshes/AnimTextData/AnimationOffsets/10448007347639226270.txt",
+                OffsetFile(@"Actors\Character\Behaviors\WeaponBehavior.hkx", new byte[] { 1, 2, 3 }));
+            WriteTestArchive(Path.Combine(data, "WeaponClips.ba2"),
+                ("Meshes/Actors/Character/Behaviors/WeaponBehavior.hkx", WeaponSubgraphBytes()),
+                ("Meshes/Actors/Character/Animations/Weapon/44Pistol/Player/WPNReload.hkx", new byte[] { 1 }));
+            File.WriteAllBytes(Path.Combine(data, "Fallout4.esm"), WeaponEsm(
+                WeaponSet(1, @"Actors\Character\Behaviors\WeaponBehavior.hkx",
+                          @"Actors\Character\Animations\Weapon\44Pistol\Player",
+                          @"Actors\Character\Animations\Weapon\44Pistol",
+                          @"Actors\Character\Animations\Weapon\Pistol"),
+                WeaponSet(2, @"Actors\Character\Behaviors\WeaponBehavior.hkx",
+                          @"Actors\Character\Animations\Weapon\Pistol\Player",
+                          @"Actors\Character\Animations\Weapon\Pistol")));
+
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+            var index = OpenCommonwealth.Services.Archive.SubgraphIndex.Discover(gameData);
+            var sub = index.Find(10448007347639226270UL);
+            Check("the crash hash resolves to a manifest", true, sub != null);
+            if (sub == null) return;
+
+            var off = index.FindOffsetData(10448007347639226270UL);
+            Check("the offset file hints at the weapon behavior",
+                  @"Actors\Character\Behaviors\WeaponBehavior.hkx", off?.FirstPathHint);
+
+            var paths = sub.BehaviorPaths.ToList();
+            if (off?.FirstPathHint != null &&
+                !paths.Contains(off.FirstPathHint, StringComparer.OrdinalIgnoreCase))
+                paths.Add(off.FirstPathHint);
+
+            var (weaponSubgraph, gaps) = Program.WeaponGapFindings(gameData, paths);
+            Check("the weapon subgraph is found through the offset hint", true, weaponSubgraph);
+            Check("the engine search resolves one missing clip", 1, gaps.Count);
+            CheckTrue("it names the weapon type", gaps[0].What.Contains("'Pistol'"));
+            CheckTrue("it names the failing chain prefix", gaps[0].What.Contains(@"Animations\Weapon\Pistol\Player"));
+            CheckTrue("it names the clip", gaps[0].What.Contains("WPNReload"));
+            CheckTrue("it marks the crash condition", gaps[0].What.Contains("crash"));
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static byte[] WeaponSubgraphBytes()
+    {
+        var classes = HavokClasses.Shipped;
+        int size = classes["hkbClipGenerator"]!.Size;
+        int nameField = classes.Field("hkbClipGenerator", "animationName")!.Offset;
+
+        var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature)
+                    .CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
+
+        string perWeapon = @"Animations\Weapon\44Pistol\WPNAssemblyPose.hkt";
+        string generic = @"Animations\WPNReload.hkt";
+        byte[] perWeaponBytes = System.Text.Encoding.UTF8.GetBytes(perWeapon);
+        byte[] genericBytes = System.Text.Encoding.UTF8.GetBytes(generic);
+        int string0At = size;
+        int object1At = size + perWeaponBytes.Length + 1;
+        int string1At = object1At + size;
+
+        var data = new byte[string1At + genericBytes.Length + 1];
+        perWeaponBytes.CopyTo(data, string0At);
+        genericBytes.CopyTo(data, string1At);
+
+        var locals = new List<byte>();
+        void Local(int at, int target)
+        {
+            locals.AddRange(BitConverter.GetBytes(at));
+            locals.AddRange(BitConverter.GetBytes(target));
+        }
+        Local(nameField, string0At);
+        Local(object1At + nameField, string1At);
+
+        var virtuals = new List<byte>();
+        virtuals.AddRange(Triple(0, 0, 5));
+        virtuals.AddRange(Triple(object1At, 0, 5));
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"),
+            Data = names,
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            LocalFixups = locals.ToArray(),
+            VirtualFixups = virtuals.ToArray(),
+        });
+        image.ContentsSectionIndex = 1;
+        return image.Rebuild();
     }
 
     private static void SubgraphHashMatchesKnownGameValues()

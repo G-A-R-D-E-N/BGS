@@ -4192,7 +4192,64 @@ public static class Program
             Console.WriteLine("  offset data (no AnimationOffsets file for this id in the game data)");
         }
 
+        var behaviorPaths = new List<string>();
+        if (sub != null) behaviorPaths.AddRange(sub.BehaviorPaths);
+        if (off?.FirstPathHint != null &&
+            !behaviorPaths.Contains(off.FirstPathHint, StringComparer.OrdinalIgnoreCase))
+            behaviorPaths.Add(off.FirstPathHint);
+
+        if (behaviorPaths.Count > 0)
+        {
+            var (weaponSubgraph, gaps) = WeaponGapFindings(data, behaviorPaths);
+            if (!weaponSubgraph)
+                Console.WriteLine("  per-weapon  not a weapon subgraph (no Animations\\Weapon\\ clips)");
+            else if (gaps.Count == 0)
+                Console.WriteLine("  per-weapon  every clip resolves for every weapon type " +
+                                  "(the fallback chains or the generic copy)");
+            else
+            {
+                Console.WriteLine($"  per-weapon  {gaps.Count} missing clip(s) resolved by the engine search:");
+                foreach (var f in gaps.Take(6))
+                    Console.WriteLine($"    {f.What}");
+                if (gaps.Count > 6)
+                    Console.WriteLine($"    ... and {gaps.Count - 6} more");
+            }
+        }
+
         return sub == null ? 1 : 0;
+    }
+
+    internal static (bool WeaponSubgraph, List<GraphValidator.Finding> Gaps) WeaponGapFindings(
+        OpenCommonwealth.Services.Archive.GameData data,
+        IEnumerable<string> behaviorPaths)
+    {
+        bool weaponSubgraph = false;
+        var gaps = new List<GraphValidator.Finding>();
+        foreach (string behavior in behaviorPaths)
+        {
+            string norm = behavior.Replace('/', '\\');
+            int at = norm.LastIndexOf("\\Behaviors\\", StringComparison.OrdinalIgnoreCase);
+            if (at < 0) continue;
+
+            string root = Path.Combine(data.DataFolder, "Meshes", norm[..at]);
+            var read = data.ReadAnimation(root, norm[(at + 1)..]);
+            if (read == null) continue;
+
+            string xml;
+            try { xml = OpenCommonwealth.Services.Hkx.NativeXml.From(read.Bytes); }
+            catch { continue; }
+            if (xml.Length == 0) continue;
+
+            if (xml.IndexOf(@"Animations\Weapon\", StringComparison.OrdinalIgnoreCase) >= 0)
+                weaponSubgraph = true;
+
+            var chain = new ProjectChain { Root = root, Data = data };
+            List<GraphValidator.Finding> findings;
+            try { findings = GraphValidator.Check(xml, chain); }
+            catch { continue; }
+            gaps.AddRange(findings.Where(f => f.Where == "weapon subgraph"));
+        }
+        return (weaponSubgraph, gaps);
     }
 
     internal static ulong? ExtractSubgraphHash(string input)
