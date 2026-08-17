@@ -5,22 +5,8 @@ using System.Linq;
 
 namespace OpenCommonwealth.Services.Archive;
 
-/// <summary>
-/// The engine's AnimTextData subgraph index, built from the files the game itself ships.
-///
-/// The game keys its animation data by a 64-bit subgraph identifier (a hash Bethesda computes
-/// at runtime; the algorithm is not public). The vanilla game ships the ground truth in
-/// Meshes\AnimTextData\AnimationFileData\&lt;id&gt;.txt inside its .ba2 archives: a small text
-/// manifest that names the subgraph's behavior graph(s) and every animation file bound to it.
-/// Mods extend the same tree, and the union manifest (PersistantSubgraphInfoAndOffsetData.txt)
-/// lists which per-subgraph offset files exist.
-///
-/// This index reads those manifests so a crash-log hash like 10448007347639226270 can be
-/// resolved to the subgraph it names without reimplementing the hash.
-/// </summary>
 public sealed class SubgraphIndex
 {
-    /// <summary>One subgraph manifest: the behavior graph(s) and animation files keyed by id.</summary>
     public sealed record Subgraph(
         ulong Id,
         IReadOnlyList<string> BehaviorPaths,
@@ -31,8 +17,6 @@ public sealed class SubgraphIndex
         public string PrimaryBehavior => BehaviorPaths.Count > 0 ? BehaviorPaths[0] : "";
     }
 
-    /// <summary>A per-subgraph offset-data file with no named manifest: the id exists in the
-    /// AnimationOffsets tree, and its first embedded path is a (sometimes inaccurate) hint.</summary>
     public sealed record OffsetData(ulong Id, string Source, string EntryName, int Bytes, string? FirstPathHint);
 
     private readonly Dictionary<ulong, Subgraph> _byId;
@@ -46,24 +30,15 @@ public sealed class SubgraphIndex
 
     public IReadOnlyDictionary<ulong, Subgraph> Subgraphs => _byId;
 
-    /// <summary>Resolve a subgraph id to its named manifest, or null when the game data has none.</summary>
     public Subgraph? Find(ulong id) => _byId.TryGetValue(id, out var s) ? s : null;
 
-    /// <summary>The offset-data file for an id, or null when the game data has none.</summary>
     public OffsetData? FindOffsetData(ulong id) => _offsets.TryGetValue(id, out var o) ? o : null;
 
-    /// <summary>
-    /// Build the index from a game data tree. Loose AnimTextData files win over archive
-    /// entries with the same id, and within archives the later-loaded archive wins, matching
-    /// how the engine resolves the tree.
-    /// </summary>
     public static SubgraphIndex Discover(GameData data)
     {
         var byId = new Dictionary<ulong, Subgraph>();
         var offsets = new Dictionary<ulong, OffsetData>();
 
-        // Archives first, then loose files override: the engine and mod managers resolve
-        // Meshes\AnimTextData with loose files winning over archive entries.
         foreach (var (archive, entry) in data.EnumerateEntries())
         {
             string name = entry.Name.Replace('\\', '/');
@@ -113,11 +88,6 @@ public sealed class SubgraphIndex
         return new SubgraphIndex(byId, offsets);
     }
 
-    /// <summary>
-    /// Parse an AnimationFileData manifest: a header line, a count line, the id, a path count,
-    /// then the paths. Paths under a ...\Behaviors\ folder are behavior graphs; the rest are
-    /// animation files. Returns null when the file is not a readable numeric manifest.
-    /// </summary>
     internal static Subgraph? ParseManifestFile(string entryName, byte[] bytes, string source, string entryPath)
     {
         string text;
@@ -147,7 +117,6 @@ public sealed class SubgraphIndex
         }
         if (behaviors.Count == 0 && animations.Count > 0)
         {
-            // A manifest with only animation paths still names a subgraph via its first entry.
             behaviors.Add(animations[0]);
             animations.RemoveAt(0);
         }
@@ -168,12 +137,6 @@ public sealed class SubgraphIndex
         catch (Exception e) when (e is IOException or InvalidDataException) { return Array.Empty<byte>(); }
     }
 
-    /// <summary>
-    /// The first embedded path of an AnimationOffsets file: "V4\n" followed by a one-byte
-    /// length and the behavior path (including its trailing NUL). This is a hint only — the
-    /// engine binds one offset file across several subgraph instances, so the authoritative
-    /// subgraph name comes from the AnimationFileData manifest.
-    /// </summary>
     internal static string? FirstPathHint(byte[] bytes)
     {
         if (bytes.Length < 8 || bytes[0] != (byte)'V' || bytes[1] != (byte)'4') return null;

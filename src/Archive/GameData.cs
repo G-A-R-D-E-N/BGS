@@ -361,20 +361,12 @@ public sealed class GameData : IDisposable
             return sets;
         }
 
-        // insertion order is the engine's fallback order: each set lists its prefixes from the
-        // most specific (Animations\Weapon\<Type>\Player) down through the generic weapon folders,
-        // and a later set only adds prefixes its type did not already inherit.
         var byType = new Dictionary<string, (List<string> Prefixes, HashSet<string> Seen)>(StringComparer.OrdinalIgnoreCase);
         foreach (var set in animSets)
         {
             string behavior = Path.GetFileNameWithoutExtension(set.Behavior);
             if (!behavior.Contains("Weapon", StringComparison.OrdinalIgnoreCase)) continue;
 
-            // each set is one weapon archetype: its first Animations\Weapon\ path names the
-            // type, and every path in the set is the fallback chain that type searches.
-            // The set paths are data-relative, e.g. Actors\Character\Animations\Weapon\
-            // 44Pistol\Player; the project root for a character sits at Actors\Character,
-            // so the declared path is the suffix after that prefix.
             string? type = null;
             var prefixes = new List<string>();
             foreach (string path in set.Paths)

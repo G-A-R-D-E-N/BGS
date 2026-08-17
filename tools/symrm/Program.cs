@@ -4129,7 +4129,6 @@ public static class Program
             return 1;
         }
 
-        // Accept either a bare hash or a crash log naming the file.
         ulong? id = ExtractSubgraphHash(input);
         if (id == null)
         {
@@ -4196,10 +4195,6 @@ public static class Program
         return sub == null ? 1 : 0;
     }
 
-    /// <summary>
-    /// Read a bare hash or a crash log and return the AnimTextData subgraph hash it names.
-    /// Prefers the AnimationOffsets\&lt;id&gt;.txt pattern, then the longest digit run.
-    /// </summary>
     internal static ulong? ExtractSubgraphHash(string input)
     {
         string text = input;

@@ -3118,8 +3118,6 @@ public static class Tests
             string projectRoot = Path.Combine(data, "Meshes", "Actors", "Test");
             Directory.CreateDirectory(projectRoot);
 
-            // two weapon archetypes from a synthetic master: 44Pistol falls back through its own
-            // folder then Pistol's; Pistol falls back through its own folder then the generic copy
             File.WriteAllBytes(Path.Combine(data, "Fallout4.esm"), WeaponEsm(
                 WeaponSet(1, @"Actors\Character\Behaviors\WeaponBehavior.hkx",
                           @"Actors\Character\Animations\Weapon\44Pistol\Player",
@@ -3129,7 +3127,6 @@ public static class Tests
                           @"Actors\Character\Animations\Weapon\Pistol\Player",
                           @"Actors\Character\Animations\Weapon\Pistol")));
 
-            // 44Pistol resolves WPNReload through its own chain; nothing resolves it for Pistol
             WriteTestArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
                 ("Meshes/Actors/Test/Animations/Weapon/44Pistol/Player/WPNReload.hkx", new byte[] { 1 }),
                 ("Meshes/Actors/Test/Animations/Weapon/44Pistol/WPNAssemblyPose.hkx", new byte[] { 2 }),
@@ -3150,7 +3147,6 @@ public static class Tests
             CheckTrue("it marks the clip as a crash", weapon[0].What.Contains("crash"));
             CheckTrue("44Pistol resolves through its chain and is not named", !weapon[0].What.Contains("44Pistol"));
 
-            // adding the generic copy removes the gap: the engine's final fallback plays it
             WriteTestArchive(Path.Combine(data, "Generic - Animations.ba2"),
                 ("Meshes/Actors/Test/Animations/WPNReload.hkx", new byte[] { 4 }));
             using var gameData2 = OpenCommonwealth.Services.Archive.GameData.Discover(data);
@@ -3188,7 +3184,6 @@ public static class Tests
 
     private static byte[] Record(string type, byte[] payload)
     {
-        // a GRUP's size field covers its own 24-byte header plus everything inside it
         uint size = type == "GRUP" ? (uint)payload.Length + 24 : (uint)payload.Length;
         var record = new List<byte>();
         record.AddRange(System.Text.Encoding.ASCII.GetBytes(type));
@@ -3253,9 +3248,6 @@ public static class Tests
     {
         Console.WriteLine("\nthe subgraph id recomputes exactly from the behavior and its prefixes");
 
-        // (id, behavior, prefixes) triples taken from the game's own archives: each id is
-        // the AnimationFileData/AnimationOffsets file name the engine shipped, and the
-        // behavior/prefixes are the matching race record's SGNM/SAPT subrecords.
         var known = new (ulong Id, string Behavior, string[] Sapt)[]
         {
             (10063049680076617785UL, @"Actors\Shared\Behaviors\BloodbugSharedCoreWrappingBehavior.hkx",
@@ -3284,9 +3276,6 @@ public static class Tests
     {
         Console.WriteLine("\nthe low half of a subgraph id is the CRC of the lowercased behavior path");
 
-        // The crash-log hash 10448007347639226270 = 0x90fec753a6b50f9e; the low half
-        // 0xa6b50f9e is the CRC of the weapon behavior path, confirmed against the
-        // AnimationOffsets file the game ships for that id.
         Check("crash hash low half is the weapon behavior path", 0xa6b50f9eu,
               OpenCommonwealth.Services.Archive.SubgraphHash.BehaviorHalf(
                   @"Actors\Character\Behaviors\WeaponBehavior.hkx"));
