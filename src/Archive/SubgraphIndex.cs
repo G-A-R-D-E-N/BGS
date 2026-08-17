@@ -63,9 +63,15 @@ public sealed class SubgraphIndex
             }
         }
 
-        string looseRoot = Path.Combine(data.DataFolder, "Meshes", "AnimTextData");
-        if (Directory.Exists(looseRoot))
+        ScanLoose(data.DataFolder);
+        foreach (string mod in data.ModRoots) ScanLoose(mod);
+
+        return new SubgraphIndex(byId, offsets);
+
+        void ScanLoose(string root)
         {
+            string looseRoot = Path.Combine(root, "Meshes", "AnimTextData");
+            if (!Directory.Exists(looseRoot)) return;
             string looseFileData = Path.Combine(looseRoot, "AnimationFileData");
             if (Directory.Exists(looseFileData))
             foreach (string file in Directory.EnumerateFiles(
@@ -86,8 +92,6 @@ public sealed class SubgraphIndex
                     offsets[id] = new OffsetData(id, "loose", file, (int)new FileInfo(file).Length, FirstPathHint(ReadText(file)));
             }
         }
-
-        return new SubgraphIndex(byId, offsets);
     }
 
     internal static Subgraph? ParseManifestFile(string entryName, byte[] bytes, string source, string entryPath)

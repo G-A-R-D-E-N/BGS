@@ -18,6 +18,7 @@ August 17, 2026
 * Loose manifest overrides (e.g. a merged AnimTextData mod) are honored, matching how the engine resolves the tree.
 * New `symrm hash <behavior.hkx> <sapt> [...]` computes the subgraph id itself from a race record's behavior graph and animation folder prefixes. The algorithm was reverse-engineered from the game binary and validated against the game's shipped ids: it is CRC-32 (reflected 0xEDB88320 table, init 0, no final xor) of the lowercased prefix list joined by `|` in the high half, and of the lowercased behavior path in the low half. Every base-game subgraph id recomputes exactly from its race record.
 * `symrm crash` then resolves the subgraph to the specific per-weapon clip that is missing: it opens each behavior the manifest names (plus the behavior its `AnimationOffsets` file hints at) and runs the engine-search check, reporting the failing weapon chain prefix and whether a generic `Animations\<clip>` fallback exists for every unresolved clip.
+* `symrm crash --mods <MO2 mods folder> [--profile <name>]` resolves the same hash against modded game data: enabled mods from the modlist (or `profiles/<name>/modlist.txt`) are layered over the base game the way the engine loads them — loose mod files and mod .ba2 archives override base data, the profile overwrite folder wins, and merged AnimTextData manifests shipped loose in a mod are honored.
 
 </details>
 

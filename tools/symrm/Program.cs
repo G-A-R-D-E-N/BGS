@@ -87,10 +87,13 @@ public static class Program
           lifecycle <hkxDir | file.hkx>
               Native open, edit, save, reload, validate, and render gate for supported files.
 
-          crash <hash | crashlog.txt> --data <Data folder>
+          crash <hash | crashlog.txt> --data <Data folder> [--mods <MO2 mods folder> [--profile <name>]]
               Resolve an AnimTextData subgraph hash (e.g. 10448007347639226270) to the
               subgraph it names, using the AnimationFileData manifests the game ships in its
-              archives, and report which of the subgraph's animations are missing.
+              archives, and report which of the subgraph's animations are missing. With
+              --mods, the merged manifests and animations from a Mod Organizer 2 modlist
+              (the mods folder, or its profiles/<name>/modlist.txt when --profile is given)
+              are layered over the game data the way the engine loads them.
 
           hash <behavior.hkx> [<sapt> ...]
               Compute the AnimTextData subgraph id for a behavior graph and its animation
@@ -4119,9 +4122,13 @@ public static class Program
 
         string input = argv[1];
         string? dataFolder = null;
+        string? modsFolder = null;
+        string? profile = null;
         for (int i = 2; i < argv.Length; i++)
         {
             if (argv[i] == "--data" && i + 1 < argv.Length) dataFolder = argv[i + 1];
+            if (argv[i] == "--mods" && i + 1 < argv.Length) modsFolder = argv[i + 1];
+            if (argv[i] == "--profile" && i + 1 < argv.Length) profile = argv[i + 1];
         }
         if (dataFolder == null)
         {
@@ -4142,15 +4149,40 @@ public static class Program
             Console.Error.WriteLine($"--data folder not found: {dataFolder}");
             return 1;
         }
+        if (modsFolder != null)
+        {
+            modsFolder = Path.GetFullPath(modsFolder);
+            if (!Directory.Exists(modsFolder))
+            {
+                Console.Error.WriteLine($"--mods folder not found: {modsFolder}");
+                return 1;
+            }
+        }
 
-        using var data = OpenCommonwealth.Services.Archive.GameData.Discover(dataFolder);
+        using var data = modsFolder != null
+            ? OpenCommonwealth.Services.Archive.GameData.DiscoverModded(dataFolder, modsFolder, profile)
+            : OpenCommonwealth.Services.Archive.GameData.Discover(dataFolder);
         var index = OpenCommonwealth.Services.Archive.SubgraphIndex.Discover(data);
         int manifestCount = index.Subgraphs.Count;
 
         var sub = index.Find(id.Value);
+        string modInfo = modsFolder != null
+            ? $" plus {data.ModRoots.Count} mod root(s) from {modsFolder}"
+            : "";
         Console.WriteLine($"subgraph {id.Value}");
-        Console.WriteLine($"  manifests   {manifestCount} AnimationFileData file(s) under {dataFolder}" +
+        Console.WriteLine($"  manifests   {manifestCount} AnimationFileData file(s) under {dataFolder}{modInfo}" +
                           $" ({data.ArchivePaths.Count} archive(s))");
+        if (data.ModRoots.Count > 0)
+        {
+            var withAnimTextData = data.ModRoots
+                .Where(r => Directory.Exists(Path.Combine(r, "Meshes", "AnimTextData")))
+                .Select(r => Path.GetFileName(r.TrimEnd(Path.DirectorySeparatorChar)))
+                .ToList();
+            if (withAnimTextData.Count > 0)
+                Console.WriteLine($"  mods        {withAnimTextData.Count} root(s) hold AnimTextData: " +
+                                  string.Join(", ", withAnimTextData.Take(4)) +
+                                  (withAnimTextData.Count > 4 ? $" (+{withAnimTextData.Count - 4} more)" : ""));
+        }
 
         if (sub != null)
         {
