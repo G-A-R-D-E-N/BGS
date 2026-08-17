@@ -22,4 +22,9 @@
   <ItemGroup>
     <ProjectReference Include="../../src/BehaviourGraph.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Genuine Fallout 4 samples shared with symrm, used by the packed-playback smoke. -->
+    <None Include="../../tools/symrm/samples/TurretStandingSkeleton.hkx" Link="samples/TurretStandingSkeleton.hkx" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../tools/symrm/samples/TurretIdleWeapReady.hkx" Link="samples/TurretIdleWeapReady.hkx" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

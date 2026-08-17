@@ -1517,6 +1517,7 @@ public static class Smoke
         StandaloneAnimationSkeletonSearchesFromAnimationsRoot();
 
         ChainTabAttachesGameData();
+        PlaybackReadsPackedClipsFromArchives();
         ArchiveBrowserBuilds();
 
         if (Settings.SettingsPathForTest != null)
@@ -1574,6 +1575,84 @@ public static class Smoke
             });
         }
         finally { System.IO.File.Delete(path); }
+    }
+
+    private static void PlaybackReadsPackedClipsFromArchives()
+    {
+        Console.WriteLine("\nthe Playback tab plays a clip straight out of a .ba2");
+
+        string samples = System.IO.Path.Combine(AppContext.BaseDirectory, "samples");
+        string animationSample = System.IO.Path.Combine(samples, "TurretIdleWeapReady.hkx");
+        string skeletonSample = System.IO.Path.Combine(samples, "TurretStandingSkeleton.hkx");
+        if (!System.IO.File.Exists(animationSample) || !System.IO.File.Exists(skeletonSample))
+        {
+            Console.WriteLine("        playback-from-archive: skipped, the genuine samples are not here");
+            return;
+        }
+
+        string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                             $"bgs-packed-playback-{Guid.NewGuid():N}");
+        string data = System.IO.Path.Combine(root, "Data");
+        string behaviorDir = System.IO.Path.Combine(data, "Meshes", "Actors", "Turret", "Behaviors");
+        System.IO.Directory.CreateDirectory(behaviorDir);
+        string behavior = System.IO.Path.Combine(behaviorDir, "TestBehavior.hkx");
+        System.IO.File.WriteAllBytes(behavior, NamedClipBytes(@"Animations\Mounted\Idle_WeapReady.hkt"));
+        try
+        {
+            WriteArchive(System.IO.Path.Combine(data, "Fallout4 - Animations.ba2"), new[]
+            {
+                ("Meshes/Actors/Turret/Animations/Mounted/Idle_WeapReady.hkx",
+                    System.IO.File.ReadAllBytes(animationSample)),
+                ("Meshes/Actors/Turret/CharacterAssets/Skeleton.hkx",
+                    System.IO.File.ReadAllBytes(skeletonSample)),
+            });
+
+            WithTemporarySettings(settingsPath =>
+            {
+                var window = new MainWindow();
+                window.Show();
+                window.Open(behavior);
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                SelectTab(window, "Playback");
+
+                string clip = OpenCommonwealth.Services.Hkx.HkxTextEdit
+                    .IdsOfClass(window.LoadedXml, "hkbClipGenerator").FirstOrDefault() ?? "";
+                CheckTrue("the packed behavior names a clip to play", clip.Length > 0);
+                if (clip.Length > 0)
+                {
+                    window.ClipGrid.SelectByTag(clip);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    Console.WriteLine("        without data: " + window.PlaybackSummary);
+                    CheckTrue("without game data the packed clip cannot play, because it is not loose",
+                              window.PoseFrameCount == 0);
+                    CheckTrue("and the summary says it is not there",
+                              window.PlaybackSummary.Contains("cannot be played", StringComparison.Ordinal));
+                }
+                CloseForTest(window);
+
+                Settings.TrySet("gameDataFolder", data, out _);
+
+                var attached = new MainWindow();
+                attached.Show();
+                attached.Open(behavior);
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                SelectTab(attached, "Playback");
+
+                if (clip.Length > 0)
+                {
+                    attached.SelectNode(clip);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    Console.WriteLine("        " + attached.PlaybackSummary);
+                    CheckTrue("with game data the same clip plays out of the archive",
+                              attached.PoseFrameCount > 0);
+                    CheckTrue("and the summary names the archive it came from",
+                              attached.PlaybackSummary.Contains("Fallout4 - Animations.ba2",
+                                                                  StringComparison.Ordinal));
+                }
+                CloseForTest(attached);
+            });
+        }
+        finally { System.IO.Directory.Delete(root, true); }
     }
 
     private static void SelectTab(MainWindow window, string header)
@@ -2302,33 +2381,44 @@ public static class Smoke
 
     private static void WriteArchive(string path, string[] names)
     {
+        var body = System.Text.Encoding.ASCII.GetBytes("file");
+        WriteArchive(path, names.Select(name => (name, body)).ToArray());
+    }
+
+    private static void WriteArchive(string path, (string Name, byte[] Payload)[] entries)
+    {
         using var stream = System.IO.File.Create(path);
         using var writer = new System.IO.BinaryWriter(stream);
 
-        var body = System.Text.Encoding.ASCII.GetBytes("file");
-        long at = 24 + 36 * names.Length;
-        long nameTableAt = at + body.Length * names.Length;
+        long at = 24 + 36L * entries.Length;
+        long cursor = at;
+        var offsets = new long[entries.Length];
+        for (int i = 0; i < entries.Length; i++)
+        {
+            offsets[i] = cursor;
+            cursor += entries[i].Payload.Length;
+        }
 
         writer.Write(new[] { 'B', 'T', 'D', 'X' });
         writer.Write(1u);
         writer.Write(new[] { 'G', 'N', 'R', 'L' });
-        writer.Write((uint)names.Length);
-        writer.Write((ulong)nameTableAt);
+        writer.Write((uint)entries.Length);
+        writer.Write((ulong)cursor);
 
-        for (int i = 0; i < names.Length; i++)
+        for (int i = 0; i < entries.Length; i++)
         {
             writer.Write(0u); writer.Write(0u); writer.Write(0u); writer.Write(0u);
-            writer.Write((ulong)(at + i * body.Length));
+            writer.Write((ulong)offsets[i]);
             writer.Write(0u);
-            writer.Write((uint)body.Length);
+            writer.Write((uint)entries[i].Payload.Length);
             writer.Write(0u);
         }
 
-        foreach (var _ in names) writer.Write(body);
+        foreach (var entry in entries) writer.Write(entry.Payload);
 
-        foreach (string name in names)
+        foreach (var entry in entries)
         {
-            var bytes = System.Text.Encoding.UTF8.GetBytes(name.Replace('/', '\\'));
+            var bytes = System.Text.Encoding.UTF8.GetBytes(entry.Name.Replace('/', '\\'));
             writer.Write((ushort)bytes.Length);
             writer.Write(bytes);
         }
@@ -2805,6 +2895,39 @@ public static class Smoke
     private static byte[] Triple(int source, int section, int destination) =>
         BitConverter.GetBytes(source).Concat(BitConverter.GetBytes(section))
                     .Concat(BitConverter.GetBytes(destination)).ToArray();
+
+    private static byte[] NamedClipBytes(string animation)
+    {
+        var classes = OpenCommonwealth.Services.Hkx.HavokClasses.Shipped;
+        int size = classes["hkbClipGenerator"]!.Size;
+        int nameField = classes.Field("hkbClipGenerator", "animationName")!.Offset;
+
+        var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        BitConverter.GetBytes(OpenCommonwealth.Services.Hkx.HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature)
+                    .CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
+
+        var text = System.Text.Encoding.UTF8.GetBytes(animation);
+        var data = new byte[size + text.Length + 1];
+        text.CopyTo(data, size);
+
+        var image = new OpenCommonwealth.Services.Hkx.PackfileImage();
+        image.Sections.Add(new OpenCommonwealth.Services.Hkx.PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"),
+            Data = names,
+        });
+        image.Sections.Add(new OpenCommonwealth.Services.Hkx.PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            LocalFixups = BitConverter.GetBytes(nameField).Concat(BitConverter.GetBytes(size)).ToArray(),
+            VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+        return image.Rebuild();
+    }
 
     private static void SaveCurrentOnlySucceedsWhenCommitted()
     {

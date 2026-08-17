@@ -55,6 +55,7 @@ August 15, 2026
 * With game data attached, an animation that is genuinely absent anywhere becomes an error instead of a warning.
 * Weapon subgraphs (behaviors that play `Animations\Weapon\...` clips) get a single per-weapon coverage note naming the weapon types that lack per-weapon copies, with the generic-copy fallback explained.
 * Borrowed `..\` animation paths (for example into `PowerArmor`) resolve correctly against the archives.
+* The Playback tab can now play clips that only exist inside a `.ba2` archive: with the Game Data folder set, selecting a clip whose animation is packed reads the animation (and, when the rig is packed too, the `CharacterAssets` skeleton) straight out of the archive, and the summary names the archive it came from.
 
 </details>
 

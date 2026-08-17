@@ -132,6 +132,7 @@ public static class Tests
         ("ProjectChainResolvesAnimationsThroughGameData", ProjectChainResolvesAnimationsThroughGameData),
         ("GameDataLoadOrderFollowsPlugins", GameDataLoadOrderFollowsPlugins),
         ("GameDataCollapsesBorrowedPaths", GameDataCollapsesBorrowedPaths),
+        ("PackedAnimationsAndSkeletonsPlayBackFromArchives", PackedAnimationsAndSkeletonsPlayBackFromArchives),
         ("WeaponSubgraphPerWeaponCoverageIsReportedOnce", WeaponSubgraphPerWeaponCoverageIsReportedOnce),
         ("ProjectFilesAreSelectedByContent", ProjectFilesAreSelectedByContent),
         ("MissingClipAnimationIsReported", MissingClipAnimationIsReported),
@@ -2982,6 +2983,69 @@ public static class Tests
             CheckTrue("a genuinely absent borrowed path does not",
                 !gameData.ContainsAnimation(projectRoot,
                                             @"..\PowerArmor\Animations\1HM\Nope.HKT"));
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static void PackedAnimationsAndSkeletonsPlayBackFromArchives()
+    {
+        Console.WriteLine("\na packed animation and its skeleton decode straight out of the .ba2");
+
+        string sample = Path.Combine(AppContext.BaseDirectory, "samples", "TurretIdleWeapReady.hkx");
+        string skeletonSample = Path.Combine(AppContext.BaseDirectory, "samples", "TurretStandingSkeleton.hkx");
+        if (!File.Exists(sample) || !File.Exists(skeletonSample))
+        {
+            Console.WriteLine("        skipped: the genuine samples are not here");
+            return;
+        }
+        byte[] animationBytes = File.ReadAllBytes(sample);
+        byte[] skeletonBytes = File.ReadAllBytes(skeletonSample);
+
+        string data = Directory.CreateTempSubdirectory("bgs-playback").FullName;
+        try
+        {
+            string projectRoot = Path.Combine(data, "Meshes", "Actors", "Turret");
+            Directory.CreateDirectory(projectRoot);
+            WriteTestArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                ("Meshes/Actors/Turret/Animations/Mounted/Idle_WeapReady.hkx", animationBytes),
+                ("Meshes/Actors/Turret/CharacterAssets/Skeleton.hkx", skeletonBytes));
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+
+            var read = gameData.ReadAnimation(projectRoot, @"Animations\Mounted\Idle_WeapReady.hkt");
+            CheckTrue("the packed clip resolves to an archive", read != null);
+            if (read == null) return;
+            Check("it names the archive it came from", "Fallout4 - Animations.ba2", read.Source);
+            Check("it carries the archive entry name", "Meshes/Actors/Turret/Animations/Mounted/Idle_WeapReady.hkx",
+                  read.EntryName);
+
+            var reader = new HkxBinaryReader();
+            CheckTrue("its bytes decode as an animation", reader.TryReadAnimation(read.Bytes, out var animation));
+            Check("of the spline-compressed class", "hkaSplineCompressedAnimation", animation.AnimationClass);
+            CheckTrue($"with frames to draw ({animation.NumFrames})", animation.NumFrames > 0);
+
+            var skeleton = reader.ReadSkeleton(skeletonBytes);
+            CheckTrue($"the packed skeleton reads with {skeleton.BoneNames.Count} bones",
+                      skeleton.BoneNames.Count > 0);
+
+            byte[]? packedSkeleton = gameData.SkeletonBytes(read.EntryName!);
+            CheckTrue("the animation's CharacterAssets folder yields the rig from the archive",
+                      packedSkeleton != null && packedSkeleton.SequenceEqual(skeletonBytes));
+
+            var viaSkeleton = new HkxBinaryReader().ReadSkeleton(packedSkeleton!);
+            CheckTrue("and it parses as the same skeleton",
+                      viaSkeleton.BoneNames.SequenceEqual(skeleton.BoneNames));
+
+            CheckTrue("the pose can be built from packed bytes alone",
+                      AnimationPose.WhyNotPosable(viaSkeleton, animation) == null);
+
+            string loose = Path.Combine(projectRoot, "Animations", "Mounted", "Idle_WeapReady.hkx");
+            Directory.CreateDirectory(Path.GetDirectoryName(loose)!);
+            File.WriteAllBytes(loose, animationBytes);
+            Check("a loose copy wins over the archive", "loose",
+                  gameData.ReadAnimation(projectRoot, @"Animations\Mounted\Idle_WeapReady.hkt")!.Source);
+
+            Check("an absent clip still reads nothing", null,
+                  gameData.ReadAnimation(projectRoot, @"Animations\Mounted\Nope.hkt"));
         }
         finally { Directory.Delete(data, true); }
     }

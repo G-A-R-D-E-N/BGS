@@ -60,21 +60,69 @@ public sealed class GameData : IDisposable
     /// Where the declared animation resolves from: "loose" when a file sits under the project
     /// root, the archive's file name when it is packed, or null when it is absent everywhere.
     /// </summary>
-    public string? ResolveAnimation(string projectRoot, string declared)
+    public string? ResolveAnimation(string projectRoot, string declared) =>
+        ReadAnimation(projectRoot, declared)?.Source;
+
+    /// <summary>A declared animation that resolves somewhere: its bytes and where they came from.</summary>
+    public sealed record AnimationRead(byte[] Bytes, string Source, string? EntryName);
+
+    /// <summary>
+    /// Read the declared animation's bytes from the loose file or the matching archive entry,
+    /// so callers can decode a packed clip without extracting it. Returns null when the
+    /// animation is absent everywhere.
+    /// </summary>
+    public AnimationRead? ReadAnimation(string projectRoot, string declared)
     {
         string loose = ResolveLoose(projectRoot, declared);
-        if (File.Exists(loose)) return "loose";
+        if (File.Exists(loose))
+        {
+            try { return new AnimationRead(File.ReadAllBytes(loose), "loose", null); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        }
 
+        var (archive, entry) = FindEntry(projectRoot, declared);
+        if (entry == null) return null;
+        try { return new AnimationRead(archive.Read(entry), Path.GetFileName(archive.Path), entry.Name); }
+        catch (Exception e) when (e is IOException or InvalidDataException) { return null; }
+    }
+
+    /// <summary>
+    /// The first .hkx under the character's CharacterAssets folder in the archives, given an
+    /// animation entry name like "Meshes/Actors/Turret/Animations/...". Returns its bytes, or
+    /// null when no packed skeleton exists there. The rig is usually the loose chain skeleton,
+    /// so this is the fallback for fully packed actors.
+    /// </summary>
+    public byte[]? SkeletonBytes(string animationEntryName)
+    {
+        string flat = animationEntryName.Replace('\\', '/');
+        int anims = flat.LastIndexOf("/Animations/", StringComparison.Ordinal);
+        if (anims < 0) return null;
+        string assets = flat[..anims] + "/CharacterAssets/";
+
+        foreach (string archive in ArchivePaths)
+        {
+            foreach (var entry in Entries(archive))
+            {
+                if (!entry.Name.StartsWith(assets, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!entry.Name.EndsWith(".hkx", StringComparison.OrdinalIgnoreCase)) continue;
+                try { return Open(archive).Read(entry); }
+                catch (Exception e) when (e is IOException or InvalidDataException) { return null; }
+            }
+        }
+        return null;
+    }
+
+    private (Ba2 Archive, Ba2.Entry? Entry) FindEntry(string projectRoot, string declared)
+    {
         string key = Normalize(declared);
-        if (key.Length == 0) return null;
+        if (key.Length == 0) return (null!, null);
 
         // the declared path may traverse up out of the project root (..\PowerArmor\... borrows
         // another actor's animations), so resolve it against the root before matching archives
         string? prefixed = null;
-        string? absolute = null;
         try
         {
-            absolute = Path.GetFullPath(Path.Combine(projectRoot,
+            string absolute = Path.GetFullPath(Path.Combine(projectRoot,
                 declared.Replace('\\', Path.DirectorySeparatorChar)
                         .Replace('/', Path.DirectorySeparatorChar)));
             if (IsUnder(absolute, DataFolder))
@@ -92,16 +140,33 @@ public sealed class GameData : IDisposable
         foreach (string archive in ArchivePaths)
         {
             var names = Names(archive);
-            if (prefixed != null && names.Contains(prefixed)) return Path.GetFileName(archive);
+            if (prefixed != null && !names.Contains(prefixed)) continue;
+            if (prefixed == null && !names.Any(n => n.EndsWith("/" + key, StringComparison.Ordinal))) continue;
 
-            if (prefixed == null)
+            foreach (var entry in Entries(archive))
             {
-                foreach (string name in names)
-                    if (name.EndsWith("/" + key, StringComparison.Ordinal))
-                        return Path.GetFileName(archive);
+                string normalized = Normalize(entry.Name);
+                if (prefixed != null)
+                {
+                    if (normalized == prefixed) return (Open(archive), entry);
+                }
+                else if (normalized.EndsWith("/" + key, StringComparison.Ordinal))
+                {
+                    return (Open(archive), entry);
+                }
             }
         }
-        return null;
+        return (null!, null);
+    }
+
+    private IEnumerable<Ba2.Entry> Entries(string archivePath)
+    {
+        try { return Open(archivePath).Entries; }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            // a texture (DX10) archive or an unreadable file simply holds no animations
+            return Array.Empty<Ba2.Entry>();
+        }
     }
 
     /// <summary>
