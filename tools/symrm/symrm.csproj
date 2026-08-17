@@ -16,4 +16,8 @@
   <ItemGroup>
     <ProjectReference Include="../../src/BehaviourGraph.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- A genuine Fallout 4 np physics skeleton used by the end-to-end RELARRAY test. -->
+    <None Include="samples/TurretStandingSkeleton.hkx" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

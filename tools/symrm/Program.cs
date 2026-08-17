@@ -37,6 +37,10 @@ public static class Program
             case "packfile": return Packfile(argv);
             case "layout": return Layout(argv);
             case "relayout": return Relayout(argv);
+            case "ground": return Ground(argv);
+            case "offsets": return Offsets(argv);
+            case "convert": return Convert(argv);
+            case "compare": return Compare(argv);
             case "delete": return DeleteObject(argv);
             case "paste": return Paste(argv);
             case "template": return Template(argv);
@@ -4011,7 +4015,31 @@ public static class Program
         if (argv.Length < 2) { Usage(); return 1; }
 
         string file = Path.GetFullPath(argv[1]);
-        var chain = ProjectChain.Resolve(file);
+        string? dataFolder = null;
+        string? plugins = null;
+        for (int i = 2; i < argv.Length; i++)
+        {
+            if (argv[i] == "--data" && i + 1 < argv.Length) dataFolder = argv[i + 1];
+            if (argv[i] == "--plugins" && i + 1 < argv.Length) plugins = argv[i + 1];
+        }
+
+        OpenCommonwealth.Services.Archive.GameData? data = null;
+        if (dataFolder != null)
+        {
+            dataFolder = Path.GetFullPath(dataFolder);
+            if (!Directory.Exists(dataFolder))
+            {
+                Console.Error.WriteLine($"--data folder not found: {dataFolder}");
+                return 1;
+            }
+            data = OpenCommonwealth.Services.Archive.GameData.Discover(dataFolder, plugins);
+            Console.WriteLine($"game data: {data.ArchivePaths.Count} .ba2 archive(s) under {dataFolder}" +
+                              (data.PluginsPath != null
+                                  ? $", ordered by {Path.GetFileName(data.PluginsPath)}"
+                                  : ""));
+        }
+
+        var chain = ProjectChain.Resolve(file, data: data);
 
         foreach (var link in chain.Links)
             Console.WriteLine($"  {link.Role,-12} {(link.Exists ? "found  " : "MISSING")} {link.Declared}");
@@ -4027,10 +4055,21 @@ public static class Program
         foreach (var unreadable in checkResult.Files.Where(f => f.Error.Length > 0).Take(5))
             Console.WriteLine($"  unread: {unreadable.Name}, {unreadable.Error}");
 
+        var shown = new List<string>();
+        foreach (var result in checkResult.Files)
+            foreach (var finding in result.Findings)
+            {
+                string line = $"{result.Name}: {finding}";
+                if (shown.Count < 12) shown.Add(line);
+            }
+        foreach (string line in shown) Console.WriteLine("  check: " + line);
+        if (checkResult.Errors + checkResult.Warnings > shown.Count)
+            Console.WriteLine($"  ... and {checkResult.Errors + checkResult.Warnings - shown.Count} more");
+
         Console.WriteLine($"\n{chain.Links.Count} link(s), {chain.Problems.Count} problem(s)");
         Console.WriteLine($"checked {checkResult.Files.Count} behaviour file(s), {unread} unread, " +
                           $"{checkResult.Errors} error(s), {checkResult.Warnings} warning(s)");
-        return chain.Links.Count == 0 || unread > 0 ? 1 : 0;
+        return chain.Links.Count == 0 || unread > 0 || checkResult.Errors > 0 ? 1 : 0;
     }
 
     private static int Lifecycle(string[] argv)
@@ -6007,6 +6046,271 @@ public static class Program
         return names == null ? new List<string>() : names.Select(n => n ?? "").ToList();
     }
 
+    private static int Compare(string[] argv)
+    {
+        if (argv.Length < 3) { Usage(); return 1; }
+        var a = PackfileImage.Read(Path.GetFullPath(argv[1]));
+        var b = PackfileImage.Read(Path.GetFullPath(argv[2]));
+
+        var lines = new List<string>();
+        int total = CompareImages(a, b, lines);
+
+        foreach (var line in lines) Console.WriteLine(line);
+        Console.WriteLine(total == 0 ? "identical" : "differs");
+        return total == 0 ? 0 : 1;
+    }
+
+    // The number of differing regions between two packfiles, with a human line per difference.
+    // "identical" means every loading-critical field agrees: the whole header (layout rules,
+    // predicates, root and class-name root pointers, flags and version), the complete section
+    // set (a section present in only one file is a difference), and for each common section
+    // its data, every fixup table, and its exports and imports.
+    internal static int CompareImages(PackfileImage a, PackfileImage b, List<string> lines)
+    {
+        int total = 0;
+
+        if (a.UserTag != b.UserTag) { lines.Add("header: user tag differs"); total++; }
+        if (a.FileVersion != b.FileVersion) { lines.Add("header: file version differs"); total++; }
+        if (!a.LayoutRules.SequenceEqual(b.LayoutRules)) { lines.Add("header: layout rules differ"); total++; }
+        if (a.ContentsSectionIndex != b.ContentsSectionIndex) { lines.Add("header: root section differs"); total++; }
+        if (a.ContentsSectionOffset != b.ContentsSectionOffset) { lines.Add("header: root offset differs"); total++; }
+        if (a.ContentsClassNameSectionIndex != b.ContentsClassNameSectionIndex)
+        { lines.Add("header: class-name root section differs"); total++; }
+        if (a.ContentsClassNameSectionOffset != b.ContentsClassNameSectionOffset)
+        { lines.Add("header: class-name root offset differs"); total++; }
+        if (!a.ContentsVersion.SequenceEqual(b.ContentsVersion)) { lines.Add("header: contents version differs"); total++; }
+        if (a.Flags != b.Flags) { lines.Add("header: flags differ"); total++; }
+        if (a.MaxPredicate != b.MaxPredicate) { lines.Add("header: predicate count differs"); total++; }
+        if (!a.Predicates.SequenceEqual(b.Predicates)) { lines.Add("header: predicates differ"); total++; }
+
+        var tags = a.Sections.Select(s => s.Tag).Concat(b.Sections.Select(s => s.Tag))
+                    .Distinct().OrderBy(t => t, StringComparer.Ordinal).ToList();
+        foreach (var tag in tags)
+        {
+            var sa = a.Section(tag);
+            var sb = b.Section(tag);
+            if (sa == null || sb == null) { lines.Add($"{tag}: present in only one file"); total++; continue; }
+
+            string detail = "";
+            int diffs = SectionDiff(sa, sb, ref detail);
+            lines.Add($"{tag}: {(diffs == 0 ? "identical" : diffs + " differing regions" + detail)}");
+            total += diffs;
+        }
+        return total;
+    }
+
+    private static int SectionDiff(PackfileSection a, PackfileSection b, ref string detail)
+    {
+        int diffs = 0;
+        diffs += ByteDiff("data", a.Data, b.Data, ref detail);
+        diffs += ByteDiff("local", a.LocalFixups, b.LocalFixups, ref detail);
+        diffs += ByteDiff("global", a.GlobalFixups, b.GlobalFixups, ref detail);
+        diffs += ByteDiff("virtual", a.VirtualFixups, b.VirtualFixups, ref detail);
+        diffs += ByteDiff("export", a.Exports, b.Exports, ref detail);
+        diffs += ByteDiff("import", a.Imports, b.Imports, ref detail);
+        return diffs;
+    }
+
+    private static int ByteDiff(string what, byte[] a, byte[] b, ref string detail)
+    {
+        if (a.Length != b.Length) { detail += $" [{what}: {a.Length} vs {b.Length} bytes]"; return 1; }
+        int diffs = 0, first = -1;
+        for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) { diffs++; if (first < 0) first = i; }
+        if (diffs > 0) detail += $" [{what}: {diffs} bytes, first at 0x{first:x}]";
+        return diffs > 0 ? 1 : 0;
+    }
+
+    private static int Convert(string[] argv)
+    {
+        if (argv.Length < 4) { Usage(); return 1; }
+        if (!int.TryParse(argv[3], out int bytes) || (bytes != 4 && bytes != 8)) { Usage(); return 1; }
+
+        var image = PackfileImage.Read(Path.GetFullPath(argv[1]));
+        if (!PackfileConverter.ConvertTo(image, new PointerLayout(bytes)))
+        {
+            Console.WriteLine("could not convert: the file holds a class, section or fixup the converter " +
+                              "will not vouch for (see the fail-closed section rules)");
+            return 1;
+        }
+        image.Save(Path.GetFullPath(argv[2]));
+        Console.WriteLine($"wrote {bytes}-byte layout to {Path.GetFullPath(argv[2])}");
+        return 0;
+    }
+
+    private static int Ground(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        var image = PackfileImage.Read(Path.GetFullPath(argv[1]));
+        var types = HavokClassTypes.Shipped;
+        var data = image.Section("__data__");
+        if (data == null) { Console.WriteLine("the reference file has no __data__ section"); return 1; }
+
+        var (placed, refused, objects, reference, predicted, unexplained) = GroundPrediction(image, types);
+
+        Console.WriteLine($"reference layout {image.Layout.PointerSize}-byte, {objects} objects " +
+                          $"({placed} placed, {refused} the walker will not vouch for)");
+        Console.WriteLine($"reference pointer fixups: {reference}, walker predicted sites: {predicted}");
+        Console.WriteLine($"fixups the walker did not predict: {unexplained.Count}");
+        foreach (int at in unexplained.Take(25))
+            Console.WriteLine($"  0x{at:x}: the reference has a pointer here, the walker placed none");
+
+        return unexplained.Count == 0 ? 0 : 1;
+    }
+
+    // Every pointer-sized fixup site a placeable object graph should carry, compared against
+    // the file's own fixup sources. The walker must predict each fixed-array element slot and
+    // both slots of every TYPE_VARIANT, not just the first.
+    internal static (int Placed, int Refused, int Objects, int ReferenceSites, int PredictedSites, List<int> Unexplained)
+        GroundPrediction(PackfileImage image, HavokClassTypes types)
+    {
+        var data = image.Section("__data__")!;
+        var objects = new PackfileObjects(image, types: types);
+
+        var referenceSites = new SortedSet<int>();
+        foreach (var (source, _) in data.Locals()) referenceSites.Add(source);
+        foreach (var (source, _, _) in data.Globals()) referenceSites.Add(source);
+
+        var predicted = new HashSet<int>();
+        int placed = 0, refused = 0;
+        foreach (var instance in objects.Instances)
+        {
+            if (!LayoutWalker.CanPlace(types, instance.ClassName)) { refused++; continue; }
+            placed++;
+            CollectSites(types, objects, image.Layout, instance.Offset, instance.ClassName, predicted, 0);
+        }
+
+        var unexplained = referenceSites.Where(s => !predicted.Contains(s)).ToList();
+        return (placed, refused, objects.Instances.Count, referenceSites.Count, predicted.Count, unexplained);
+    }
+
+    private static int Offsets(string[] argv)
+    {
+        if (argv.Length < 2) { Usage(); return 1; }
+
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.GetFullPath(argv[1])));
+        var reflected = doc.RootElement.GetProperty("reflected");
+        var types = HavokClassTypes.Shipped;
+        string? dumpPath = argv.Length >= 3 ? Path.GetFullPath(argv[2]) : null;
+        var dump = new System.Text.StringBuilder("{\n");
+
+        int checkedClasses = 0, badClasses = 0, badMembers = 0, skipped = 0;
+        foreach (var prop in reflected.EnumerateObject())
+        {
+            string cls = prop.Name;
+            var v = prop.Value;
+            if (v.TryGetProperty("empty", out var e) && e.GetBoolean()) continue;
+            if (!types.Knows(cls) || !LayoutWalker.CanPlace(types, cls)) { skipped++; continue; }
+
+            var laid = LayoutWalker.Of(types, cls, PointerLayout.FourByte);
+            string? parent = types[cls]?.Parent;
+            int parentSize = parent != null && types.Knows(parent)
+                ? LayoutWalker.Of(types, parent, PointerLayout.FourByte).Size : 0;
+
+            checkedClasses++;
+            bool shown = false, bad = false;
+            var rows = new List<string>();
+            foreach (var m in v.GetProperty("members").EnumerateArray())
+            {
+                string name = m.GetProperty("name").GetString()!;
+                int reference = m.GetProperty("offset").GetInt32();
+                int? walk = laid.OffsetOf(name);
+                if (walk == null) continue;
+                rows.Add($"[\"{name}\",{walk},{reference}]");
+                if (walk == reference) continue;
+                bad = true; badMembers++;
+                if (!shown)
+                {
+                    Console.WriteLine($"{cls}: parentSize4={parentSize} size4={laid.Size} " +
+                                      $"first-bad {name} walk={walk} reference={reference}");
+                    shown = true;
+                }
+            }
+            if (bad) badClasses++;
+            if (dumpPath != null)
+                dump.Append($"  \"{cls}\": {{\"parent4\":{parentSize},\"size4\":{laid.Size}," +
+                            $"\"m\":[{string.Join(",", rows)}]}},\n");
+        }
+
+        if (dumpPath != null)
+        {
+            if (dump.Length > 2) dump.Length -= 2;
+            dump.Append("\n}\n");
+            File.WriteAllText(dumpPath, dump.ToString());
+            Console.WriteLine($"wrote walk/reference dump to {dumpPath}");
+        }
+        Console.WriteLine($"checked {checkedClasses} placeable reflected classes ({skipped} skipped); " +
+                          $"{badClasses} classes differ, {badMembers} member offsets differ");
+        return badClasses == 0 ? 0 : 1;
+    }
+
+    private static void CollectSites(HavokClassTypes types, PackfileObjects objects, PointerLayout layout,
+                                     int offset, string className, HashSet<int> sites, int depth)
+    {
+        if (depth > 12) return;
+
+        int p = layout.PointerSize;
+        var laid = LayoutWalker.Of(types, className, layout);
+        var members = types.Members(className);
+
+        for (int i = 0; i < members.Count && i < laid.Offsets.Count; i++)
+        {
+            var member = members[i];
+            if (!member.Written) continue;
+            int at = offset + laid.Offsets[i];
+            int count = Math.Max(1, member.ArrSize);
+
+            // Fixed arrays are inline: every element is its own pointer site, at pointer stride.
+            if (member.VType is "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING")
+            {
+                for (int e = 0; e < count; e++) sites.Add(at + e * p);
+                continue;
+            }
+
+            // A variant holds two pointer-sized slots per element: the object pointer and the
+            // class-name pointer.
+            if (member.VType == "TYPE_VARIANT")
+            {
+                for (int e = 0; e < count; e++)
+                {
+                    sites.Add(at + e * 2 * p);
+                    sites.Add(at + e * 2 * p + p);
+                }
+                continue;
+            }
+
+            if (member.VType == "TYPE_STRUCT")
+            {
+                if (member.CType != null && types.Knows(member.CType))
+                {
+                    int stride = LayoutWalker.Of(types, member.CType, layout).Size;
+                    if (stride <= 0) continue;
+                    for (int e = 0; e < count; e++)
+                        CollectSites(types, objects, layout, at + e * stride, member.CType, sites, depth + 1);
+                }
+                continue;
+            }
+
+            if (member.VType is not ("TYPE_ARRAY" or "TYPE_SIMPLEARRAY")) continue;
+
+            sites.Add(at);
+            var array = objects.ArrayAt(at);
+            if (array == null || array.Count == 0) continue;
+
+            if (member.VSub is "TYPE_POINTER" or "TYPE_STRINGPTR" or "TYPE_CSTRING")
+            {
+                for (int e = 0; e < array.Count; e++) sites.Add(array.At + e * p);
+            }
+            else if (member.VSub == "TYPE_STRUCT" && member.CType != null && types.Knows(member.CType))
+            {
+                int stride = LayoutWalker.Of(types, member.CType, layout).Size;
+                if (stride <= 0) continue;
+                for (int e = 0; e < array.Count; e++)
+                    CollectSites(types, objects, layout, array.At + e * stride, member.CType, sites, depth + 1);
+            }
+        }
+    }
+
     private static int Relayout(string[] argv)
     {
         if (argv.Length < 2) { Usage(); return 1; }
@@ -6653,14 +6957,59 @@ public static class Program
     {
         if (argv.Length < 2) { Usage(); return 1; }
 
-        var files = Directory.GetFiles(argv[1], "*.xml").OrderBy(f => f).ToList();
+        string target = Path.GetFullPath(argv[1]);
+        string? dataFolder = null;
+        string? plugins = null;
+        for (int i = 2; i < argv.Length; i++)
+        {
+            if (argv[i] == "--data" && i + 1 < argv.Length) dataFolder = argv[i + 1];
+            if (argv[i] == "--plugins" && i + 1 < argv.Length) plugins = argv[i + 1];
+        }
+
+        OpenCommonwealth.Services.Archive.GameData? data = null;
+        if (dataFolder != null)
+        {
+            dataFolder = Path.GetFullPath(dataFolder);
+            if (!Directory.Exists(dataFolder))
+            {
+                Console.Error.WriteLine($"--data folder not found: {dataFolder}");
+                return 1;
+            }
+            data = OpenCommonwealth.Services.Archive.GameData.Discover(dataFolder, plugins);
+            Console.WriteLine($"game data: {data.ArchivePaths.Count} .ba2 archive(s) under {dataFolder}");
+        }
+
+        var files = Directory.Exists(target)
+            ? Directory.EnumerateFiles(target, "*.hkx", SearchOption.AllDirectories)
+                       .Concat(Directory.EnumerateFiles(target, "*.xml", SearchOption.AllDirectories))
+                       .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList()
+            : new List<string> { target };
         int clean = 0, broken = 0, errorCount = 0, warningCount = 0;
         var byKind = new Dictionary<string, int>();
 
         foreach (string file in files)
         {
+            ProjectChain? chain = null;
+            string xml;
+            try
+            {
+                if (file.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                    xml = HkxTextEdit.ReadXml(file);
+                else
+                {
+                    xml = HkxTextEdit.TextOf(file);
+                    chain = ProjectChain.Resolve(file, data: data);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  THREW {Path.GetFileName(file)}: {ex.Message.Split('\n')[0]}");
+                broken++;
+                continue;
+            }
+
             List<GraphValidator.Finding> findings;
-            try { findings = GraphValidator.Check(HkxTextEdit.ReadXml(file)); }
+            try { findings = GraphValidator.Check(xml, chain); }
             catch (Exception ex) { Console.WriteLine($"  THREW {Path.GetFileName(file)}: {ex.Message.Split('\n')[0]}"); broken++; continue; }
 
             var errors = findings.Where(f => f.Level == GraphValidator.Level.Error).ToList();

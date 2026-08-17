@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
@@ -44,6 +43,7 @@ public static class GraphValidator
         CheckBlenders(model, found);
         CheckClips(model, found);
         CheckClipAnimations(model, chain, found);
+        if (chain != null) CheckWeaponSubgraphClips(model, chain, found);
         CheckUnattached(model, found);
 
         return found;
@@ -416,12 +416,85 @@ public static class GraphValidator
 
             string where = $"#{clip.Id} clip '{clip.Str("name")}'";
 
-            if (!File.Exists(ProjectChain.ResolvePath(chain.Root, anim)))
-                Add(found, Level.Warning, where, $"plays '{anim}', which is not on disk under {chain.Root}");
+            if (!ProjectChain.AnimationExists(chain.Root, anim, chain.Data))
+            {
+                string whereTo = chain.Data != null
+                    ? $"under {chain.Root} nor inside any .ba2 under {chain.Data.DataFolder}"
+                    : $"under {chain.Root}";
+                Add(found, chain.Data != null ? Level.Error : Level.Warning, where,
+                    $"plays '{anim}', which is not on disk {whereTo}");
+            }
             else if (declared.Count > 0 && !declared.Contains(ProjectChain.AnimationKey(anim)))
                 Add(found, Level.Warning, where,
                     $"plays '{anim}', which the character file does not list, so the engine may not load it");
         }
+    }
+
+    /// <summary>
+    /// The per-weapon half of animation checking. A behavior that plays clips under
+    /// Animations\Weapon\&lt;Type&gt;\ is a weapon subgraph: the engine resolves its generic
+    /// Animations\&lt;clip&gt; references per weapon through Animations\Weapon\&lt;Type&gt;\&lt;clip&gt;.
+    /// Exactly which weapon types need which clips is the ARMA/animation-set mapping, which the
+    /// file format does not carry, so this reports a single bounded warning per subgraph: the
+    /// weapon types it references and how many of its generic clips have no per-weapon copy
+    /// there (the engine falls back to the generic file, so a gap is not itself the crash).
+    /// </summary>
+    private static void CheckWeaponSubgraphClips(BehaviourGraphModel model, ProjectChain chain,
+                                                 List<Finding> found)
+    {
+        if (chain.Data == null || chain.Root.Length == 0) return;
+
+        var clips = model.Objects.Where(o => o.Class == "hkbClipGenerator").ToList();
+        var referencedTypes = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var clip in clips)
+        {
+            string anim = clip.Str("animationName");
+            string[] parts = anim.Replace('\\', '/').Split('/');
+            for (int i = 0; i + 1 < parts.Length; i++)
+                if (parts[i].Equals("Weapon", StringComparison.OrdinalIgnoreCase) && parts[i + 1].Length > 0)
+                    referencedTypes.Add(parts[i + 1]);
+        }
+        if (referencedTypes.Count == 0) return;
+
+        var weaponFolders = chain.Data.Subfolders(chain.Root, "Animations/Weapon");
+        if (weaponFolders.Count == 0) return;
+
+        // the generic clips this subgraph plays from the Animations root, one level deep
+        var generic = clips
+            .Select(clip => clip.Str("animationName").Replace('\\', '/'))
+            .Where(a => a.Split('/').Length == 2 && a.StartsWith("Animations/", StringComparison.OrdinalIgnoreCase))
+            .Select(a => a[(a.LastIndexOf('/') + 1)..])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (generic.Count == 0) return;
+
+        // a clip is per-weapon when a copy exists under some weapon folder in the data
+        var perWeapon = generic.Where(leaf =>
+            weaponFolders.Any(type => ProjectChain.AnimationExists(
+                chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data))).ToList();
+        if (perWeapon.Count == 0) return;
+
+        var gaps = new List<string>();
+        string? example = null;
+        foreach (string type in referencedTypes)
+        {
+            int missing = perWeapon.Count(leaf => !ProjectChain.AnimationExists(
+                chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data));
+            if (missing == 0) continue;
+
+            gaps.Add($"'{type}' lacks {missing} of {perWeapon.Count}");
+            example ??= perWeapon.First(leaf => !ProjectChain.AnimationExists(
+                chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data));
+        }
+        if (gaps.Count == 0) return;
+
+        string types = string.Join(", ", gaps.Take(4));
+        if (gaps.Count > 4) types += $", and {gaps.Count - 4} more";
+        Add(found, Level.Warning, "weapon subgraph",
+            $"per-weapon coverage of {perWeapon.Count} generic clip(s): {types} " +
+            $"(e.g. {example}); the engine falls back to the generic copy where it exists, " +
+            $"and not every weapon needs every clip, so a gap is only a crash when the generic " +
+            $"copy is missing too");
     }
 
     private static void CheckUnattached(BehaviourGraphModel model, List<Finding> found)

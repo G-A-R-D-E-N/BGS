@@ -16,17 +16,23 @@ public sealed class PackfileObjects
     private readonly PackfileSection _data;
     private readonly PackfileSection _classNames;
     private readonly HavokClasses _classes;
+    private readonly HavokClassTypes _types;
     private readonly List<Instance> _instances = new();
 
     private readonly Dictionary<int, int> _pointsAt = new();
 
     private readonly Dictionary<int, Instance> _startsAt = new();
 
+    private readonly int _pointer;
+
     public IReadOnlyList<Instance> Instances => _instances;
 
-    public PackfileObjects(PackfileImage image, HavokClasses? classes = null)
+    public PackfileObjects(PackfileImage image, HavokClasses? classes = null,
+                           HavokClassTypes? types = null)
     {
         _classes = classes ?? HavokClasses.Shipped;
+        _types = types ?? HavokClassTypes.Shipped;
+        _pointer = image.Layout.PointerSize;
         _data = image.Section("__data__")
                 ?? throw new InvalidOperationException("The file has no __data__ section.");
         _classNames = image.Section("__classnames__")
@@ -67,13 +73,21 @@ public sealed class PackfileObjects
 
     public int? FieldAt(Instance instance, string field)
     {
-        if (!_classes.Knows(instance.ClassName)) return null;
+        int? offset = MemberOffset(instance.ClassName, field);
+        if (offset == null) return null;
 
-        var member = _classes.Field(instance.ClassName, field);
-        if (member == null) return null;
-
-        int at = instance.Offset + member.Offset;
+        int at = instance.Offset + offset.Value;
         return at >= 0 && at < _data.Data.Length ? at : null;
+    }
+
+    private int? MemberOffset(string className, string field)
+    {
+        if (_pointer == 8)
+            return _classes.Knows(className) ? _classes.Field(className, field)?.Offset : null;
+
+        // The stored class table is 8-byte, so a 4-byte file's member offsets must come from the
+        // pointer-width walker. Honor the schema the caller supplied, like the 8-byte path does.
+        return LayoutWalker.Active(_types, className, _pointer)?.OffsetOf(field);
     }
 
     public float? ReadFloatAt(int at) =>
@@ -93,6 +107,19 @@ public sealed class PackfileObjects
 
     public ulong? ReadULongAt(int at) =>
         at < 0 || at + 8 > _data.Data.Length ? null : BitConverter.ToUInt64(_data.Data, at);
+
+    // The pointer width of the file being read. A TYPE_ULONG (hkUlong) is pointer-sized, so
+    // callers must read it at this width, not always eight bytes.
+    public int PointerWidth => _pointer;
+
+    public ulong? ReadUnsignedAt(int at, int width)
+    {
+        if (at < 0 || width <= 0 || width > 8 || at + width > _data.Data.Length) return null;
+
+        ulong value = 0;
+        for (int b = 0; b < width; b++) value |= (ulong)_data.Data[at + b] << (8 * b);
+        return value;
+    }
 
     public long? ReadLongAt(int at) =>
         at < 0 || at + 8 > _data.Data.Length ? null : BitConverter.ToInt64(_data.Data, at);
@@ -120,13 +147,14 @@ public sealed class PackfileObjects
 
     public IReadOnlyList<string?>? ReadStringArrayAt(int at)
     {
-        var array = ArrayAt(at, 8);
+        var array = ArrayAt(at, _pointer);
         if (array == null) return null;
 
         var values = new List<string?>(array.Count);
         for (int i = 0; i < array.Count; i++)
         {
-            int slot = array.At + i * 8;
+            int slot = array.At + i * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
             values.Add(TextAt(Aim(slot)));
         }
         return values;
@@ -134,13 +162,57 @@ public sealed class PackfileObjects
 
     public IReadOnlyList<Instance?>? ReadRefArrayAt(int at)
     {
-        var array = ArrayAt(at, 8);
+        var array = ArrayAt(at, _pointer);
         if (array == null) return null;
 
         var values = new List<Instance?>(array.Count);
         for (int i = 0; i < array.Count; i++)
         {
-            int? destination = Aim(array.At + i * 8);
+            int slot = array.At + i * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
+
+            int? destination = Aim(slot);
+            values.Add(destination != null && _startsAt.TryGetValue(destination.Value, out var target)
+                           ? target
+                           : null);
+        }
+        return values;
+    }
+
+    public IReadOnlyList<Instance?>? ReadVariantArrayAt(int at)
+    {
+        // A variant element is two pointer-sized slots (object pointer, then type pointer),
+        // so it strides at twice the pointer width. Only the object pointer is resolved here;
+        // the type pointer is not part of the object graph.
+        var array = ArrayAt(at, 2 * _pointer);
+        if (array == null) return null;
+
+        var values = new List<Instance?>(array.Count);
+        for (int i = 0; i < array.Count; i++)
+        {
+            int slot = array.At + i * 2 * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
+
+            int? destination = Aim(slot);
+            values.Add(destination != null && _startsAt.TryGetValue(destination.Value, out var target)
+                           ? target
+                           : null);
+        }
+        return values;
+    }
+
+    public IReadOnlyList<Instance?>? ReadRelVariantArrayAt(int headerAt)
+    {
+        var rel = RelArrayAt(headerAt, 2 * _pointer);
+        if (rel == null) return null;
+
+        var values = new List<Instance?>(rel.Count);
+        for (int i = 0; i < rel.Count; i++)
+        {
+            int slot = rel.At + i * 2 * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
+
+            int? destination = Aim(slot);
             values.Add(destination != null && _startsAt.TryGetValue(destination.Value, out var target)
                            ? target
                            : null);
@@ -166,7 +238,7 @@ public sealed class PackfileObjects
         FieldAt(instance, field) is { } at ? ReadIntAt(at) : null;
 
     public ulong? ReadULong(Instance instance, string field) =>
-        FieldAt(instance, field) is { } at ? ReadULongAt(at) : null;
+        FieldAt(instance, field) is { } at ? ReadUnsignedAt(at, _pointer) : null;
 
     public float[]? ReadFloats(Instance instance, string field, int count) =>
         FieldAt(instance, field) is { } at ? ReadFloatsAt(at, count) : null;
@@ -190,7 +262,83 @@ public sealed class PackfileObjects
 
     private int? Aim(int at) => _pointsAt.TryGetValue(at, out int destination) ? destination : null;
 
-    public sealed record Elements(int At, int Count);
+    public interface IArraySpan
+    {
+        int At { get; }
+        int Count { get; }
+    }
+
+    public sealed record Elements(int At, int Count) : IArraySpan;
+
+    // The np-era relative-array header is two little-endian uint16s at the member site: the
+    // element count plus one, then the payload's offset from the member site itself. The base
+    // is the member's own address — hkRelArray::operator[] resolves `this + m_offset` in the
+    // game runtime (CommonLibF4), and real files place polytope payloads accordingly. The
+    // stored offset is authoritative — the payload does not have to sit immediately after the
+    // object — so it is read from the header, never reconstructed.
+    public sealed record RelElements(int At, int Count) : IArraySpan;
+
+    public RelElements? RelArrayAt(int headerAt)
+    {
+        if (headerAt < 0 || headerAt + 4 > _data.Data.Length) return null;
+
+        int raw = BitConverter.ToInt32(_data.Data, headerAt);
+        int sizePlusOne = raw & 0xFFFF;
+        int relOff = (raw >> 16) & 0xFFFF;
+        if (sizePlusOne == 0) return null;
+
+        int count = sizePlusOne - 1;
+        if (count == 0) return new RelElements(0, 0);
+
+        long payload = (long)headerAt + relOff;
+        if (payload < 0 || payload > _data.Data.Length) return null;
+        return new RelElements((int)payload, count);
+    }
+
+    public RelElements? RelArrayAt(int headerAt, int elementWidth)
+    {
+        if (elementWidth <= 0) return null;
+        var rel = RelArrayAt(headerAt);
+        if (rel == null || rel.Count == 0) return rel;
+
+        long bytes = (long)rel.Count * elementWidth;
+        if (bytes > _data.Data.Length - rel.At) return null;
+        return rel;
+    }
+
+    public IReadOnlyList<string?>? ReadRelStringArrayAt(int headerAt)
+    {
+        var rel = RelArrayAt(headerAt, _pointer);
+        if (rel == null) return null;
+
+        var values = new List<string?>(rel.Count);
+        for (int i = 0; i < rel.Count; i++)
+        {
+            int slot = rel.At + i * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
+            values.Add(TextAt(Aim(slot)));
+        }
+        return values;
+    }
+
+    public IReadOnlyList<Instance?>? ReadRelRefArrayAt(int headerAt)
+    {
+        var rel = RelArrayAt(headerAt, _pointer);
+        if (rel == null) return null;
+
+        var values = new List<Instance?>(rel.Count);
+        for (int i = 0; i < rel.Count; i++)
+        {
+            int slot = rel.At + i * _pointer;
+            if (slot + _pointer > _data.Data.Length) return null;
+
+            int? destination = Aim(slot);
+            values.Add(destination != null && _startsAt.TryGetValue(destination.Value, out var target)
+                           ? target
+                           : null);
+        }
+        return values;
+    }
 
     public Elements? ReadArray(Instance instance, string field)
     {
@@ -200,9 +348,9 @@ public sealed class PackfileObjects
 
     public Elements? ArrayAt(int at)
     {
-        if (at < 0 || at + 12 > _data.Data.Length) return null;
+        if (at < 0 || at + _pointer + 4 > _data.Data.Length) return null;
 
-        int count = BitConverter.ToInt32(_data.Data, at + 8);
+        int count = BitConverter.ToInt32(_data.Data, at + _pointer);
         if (count < 0) return null;
 
         int? destination = Aim(at);
@@ -222,6 +370,13 @@ public sealed class PackfileObjects
         long bytes = (long)array.Count * elementWidth;
         if (bytes > _data.Data.Length - array.At) return null;
         return array;
+    }
+
+    public int RunToNull(int at)
+    {
+        if (at < 0 || at >= _data.Data.Length) return 0;
+        int end = Array.IndexOf(_data.Data, (byte)0, at);
+        return end < 0 ? _data.Data.Length - at : end - at + 1;
     }
 
     public IEnumerable<(uint Signature, string Name)> ClassNames()
@@ -268,7 +423,7 @@ public sealed class PackfileObjects
     public bool WriteString(Instance instance, string field, string value)
     {
         int? at = FieldAt(instance, field);
-        if (at == null || at + 8 > _data.Data.Length) return false;
+        if (at == null || at + _pointer > _data.Data.Length) return false;
 
         if (ReadString(instance, field) == value) return true;
 

@@ -42,6 +42,7 @@ public static class NativeAnimation
         ArgumentNullException.ThrowIfNull(decoded);
         InputFilePolicy.EnsureHkx(hkx.LongLength);
         var image = PackfileImage.Read(hkx);
+        NativeLayout.RequireWritable(image);
         long was = hkx.LongLength;
 
         var data = image.Section("__data__")
@@ -192,6 +193,7 @@ public static class NativeAnimation
         ArgumentNullException.ThrowIfNull(decoded);
         InputFilePolicy.EnsureHkx(hkx.LongLength);
         var image = PackfileImage.Read(hkx);
+        NativeLayout.RequireWritable(image);
         long was = hkx.LongLength;
 
         var data = image.Section("__data__")

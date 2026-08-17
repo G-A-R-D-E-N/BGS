@@ -1516,6 +1516,7 @@ public static class Smoke
         StandaloneAnimationFillsTheClipList();
         StandaloneAnimationSkeletonSearchesFromAnimationsRoot();
 
+        ChainTabAttachesGameData();
         ArchiveBrowserBuilds();
 
         if (Settings.SettingsPathForTest != null)
@@ -1526,6 +1527,61 @@ public static class Smoke
 
         Console.WriteLine($"\n{_ran} checks, {_failed} failed");
         return _failed == 0 ? 0 : 1;
+    }
+
+    private static void ChainTabAttachesGameData()
+    {
+        Console.WriteLine("\nthe Chain tab attaches game data and shows where animations resolve");
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-chain-ui-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path, OneClipBytes());
+        try
+        {
+            WithTemporarySettings(settingsPath =>
+            {
+                var window = new MainWindow();
+                window.Show();
+                window.Open(path);
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                SelectTab(window, "Chain");
+
+                Check("with no game data the chain shows no game-data row", 0,
+                      Find<TextBlock>(window.ChainGrid).Count(t => t.Text == "game data"));
+                Check("and the summary says none is attached", "no game data attached", window.GameDataSummary);
+                CloseForTest(window);
+
+                string data = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                                     $"bgs-chain-data-{Guid.NewGuid():N}");
+                Directory.CreateDirectory(data);
+                try
+                {
+                    WriteArchive(System.IO.Path.Combine(data, "Fallout4 - Animations.ba2"),
+                                 new[] { "Meshes/Actors/Test/Animations/Attack1.hkx" });
+                    Settings.TrySet("gameDataFolder", data, out _);
+
+                    var attached = new MainWindow();
+                    attached.Show();
+                    attached.Open(path);
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                    SelectTab(attached, "Chain");
+
+                    Check("with a data folder the chain gains a game-data row", 1,
+                          Find<TextBlock>(attached.ChainGrid).Count(t => t.Text == "game data"));
+                    CheckTrue("the summary counts the indexed archives",
+                              attached.GameDataSummary.Contains("1 .ba2 archive(s)"));
+                    CloseForTest(attached);
+                }
+                finally { Directory.Delete(data, true); }
+            });
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    private static void SelectTab(MainWindow window, string header)
+    {
+        var tabs = Find<TabControl>(window).First();
+        tabs.SelectedIndex = tabs.Items.OfType<TabItem>().ToList()
+                                 .FindIndex(t => t.Header?.ToString() == header);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
     }
 
     private static void CloseForTest(MainWindow window)

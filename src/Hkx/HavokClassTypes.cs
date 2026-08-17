@@ -40,6 +40,8 @@ public sealed class HavokClassTypes
 
         public int? Size { get; init; }
 
+        public int? Align { get; init; }
+
         public IReadOnlyList<Member> Declared { get; init; } = Array.Empty<Member>();
         public IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> Enums { get; init; } =
             new Dictionary<string, IReadOnlyDictionary<string, long>>();
@@ -148,7 +150,10 @@ public sealed class HavokClassTypes
         "TYPE_BOOL" or "TYPE_CHAR" or "TYPE_INT8" or "TYPE_UINT8" => 1,
         "TYPE_INT16" or "TYPE_UINT16" or "TYPE_HALF" => 2,
         "TYPE_INT64" or "TYPE_UINT64" or "TYPE_ULONG" or "TYPE_POINTER"
-            or "TYPE_STRINGPTR" or "TYPE_CSTRING" or "TYPE_RELARRAY" => 8,
+            or "TYPE_STRINGPTR" or "TYPE_CSTRING" => 8,
+        // A relative array header is one four-byte count at any pointer width (the np shape
+        // classes lay their relative arrays four bytes apart even in the 64-bit exe).
+        "TYPE_RELARRAY" => 4,
         "TYPE_VECTOR4" or "TYPE_QUATERNION" or "TYPE_ARRAY" or "TYPE_SIMPLEARRAY"
             or "TYPE_VARIANT" => 16,
         "TYPE_QSTRANSFORM" or "TYPE_MATRIX3" or "TYPE_ROTATION" => 48,
@@ -195,6 +200,9 @@ public sealed class HavokClassTypes
                                        System.Globalization.NumberStyles.HexNumber),
                 Size = entry.Value.TryGetProperty("size", out var s) && s.ValueKind != JsonValueKind.Null
                     ? s.GetInt32()
+                    : null,
+                Align = entry.Value.TryGetProperty("align", out var al) && al.ValueKind != JsonValueKind.Null
+                    ? al.GetInt32()
                     : null,
                 Declared = members,
                 Enums = enums,

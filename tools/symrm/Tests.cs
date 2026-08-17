@@ -15,6 +15,63 @@ public static class Tests
 
     public static readonly (string Name, Action Check)[] Cases =
     {
+        ("PointerLayoutValuesAreWhatTheySay", PointerLayoutValuesAreWhatTheySay),
+        ("TheWalkerReproducesEveryStoredEightByteOffset", TheWalkerReproducesEveryStoredEightByteOffset),
+        ("TheWalkerHalvesPointerOffsetsAtFourBytes", TheWalkerHalvesPointerOffsetsAtFourBytes),
+        ("TheWalkerReportsClassesItCannotPlace", TheWalkerReportsClassesItCannotPlace),
+        ("BigEndianPackfilesAreRefused", BigEndianPackfilesAreRefused),
+        ("PointerSizedIntegersHalveAtFourBytes", PointerSizedIntegersHalveAtFourBytes),
+        ("ConvertingToFourBytesKeepsTheGraph", ConvertingToFourBytesKeepsTheGraph),
+        ("RoundTrippingPointerWidthKeepsReadableValues", RoundTrippingPointerWidthKeepsReadableValues),
+        ("NarrowingAnOversizedUlongIsRefused", NarrowingAnOversizedUlongIsRefused),
+        ("UnsupportedLayoutRulesAreRefused", UnsupportedLayoutRulesAreRefused),
+        ("RootOffsetMovesWithTheRootObject", RootOffsetMovesWithTheRootObject),
+        ("FourByteUlongFieldsDoNotBleedIntoTheNextField", FourByteUlongFieldsDoNotBleedIntoTheNextField),
+        ("FixedStructArraysConvertEveryElement", FixedStructArraysConvertEveryElement),
+        ("PopulatedVariantsRelocateTheirPointer", PopulatedVariantsRelocateTheirPointer),
+        ("LayoutCachesAreScopedPerClassTable", LayoutCachesAreScopedPerClassTable),
+        ("ConvertToRejectsNonsensicalTargetWidths", ConvertToRejectsNonsensicalTargetWidths),
+        ("NativeEditingRefusesNonEightByteFiles", NativeEditingRefusesNonEightByteFiles),
+        ("NativePasteRefusesNonEightByteFiles", NativePasteRefusesNonEightByteFiles),
+        ("NativeAnimationRefusesNonEightByteFiles", NativeAnimationRefusesNonEightByteFiles),
+        ("FourByteFilesAreModeledAtTheActiveLayout", FourByteFilesAreModeledAtTheActiveLayout),
+        ("FourByteConvertedFilesRenderAtTheActiveLayout", FourByteConvertedFilesRenderAtTheActiveLayout),
+        ("FixedUlongArraysRenderAtPointerWidth", FixedUlongArraysRenderAtPointerWidth),
+        ("WidthSensitiveDynamicArraysUseActiveLayouts", WidthSensitiveDynamicArraysUseActiveLayouts),
+        ("SignatureMismatchesRefuseConversion", SignatureMismatchesRefuseConversion),
+        ("SignatureMismatchAlsoRefusesSameWidth", SignatureMismatchAlsoRefusesSameWidth),
+        ("NonDataPayloadRefusesConversion", NonDataPayloadRefusesConversion),
+        ("NonDataLocalFixupsRefuseConversion", NonDataLocalFixupsRefuseConversion),
+        ("NonDataGlobalFixupsRefuseConversion", NonDataGlobalFixupsRefuseConversion),
+        ("NonDataVirtualFixupsRefuseConversion", NonDataVirtualFixupsRefuseConversion),
+        ("ExportsRefuseConversion", ExportsRefuseConversion),
+        ("ImportsRefuseConversion", ImportsRefuseConversion),
+        ("CrossSectionGlobalIntoDataRefusesConversion", CrossSectionGlobalIntoDataRefusesConversion),
+        ("RootOutsideDataRefusesConversion", RootOutsideDataRefusesConversion),
+        ("InvalidFixupSectionIndexRefusesConversion", InvalidFixupSectionIndexRefusesConversion),
+        ("VirtualIntoWrongSectionRefusesConversion", VirtualIntoWrongSectionRefusesConversion),
+        ("VirtualIntoMiddleOfClassNameRefusesConversion", VirtualIntoMiddleOfClassNameRefusesConversion),
+        ("VirtualSourceOutsideDataRefusesConversion", VirtualSourceOutsideDataRefusesConversion),
+        ("VirtualSourceOverflowRefusesConversion", VirtualSourceOverflowRefusesConversion),
+        ("OverlappingVirtualObjectsRefuseConversion", OverlappingVirtualObjectsRefuseConversion),
+        ("DuplicateVirtualSourcesRefuseConversion", DuplicateVirtualSourcesRefuseConversion),
+        ("CrossSectionGlobalIntoClassNamesIsAllowed", CrossSectionGlobalIntoClassNamesIsAllowed),
+        ("RelativeArraysLayOutFourBytesAtBothWidths", RelativeArraysLayOutFourBytesAtBothWidths),
+        ("RelativeArrayPayloadsRoundTripThroughWidths", RelativeArrayPayloadsRoundTripThroughWidths),
+        ("RelativeArrayPayloadsUseStoredRelativeOffsets", RelativeArrayPayloadsUseStoredRelativeOffsets),
+        ("RelativeArraysRenderInTheModelAndXml", RelativeArraysRenderInTheModelAndXml),
+        ("GenuineNpSkeletonRelarraysConvertAndRender", GenuineNpSkeletonRelarraysConvertAndRender),
+        ("RelativeArrayMalformedHeadersAreRefused", RelativeArrayMalformedHeadersAreRefused),
+        ("RelativeArrayPayloadOverlapsObjectRefusesConversion", RelativeArrayPayloadOverlapsObjectRefusesConversion),
+        ("OverlappingRelativeArrayPayloadsRefuseConversion", OverlappingRelativeArrayPayloadsRefuseConversion),
+        ("NonEmptyArrayWithoutFixupRefusesConversion", NonEmptyArrayWithoutFixupRefusesConversion),
+        ("ClassNamesFixupsRefuseConversion", ClassNamesFixupsRefuseConversion),
+        ("CompareCatchesHeaderAndSectionDifferences", CompareCatchesHeaderAndSectionDifferences),
+        ("GroundPredictsEveryFixedArrayAndVariantSlot", GroundPredictsEveryFixedArrayAndVariantSlot),
+        ("ConvertedArrayCapacityMatchesTheCopiedCount", ConvertedArrayCapacityMatchesTheCopiedCount),
+        ("PointerArraysRenderIdenticallyAtBothWidths", PointerArraysRenderIdenticallyAtBothWidths),
+        ("ArraysAreReadAtTheFilesPointerWidth", ArraysAreReadAtTheFilesPointerWidth),
+        ("FieldOffsetsFollowTheFilesPointerWidth", FieldOffsetsFollowTheFilesPointerWidth),
         ("DetachedSubtreeStaysDrawn", DetachedSubtreeStaysDrawn),
         ("EveryDrawnNodeHasOneOwner", EveryDrawnNodeHasOneOwner),
         ("OwnershipAnswersWhatMovesAndWhatHides", OwnershipAnswersWhatMovesAndWhatHides),
@@ -71,6 +128,11 @@ public static class Tests
         ("StructuralObjectsAreProtected", StructuralObjectsAreProtected),
         ("PortTypesRefuseNonsense", PortTypesRefuseNonsense),
         ("Fo4CharacterListsItsAnimations", Fo4CharacterListsItsAnimations),
+        ("GameDataResolvesAnimationsInsideArchives", GameDataResolvesAnimationsInsideArchives),
+        ("ProjectChainResolvesAnimationsThroughGameData", ProjectChainResolvesAnimationsThroughGameData),
+        ("GameDataLoadOrderFollowsPlugins", GameDataLoadOrderFollowsPlugins),
+        ("GameDataCollapsesBorrowedPaths", GameDataCollapsesBorrowedPaths),
+        ("WeaponSubgraphPerWeaponCoverageIsReportedOnce", WeaponSubgraphPerWeaponCoverageIsReportedOnce),
         ("ProjectFilesAreSelectedByContent", ProjectFilesAreSelectedByContent),
         ("MissingClipAnimationIsReported", MissingClipAnimationIsReported),
         ("RepackDriftNamesWhatMoved", RepackDriftNamesWhatMoved),
@@ -252,6 +314,1670 @@ public static class Tests
         _ran++;
         if (!value) _failed++;
         Console.WriteLine($"  {(value ? "ok  " : "FAIL")}  {what}");
+    }
+
+    private static void PointerLayoutValuesAreWhatTheySay()
+    {
+        Check("eight-byte pointer size", 8, PointerLayout.EightByte.PointerSize);
+        Check("four-byte pointer size", 4, PointerLayout.FourByte.PointerSize);
+
+        var layout = new ObjectLayout(
+            new[] { 0, 8 },
+            new Dictionary<string, int>(StringComparer.Ordinal) { ["a"] = 0, ["b"] = 8 }, 16, 8);
+        Check("size", 16, layout.Size);
+        Check("alignment", 8, layout.Alignment);
+        Check("offset by position", 8, layout.Offsets[1]);
+        Check("offset of b", 8, layout.OffsetOf("b"));
+        Check("offset of missing", null, layout.OffsetOf("nope"));
+    }
+
+    private static void TheWalkerReproducesEveryStoredEightByteOffset()
+    {
+        var types = HavokClassTypes.Shipped;
+        int placeable = 0, reproducedWrong = 0;
+        string firstWrong = "";
+
+        foreach (var name in types.Names)
+        {
+            if (types[name]?.Size is not int storedSize) continue;
+            if (!LayoutWalker.CanPlace(types, name)) continue;
+
+            placeable++;
+            var walked = LayoutWalker.Of(types, name, PointerLayout.EightByte);
+
+            bool ok = walked.Size == storedSize;
+            var flat = types.Members(name);
+            for (int i = 0; i < flat.Count; i++)
+                if (i >= walked.Offsets.Count || walked.Offsets[i] != flat[i].Offset) ok = false;
+
+            if (!ok)
+            {
+                reproducedWrong++;
+                if (firstWrong == "") firstWrong = $"{name}: size walked {walked.Size}, stored {storedSize}";
+            }
+        }
+
+        if (firstWrong != "") Console.WriteLine("  first placeable-but-wrong: " + firstWrong);
+        CheckTrue("most classes are placeable", placeable > 800);
+        Check("placeable classes that reproduce wrong", 0, reproducedWrong);
+
+        string[] essential =
+        {
+            "hkbClipGenerator", "hkbStateMachine", "hkbStateMachineStateInfo", "hkbBehaviorGraph",
+            "hkbBehaviorGraphData", "hkbBehaviorGraphStringData", "hkbVariableValueSet",
+            "hkbBlenderGenerator", "hkbBlenderGeneratorChild", "hkbModifierGenerator",
+            "hkbManualSelectorGenerator", "hkbBlendingTransitionEffect", "hkbLayerGenerator",
+            "hkbStateMachineTransitionInfoArray", "hkbExpressionDataArray", "hkbVariableBindingSet",
+        };
+        foreach (var className in essential)
+            CheckTrue($"{className} is placeable", LayoutWalker.CanPlace(types, className));
+    }
+
+    private static void FieldOffsetsFollowTheFilesPointerWidth()
+    {
+        const string className = "hkbStateMachineStateInfo";
+        var nameBytes = System.Text.Encoding.ASCII.GetBytes(className);
+        var classNamesData = new byte[5 + nameBytes.Length + 1];
+        nameBytes.CopyTo(classNamesData, 5);
+
+        var image = new PackfileImage { LayoutRules = new byte[] { 4, 1, 0, 1 }, Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = classNamesData });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = new byte[256],
+            VirtualFixups = Triple(0, 0, 5),
+        });
+
+        var objects = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        var instance = objects.Instances[0];
+        Check("the instance is the class we named", className, instance.ClassName);
+
+        Check("FieldAt reads generator at its exact four-byte offset", 52, objects.FieldAt(instance, "generator"));
+    }
+
+    private static void ArraysAreReadAtTheFilesPointerWidth()
+    {
+        var image = new PackfileImage { LayoutRules = new byte[] { 4, 1, 0, 1 }, Predicates = new byte[16] };
+        var data = new byte[32];
+        BitConverter.GetBytes(3).CopyTo(data, 4);
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            LocalFixups = Pair(0, 16),
+        });
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__") });
+
+        var objects = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        var array = objects.ArrayAt(0);
+        Check("the array count is read at the four-byte offset", 3, array?.Count);
+        Check("the array points where the fixup says", 16, array?.At);
+    }
+
+    private static void PointerSizedIntegersHalveAtFourBytes()
+    {
+        var types = HavokClassTypes.Shipped;
+        var four = LayoutWalker.Of(types, "hkbNode", PointerLayout.FourByte);
+        Check("userData is eight bytes at eight-byte",
+            LayoutWalker.Of(types, "hkbNode", PointerLayout.EightByte).OffsetOf("name"),
+            LayoutWalker.Of(types, "hkbNode", PointerLayout.EightByte).OffsetOf("userData") + 8);
+        Check("userData is four bytes at four-byte", four.OffsetOf("userData") + 4, four.OffsetOf("name"));
+    }
+
+    private static void ConvertingToFourBytesKeepsTheGraph()
+    {
+        var original = ClipInAPackfile("A.hkx", out _);
+        byte[] eight = original.Rebuild();
+        var before = new PackfileObjects(PackfileImage.Read(eight));
+
+        var image = PackfileImage.Read(eight);
+        CheckTrue("conversion to four bytes succeeds", PackfileConverter.ConvertTo(image, PointerLayout.FourByte));
+        Check("the file is now four-byte", 4, image.Layout.PointerSize);
+
+        var after = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        Check("object count is unchanged", before.Instances.Count, after.Instances.Count);
+        CheckTrue("class names are unchanged in order",
+            before.Instances.Select(i => i.ClassName).SequenceEqual(after.Instances.Select(i => i.ClassName)));
+    }
+
+    private static void RoundTrippingPointerWidthKeepsReadableValues()
+    {
+        var classes = HavokClasses.Shipped;
+        int userData = classes.Field("hkbClipGenerator", "userData")!.Offset;
+
+        var original = ClipInAPackfile("Idle.hkx", out _);
+        BitConverter.GetBytes(0xABCDUL).CopyTo(original.Section("__data__")!.Data, userData);
+        byte[] eight = original.Rebuild();
+
+        var before = new PackfileObjects(PackfileImage.Read(eight));
+        Check("eight-byte speed", 2.5f, before.ReadFloat(before.Instances[0], "playbackSpeed"));
+        Check("eight-byte name", "Idle.hkx", before.ReadString(before.Instances[0], "animationName"));
+        Check("eight-byte userData", (ulong)0xABCD, before.ReadULong(before.Instances[0], "userData"));
+
+        var four = PackfileImage.Read(eight);
+        CheckTrue("eight to four succeeds", PackfileConverter.ConvertTo(four, PointerLayout.FourByte));
+        var mid = new PackfileObjects(PackfileImage.Read(four.Rebuild()));
+        Check("four-byte speed survives", 2.5f, mid.ReadFloat(mid.Instances[0], "playbackSpeed"));
+        Check("four-byte name survives", "Idle.hkx", mid.ReadString(mid.Instances[0], "animationName"));
+        Check("four-byte userData survives at pointer width", (ulong)0xABCD,
+              mid.ReadULong(mid.Instances[0], "userData"));
+
+        var back = PackfileImage.Read(four.Rebuild());
+        CheckTrue("four to eight succeeds", PackfileConverter.ConvertTo(back, PointerLayout.EightByte));
+        var after = new PackfileObjects(PackfileImage.Read(back.Rebuild()));
+        Check("round-trip speed", 2.5f, after.ReadFloat(after.Instances[0], "playbackSpeed"));
+        Check("round-trip name", "Idle.hkx", after.ReadString(after.Instances[0], "animationName"));
+        Check("round-trip userData", (ulong)0xABCD, after.ReadULong(after.Instances[0], "userData"));
+    }
+
+    private static void NarrowingAnOversizedUlongIsRefused()
+    {
+        var classes = HavokClasses.Shipped;
+        int userData = classes.Field("hkbClipGenerator", "userData")!.Offset;
+
+        var big = ClipInAPackfile("A.hkx", out _);
+        BitConverter.GetBytes(0x1_0000_0000UL).CopyTo(big.Section("__data__")!.Data, userData);
+        var bigImage = PackfileImage.Read(big.Rebuild());
+        CheckTrue("narrowing a value that needs more than 32 bits is refused",
+                  !PackfileConverter.ConvertTo(bigImage, PointerLayout.FourByte));
+
+        var ok = ClipInAPackfile("A.hkx", out _);
+        BitConverter.GetBytes(0xDEADBEEFUL).CopyTo(ok.Section("__data__")!.Data, userData);
+        var okImage = PackfileImage.Read(ok.Rebuild());
+        CheckTrue("narrowing a value that fits succeeds",
+                  PackfileConverter.ConvertTo(okImage, PointerLayout.FourByte));
+        var after = new PackfileObjects(PackfileImage.Read(okImage.Rebuild()));
+        Check("the fitting value survives narrowing", (ulong)0xDEADBEEF,
+              after.ReadULong(after.Instances[0], "userData"));
+    }
+
+    private static void UnsupportedLayoutRulesAreRefused()
+    {
+        var image = new PackfileImage { Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__data__"), Data = new byte[16] });
+        byte[] bytes = image.Rebuild();
+
+        var reusePadding = (byte[])bytes.Clone();
+        reusePadding[0x12] = 1;
+        CheckThrows<InvalidDataException>("a reuse-padding header is refused",
+            () => PackfileImage.Read(reusePadding));
+
+        var noEmptyBase = (byte[])bytes.Clone();
+        noEmptyBase[0x13] = 0;
+        CheckThrows<InvalidDataException>("an empty-base-off header is refused",
+            () => PackfileImage.Read(noEmptyBase));
+
+        var same = PackfileImage.Read(bytes);
+        CheckTrue("converting eight-byte to eight-byte is a no-op success",
+                  PackfileConverter.ConvertTo(same, PointerLayout.EightByte));
+    }
+
+    private static void RootOffsetMovesWithTheRootObject()
+    {
+        int size = HavokClasses.Shipped["hkbClipGenerator"]!.Size;
+        int second = (size + 15) / 16 * 16;
+
+        var image = TwoClipsOnePointingAtTheOther(out _);
+        image.ContentsSectionIndex = image.Sections.IndexOf(image.Section("__data__")!);
+        image.ContentsSectionOffset = second;
+
+        CheckTrue("eight to four succeeds", PackfileConverter.ConvertTo(image, PointerLayout.FourByte));
+
+        var after = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        Check("both objects remain", 2, after.Instances.Count);
+        Check("the root offset now points at the relocated second object",
+              after.Instances[1].Offset, image.ContentsSectionOffset);
+        CheckTrue("and it is no longer the stale eight-byte offset", image.ContentsSectionOffset != second);
+    }
+
+    private static void FourByteUlongFieldsDoNotBleedIntoTheNextField()
+    {
+        var types = HavokClassTypes.Shipped;
+        int userData = LayoutWalker.Of(types, "hkbClipGenerator", PointerLayout.FourByte).OffsetOf("userData")!.Value;
+
+        var names = new byte[5 + "hkbClipGenerator".Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped["hkbClipGenerator"]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbClipGenerator").CopyTo(names, 5);
+
+        int size = LayoutWalker.Of(types, "hkbClipGenerator", PointerLayout.FourByte).Size;
+        var data = new byte[size + 16];
+        BitConverter.GetBytes(0x11223344u).CopyTo(data, userData);       // the ulong itself
+        BitConverter.GetBytes(0x55667788u).CopyTo(data, userData + 4);   // a sentinel in the next four bytes
+
+        var image = new PackfileImage { LayoutRules = new byte[] { 4, 1, 0, 1 }, Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data, VirtualFixups = Triple(0, 0, 5),
+        });
+
+        var objects = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        Check("a four-byte ulong is read as four bytes, not eight", (ulong)0x11223344,
+              objects.ReadULong(objects.Instances[0], "userData"));
+    }
+
+    private static byte[] ClassNamesBlob(string className)
+    {
+        var blob = new byte[5 + className.Length + 1];
+        BitConverter.GetBytes(HavokClassTypes.Shipped[className]!.Signature).CopyTo(blob, 0);
+        blob[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes(className).CopyTo(blob, 5);
+        return blob;
+    }
+
+    private static void FixedStructArraysConvertEveryElement()
+    {
+        // hkbGeneratorSyncInfo.syncPoints is an inline TYPE_STRUCT[16] of
+        // hkbGeneratorSyncInfoSyncPoint (id:int32 @0, time:real @4, 8 bytes, no pointers).
+        // The old converter transcoded only element 0 and left 1..15 zero-filled.
+        int size = LayoutWalker.Of(HavokClassTypes.Shipped, "hkbGeneratorSyncInfo",
+                                   PointerLayout.EightByte).Size;
+        var data = new byte[size];
+        for (int e = 0; e < 16; e++)
+        {
+            BitConverter.GetBytes(1000 + e).CopyTo(data, e * 8);
+            BitConverter.GetBytes(e + 0.5f).CopyTo(data, e * 8 + 4);
+        }
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbGeneratorSyncInfo"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data, VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+
+        var four = PackfileImage.Read(image.Rebuild());
+        CheckTrue("eight to four succeeds", PackfileConverter.ConvertTo(four, PointerLayout.FourByte));
+
+        var objects = new PackfileObjects(PackfileImage.Read(four.Rebuild()));
+        int at = objects.Instances[0].Offset;
+        bool all = true;
+        for (int e = 0; e < 16; e++)
+            if (objects.ReadIntAt(at + e * 8) != 1000 + e) all = false;
+        CheckTrue("every fixed struct-array element survives, not just the first", all);
+        Check("the sixteenth element survives", 1015, objects.ReadIntAt(at + 15 * 8));
+    }
+
+    private static void PopulatedVariantsRelocateTheirPointer()
+    {
+        // hkCustomAttributesAttribute has a TYPE_VARIANT member 'value' (two pointer slots).
+        // Point its object slot at a second instance and convert: the old converter copied the
+        // 16-byte variant over the next field and never registered the fixup, so remapping
+        // failed. The fix registers both slots and relocates the pointer.
+        var data = new byte[64];
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkCustomAttributesAttribute"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            GlobalFixups = Triple(8, 1, 32),   // value's object pointer (offset 8) -> instance at 32
+            VirtualFixups = Triple(0, 0, 5).Concat(Triple(32, 0, 5)).ToArray(),
+        });
+        image.ContentsSectionIndex = 1;
+
+        var four = PackfileImage.Read(image.Rebuild());
+        CheckTrue("eight to four succeeds with a populated variant",
+                  PackfileConverter.ConvertTo(four, PointerLayout.FourByte));
+
+        var objects = new PackfileObjects(PackfileImage.Read(four.Rebuild()));
+        Check("both instances remain", 2, objects.Instances.Count);
+        var target = objects.ReadRefAt(objects.Instances[0].Offset + 4, out bool wasNull);
+        CheckTrue("the variant pointer is not null after conversion", !wasNull);
+        Check("the variant pointer relocated to the second instance",
+              objects.Instances[1].Offset, target?.Offset);
+    }
+
+    private static void LayoutCachesAreScopedPerClassTable()
+    {
+        static System.IO.Stream Json(string text) =>
+            new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
+
+        var small = HavokClassTypes.Parse(Json(
+            "{\"classes\":{\"Foo\":{\"signature\":\"0x1\",\"size\":4," +
+            "\"members\":[{\"name\":\"a\",\"offset\":0,\"vtype\":\"TYPE_INT32\"}]}}}"));
+        var big = HavokClassTypes.Parse(Json(
+            "{\"classes\":{\"Foo\":{\"signature\":\"0x1\",\"size\":8," +
+            "\"members\":[{\"name\":\"a\",\"offset\":0,\"vtype\":\"TYPE_INT32\"}," +
+            "{\"name\":\"b\",\"offset\":4,\"vtype\":\"TYPE_INT32\"}]}}}"));
+
+        Check("Foo is four bytes in the small schema", 4,
+              LayoutWalker.Of(small, "Foo", PointerLayout.EightByte).Size);
+        Check("Foo is eight bytes in the big schema, same class name", 8,
+              LayoutWalker.Of(big, "Foo", PointerLayout.EightByte).Size);
+        Check("the small schema is not poisoned by the big one", 4,
+              LayoutWalker.Of(small, "Foo", PointerLayout.EightByte).Size);
+    }
+
+    private static void ConvertToRejectsNonsensicalTargetWidths()
+    {
+        var image = PackfileImage.Read(ClipInAPackfile("A.hkx", out _).Rebuild());
+        CheckTrue("a three-byte target is refused",
+                  !PackfileConverter.ConvertTo(image, new PointerLayout(3)));
+        CheckTrue("a default (zero) target is refused",
+                  !PackfileConverter.ConvertTo(image, default));
+        Check("the file is untouched after a refused conversion", 8, image.Layout.PointerSize);
+    }
+
+    private static void NativeEditingRefusesNonEightByteFiles()
+    {
+        var image = new PackfileImage { LayoutRules = new byte[] { 4, 1, 0, 1 }, Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__data__"), Data = new byte[16] });
+        byte[] fourByte = image.Rebuild();
+
+        var plan = new NativeSave.Plan(new System.Collections.Generic.List<NativeSave.Change>(), null);
+        CheckThrows<NotSupportedException>("native save refuses a four-byte file",
+            () => NativeSave.Apply(fourByte, plan));
+    }
+
+    private static void NativePasteRefusesNonEightByteFiles()
+    {
+        // The paste writer is 8-byte only: object sizes, pointer/struct strides and array
+        // headers all assume the stored layout. Copying out of a file is read-only and stays
+        // allowed; mutating either end of a paste must refuse a four-byte file.
+        var four = PackfileImage.Read(FourByteStateMachine(-1, out _, out _, out _).Rebuild());
+        var tree = NativePaste.Of(four, NativeGraphModel.FirstId);
+        Check("the read-only copy still works on a four-byte file", 1, tree.Ids.Count);
+
+        string sameFile = "";
+        try { NativePaste.Into(four, four, tree, sameFile: true); }
+        catch (NotSupportedException e) { sameFile = e.Message; }
+        CheckTrue("pasting into a four-byte file is refused",
+                  sameFile.Contains("8-byte", StringComparison.Ordinal));
+
+        var eight = ClipInAPackfile("A.hkx", out _);
+        string cross = "";
+        try { NativePaste.Into(eight, four, tree, sameFile: false); }
+        catch (NotSupportedException e) { cross = e.Message; }
+        CheckTrue("a four-byte source is refused even into an eight-byte file",
+                  cross.Contains("8-byte", StringComparison.Ordinal));
+
+        string source = "";
+        try { NativePaste.Into(four, eight, tree, sameFile: false); }
+        catch (NotSupportedException e) { source = e.Message; }
+        CheckTrue("and a four-byte target is refused even from an eight-byte file",
+                  source.Contains("8-byte", StringComparison.Ordinal));
+    }
+
+    private static void NativeAnimationRefusesNonEightByteFiles()
+    {
+        // The gate sits right after the packfile read, before any animation is looked at, so a
+        // minimal four-byte packfile is enough to prove the writer refuses to run on one.
+        var image = new PackfileImage { LayoutRules = new byte[] { 4, 1, 0, 1 }, Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__data__"), Data = new byte[16] });
+        byte[] fourByte = image.Rebuild();
+
+        var decoded = new HkxAnimationData { NumFrames = 1, NumTracks = 1, Duration = 1f };
+        CheckThrows<NotSupportedException>("interleaving into a four-byte file is refused",
+            () => NativeAnimation.Interleave(fourByte, decoded));
+        CheckThrows<NotSupportedException>("recompressing into a four-byte file is refused",
+            () => NativeAnimation.Recompress(fourByte, decoded));
+    }
+
+    private static void FourByteFilesAreModeledAtTheActiveLayout()
+    {
+        var types = HavokClassTypes.Shipped;
+        var four = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.FourByte);
+        var eight = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte);
+
+        CheckTrue("the four-byte offsets differ from the stored eight-byte ones",
+                  four.OffsetOf("startStateId") != eight.OffsetOf("startStateId"));
+
+        var image = FourByteStateMachine(3, out int nameField, out int stateIdField, out int eventIdField);
+        var objects = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        var instance = objects.Instances[0];
+
+        Check("the state id is read at its four-byte offset", stateIdField,
+              objects.FieldAt(instance, "startStateId"));
+        Check("the state id value survives", 7, objects.ReadInt(instance, "startStateId"));
+        Check("the name is read at its four-byte offset", nameField,
+              objects.FieldAt(instance, "name"));
+        Check("the name value survives", "Idle", objects.ReadString(instance, "name"));
+        Check("the pointer-sized userData is read at pointer width", (ulong)0xABCD,
+              objects.ReadULong(instance, "userData"));
+
+        var model = NativeGraphModel.From(objects);
+        Check("the graph model is built", true, model != null);
+        if (model != null)
+        {
+            var obj = model.Objects[0];
+            Check("the model reads the state id at the four-byte offset", "7", obj.Scalars["startStateId"]);
+            Check("the model reads the name at the four-byte offset", "Idle", obj.Scalars["name"]);
+            Check("the model reads userData at pointer width", "43981", obj.Scalars["userData"]);
+        }
+
+        string xml = NativeXml.From(objects, image);
+        CheckTrue("the XML reads the state id at the four-byte offset",
+                  xml.Contains("name=\"startStateId\">7</hkparam>", StringComparison.Ordinal));
+        CheckTrue("the XML reads the name at the four-byte offset",
+                  xml.Contains("name=\"name\">Idle</hkparam>", StringComparison.Ordinal));
+        CheckTrue("the XML reads userData at pointer width",
+                  xml.Contains("name=\"userData\">43981</hkparam>", StringComparison.Ordinal));
+
+        var fields = ClassFields.Of(objects, instance);
+        Check("the field walker finds the state id", true, fields != null);
+        var stateId = fields?.FirstOrDefault(f => f.Name == "startStateId");
+        Check("the field walker lands on the four-byte offset", stateIdField,
+              stateId?.At ?? -1);
+
+        var sites = SymbolIndexFixup.IndexSites(objects, events: true);
+        var eventId = sites.FirstOrDefault(s => s.Value == 3);
+        Check("the event id site lands on the four-byte offset", eventIdField, eventId.At);
+        Check("and is four bytes wide", 4, eventId.Width);
+
+        var items = PackfileLayout.Of(image);
+        Check("the layout walker sizes the object at the four-byte size", four.Size,
+              items?.FirstOrDefault(i => i.Kind == "object")?.Length ?? -1);
+        CheckTrue("the layout walker still finds the string",
+                  (items ?? new()).Any(i => i.Kind == "string" && i.Length == "Idle".Length + 1));
+    }
+
+    private static void FourByteConvertedFilesRenderAtTheActiveLayout()
+    {
+        // A file converted to four bytes must be read back into the same object model, not into
+        // one built from the stored eight-byte offsets. This is the editor/XML path (#24 core).
+        var original = ClipInAPackfile("Idle.hkx", out _);
+        int userData8 = HavokClasses.Shipped.Field("hkbClipGenerator", "userData")!.Offset;
+        BitConverter.GetBytes(0xABCDUL).CopyTo(original.Section("__data__")!.Data, userData8);
+
+        var four = PackfileImage.Read(original.Rebuild());
+        CheckTrue("eight to four succeeds", PackfileConverter.ConvertTo(four, PointerLayout.FourByte));
+        var fourObjects = new PackfileObjects(PackfileImage.Read(four.Rebuild()));
+
+        var model8 = NativeGraphModel.From(new PackfileObjects(PackfileImage.Read(original.Rebuild())));
+        var model4 = NativeGraphModel.From(fourObjects);
+
+        Check("the eight-byte model reads the clip", true, model8 != null && model4 != null);
+        if (model8 != null && model4 != null)
+        {
+            foreach (string field in new[] { "userData", "animationName", "playbackSpeed" })
+                Check($"the four-byte model reads {field} the same as the eight-byte one",
+                      model8.Objects[0].Scalars[field], model4.Objects[0].Scalars[field]);
+            Check("and the four-byte values are the ones that were written", "43981",
+                  model4.Objects[0].Scalars["userData"]);
+            Check("the animation name survives conversion", "Idle.hkx",
+                  model4.Objects[0].Scalars["animationName"]);
+        }
+
+        string xml = NativeXml.From(fourObjects, PackfileImage.Read(four.Rebuild()));
+        CheckTrue("the XML on the converted file names the animation",
+                  xml.Contains("name=\"animationName\">Idle.hkx</hkparam>", StringComparison.Ordinal));
+
+        var fields = ClassFields.Of(fourObjects, fourObjects.Instances[0]);
+        var animationName = fields?.FirstOrDefault(f => f.Name == "animationName");
+        int fourName = LayoutWalker.Of(HavokClassTypes.Shipped, "hkbClipGenerator",
+                                       PointerLayout.FourByte).OffsetOf("animationName")!.Value;
+        Check("the field walker lands on the four-byte animation name", fourName,
+              animationName?.At ?? -1);
+    }
+
+    private static void FixedUlongArraysRenderAtPointerWidth()
+    {
+        static System.IO.Stream Json(string text) =>
+            new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
+
+        // Foo holds a fixed array of three hkUlong (pointer-sized) values followed by an int.
+        // Eight-byte layout: a@0, b@24, size 32. Four-byte layout: a@0 stride 4, b@12, size 16.
+        var custom = HavokClassTypes.Parse(Json(
+            "{\"classes\":{\"Foo\":{\"parent\":null,\"signature\":\"0x1\",\"size\":32," +
+            "\"members\":[" +
+            "{\"name\":\"a\",\"offset\":0,\"vtype\":\"TYPE_ULONG\",\"vsub\":\"TYPE_VOID\",\"arrsize\":3}," +
+            "{\"name\":\"b\",\"offset\":24,\"vtype\":\"TYPE_INT32\",\"vsub\":\"TYPE_VOID\",\"arrsize\":0}]}}}"));
+
+        var data = new byte[16];
+        BitConverter.GetBytes(0x11u).CopyTo(data, 0);
+        BitConverter.GetBytes(0x22u).CopyTo(data, 4);
+        BitConverter.GetBytes(0x33u).CopyTo(data, 8);
+        BitConverter.GetBytes(0x99u).CopyTo(data, 12);
+
+        var names = new byte[5 + "Foo".Length + 1];
+        BitConverter.GetBytes(0x1u).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("Foo").CopyTo(names, 5);
+
+        var image = new PackfileImage { LayoutRules = new byte[] { 4, 1, 0, 1 }, Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data, VirtualFixups = Triple(0, 0, 5),
+        });
+
+        var objects = new PackfileObjects(PackfileImage.Read(image.Rebuild()), types: custom);
+
+        // The 4-byte FieldAt honors the custom schema, not the shipped table (which does not
+        // even know Foo), so b must land on the four-byte offset rather than being refused.
+        Check("FieldAt uses the custom schema on the four-byte path", 12,
+              objects.FieldAt(objects.Instances[0], "b"));
+
+        var model = NativeGraphModel.From(objects, custom);
+        Check("the model is built from the custom schema", true, model != null);
+        if (model != null)
+        {
+            var obj = model.Objects[0];
+            Check("the first fixed ulong is read at pointer width", "17", obj.Scalars["a1"]);
+            Check("the second fixed ulong is read four bytes after the first, not eight", "34",
+                  obj.Scalars["a2"]);
+            Check("the third fixed ulong follows at pointer width", "51", obj.Scalars["a3"]);
+            Check("the field after the array lands on the four-byte offset", "153",
+                  obj.Scalars["b"]);
+        }
+
+        string xml = NativeXml.From(objects, image, custom);
+        CheckTrue("the XML reads the second fixed ulong at pointer width",
+                  xml.Contains("name=\"a2\">34</hkparam>", StringComparison.Ordinal));
+        CheckTrue("and the third", xml.Contains("name=\"a3\">51</hkparam>", StringComparison.Ordinal));
+    }
+
+    private static void WidthSensitiveDynamicArraysUseActiveLayouts()
+    {
+        static System.IO.Stream Json(string text) =>
+            new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
+
+        // Foo holds an ordinary TYPE_ARRAY of three hkUlong and an ordinary TYPE_ARRAY of two
+        // variants, then an int. Eight-byte layout: ulongs@0 (ptr+count+capacity = 16),
+        // variants@16 (16), tail@32, size 40. Four-byte layout: ulongs@0 (12), variants@12
+        // (12), tail@24, size 28. hkUlong elements are pointer-sized and variants are two
+        // pointers, so both arrays stride differently at four bytes — the fixed shipped-table
+        // widths (8 and 16) must not size the backing store.
+        var custom = HavokClassTypes.Parse(Json(
+            "{\"classes\":{\"Foo\":{\"parent\":null,\"signature\":\"0x1\",\"size\":40," +
+            "\"members\":[" +
+            "{\"name\":\"ulongs\",\"offset\":0,\"vtype\":\"TYPE_ARRAY\",\"vsub\":\"TYPE_ULONG\",\"arrsize\":0}," +
+            "{\"name\":\"variants\",\"offset\":16,\"vtype\":\"TYPE_ARRAY\",\"vsub\":\"TYPE_VARIANT\",\"arrsize\":0}," +
+            "{\"name\":\"tail\",\"offset\":32,\"vtype\":\"TYPE_INT32\",\"vsub\":\"TYPE_VOID\",\"arrsize\":0}]}}}"));
+
+        // The fixture uses the converter's canonical eight-byte placement — object 0..40,
+        // hkUlong backing 48..72, variant backing 80..112 — so the 8 -> 4 -> 8 round trip
+        // restores the exact bytes. The variant backing is zeroed: its pointers are carried
+        // entirely by fixups, exactly as the converter writes them.
+        var data = new byte[112];
+        // ulongs header @0: pointer fixup -> 48, count 3, capacity 3.
+        BitConverter.GetBytes(3).CopyTo(data, 8);
+        BitConverter.GetBytes(3).CopyTo(data, 12);
+        // variants header @16: pointer fixup -> 80, count 2, capacity 2.
+        BitConverter.GetBytes(2).CopyTo(data, 24);
+        BitConverter.GetBytes(2).CopyTo(data, 28);
+        // tail @32.
+        BitConverter.GetBytes(0x99).CopyTo(data, 32);
+        // ulongs backing @48: three eight-byte values.
+        BitConverter.GetBytes(0x11UL).CopyTo(data, 48);
+        BitConverter.GetBytes(0x22UL).CopyTo(data, 56);
+        BitConverter.GetBytes(0x33UL).CopyTo(data, 64);
+        // variants backing @80: two elements of two pointers each; all four point back at
+        // the object itself.
+
+        var names = new byte[5 + "Foo".Length + 1];
+        BitConverter.GetBytes(0x1u).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("Foo").CopyTo(names, 5);
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data, VirtualFixups = Triple(0, 0, 5),
+        });
+        image.Section("__data__")!.SetLocals(new[]
+        {
+            (0, 48), (16, 80), (80, 0), (88, 0), (96, 0), (104, 0),
+        });
+        image.ContentsSectionIndex = 1;
+
+        void CheckModel(PackfileObjects objects, string when)
+        {
+            var model = NativeGraphModel.From(objects, custom);
+            Check($"the {when} model is built from the custom schema", true, model != null);
+            if (model == null) return;
+
+            var obj = model.Objects.Single(o => o.Class == "Foo");
+            Check($"the {when} model reads the hkUlong array at pointer width", "17 34 51",
+                  string.Join(" ", obj.Lists["ulongs"]));
+            Check($"the {when} model reads the variant array at two-pointer stride", "#90 #90",
+                  string.Join(" ", obj.Lists["variants"]));
+            Check($"the {when} model reads the field after the arrays", "153", obj.Scalars["tail"]);
+        }
+
+        byte[] before = image.Rebuild();
+        var objects8 = new PackfileObjects(PackfileImage.Read(before), types: custom);
+        CheckModel(objects8, "eight-byte");
+
+        string xml8 = NativeXml.From(objects8, PackfileImage.Read(before), custom);
+        CheckTrue("the eight-byte XML carries the hkUlong values",
+                  xml8.Contains("name=\"ulongs\" numelements=\"3\">17 34 51</hkparam>", StringComparison.Ordinal));
+        CheckTrue("the eight-byte XML carries the variant references",
+                  xml8.Contains("name=\"variants\" numelements=\"2\">#90 #90</hkparam>", StringComparison.Ordinal));
+
+        // Convert to four bytes: the backing stores must shrink to the active-layout widths
+        // (3 x 4 bytes for the hkUlongs, 2 x 8 for the variants). Reading the converted file
+        // back at the four-byte layout is what proves the width change actually happened —
+        // an 8-byte-strided hkUlong backing reads back as 17 34 0, and a variant array
+        // sized at the fixed width renders nothing at all.
+        var four = PackfileImage.Read(before);
+        CheckTrue("eight to four succeeds", PackfileConverter.ConvertTo(four, PointerLayout.FourByte, custom));
+        var objects4 = new PackfileObjects(PackfileImage.Read(four.Rebuild()), types: custom);
+        CheckModel(objects4, "four-byte");
+
+        string xml4 = NativeXml.From(objects4, PackfileImage.Read(four.Rebuild()), custom);
+        CheckTrue("the four-byte XML carries the hkUlong values at pointer width",
+                  xml4.Contains("name=\"ulongs\" numelements=\"3\">17 34 51</hkparam>", StringComparison.Ordinal));
+        CheckTrue("the four-byte XML carries the variant references",
+                  xml4.Contains("name=\"variants\" numelements=\"2\">#90 #90</hkparam>", StringComparison.Ordinal));
+
+        CheckTrue("four back to eight succeeds",
+                  PackfileConverter.ConvertTo(four, PointerLayout.EightByte, custom));
+        CheckTrue("the 8 -> 4 -> 8 round trip restores the exact bytes",
+                  before.SequenceEqual(four.Rebuild()));
+    }
+
+    private static void SignatureMismatchesRefuseConversion()
+    {
+        // A file declaring a shipped class name under a foreign signature must be refused before
+        // the walker interprets its bytes with the shipped schema: same name, different layout.
+        var names = new byte[5 + "hkbStateMachine".Length + 1];
+        BitConverter.GetBytes(0xDEADBEEFu).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbStateMachine").CopyTo(names, 5);
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = new byte[64],
+            VirtualFixups = Triple(0, 0, 5),
+        });
+
+        CheckTrue("a signature mismatch refuses conversion",
+                  !PackfileConverter.ConvertTo(image, PointerLayout.FourByte));
+        Check("and the file stays eight-byte", 8, image.Layout.PointerSize);
+    }
+
+    private static void SignatureMismatchAlsoRefusesSameWidth()
+    {
+        // Same-width conversion does not transcode any bytes, but ConvertTo(true) must not vouch
+        // for a file whose classes are not the ones this schema describes, so 8 -> 8 refuses a
+        // foreign signature too (when the sections needed to read the names exist).
+        var names = new byte[5 + "hkbStateMachine".Length + 1];
+        BitConverter.GetBytes(0xDEADBEEFu).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hkbStateMachine").CopyTo(names, 5);
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = new byte[64], VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+
+        CheckTrue("same-width conversion refuses a signature mismatch",
+                  !PackfileConverter.ConvertTo(image, PointerLayout.EightByte));
+        Check("and the header is untouched", 8, image.Layout.PointerSize);
+    }
+
+    private static void NonDataPayloadRefusesConversion()
+    {
+        var image = StateMachineEight(out _);
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__types__"), Data = new byte[8] });
+        RefusedLeavesFileUntouched(image, "a populated non-data section");
+    }
+
+    private static void NonDataLocalFixupsRefuseConversion()
+    {
+        var image = StateMachineEight(out _);
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__types__"), LocalFixups = Pair(0, 8),
+        });
+        RefusedLeavesFileUntouched(image, "local fixups in a non-data section");
+    }
+
+    private static void NonDataGlobalFixupsRefuseConversion()
+    {
+        var image = StateMachineEight(out _);
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__types__"), GlobalFixups = Triple(0, 1, 8),
+        });
+        RefusedLeavesFileUntouched(image, "global fixups in a non-data section");
+    }
+
+    private static void NonDataVirtualFixupsRefuseConversion()
+    {
+        var image = StateMachineEight(out _);
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__types__"), VirtualFixups = Triple(0, 0, 5),
+        });
+        RefusedLeavesFileUntouched(image, "virtual fixups in a non-data section");
+    }
+
+    private static void ExportsRefuseConversion()
+    {
+        var image = StateMachineEight(out int dataIndex);
+        image.Sections[dataIndex].Exports = new byte[4];
+        RefusedLeavesFileUntouched(image, "exports in any section");
+    }
+
+    private static void ImportsRefuseConversion()
+    {
+        var image = StateMachineEight(out int dataIndex);
+        image.Sections[dataIndex].Imports = new byte[4];
+        RefusedLeavesFileUntouched(image, "imports in any section");
+    }
+
+    private static void CrossSectionGlobalIntoDataRefusesConversion()
+    {
+        // A __data__ pointer whose target sits in an arbitrary section is not understood, so it
+        // is refused rather than left pointing at bytes the header no longer describes.
+        var image = StateMachineEight(out int dataIndex);
+        var types = HavokClassTypes.Shipped;
+        int binding = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte)
+                                  .OffsetOf("variableBindingSet")!.Value;
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__types__") });
+        image.Sections[dataIndex].GlobalFixups = Triple(binding, 2, 0);
+        RefusedLeavesFileUntouched(image, "a data pointer into an arbitrary section");
+    }
+
+    private static void RootOutsideDataRefusesConversion()
+    {
+        var image = StateMachineEight(out _);
+        image.ContentsSectionIndex = 0; // the class-name section, not __data__
+        RefusedLeavesFileUntouched(image, "a root that is not in __data__");
+    }
+
+    private static void InvalidFixupSectionIndexRefusesConversion()
+    {
+        var image = StateMachineEight(out int dataIndex);
+        image.Sections[dataIndex].VirtualFixups =
+            Triple(0, 0, 5).Concat(Triple(8, 99, 0)).ToArray();
+        RefusedLeavesFileUntouched(image, "a fixup carrying an invalid section index");
+    }
+
+    private static void VirtualIntoWrongSectionRefusesConversion()
+    {
+        // A virtual fixup declares the class of the object at its source, so its section field
+        // must name the class-name table. A virtual claiming __data__ while its destination
+        // happens to read as a class name would still be walked as one (PackfileObjects ignores
+        // the section) and then preserved pointing at the wrong section by Remap.
+        var image = StateMachineEight(out int dataIndex);
+        image.Sections[dataIndex].VirtualFixups = Triple(0, dataIndex, 5);
+        RefusedLeavesFileUntouched(image, "a virtual fixup whose section is __data__");
+    }
+
+    private static void VirtualIntoMiddleOfClassNameRefusesConversion()
+    {
+        // A destination inside a longer class name resolves to a suffix of the record. Here the
+        // suffix ("Bar") is itself a known class in the supplied schema, so without the
+        // record-start check the object would be walked under a class the file never declared —
+        // bypassing the signature check that runs on whole records.
+        static System.IO.Stream Json(string text) =>
+            new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
+
+        var custom = HavokClassTypes.Parse(Json(
+            "{\"classes\":{" +
+            "\"FooBar\":{\"parent\":null,\"signature\":\"0x1\",\"size\":8,\"members\":[" +
+            "{\"name\":\"x\",\"offset\":0,\"vtype\":\"TYPE_INT32\",\"vsub\":\"TYPE_VOID\",\"arrsize\":0}," +
+            "{\"name\":\"y\",\"offset\":4,\"vtype\":\"TYPE_INT32\",\"vsub\":\"TYPE_VOID\",\"arrsize\":0}]}," +
+            "\"Bar\":{\"parent\":null,\"signature\":\"0x2\",\"size\":4,\"members\":[" +
+            "{\"name\":\"x\",\"offset\":0,\"vtype\":\"TYPE_INT32\",\"vsub\":\"TYPE_VOID\",\"arrsize\":0}]}}}"));
+
+        var names = new byte[5 + "FooBar".Length + 1];
+        BitConverter.GetBytes(0x1u).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("FooBar").CopyTo(names, 5);
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = new byte[8], VirtualFixups = Triple(0, 0, 8),
+        });
+        image.ContentsSectionIndex = 1;
+        RefusedLeavesFileUntouched(image, "a virtual fixup into the middle of a class name", custom);
+    }
+
+    private static void VirtualSourceOutsideDataRefusesConversion()
+    {
+        // The object a virtual describes must fit inside __data__ under the active layout, or
+        // the walker would read past the section. Point the root at that object too, so the
+        // refusal comes from the span check rather than from root resolution failing to find a
+        // relocated block.
+        var image = StateMachineEight(out int dataIndex);
+        image.ContentsSectionOffset = image.Sections[dataIndex].Data.Length;
+        image.Sections[dataIndex].VirtualFixups =
+            Triple(image.Sections[dataIndex].Data.Length, 0, 5);
+        RefusedLeavesFileUntouched(image, "a virtual fixup whose object starts past __data__");
+    }
+
+    private static void VirtualSourceOverflowRefusesConversion()
+    {
+        // A hostile source near int.MaxValue must not overflow the span arithmetic and slip
+        // past the in-bounds check: the object would be transcoded from bytes far past __data__.
+        var image = StateMachineEight(out int dataIndex);
+        // Point the root at the overflowing object too, so the refusal comes from the span
+        // arithmetic rather than from root resolution failing to find a relocated block.
+        image.ContentsSectionOffset = int.MaxValue - 8;
+        image.Sections[dataIndex].VirtualFixups = Triple(int.MaxValue - 8, 0, 5);
+        RefusedLeavesFileUntouched(image, "a virtual fixup whose source overflows the span check");
+    }
+
+    private static void OverlappingVirtualObjectsRefuseConversion()
+    {
+        // Unique starts are not enough: two virtuals may still describe overlapping objects,
+        // which the converter would transcode from the same source bytes into two destinations.
+        var types = HavokClassTypes.Shipped;
+        int size8 = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte).Size;
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbStateMachine"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = new byte[size8 * 2],
+            VirtualFixups = Triple(0, 0, 5).Concat(Triple(16, 0, 5)).ToArray(),
+        });
+        image.ContentsSectionIndex = 1;
+        RefusedLeavesFileUntouched(image, "overlapping virtual object spans");
+    }
+
+    private static void DuplicateVirtualSourcesRefuseConversion()
+    {
+        // Two virtuals cannot declare one object's class twice: the object would be walked and
+        // relocated under two names.
+        var image = StateMachineEight(out int dataIndex);
+        image.Sections[dataIndex].VirtualFixups =
+            Triple(0, 0, 5).Concat(Triple(0, 0, 5)).ToArray();
+        RefusedLeavesFileUntouched(image, "duplicate virtual fixup sources");
+    }
+
+    private static void CrossSectionGlobalIntoClassNamesIsAllowed()
+    {
+        // The one cross-section target the converter understands is the class-name table, which
+        // is byte-for-byte width-independent. A data pointer into it must not be over-refused.
+        var types = HavokClassTypes.Shipped;
+        int binding = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte)
+                                  .OffsetOf("variableBindingSet")!.Value;
+
+        int size8 = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte).Size;
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbStateMachine"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = new byte[size8],
+            GlobalFixups = Triple(binding, 0, 5),
+            VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+
+        CheckTrue("a data pointer into the class-name table is allowed",
+                  PackfileConverter.ConvertTo(image, PointerLayout.FourByte));
+        Check("and the file is now four-byte", 4, image.Layout.PointerSize);
+    }
+
+    private static void RelativeArraysLayOutFourBytesAtBothWidths()
+    {
+        // The np shape classes prove the relative-array header is a single four-byte count at
+        // any pointer width: planes@64, faces@68, indices@72 sit four bytes apart even in the
+        // eight-byte exe the stored offsets were captured from. With the header fixed at four
+        // bytes, these classes become placeable and the walker reproduces the stored layout.
+        var types = HavokClassTypes.Shipped;
+
+        CheckTrue("the np shape classes become placeable",
+                  LayoutWalker.CanPlace(types, "hknpConvexShape") &&
+                  LayoutWalker.CanPlace(types, "hknpConvexPolytopeShape") &&
+                  LayoutWalker.CanPlace(types, "hknpCapsuleShape"));
+
+        var shape8 = LayoutWalker.Of(types, "hknpConvexShape", PointerLayout.EightByte);
+        Check("vertices sits four bytes into hknpConvexShape", 48, shape8.OffsetOf("vertices"));
+        Check("hknpConvexShape is sixty-four bytes", 64, shape8.Size);
+
+        var poly8 = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte);
+        Check("planes is at sixty-four", 64, poly8.OffsetOf("planes"));
+        Check("faces is four bytes after planes", 68, poly8.OffsetOf("faces"));
+        Check("indices is four bytes after faces", 72, poly8.OffsetOf("indices"));
+        Check("the polytope is eighty bytes", 80, poly8.Size);
+
+        var poly4 = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.FourByte);
+        int planes4 = poly4.OffsetOf("planes")!.Value;
+        Check("planes shifts with the pointer width", true, planes4 != 64);
+        Check("faces still sits four bytes after planes", planes4 + 4, poly4.OffsetOf("faces"));
+        Check("indices still sits four bytes after faces", planes4 + 8, poly4.OffsetOf("indices"));
+    }
+
+    // Builds an eight-byte hknpConvexPolytopeShape whose relative arrays use the real
+    // np-format headers — uint16(size + 1) followed by uint16(payload offset from the member
+    // site) — with payloads placed at member + rel. hkRelArray resolves `this + m_offset` in
+    // the game runtime (CommonLibF4), so the stored offset is measured from the member's own
+    // address, never the struct start. offs is (planes, faces, indices); counts are 2, 3, 5.
+    // The base class's own relative array (vertices, count 0) is written as a valid empty
+    // header.
+    private static byte[] PolytopeWithRelativePayloads(int planesRel, int facesRel, int indicesRel,
+                                                       int dataLen)
+    {
+        var types = HavokClassTypes.Shipped;
+        var poly = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte);
+        int vertices = poly.OffsetOf("vertices")!.Value;
+        int planes = poly.OffsetOf("planes")!.Value;
+        int faces = poly.OffsetOf("faces")!.Value;
+        int indices = poly.OffsetOf("indices")!.Value;
+
+        var data = new byte[dataLen];
+
+        void Header(int at, int count, int rel)
+        {
+            data[at] = (byte)(count + 1);
+            data[at + 1] = 0;
+            data[at + 2] = (byte)rel;
+            data[at + 3] = (byte)(rel >> 8);
+        }
+
+        Header(vertices, 0, 0);
+        Header(planes, 2, planesRel);
+        Header(faces, 3, facesRel);
+        Header(indices, 5, indicesRel);
+
+        for (int e = 0; e < 2; e++) BitConverter.GetBytes(10f + e).CopyTo(data, planes + planesRel + e * 16);
+        for (int e = 0; e < 3; e++) BitConverter.GetBytes((uint)(0xA0 + e)).CopyTo(data, faces + facesRel + e * 4);
+        for (int e = 0; e < 5; e++) data[indices + indicesRel + e] = (byte)(0x50 + e);
+        return data;
+    }
+
+    private static PackfileImage PolytopeImage(byte[] data)
+    {
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hknpConvexPolytopeShape"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data, VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+        return image;
+    }
+
+    private static void RelativeArrayPayloadsRoundTripThroughWidths()
+    {
+        // The canonical FO4-era layout for the 80-byte polytope: each payload starts on a
+        // 16-byte line and each completed block is padded to the next line — planes at
+        // +0x50 (2 x vector4), faces at +0x70 (3 x 4 bytes, then padding to +0x80), indices
+        // at +0x80 (5 x uint8). Headers encode count + 1 in the first uint16 and the payload's
+        // offset from the member site in the second — planes@64 + 0x10 = +0x50, faces@68 +
+        // 0x1c = +0x70, indices@72 + 0x20 = +0x80.
+        var types = HavokClassTypes.Shipped;
+        int size = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte).Size;
+        Check("the eight-byte polytope is eighty bytes", 0x50, size);
+
+        // The section is sized to the compacted layout (payloads end at 0x85, aligned to
+        // 0x90) so the round trip is byte-for-byte comparable.
+        var image = PolytopeImage(PolytopeWithRelativePayloads(0x10, 0x2C, 0x38, 0x90));
+        byte[] before = image.Rebuild();
+
+        CheckTrue("an eight-byte polytope converts to four bytes",
+                  PackfileConverter.ConvertTo(image, PointerLayout.FourByte));
+        Check("and the file is now four-byte", 4, image.Layout.PointerSize);
+        CheckTrue("and converts back to eight bytes",
+                  PackfileConverter.ConvertTo(image, PointerLayout.EightByte));
+        CheckTrue("the 8 -> 4 -> 8 round trip restores the exact bytes",
+                  before.SequenceEqual(image.Rebuild()));
+
+        // The round trip restores the canonical line placement, not just the bytes: the
+        // rewritten stored offsets point at the canonical payload positions, including the
+        // line padding between the faces and indices payloads.
+        var rebuilt = PackfileImage.Read(image.Rebuild());
+        var bytes = rebuilt.Section("__data__")!.Data;
+        int base0 = new PackfileObjects(rebuilt).Instances[0].Offset;
+        int planesH = base0 + LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte).OffsetOf("planes")!.Value;
+        int facesH = base0 + LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte).OffsetOf("faces")!.Value;
+        int indicesH = base0 + LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte).OffsetOf("indices")!.Value;
+
+        int Rel(int header) => bytes[header + 2] | bytes[header + 3] << 8;
+        Check("planes stores its member-site distance", 0x10, Rel(planesH));
+        Check("faces stores its member-site distance", 0x2C, Rel(facesH));
+        Check("indices stores its member-site distance", 0x38, Rel(indicesH));
+        Check("planes payload returns to +0x50", base0 + 0x50, planesH + Rel(planesH));
+        Check("faces payload returns to +0x70", base0 + 0x70, facesH + Rel(facesH));
+        Check("indices payload returns to +0x80", base0 + 0x80, indicesH + Rel(indicesH));
+        Check("the payloads are 16-byte line padded", base0 + 0x50 + 32, facesH + Rel(facesH));
+        CheckTrue("the line padding between payloads is zero",
+                  bytes.Skip(base0 + 0x7C).Take(0x80 - 0x7C).All(b => b == 0));
+    }
+
+    private static void RelativeArrayPayloadsUseStoredRelativeOffsets()
+    {
+        // The payloads are deliberately NOT immediately after the object: planes sits at
+        // member@64 + 0x70 = +0xB0 (well past the 0x50-byte struct), faces at 0xF8, indices
+        // at 0x10C. Only the stored relative offset can find them; a tail-layout model would
+        // read the wrong bytes (or refuse, since the same bytes decode as an absurd count).
+        var types = HavokClassTypes.Shipped;
+        int size4 = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.FourByte).Size;
+        int planes4 = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.FourByte).OffsetOf("planes")!.Value;
+
+        var data = PolytopeWithRelativePayloads(0x70, 0x90, 0x9C, 0x120);
+        Check("the fixture really is non-tail", true, 64 + 0x70 != 0x50);
+
+        var image = PolytopeImage(data);
+        CheckTrue("the non-tail polytope converts to four bytes",
+                  PackfileConverter.ConvertTo(image, PointerLayout.FourByte));
+
+        var rebuilt = PackfileImage.Read(image.Rebuild());
+        var objects = new PackfileObjects(rebuilt);
+        int base4 = objects.Instances[0].Offset;
+        var bytes = rebuilt.Section("__data__")!.Data;
+        int header = base4 + planes4;
+
+        int outCount = bytes[header] | bytes[header + 1] << 8;
+        int outRel = bytes[header + 2] | bytes[header + 3] << 8;
+        Check("the count header is preserved as size + 1", 3, outCount);
+
+        // The converter snaps the payload to a 16-byte line and rewrites the stored distance
+        // against the relocated member site — never the source's 0x70, and never a
+        // tail-model distance computed from the four-byte size.
+        int planesAt = PackfileLayout.Align(size4, 16);
+        Check("the output relative offset points at the relocated payload",
+              planesAt - planes4, outRel);
+        CheckTrue("the relocated payload start is 16-byte aligned", (base4 + planes4 + outRel) % 16 == 0);
+
+        float v0 = BitConverter.ToSingle(bytes, base4 + planes4 + outRel);
+        float v1 = BitConverter.ToSingle(bytes, base4 + planes4 + outRel + 16);
+        Check("the first plane vector's x survives", 10f, v0);
+        Check("the second plane vector's x survives", 11f, v1);
+
+        int facesAt = PackfileLayout.Align(planesAt + 32, 16);
+        Check("the faces payload follows the planes on a new line", 0xA0u,
+              BitConverter.ToUInt32(bytes, facesAt));
+        int indicesAt = PackfileLayout.Align(facesAt + 12, 16);
+        Check("the indices payload follows the faces on a new line", (byte)0x50, bytes[indicesAt]);
+        Check("the last index survives", (byte)0x54, bytes[indicesAt + 4]);
+    }
+
+    private static void RelativeArraysRenderInTheModelAndXml()
+    {
+        // The model and XML readers must route TYPE_RELARRAY through the real np header
+        // (uint16 size + 1, uint16 relative offset from the member site) and locate the
+        // payload at member + storedOffset. The payloads here sit at +0xB0 / +0xF8 /
+        // +0x10C — deliberately NOT immediately after the 0x50-byte object — so only the
+        // stored offsets can find them; the pointer-header array path reads count from
+        // header + pointerWidth (garbage, or a null backing without a fixup) and renders
+        // nothing.
+        var image = PolytopeImage(PolytopeWithRelativePayloads(0x70, 0x90, 0x9C, 0x120));
+        var objects = new PackfileObjects(image);
+
+        var model = NativeGraphModel.From(objects);
+        Check("the polytope renders into the graph model", true, model != null);
+        if (model != null)
+        {
+            var obj = model.Objects.Single(o => o.Class == "hknpConvexPolytopeShape");
+
+            Check("the planes list carries both vector4s from the stored offset",
+                  "(10.0 0.0 0.0 0.0) (11.0 0.0 0.0 0.0)", string.Join(" ", obj.Lists["planes"]));
+            Check("the indices list carries all five bytes from the stored offset",
+                  "80 81 82 83 84", string.Join(" ", obj.Lists["indices"]));
+
+            obj.StructLists.TryGetValue("faces", out var faces);
+            Check("the faces struct list has all three faces", 3, faces?.Count ?? 0);
+            if (faces != null && faces.Count == 3)
+            {
+                Check("the first face is read from its own payload", "160", faces[0]["firstIndex"]);
+                Check("the second face follows at the struct stride", "161", faces[1]["firstIndex"]);
+                Check("the third face follows at the struct stride", "162", faces[2]["firstIndex"]);
+            }
+        }
+
+        string xml = NativeXml.From(objects, image);
+        CheckTrue("the XML carries the planes payload values",
+                  xml.Contains("name=\"planes\" numelements=\"2\">(10.0 0.0 0.0 0.0) (11.0 0.0 0.0 0.0)</hkparam>",
+                               StringComparison.Ordinal));
+        CheckTrue("the XML carries the indices payload values",
+                  xml.Contains("name=\"indices\" numelements=\"5\">80 81 82 83 84</hkparam>",
+                               StringComparison.Ordinal));
+        CheckTrue("the XML emits all three faces as structs",
+                  xml.Contains("<hkparam name=\"faces\" numelements=\"3\">", StringComparison.Ordinal));
+        CheckTrue("the XML renders the first face's fields",
+                  xml.Contains("name=\"firstIndex\">160</hkparam>", StringComparison.Ordinal));
+        CheckTrue("and the second face's fields",
+                  xml.Contains("name=\"firstIndex\">161</hkparam>", StringComparison.Ordinal));
+    }
+
+    private static void GenuineNpSkeletonRelarraysConvertAndRender()
+    {
+        // A real Fallout 4 Turret standing skeleton — an np physics packfile carrying eight
+        // hknpConvexPolytopeShape instances whose planes/faces/indices (and inherited
+        // vertices) are genuine np relative arrays. This exercises the whole pipeline against
+        // bytes the game actually wrote, not a synthetic fixture: in particular the
+        // member-site offset base, since hkRelArray resolves `this + m_offset` in the game
+        // runtime and this file's payloads only resolve with that base (the box polytope's
+        // vertices sit at member@48 + 0x20, planes at member@64 + 0x90, faces at member@68 +
+        // 0x10C, indices at member@72 + 0x128).
+        string sample = Path.Combine(AppContext.BaseDirectory, "samples", "TurretStandingSkeleton.hkx");
+        if (!File.Exists(sample)) { Check("the genuine sample file is present", true, false); return; }
+
+        var original = PackfileImage.Read(File.ReadAllBytes(sample));
+        Check("the genuine skeleton is an eight-byte packfile", 8, original.Layout.PointerSize);
+
+        void CheckPolytope(PackfileObjects objects, string when)
+        {
+            var model = NativeGraphModel.From(objects);
+            Check($"the {when} file renders into the graph model", true, model != null);
+            if (model == null) return;
+
+            var polys = model.Objects.Where(o => o.Class == "hknpConvexPolytopeShape").ToList();
+            Check($"the {when} file carries all eight polytopes", 8, polys.Count);
+
+            string indices = string.Join(" ",
+                polys.Select(p => string.Join(" ", p.Lists.GetValueOrDefault("indices") ?? new()))
+                     .FirstOrDefault(s => s.Length > 0) ?? "");
+            var box = polys.FirstOrDefault(p =>
+                string.Join(" ", p.Lists.GetValueOrDefault("indices") ?? new()) == indices);
+            Check($"the {when} file renders a polytope with its payloads", true, box != null);
+            if (box == null) return;
+
+            Check($"the {when} vertices payload has seven vector4s", 28, box.Lists["vertices"].Count);
+            Check($"the {when} planes payload has seven vector4s", 28, box.Lists["planes"].Count);
+            Check($"the {when} indices payload matches the game data", indices,
+                  string.Join(" ", box.Lists["indices"]));
+
+            box.StructLists.TryGetValue("faces", out var faces);
+            Check($"the {when} faces struct list has all five faces", 5, faces?.Count ?? 0);
+            if (faces != null && faces.Count == 5)
+            {
+                Check($"the {when} first face's firstIndex is read from its payload", "0",
+                      faces[0]["firstIndex"]);
+                Check($"the {when} last face's firstIndex is read from its payload", "16",
+                      faces[4]["firstIndex"]);
+                Check($"the {when} faces carry their numIndices", "4", faces[0]["numIndices"]);
+            }
+        }
+
+        var objects8 = new PackfileObjects(original);
+        CheckPolytope(objects8, "original eight-byte");
+
+        string xml8 = NativeXml.From(objects8, original);
+        CheckTrue("the XML carries the genuine indices payload",
+                  xml8.Contains("name=\"indices\" numelements=\"23\">0 3 6 1 7 5 2 4 7 4 1 6 0 2 5 3 3 5 7 6 4 2 0</hkparam>",
+                                StringComparison.Ordinal));
+        CheckTrue("the XML emits all five genuine faces",
+                  xml8.Contains("<hkparam name=\"faces\" numelements=\"5\">", StringComparison.Ordinal));
+
+        // Convert to four bytes and back. The relarray payloads are relocated — the converter
+        // packs them at consecutive 16-byte lines, unlike the game's original layout with its
+        // inter-payload gaps — so the round trip is not byte-identical, but every payload
+        // value must survive both directions.
+        var four = PackfileImage.Read(original.Rebuild());
+        CheckTrue("the genuine skeleton converts to four bytes",
+                  PackfileConverter.ConvertTo(four, PointerLayout.FourByte));
+        Check("and is now four-byte", 4, four.Layout.PointerSize);
+
+        var objects4 = new PackfileObjects(PackfileImage.Read(four.Rebuild()));
+        CheckPolytope(objects4, "converted four-byte");
+
+        CheckTrue("and converts back to eight bytes",
+                  PackfileConverter.ConvertTo(four, PointerLayout.EightByte));
+        var objects88 = new PackfileObjects(PackfileImage.Read(four.Rebuild()));
+        CheckPolytope(objects88, "round-tripped eight-byte");
+
+        string xml88 = NativeXml.From(objects88, PackfileImage.Read(four.Rebuild()));
+        CheckTrue("the round-tripped XML still carries the genuine indices payload",
+                  xml88.Contains("name=\"indices\" numelements=\"23\">0 3 6 1 7 5 2 4 7 4 1 6 0 2 5 3 3 5 7 6 4 2 0</hkparam>",
+                                 StringComparison.Ordinal));
+    }
+
+    private static void RelativeArrayMalformedHeadersAreRefused()
+    {
+        var types = HavokClassTypes.Shipped;
+        int planes = LayoutWalker.Of(types, "hknpConvexPolytopeShape", PointerLayout.EightByte).OffsetOf("planes")!.Value;
+
+        // An encoded size of zero means count -1: the header is malformed, not merely empty.
+        var zero = PolytopeWithRelativePayloads(0x50, 0x70, 0x80, 0x100);
+        zero[planes] = 0;
+        zero[planes + 1] = 0;
+        var zeroImage = PolytopeImage(zero);
+        byte[] zeroBefore = zeroImage.Rebuild();
+        CheckTrue("an encoded size of zero is refused",
+                  !PackfileConverter.ConvertTo(zeroImage, PointerLayout.FourByte));
+        CheckTrue("and the file is untouched", zeroBefore.SequenceEqual(zeroImage.Rebuild()));
+
+        // A relative offset whose payload would run past the end of the section is refused.
+        var overrun = PolytopeWithRelativePayloads(0x50, 0x70, 0x80, 0x100);
+        overrun[planes + 2] = 0xFD;
+        overrun[planes + 3] = 0xFF;
+        var overrunImage = PolytopeImage(overrun);
+        byte[] overrunBefore = overrunImage.Rebuild();
+        CheckTrue("a payload running past the section end is refused",
+                  !PackfileConverter.ConvertTo(overrunImage, PointerLayout.FourByte));
+        CheckTrue("and the file is untouched", overrunBefore.SequenceEqual(overrunImage.Rebuild()));
+
+        // A count whose payload cannot fit is refused the same way.
+        var huge = PolytopeWithRelativePayloads(0x50, 0x70, 0x80, 0x100);
+        huge[planes] = 0xFF;
+        huge[planes + 1] = 0xFF;
+        var hugeImage = PolytopeImage(huge);
+        byte[] hugeBefore = hugeImage.Rebuild();
+        CheckTrue("a count whose payload does not fit is refused",
+                  !PackfileConverter.ConvertTo(hugeImage, PointerLayout.FourByte));
+        CheckTrue("and the file is untouched", hugeBefore.SequenceEqual(hugeImage.Rebuild()));
+    }
+
+    private static void RelativeArrayPayloadOverlapsObjectRefusesConversion()
+    {
+        // The first polytope's planes payload (member@64 + 0x20 = +0x90) lands inside the
+        // second object's span — a four-byte hknpConvexPolytopeShapeFace at +0x90. Both
+        // blocks individually fit in __data__ and both virtuals are valid, so only the global
+        // source-range overlap check can catch it; without it the converter relocates both
+        // blocks and lets the overlapping source bytes be transcoded into two destinations.
+        var types = HavokClassTypes.Shipped;
+
+        var data = PolytopeWithRelativePayloads(0x50, 0x70, 0x80, 0x100);
+
+        var names = new byte[5 + "hknpConvexPolytopeShape".Length + 1
+                            + 5 + "hknpConvexPolytopeShapeFace".Length + 1];
+        BitConverter.GetBytes(types["hknpConvexPolytopeShape"]!.Signature).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hknpConvexPolytopeShape").CopyTo(names, 5);
+        int nameAt = 5 + "hknpConvexPolytopeShape".Length + 1;
+        BitConverter.GetBytes(types["hknpConvexPolytopeShapeFace"]!.Signature).CopyTo(names, nameAt);
+        names[nameAt + 4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("hknpConvexPolytopeShapeFace").CopyTo(names, nameAt + 5);
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data,
+            VirtualFixups = Triple(0, 0, 5).Concat(Triple(0x90, 0, nameAt + 5)).ToArray(),
+        });
+        image.ContentsSectionIndex = 1;
+
+        RefusedLeavesFileUntouched(image, "a relative-array payload overlapping another object");
+    }
+
+    private static void OverlappingRelativeArrayPayloadsRefuseConversion()
+    {
+        // planes declares its payload at member@64 + 0x10 = +0x50 and faces at member@68 +
+        // 0x1C = +0x60: the faces payload (0x60..0x6C) sits inside the planes payload
+        // (0x50..0x70). Each header and span is individually valid, so only the overlap
+        // check can refuse it.
+        var image = PolytopeImage(PolytopeWithRelativePayloads(0x10, 0x1C, 0x80, 0x100));
+        RefusedLeavesFileUntouched(image, "two overlapping relative-array payloads");
+    }
+
+    private static void NonEmptyArrayWithoutFixupRefusesConversion()
+    {
+        // hkbStateMachine.states declares two elements but its pointer site has no local or
+        // global fixup anywhere in the file. ArrayAt cannot resolve a backing store, and
+        // copying the nonzero header anyway would emit a converted file whose array
+        // advertises elements but whose backing pointer was silently dropped.
+        var types = HavokClassTypes.Shipped;
+        int states8 = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte).OffsetOf("states")!.Value;
+        int size8 = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte).Size;
+
+        var data = new byte[size8];
+        BitConverter.GetBytes(2).CopyTo(data, states8 + 8);   // count, with no fixup anywhere
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbStateMachine"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = data, VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+
+        RefusedLeavesFileUntouched(image, "a non-empty array without its backing fixup");
+    }
+
+    private static void ClassNamesFixupsRefuseConversion()
+    {
+        // __classnames__ bytes are opaque/raw data, but a fixup table in that section still
+        // carries offsets that the width change would leave unremapped.
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbClipGenerator"),
+            LocalFixups = Pair(0, 8),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = new byte[0x200], VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+
+        RefusedLeavesFileUntouched(image, "a fixup inside __classnames__");
+    }
+
+    private static void CompareCatchesHeaderAndSectionDifferences()
+    {
+        PackfileImage Base()
+        {
+            var image = new PackfileImage();
+            image.Sections.Add(new PackfileSection
+            {
+                TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbClipGenerator"),
+            });
+            image.Sections.Add(new PackfileSection
+            {
+                TagBytes = MakeTag("__data__"), Data = new byte[0x200], VirtualFixups = Triple(0, 0, 5),
+            });
+            image.ContentsSectionIndex = 1;
+            return image;
+        }
+
+        int Diffs(PackfileImage other) =>
+            Program.CompareImages(Base(), other, new List<string>());
+
+        Check("identical packfiles compare clean", 0, Diffs(Base()));
+
+        // Each variant mutates a fresh base; the comparison must flag the field in question.
+        var rules = Base();
+        rules.LayoutRules = new byte[] { 4, 1, 0, 1 };
+        CheckTrue("differing layout rules are caught", Diffs(rules) > 0);
+
+        var root = Base();
+        root.ContentsSectionOffset = 0x10;
+        CheckTrue("differing root offsets are caught", Diffs(root) > 0);
+
+        var predicates = Base();
+        predicates.Predicates = new byte[] { 1, 2, 3 };
+        CheckTrue("differing predicates are caught", Diffs(predicates) > 0);
+
+        var extra = Base();
+        extra.Sections.Add(new PackfileSection { TagBytes = MakeTag("__types__"), Data = new byte[4] });
+        CheckTrue("a section present in only one file is caught", Diffs(extra) > 0);
+
+        var exported = Base();
+        exported.Sections[1].Exports = new byte[8];
+        CheckTrue("differing exports are caught", Diffs(exported) > 0);
+    }
+
+    private static void GroundPredictsEveryFixedArrayAndVariantSlot()
+    {
+        // A custom class with a fixed array of three pointers and one TYPE_VARIANT (two
+        // pointer-sized slots: the object pointer and the class-name pointer). The reference
+        // file carries fixups at all five sites, so ground must predict every slot, not just
+        // the first pointer and nothing for the variant.
+        static System.IO.Stream Json(string text) =>
+            new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
+
+        var custom = HavokClassTypes.Parse(Json(
+            "{\"classes\":{\"Lod\":{\"parent\":null,\"signature\":\"0x1\",\"size\":40,\"members\":[" +
+            "{\"name\":\"shapes\",\"offset\":0,\"vtype\":\"TYPE_POINTER\",\"vsub\":\"TYPE_VOID\",\"arrsize\":3}," +
+            "{\"name\":\"value\",\"offset\":24,\"vtype\":\"TYPE_VARIANT\",\"vsub\":\"TYPE_VOID\",\"arrsize\":0}]}}}"));
+
+        var names = new byte[5 + 3 + 1];
+        BitConverter.GetBytes(0x1u).CopyTo(names, 0);
+        names[4] = 0x09;
+        System.Text.Encoding.ASCII.GetBytes("Lod").CopyTo(names, 5);
+
+        var fixups = new byte[0];
+        foreach (int at in new[] { 0, 8, 16, 24, 32 })
+            fixups = fixups.Concat(Pair(at, 0x100)).ToArray();
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = new byte[0x200],
+            LocalFixups = fixups, VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+
+        var read = PackfileImage.Read(image.Rebuild());
+        var (placed, refused, objects, reference, predicted, unexplained) =
+            Program.GroundPrediction(read, custom);
+
+        Check("the custom class is placeable", 1, placed);
+        Check("and nothing is refused", 0, refused);
+        Check("the file has one object", 1, objects);
+        Check("the reference carries all five pointer sites", 5, reference);
+        Check("ground predicts every fixed-array and variant slot", 5, predicted);
+        Check("nothing is unexplained", 0, unexplained.Count);
+    }
+
+    // An eight-byte packfile holding one hkbStateMachine that converts cleanly, with the root
+    // pointing at __data__. Individual tests add the unsafe ingredient they want to refuse.
+    private static PackfileImage StateMachineEight(out int dataIndex)
+    {
+        int size8 = LayoutWalker.Of(HavokClassTypes.Shipped, "hkbStateMachine",
+                                    PointerLayout.EightByte).Size;
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbStateMachine"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"), Data = new byte[size8], VirtualFixups = Triple(0, 0, 5),
+        });
+        dataIndex = 1;
+        image.ContentsSectionIndex = dataIndex;
+        return image;
+    }
+
+    private static void RefusedLeavesFileUntouched(PackfileImage image, string what,
+                                                   HavokClassTypes? types = null)
+    {
+        byte[] before = image.Rebuild();
+        CheckTrue(what + " refuses conversion",
+                  !PackfileConverter.ConvertTo(image, PointerLayout.FourByte, types));
+        CheckTrue(what + " leaves the file untouched", before.SequenceEqual(image.Rebuild()));
+    }
+
+    private static void ConvertedArrayCapacityMatchesTheCopiedCount()
+    {
+        // hkbStateMachine.states is a TYPE_ARRAY. The source advertises count 2 but capacity 8;
+        // the converted header must re-advertise capacity 2 (the relocated block holds exactly
+        // two slots), or a runtime append could write past the new block.
+        var types = HavokClassTypes.Shipped;
+        int states8 = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte).OffsetOf("states")!.Value;
+        int states4 = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.FourByte).OffsetOf("states")!.Value;
+        int size8 = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte).Size;
+        int run = (size8 + 15) / 16 * 16;
+
+        var data = new byte[run + 16];
+        BitConverter.GetBytes(2).CopyTo(data, states8 + 8);            // count
+        BitConverter.GetBytes(0x80000008u).CopyTo(data, states8 + 12); // embedded flag + capacity 8
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbStateMachine"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            LocalFixups = Pair(states8, run),
+            VirtualFixups = Triple(0, 0, 5),
+        });
+        image.ContentsSectionIndex = 1;
+
+        CheckTrue("eight to four succeeds", PackfileConverter.ConvertTo(image, PointerLayout.FourByte));
+
+        var rebuilt = PackfileImage.Read(image.Rebuild());
+        var objects = new PackfileObjects(rebuilt);
+        int header = objects.Instances[0].Offset + states4;
+        var bytes = rebuilt.Section("__data__")!.Data;
+
+        Check("the count survives", 2, BitConverter.ToInt32(bytes, header + 4));
+        Check("the flag bits are preserved", 0x80000000u,
+              BitConverter.ToUInt32(bytes, header + 8) & 0xC0000000u);
+        Check("the capacity is rewritten to the copied count", 0x80000002u,
+              BitConverter.ToUInt32(bytes, header + 8));
+    }
+
+    private static void PointerArraysRenderIdenticallyAtBothWidths()
+    {
+        // A non-empty pointer array (hkbStateMachine.states) must render the same references and
+        // element counts in the XML/model at four bytes as at eight. Before the read-path fix,
+        // the 4-byte XML sized pointer elements at 8 bytes and reported the wrong element count.
+        var types = HavokClassTypes.Shipped;
+        int rootSize = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte).Size;
+        int infoSize = LayoutWalker.Of(types, "hkbStateMachineStateInfo", PointerLayout.EightByte).Size;
+        int states8 = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.EightByte).OffsetOf("states")!.Value;
+        int infoOffset = (rootSize + 15) / 16 * 16;
+        int run = infoOffset + infoSize;
+
+        var data = new byte[run + 16];
+        BitConverter.GetBytes(2).CopyTo(data, states8 + 8);
+        BitConverter.GetBytes(0x80000002u).CopyTo(data, states8 + 12);
+
+        var machine = ClassNamesBlob("hkbStateMachine");
+        var info = ClassNamesBlob("hkbStateMachineStateInfo");
+        var names = machine.Concat(info).ToArray();
+
+        var image = new PackfileImage();
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__classnames__"), Data = names });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            LocalFixups = Pair(states8, run),
+            GlobalFixups = Triple(run, 1, infoOffset),
+            VirtualFixups = Triple(0, 0, 5).Concat(Triple(infoOffset, 0, machine.Length + 5)).ToArray(),
+        });
+        image.ContentsSectionIndex = 1;
+
+        var objects8 = new PackfileObjects(PackfileImage.Read(image.Rebuild()));
+        string xml8 = NativeXml.From(objects8, image);
+        var model8 = NativeGraphModel.From(objects8);
+
+        var four = PackfileImage.Read(image.Rebuild());
+        CheckTrue("eight to four succeeds", PackfileConverter.ConvertTo(four, PointerLayout.FourByte));
+
+        var fourImage = PackfileImage.Read(four.Rebuild());
+        var objects4 = new PackfileObjects(fourImage);
+        string xml4 = NativeXml.From(objects4, fourImage);
+        var model4 = NativeGraphModel.From(objects4);
+
+        Check("both objects survive conversion", 2, objects4.Instances.Count);
+        CheckTrue("the four-byte XML carries the pointer array with its count",
+                  xml4.Contains("numelements=\"2\"", StringComparison.Ordinal));
+        CheckTrue("the four-byte XML keeps the reference",
+                  xml4.Contains("#91", StringComparison.Ordinal));
+        CheckTrue("the pointer array renders identically at both widths", xml8 == xml4);
+
+        CheckTrue("the models both name the state", model8 != null && model4 != null);
+        if (model8 != null && model4 != null)
+            CheckTrue("the four-byte model lists the same states",
+                      model8.Objects[0].Lists["states"].SequenceEqual(
+                          model4.Objects[0].Lists["states"]));
+    }
+
+    // A four-byte packfile holding one hkbStateMachine with a name, a state id, a pointer-sized
+    // userData and (when asked) an event id. All other event/variable index fields are set to -1
+    // so the read-only paste analysis does not demand names the file does not declare.
+    private static PackfileImage FourByteStateMachine(int eventId, out int nameField,
+                                                      out int stateIdField, out int eventIdField)
+    {
+        var types = HavokClassTypes.Shipped;
+        var four = LayoutWalker.Of(types, "hkbStateMachine", PointerLayout.FourByte);
+
+        nameField = four.OffsetOf("name")!.Value;
+        stateIdField = four.OffsetOf("startStateId")!.Value;
+        eventIdField = four.OffsetOf("transitionToNextHigherStateEventId")!.Value;
+        int userData = four.OffsetOf("userData")!.Value;
+
+        int size = four.Size;
+        var data = new byte[size + 16];
+
+        BitConverter.GetBytes(0xABCDu).CopyTo(data, userData);
+        BitConverter.GetBytes(7).CopyTo(data, stateIdField);
+        BitConverter.GetBytes(eventId).CopyTo(data, eventIdField);
+        foreach (string field in new[]
+                 {
+                     "returnToPreviousStateEventId", "randomTransitionEventId",
+                     "transitionToNextLowerStateEventId", "syncVariableIndex",
+                 })
+            BitConverter.GetBytes(-1).CopyTo(data, four.OffsetOf(field)!.Value);
+
+        // The inline hkbEvent's id is an event index too; leave it -1 so the read-only paste
+        // analysis does not demand a name the file does not declare.
+        var hkbEvent = LayoutWalker.Of(types, "hkbEvent", PointerLayout.FourByte);
+        int eventStruct = four.OffsetOf("eventToSendWhenStateOrTransitionChanges")!.Value;
+        BitConverter.GetBytes(-1).CopyTo(data, eventStruct + (hkbEvent.OffsetOf("id") ?? 0));
+
+        var text = System.Text.Encoding.UTF8.GetBytes("Idle");
+        text.CopyTo(data, size);
+        data[size + text.Length] = 0;
+
+        var image = new PackfileImage { LayoutRules = new byte[] { 4, 1, 0, 1 }, Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__classnames__"), Data = ClassNamesBlob("hkbStateMachine"),
+        });
+        image.Sections.Add(new PackfileSection
+        {
+            TagBytes = MakeTag("__data__"),
+            Data = data,
+            LocalFixups = Pair(nameField, size),
+            VirtualFixups = Triple(0, 0, 5),
+        });
+        return image;
+    }
+
+    private static void BigEndianPackfilesAreRefused()
+    {
+        var image = new PackfileImage { Predicates = new byte[16] };
+        image.Sections.Add(new PackfileSection { TagBytes = MakeTag("__data__"), Data = new byte[16] });
+
+        byte[] bytes = image.Rebuild();
+        Check("a shipped file reads as eight-byte pointers", 8, PackfileImage.Read(bytes).Layout.PointerSize);
+
+        var bigEndian = (byte[])bytes.Clone();
+        bigEndian[0x11] = 0;
+        CheckThrows<InvalidDataException>("a big-endian header is refused",
+            () => PackfileImage.Read(bigEndian));
+
+        var oddPointer = (byte[])bytes.Clone();
+        oddPointer[0x10] = 2;
+        CheckThrows<InvalidDataException>("an unsupported pointer size is refused",
+            () => PackfileImage.Read(oddPointer));
+    }
+
+    private static void TheWalkerReportsClassesItCannotPlace()
+    {
+        var types = HavokClassTypes.Shipped;
+
+        Check("a stock class is placeable", true, LayoutWalker.CanPlace(types, "hkbStateMachine"));
+        Check("an unknown class is not placeable", false, LayoutWalker.CanPlace(types, "hkpMadeUpEntity"));
+
+        Check("an unreproducible custom class is not placeable", false,
+              LayoutWalker.CanPlace(types, "BSBehaviorGraphSwapGenerator"));
+    }
+
+    private static void TheWalkerHalvesPointerOffsetsAtFourBytes()
+    {
+        var types = HavokClassTypes.Shipped;
+
+        var baseFour = LayoutWalker.Of(types, "hkBaseObject", PointerLayout.FourByte);
+        Check("hkBaseObject four-byte size", 4, baseFour.Size);
+
+        var refFour = LayoutWalker.Of(types, "hkReferencedObject", PointerLayout.FourByte);
+        Check("hkReferencedObject four-byte size", 8, refFour.Size);
+        Check("memSizeAndRefCount four-byte offset", 4, refFour.OffsetOf("memSizeAndRefCount"));
+
+        var info8 = LayoutWalker.Of(types, "hkbStateMachineStateInfo", PointerLayout.EightByte);
+        Check("generator eight-byte offset", 88, info8.OffsetOf("generator"));
+        var info4 = LayoutWalker.Of(types, "hkbStateMachineStateInfo", PointerLayout.FourByte);
+        Check("generator four-byte offset", 52, info4.OffsetOf("generator"));
     }
 
     private static void DetachedSubtreeStaysDrawn()
@@ -1050,6 +2776,262 @@ public static class Tests
         {
             Directory.Delete(root, true);
         }
+    }
+
+    private static void WriteSingleEntryArchive(string path, string entryName, byte[] payload)
+    {
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+        long headerEnd = 24 + 36;
+        long nameTableAt = headerEnd + payload.Length;
+
+        writer.Write(new[] { 'B', 'T', 'D', 'X' });
+        writer.Write(1u);
+        writer.Write(new[] { 'G', 'N', 'R', 'L' });
+        writer.Write(1u);
+        writer.Write((ulong)nameTableAt);
+
+        writer.Write(0u); writer.Write(0u); writer.Write(0u); writer.Write(0u);
+        writer.Write((ulong)headerEnd);
+        writer.Write(0u);
+        writer.Write((uint)payload.Length);
+        writer.Write(0u);
+
+        writer.Write(payload);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(entryName.Replace('/', '\\'));
+        writer.Write((ushort)bytes.Length);
+        writer.Write(bytes);
+    }
+
+    private static void GameDataResolvesAnimationsInsideArchives()
+    {
+        Console.WriteLine("\nan animation that lives inside a .ba2 is not missing once game data is attached");
+
+        string data = Directory.CreateTempSubdirectory("bgs-gamedata").FullName;
+        try
+        {
+            string projectRoot = Path.Combine(data, "Meshes", "Actors", "Test");
+            Directory.CreateDirectory(projectRoot);
+            WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                "Meshes/Actors/Test/Animations/Attack1.hkx", new byte[] { 1, 2, 3 });
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+
+            var chain = new ProjectChain { Root = projectRoot, Data = gameData };
+            chain.Animations.AddRange(new[] { @"Animations\Attack1.HKT", @"Animations\Gone.hkt" });
+
+            var findings = GraphValidator.Check(
+                    SmallGraph().Replace("a.hkx", @"Animations\Attack1.HKT")
+                                .Replace("b.hkx", @"Animations\Gone.hkt")
+                                .Replace("spare.hkx", @"Animations\Attack1.hkx"), chain)
+                .Where(f => f.What.Contains("not on disk")).ToList();
+
+            Check("the archived animation is not reported missing", 1, findings.Count);
+            var gone = findings.FirstOrDefault(f => f.What.Contains("Gone.hkt"));
+            CheckTrue("only the truly absent one is named", gone != null);
+            CheckTrue("the case- and extension-flexible declaration resolves",
+                      !findings.Any(f => f.What.Contains("Attack1")));
+            Check("with game data attached a missing animation is an error",
+                  GraphValidator.Level.Error, gone?.Level);
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static void ProjectChainResolvesAnimationsThroughGameData()
+    {
+        Console.WriteLine("\nthe chain's declared animations resolve through the game data archives");
+
+        string work = Directory.CreateTempSubdirectory("bgs-chaindata").FullName;
+        try
+        {
+            string data = Path.Combine(work, "Data");
+            string root = Path.Combine(data, "Meshes", "Actors", "Test");
+            Directory.CreateDirectory(Path.Combine(root, "Behaviors"));
+            Directory.CreateDirectory(Path.Combine(root, "Characters"));
+            Directory.CreateDirectory(Path.Combine(root, "CharacterAssets"));
+            File.WriteAllBytes(Path.Combine(root, "Behaviors", "input.hkx"), Array.Empty<byte>());
+            File.WriteAllBytes(Path.Combine(root, "Behaviors", "Behavior00.hkx"), Array.Empty<byte>());
+            File.WriteAllBytes(Path.Combine(root, "CharacterAssets", "Skeleton.hkx"), Array.Empty<byte>());
+            File.WriteAllBytes(Path.Combine(root, "TestProject.hkx"), Array.Empty<byte>());
+            File.WriteAllBytes(Path.Combine(root, "Characters", "TestCharacter.hkx"), Array.Empty<byte>());
+            Directory.CreateDirectory(Path.Combine(root, "Animations"));
+            File.WriteAllBytes(Path.Combine(root, "Animations", "Loose.hkx"), Array.Empty<byte>());
+            WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                "Meshes/Actors/Test/Animations/Attack1.hkx", new byte[] { 1, 2, 3 });
+
+            var models = new Dictionary<string, BehaviourGraphModel>(StringComparer.OrdinalIgnoreCase);
+            models[Path.Combine(root, "TestProject.hkx")] = BehaviourGraphModel.Parse($"""
+                <hkpackfile><hksection name="__data__">
+                  <hkobject class="hkbProjectStringData" name="#1">
+                    <hkparam name="characterFilenames" numelements="1">
+                      <hkcstring>Characters\TestCharacter.hkx</hkcstring>
+                    </hkparam>
+                  </hkobject>
+                </hksection></hkpackfile>
+                """);
+            models[Path.Combine(root, "Characters", "TestCharacter.hkx")] =
+                BehaviourGraphModel.Parse($"""
+                    <hkpackfile><hksection name="__data__">
+                      <hkobject class="hkbCharacterStringData" name="#1">
+                        <hkparam name="animationNames" numelements="3">
+                          <hkcstring>Animations\Attack1.HKT</hkcstring>
+                          <hkcstring>Animations\Loose.HKT</hkcstring>
+                          <hkcstring>Animations\Gone.hkt</hkcstring>
+                        </hkparam>
+                        <hkparam name="behaviorFilename">Behaviors\Behavior00.hkx</hkparam>
+                        <hkparam name="rigName">CharacterAssets\Skeleton.HKT</hkparam>
+                      </hkobject>
+                    </hksection></hkpackfile>
+                    """);
+
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+            var chain = ProjectChain.Resolve(Path.Combine(root, "Behaviors", "input.hkx"),
+                                             path => models[path], gameData);
+
+            Check("all three declared animations are listed", 3, chain.Animations.Count);
+            Check("only the absent one is a problem", 1, chain.Problems.Count);
+            CheckTrue("the absent one is named and the archived one is not",
+                      chain.Problems[0].Contains("Gone.hkt") &&
+                      !chain.Problems[0].Contains("Attack1"));
+            Check("the packed one reports its archive", "Fallout4 - Animations.ba2",
+                  chain.AnimationSources[@"Animations\Attack1.HKT"]);
+            Check("the loose one reports loose", "loose",
+                  chain.AnimationSources[@"Animations\Loose.HKT"]);
+            Check("the absent one reports nothing", "",
+                  chain.AnimationSources[@"Animations\Gone.hkt"]);
+        }
+        finally { Directory.Delete(work, true); }
+    }
+
+    private static void GameDataLoadOrderFollowsPlugins()
+    {
+        Console.WriteLine("\ngame data orders archives by the plugin load order, not alphabetically");
+
+        string data = Directory.CreateTempSubdirectory("bgs-plugins").FullName;
+        try
+        {
+            WriteSingleEntryArchive(Path.Combine(data, "A - Animations.ba2"), "a.hkx", new byte[] { 1 });
+            WriteSingleEntryArchive(Path.Combine(data, "B - Animations.ba2"), "b.hkx", new byte[] { 2 });
+            WriteSingleEntryArchive(Path.Combine(data, "C - Animations.ba2"), "c.hkx", new byte[] { 3 });
+            string plugins = Path.Combine(data, "plugins.txt");
+            File.WriteAllLines(plugins, new[] { "*C.esm", "*B.esm", "*A.esm" });
+
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data, plugins);
+            Check("three archives indexed", 3, gameData.ArchivePaths.Count);
+            Check("the highest-priority plugin's archive first", "C - Animations.ba2",
+                  Path.GetFileName(gameData.ArchivePaths[0]));
+            Check("the second plugin's archive next", "B - Animations.ba2",
+                  Path.GetFileName(gameData.ArchivePaths[1]));
+            Check("the lowest-priority plugin's archive last", "A - Animations.ba2",
+                  Path.GetFileName(gameData.ArchivePaths[2]));
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static void WriteTestArchive(string path, params (string Name, byte[] Payload)[] entries)
+    {
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+        long headerEnd = 24 + 36L * entries.Length;
+        long cursor = headerEnd;
+        var offsets = new long[entries.Length];
+        for (int i = 0; i < entries.Length; i++)
+        {
+            offsets[i] = cursor;
+            cursor += entries[i].Payload.Length;
+        }
+
+        writer.Write(new[] { 'B', 'T', 'D', 'X' });
+        writer.Write(1u);
+        writer.Write(new[] { 'G', 'N', 'R', 'L' });
+        writer.Write((uint)entries.Length);
+        writer.Write((ulong)cursor);
+
+        for (int i = 0; i < entries.Length; i++)
+        {
+            writer.Write(0u); writer.Write(0u); writer.Write(0u); writer.Write(0u);
+            writer.Write((ulong)offsets[i]);
+            writer.Write(0u);
+            writer.Write((uint)entries[i].Payload.Length);
+            writer.Write(0u);
+        }
+        foreach (var entry in entries) writer.Write(entry.Payload);
+        foreach (var entry in entries)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(entry.Name.Replace('/', '\\'));
+            writer.Write((ushort)bytes.Length);
+            writer.Write(bytes);
+        }
+    }
+
+    private static void GameDataCollapsesBorrowedPaths()
+    {
+        Console.WriteLine("\na borrowed ..\\ path resolves inside the archives");
+
+        string data = Directory.CreateTempSubdirectory("bgs-borrowed").FullName;
+        try
+        {
+            string projectRoot = Path.Combine(data, "Meshes", "Actors", "Character");
+            Directory.CreateDirectory(projectRoot);
+            WriteSingleEntryArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                "Meshes/Actors/PowerArmor/Animations/1HM/SprintPainTrain.hkx", new byte[] { 1 });
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+
+            CheckTrue("the borrowed path resolves through the archive",
+                gameData.ContainsAnimation(projectRoot,
+                                           @"..\PowerArmor\Animations\1HM\SprintPainTrain.HKT"));
+            CheckTrue("a genuinely absent borrowed path does not",
+                !gameData.ContainsAnimation(projectRoot,
+                                            @"..\PowerArmor\Animations\1HM\Nope.HKT"));
+        }
+        finally { Directory.Delete(data, true); }
+    }
+
+    private static string WeaponSubgraph() => """
+        <hkpackfile><hksection name="__data__">
+          <hkobject class="hkbClipGenerator" name="#1">
+            <hkparam name="name">PoseA</hkparam>
+            <hkparam name="animationName">Animations\Weapon\44Pistol\WPNAssemblyPose.hkt</hkparam>
+          </hkobject>
+          <hkobject class="hkbClipGenerator" name="#2">
+            <hkparam name="name">PoseB</hkparam>
+            <hkparam name="animationName">Animations\Weapon\Pistol\WPNAssemblyPose.hkt</hkparam>
+          </hkobject>
+          <hkobject class="hkbClipGenerator" name="#3">
+            <hkparam name="name">Reload</hkparam>
+            <hkparam name="animationName">Animations\WPNReload.hkt</hkparam>
+          </hkobject>
+        </hksection></hkpackfile>
+        """;
+
+    private static void WeaponSubgraphPerWeaponCoverageIsReportedOnce()
+    {
+        Console.WriteLine("\na weapon subgraph reports per-weapon coverage as one bounded warning");
+
+        string data = Directory.CreateTempSubdirectory("bgs-weapon").FullName;
+        try
+        {
+            string projectRoot = Path.Combine(data, "Meshes", "Actors", "Test");
+            Directory.CreateDirectory(projectRoot);
+            WriteTestArchive(Path.Combine(data, "Fallout4 - Animations.ba2"),
+                ("Meshes/Actors/Test/Animations/Weapon/44Pistol/WPNAssemblyPose.hkx", new byte[] { 1 }),
+                ("Meshes/Actors/Test/Animations/Weapon/44Pistol/WPNReload.hkx", new byte[] { 2 }),
+                ("Meshes/Actors/Test/Animations/WPNReload.hkx", new byte[] { 4 }));
+            // the Pistol type lacks a per-weapon WPNReload, but the generic copy exists
+            WriteTestArchive(Path.Combine(data, "PistolMod - Animations.ba2"),
+                ("Meshes/Actors/Test/Animations/Weapon/Pistol/WPNAssemblyPose.hkx", new byte[] { 3 }));
+            using var gameData = OpenCommonwealth.Services.Archive.GameData.Discover(data);
+
+            var chain = new ProjectChain { Root = projectRoot, Data = gameData };
+            var findings = GraphValidator.Check(BehaviourGraphModel.Parse(WeaponSubgraph()), chain);
+
+            var weapon = findings.Where(f => f.What.Contains("per-weapon coverage")).ToList();
+            Check("one aggregate warning for the subgraph", 1, weapon.Count);
+            CheckTrue("it names the type with the gap", weapon[0].What.Contains("Pistol"));
+            CheckTrue("it names an example clip", weapon[0].What.Contains("WPNReload"));
+            Check("no clip is reported missing when the generic copy exists", 0,
+                  findings.Count(f => f.What.Contains("not on disk")));
+        }
+        finally { Directory.Delete(data, true); }
     }
 
     private static void RepackDriftNamesWhatMoved()
@@ -2968,6 +4950,7 @@ public static class Tests
             LocalFixups = Pair(nameField, size),
             VirtualFixups = Triple(0, 0, 5),
         });
+        image.ContentsSectionIndex = 1;
         return image;
     }
 

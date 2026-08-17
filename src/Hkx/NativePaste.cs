@@ -161,6 +161,13 @@ public static class NativePaste
     {
         types ??= HavokClassTypes.Shipped;
 
+        // Copying lays 64-bit structures: object sizes and pointer/struct strides come from the
+        // stored class table and array headers carry counts at +8. Both files being pasted across
+        // must be 8-byte, not just the target, or the walker would read the source with the wrong
+        // strides.
+        NativeLayout.RequireWritable(target);
+        NativeLayout.RequireWritable(source);
+
         var sourceData = source.Section("__data__")
                          ?? throw new InvalidOperationException("The file copied from has no __data__ section.");
         var targetData = target.Section("__data__")

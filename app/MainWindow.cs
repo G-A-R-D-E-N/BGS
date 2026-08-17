@@ -9,6 +9,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using OpenCommonwealth.Services.Archive;
 using OpenCommonwealth.Services.Hkx;
 using OpenCommonwealth.Services.Nif;
 using OpenCommonwealth.Services;
@@ -240,6 +241,9 @@ public class MainWindow : Window
     private string _xmlPath = "";
     private string _xmlText = "";
     private ProjectChain? _projectChain;
+    private GameData? _gameData;
+    private readonly TextBox _dataField = Ux.Field("Path to the game Data folder, e.g. .../Fallout 4/Data", 220);
+    private readonly TextBlock _dataSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
     private string _selectedId = "";
     private readonly List<Action> _fieldCommits = new();
     private bool _dirty;
@@ -310,7 +314,7 @@ public class MainWindow : Window
         _tabs.Items.Add(Tab("Tree", BuildTreeTab()));
         _tabs.Items.Add(Tab("Graph", BuildGraphTab()));
         _tabs.Items.Add(Tab("Symbols", BuildSymbolsTab()));
-        _tabs.Items.Add(Tab("Chain", _chain));
+        _tabs.Items.Add(Tab("Chain", BuildChainTab()));
         _tabs.Items.Add(Tab("Project search", BuildProjectSearchTab()));
         _tabs.Items.Add(Tab("Animation", BuildAnimationTab()));
         _tabs.Items.Add(Tab("Playback", BuildPlaybackTab()));
@@ -1300,7 +1304,10 @@ public class MainWindow : Window
         _pasteInto.ItemsSource = slots;
         _pasteInto.SelectedItem = slots.Contains(chosen) ? chosen : Unattached;
 
-        _pasteButton.IsEnabled = _clip != null && !_readOnly && _hkxPath.Length > 0;
+        // Paste needs a writable native document actually loaded: _bytes is nulled on every
+        // fresh load, so a rejected (e.g. 4-byte) file must never leave Paste enabled against
+        // the clipboard even though the path was remembered.
+        _pasteButton.IsEnabled = _clip != null && _bytes != null && !_readOnly && _hkxPath.Length > 0;
         _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
         if (_clip != null && _pasteSummary.Text?.Length == 0) SetPasteSummary(Held(_clip), Ux.MetaBrush);
     }
@@ -3756,6 +3763,34 @@ public class MainWindow : Window
         _readOnly = false;
         _readOnlyWhy = "";
 
+        // BGS reads and edits the 8-byte (64-bit) layout Fallout 4 ships. A 4-byte file can be
+        // parsed at the low level, but the editor's decode paths and the native writer are still
+        // 8-byte only, so opening one here would show and save the wrong bytes. Refuse it and point
+        // at the converter rather than display a graph built from the wrong offsets.
+        if (NonEightByteLayout(path) is int layoutWidth)
+        {
+            // This is a refusal, not an open: finish replacing the previous document model so it
+            // cannot half-survive with the path now naming a file that was never loaded into it.
+            _hkxPath = path;
+            _root = null;
+            _objects = new List<HkxBehaviorParser.BehaviorNode>();
+            _classWarning = "";
+            _animation.Clear();
+            _animationData = null;
+            _animationSummary.Text = "";
+            RememberRecent(path);
+            RefreshRecents();
+            RememberSetting("last_path", path, "The file opened");
+            SetSummary(
+                $"{Path.GetFileName(path)}   uses the {layoutWidth}-byte pointer layout, which BGS cannot " +
+                "open for editing yet. Convert it to the 8-byte layout first (symrm convert), then open the result.",
+                Ux.WarnBrush);
+            BuildClipList(new BehaviourGraphModel());
+            RefreshPasteSlots();
+            RefreshTemplates();
+            return;
+        }
+
         bool isAnimation = BuildAnimation(path);
 
         var root = HkxBehaviorParser.ParseBehavior(path);
@@ -3836,6 +3871,21 @@ public class MainWindow : Window
 
         if (_animationData != null) LoadPose(path, Path.GetFileName(path));
         if (settingsWarning != null) SetStatus(settingsWarning, Ux.WarnBrush);
+    }
+
+    // Returns the file's pointer width when it is a readable packfile that is not 8-byte, or null
+    // when it is 8-byte or not a packfile we can read (the normal open path then reports that).
+    private static int? NonEightByteLayout(string path)
+    {
+        try
+        {
+            int size = PackfileImage.Read(path).Layout.PointerSize;
+            return size == 8 ? null : size;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private BehaviourGraphModel Model() =>
@@ -4081,6 +4131,8 @@ public class MainWindow : Window
     }
 
     public HkGrid TreeGrid => _tree;
+    public HkGrid ChainGrid => _chain;
+    public string GameDataSummary => _dataSummary.Text ?? "";
 
     private static bool Matches(HkxBehaviorParser.BehaviorNode o, string needle) =>
         o.ClassName.Contains(needle, StringComparison.OrdinalIgnoreCase)
@@ -4684,22 +4736,130 @@ public class MainWindow : Window
             .Select(g => g.Count() > 1 ? $"{g.Key} x{g.Count()}" : g.Key).Take(4));
     }
 
+    private Control BuildChainTab()
+    {
+        _dataField.Text = Settings.Get("gameDataFolder");
+        _dataField.KeyDown += (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter) ApplyGameData();
+        };
+        var browse = Ux.Secondary("Browse...");
+        browse.Click += async (_, _) => await PickGameDataFolder();
+
+        _dataSummary.Text = "no game data attached";
+        var bar = Bar(_dataField, browse, Ux.Pill(_dataSummary));
+        var panel = new DockPanel();
+        DockPanel.SetDock(bar, Dock.Top);
+        bar.Margin = new Thickness(0, 0, 0, 8);
+        panel.Children.Add(bar);
+        panel.Children.Add(_chain);
+        return panel;
+    }
+
+    private async Task PickGameDataFolder()
+    {
+        var picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "The game Data folder (holds the .ba2 archives)",
+            AllowMultiple = false,
+        });
+
+        string? folder = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (folder == null) return;
+        _dataField.Text = folder;
+        ApplyGameData();
+    }
+
+    private void ApplyGameData()
+    {
+        string folder = (_dataField.Text ?? "").Trim();
+        if (folder.Length == 0)
+        {
+            Settings.TrySet("gameDataFolder", "", out _);
+            _dataSummary.Text = "no game data attached";
+        }
+        else if (!Directory.Exists(folder))
+        {
+            _dataSummary.Text = "that folder is not there";
+            return;
+        }
+        else
+        {
+            Settings.TrySet("gameDataFolder", folder, out _);
+            _dataSummary.Text = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar));
+        }
+
+        if (_hkxPath.Length > 0) BuildChain();
+    }
+
     private void BuildChain()
     {
         _chain.Clear();
-        var chain = ProjectChain.Resolve(_hkxPath);
+        _gameData?.Dispose();
+        _gameData = null;
+
+        GameData? data = null;
+        string folder = Settings.Get("gameDataFolder");
+        if (folder.Length > 0 && Directory.Exists(folder))
+        {
+            try
+            {
+                data = _gameData = GameData.Discover(folder);
+                string summary = $"{data.ArchivePaths.Count} .ba2 archive(s)";
+                if (data.PluginsPath != null)
+                    summary += $", ordered by {Path.GetFileName(data.PluginsPath)}";
+                _dataSummary.Text = summary;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                _dataSummary.Text = "game data could not be read";
+            }
+        }
+        else if (folder.Length > 0)
+        {
+            _dataSummary.Text = "the saved folder is not there now";
+        }
+
+        var chain = ProjectChain.Resolve(_hkxPath, data: data);
         _projectChain = chain;
+
+        if (data != null)
+            _chain.Add(null, "game data", folder, $"{data.ArchivePaths.Count} .ba2 archive(s)",
+                       data.PluginsPath != null ? Path.GetFileName(data.PluginsPath) : "")
+                  .Colour(0, Ux.MutedBrush).Colour(1, Ux.TitleBrush).Colour(2, Ux.MetaBrush);
 
         foreach (var link in chain.Links)
             _chain.Add(null, link.Role, link.Declared, link.Exists ? "found" : "MISSING", link.Note)
                   .Colour(0, Ux.MutedBrush).Colour(1, Ux.TitleBrush)
                   .Colour(2, link.Exists ? Ux.MetaBrush : Ux.BadBrush);
 
-        AddChainGroup("animations", $"{chain.Animations.Count} declared by the character", chain.Animations, Ux.CodeBrush);
+        AddChainAnimations(chain);
         AddChainGroup("bones", $"{chain.Bones.Count} in the skeleton", chain.Bones, Ux.MetaBrush);
 
         foreach (string problem in chain.Problems)
             _chain.Add(null, "problem", problem).Colour(0, Ux.BadBrush).Colour(1, Ux.BadBrush);
+    }
+
+    private void AddChainAnimations(ProjectChain chain)
+    {
+        if (chain.Animations.Count == 0) return;
+
+        var head = _chain.Add(null, "animations", $"{chain.Animations.Count} declared by the character")
+                         .Colour(0, Ux.MutedBrush).Colour(1, Ux.TitleBrush).Collapse();
+        int loose = 0, archived = 0;
+        foreach (string anim in chain.Animations)
+        {
+            string source = chain.AnimationSources.TryGetValue(anim, out string? s) ? s ?? "" : "";
+            if (source == "loose") loose++;
+            else if (source.Length > 0) archived++;
+
+            var row = _chain.Add(head, "", anim, source.Length > 0 ? source : "", "")
+                             .Colour(1, Ux.CodeBrush);
+            if (source.Length > 0) row.Colour(2, Ux.MetaBrush);
+        }
+        if (chain.Data != null)
+            _chain.Add(head, "sources", $"{loose} loose, {archived} inside .ba2 archives")
+                   .Colour(0, Ux.MutedBrush).Colour(1, Ux.MetaBrush);
     }
 
     private void AddChainGroup(string role, string summary, List<string> values, IBrush colour)
