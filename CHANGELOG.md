@@ -23,6 +23,7 @@ August 17, 2026
 * Modded data lookups are indexed once, so per-file checks stay O(1) no matter how many mod roots are layered on.
 * Resolving a crash hash on the Chain tab now floats a panel over the graph canvas: it names the subgraph's behaviors, the animation presence, and every per-weapon gap, and each gap has a **Jump** button that selects and centres the missing clip's node on the graph.
 * The Chain tab's new **Sweep all subgraphs** button runs the same whole-load-order per-weapon check as `symrm sweep` in the app: it scans every AnimationFileData manifest and reports each subgraph with a per-weapon gap (behavior, id, and the exact missing clips), running off the UI thread so the studio stays responsive.
+* The Chain tab has a **mods folder** field (the MO2 instance root): when set, game data, the crash-hash lookup, and the sweep all run against the modlist the way the engine loads it — enabled mods from `modlist.txt` (or the profile's), the profile overwrite folder, mod loose files and mod .ba2 archives overriding base data, and merged AnimTextData manifests honored.
 
 </details>
 

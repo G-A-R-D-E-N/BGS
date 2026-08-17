@@ -128,6 +128,23 @@ public sealed class GameData : IDisposable
     }
 
     /// <summary>
+    /// The profile whose modlist.txt to use for an MO2 instance root: null when the root
+    /// itself has a modlist.txt, otherwise the first profile (alphabetically) that ships one.
+    /// </summary>
+    public static string? ModlistProfile(string modsFolder)
+    {
+        string mods = Path.GetFullPath(modsFolder);
+        if (File.Exists(Path.Combine(mods, "modlist.txt"))) return null;
+        string profiles = Path.Combine(mods, "profiles");
+        if (!Directory.Exists(profiles)) return null;
+        return Directory.EnumerateDirectories(profiles)
+            .Select(d => Path.GetFileName(d))
+            .Where(n => File.Exists(Path.Combine(profiles, n, "modlist.txt")))
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+    }
+
+    /// <summary>
     /// True when the animation is loose under the project root, or an archive entry matches it.
     /// The declared extension does not matter (.hkt resolves to .hkx, as the game treats them
     /// as the same file).

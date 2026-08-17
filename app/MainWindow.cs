@@ -245,6 +245,8 @@ public class MainWindow : Window
     private GameData? _gameData;
     private readonly TextBox _dataField = Ux.Field("Path to the game Data folder, e.g. .../Fallout 4/Data", 220);
     private readonly TextBlock _dataSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private readonly TextBox _modsField = Ux.Field("MO2 mods folder, e.g. .../ModOrganizer (optional)", 220);
+    private readonly TextBlock _modsSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
     private readonly TextBox _crashField = Ux.Field("AnimTextData crash hash, e.g. 10448007347639226270", 220);
     private readonly TextBlock _crashSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
     private Border? _crashPanel;
@@ -4186,6 +4188,9 @@ public class MainWindow : Window
     public bool CrashPanelVisible => _crashPanel?.IsVisible == true;
     public string CrashPanelTitle => _crashPanelTitle.Text ?? "";
     public string CrashPanelBodyText => string.Join("\n", FindPanelTexts(_crashPanelBody));
+    public TextBox ModsField => _modsField;
+    public string ModsSummary => _modsSummary.Text ?? "";
+    public void ApplyModsForTest() => ApplyMods();
     public string SweepSummary => _sweepSummary.Text ?? "";
     public void RunSweepForTest()
     {
@@ -4817,6 +4822,17 @@ public class MainWindow : Window
         _dataSummary.Text = "no game data attached";
         var bar = Bar(_dataField, browse, Ux.Pill(_dataSummary));
 
+        _modsField.Text = Settings.Get("gameModsFolder");
+        _modsField.KeyDown += (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter) ApplyMods();
+        };
+        var modsBrowse = Ux.Secondary("Browse...");
+        modsBrowse.Click += async (_, _) => await PickModsFolder();
+        ToolTip.SetTip(modsBrowse, "The Mod Organizer 2 instance root (holds mods/, profiles/, overwrite/)");
+        _modsSummary.Text = "no mods layered";
+        var modsBar = Bar(_modsField, modsBrowse, Ux.Pill(_modsSummary));
+
         _crashField.KeyDown += (_, e) =>
         {
             if (e.Key == Avalonia.Input.Key.Enter) ResolveCrashHash();
@@ -4835,12 +4851,15 @@ public class MainWindow : Window
         var panel = new DockPanel();
         DockPanel.SetDock(bar, Dock.Top);
         bar.Margin = new Thickness(0, 0, 0, 8);
+        DockPanel.SetDock(modsBar, Dock.Top);
+        modsBar.Margin = new Thickness(0, 0, 0, 8);
         DockPanel.SetDock(crashBar, Dock.Top);
         crashBar.Margin = new Thickness(0, 0, 0, 8);
         DockPanel.SetDock(sweepBar, Dock.Top);
         sweepBar.Margin = new Thickness(0, 0, 0, 8);
         panel.Children.Add(sweepBar);
         panel.Children.Add(crashBar);
+        panel.Children.Add(modsBar);
         panel.Children.Add(bar);
         panel.Children.Add(_chain);
         return panel;
@@ -4877,6 +4896,41 @@ public class MainWindow : Window
         {
             Settings.TrySet("gameDataFolder", folder, out _);
             _dataSummary.Text = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar));
+        }
+
+        if (_hkxPath.Length > 0) BuildChain();
+    }
+
+    private async Task PickModsFolder()
+    {
+        var picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "The Mod Organizer 2 instance root (holds mods/, profiles/, overwrite/)",
+            AllowMultiple = false,
+        });
+
+        string? folder = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (folder == null) return;
+        _modsField.Text = folder;
+        ApplyMods();
+    }
+
+    private void ApplyMods()
+    {
+        string folder = (_modsField.Text ?? "").Trim();
+        if (folder.Length == 0)
+        {
+            Settings.TrySet("gameModsFolder", "", out _);
+            _modsSummary.Text = "no mods layered";
+        }
+        else if (!Directory.Exists(folder))
+        {
+            _modsSummary.Text = "that folder is not there";
+            return;
+        }
+        else
+        {
+            Settings.TrySet("gameModsFolder", folder, out _);
         }
 
         if (_hkxPath.Length > 0) BuildChain();
@@ -5149,10 +5203,40 @@ public class MainWindow : Window
         {
             try
             {
-                data = _gameData = GameData.Discover(folder);
+                bool modded = false;
+                string mods = Settings.Get("gameModsFolder");
+                if (mods.Length > 0 && Directory.Exists(mods))
+                {
+                    string? profile = GameData.ModlistProfile(mods);
+                    if (profile != null || File.Exists(Path.Combine(mods, "modlist.txt")))
+                    {
+                        data = _gameData = GameData.DiscoverModded(folder, mods, profile);
+                        modded = true;
+                        _modsSummary.Text = profile != null
+                            ? $"{data.ModRoots.Count} mod root(s), profile {profile}"
+                            : $"{data.ModRoots.Count} mod root(s)";
+                    }
+                    else
+                    {
+                        _modsSummary.Text = "no modlist.txt under that folder";
+                    }
+                }
+                else if (mods.Length > 0)
+                {
+                    _modsSummary.Text = "the saved mods folder is not there now";
+                }
+                else
+                {
+                    _modsSummary.Text = "no mods layered";
+                }
+
+                if (data == null)
+                    data = _gameData = GameData.Discover(folder);
+
                 string summary = $"{data.ArchivePaths.Count} .ba2 archive(s)";
                 if (data.PluginsPath != null)
                     summary += $", ordered by {Path.GetFileName(data.PluginsPath)}";
+                if (modded) summary += " + mods";
                 _dataSummary.Text = summary;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)

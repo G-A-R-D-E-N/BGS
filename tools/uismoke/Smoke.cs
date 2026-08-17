@@ -1521,6 +1521,7 @@ public static class Smoke
         ChainTabResolvesCrashHashToTheMissingClip();
         CrashPanelJumpsToTheMissingClipOnTheGraph();
         ChainTabSweepFlagsGapsAcrossTheLoadOrder();
+        ChainTabLayersTheModlistOverTheGameData();
         PlaybackReadsPackedClipsFromArchives();
         ArchiveBrowserBuilds();
 
@@ -1793,6 +1794,92 @@ public static class Smoke
                 CloseForTest(window);
             }
             finally { Directory.Delete(data, true); }
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    private static void ChainTabLayersTheModlistOverTheGameData()
+    {
+        Console.WriteLine("\nthe Chain tab mods folder layers the modlist over the game data");
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"bgs-mods-tab-{Guid.NewGuid():N}.hkx");
+        System.IO.File.WriteAllBytes(path,
+            WeaponSubgraphBytes(@"Animations\Weapon\44Pistol\WPNAssemblyPose.hkt",
+                                @"Animations\WPNReload.hkt"));
+        try
+        {
+            string data = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                                 $"bgs-mods-tab-data-{Guid.NewGuid():N}");
+            string mods = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                                $"bgs-mods-tab-mods-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(data);
+            Directory.CreateDirectory(mods);
+            try
+            {
+                const string baseManifest =
+                    "3\n1\n10448007347639226270\n1\n" +
+                    "Actors\\Character\\Behaviors\\BaseBehavior.hkx\n";
+                WriteArchive(System.IO.Path.Combine(data, "Fallout4 - Animations.ba2"), new[]
+                {
+                    ("Meshes/AnimTextData/AnimationFileData/10448007347639226270.txt",
+                        System.Text.Encoding.UTF8.GetBytes(baseManifest)),
+                    ("Meshes/Actors/Character/Behaviors/BaseBehavior.hkx",
+                        WeaponSubgraphBytes(@"Animations\Weapon\44Pistol\WPNAssemblyPose.hkt",
+                                            @"Animations\WPNReload.hkt")),
+                    ("Meshes/Actors/Character/Animations/Weapon/44Pistol/WPNReload.hkx", new byte[] { 2 }),
+                });
+
+                File.WriteAllText(System.IO.Path.Combine(mods, "modlist.txt"), "+AnimTextData Merge\n");
+                string merge = System.IO.Path.Combine(mods, "mods", "AnimTextData Merge");
+                string fileData = System.IO.Path.Combine(merge, "Meshes", "AnimTextData", "AnimationFileData");
+                Directory.CreateDirectory(fileData);
+                File.WriteAllText(System.IO.Path.Combine(fileData, "8806872131610908823.txt"),
+                    "3\n1\n8806872131610908823\n1\n" +
+                    "Actors\\Character\\Behaviors\\WeaponOverhaulBehavior.hkx\n");
+                string behaviors = System.IO.Path.Combine(merge, "Meshes", "Actors", "Character", "Behaviors");
+                Directory.CreateDirectory(behaviors);
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(behaviors, "WeaponOverhaulBehavior.hkx"),
+                    WeaponSubgraphBytes());
+
+                Settings.TrySet("gameDataFolder", data, out _);
+
+                var window = new MainWindow();
+                window.Show();
+                window.Open(path);
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                SelectTab(window, "Chain");
+
+                window.ModsField.Text = "";
+                window.ApplyModsForTest();
+                Check("without a mods folder nothing is layered", "no mods layered", window.ModsSummary);
+                window.RunSweepForTest();
+                CheckTrue("the vanilla sweep is clean before the mods are attached",
+                          window.SweepSummary.Contains("all clean", StringComparison.Ordinal));
+
+                window.ModsField.Text = mods;
+                window.ApplyModsForTest();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                CheckTrue("the mods summary names the enabled root",
+                          window.ModsSummary.Contains("1 mod root", StringComparison.Ordinal));
+
+                window.CrashHashField.Text = "8806872131610908823";
+                window.ResolveCrashHashForTest();
+                CheckTrue("the crash lookup resolves the merged manifest",
+                          window.CrashHashSummary.Contains("WeaponOverhaulBehavior", StringComparison.Ordinal));
+
+                window.RunSweepForTest();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                CheckTrue("the modded sweep flags the merged subgraph",
+                          window.SweepSummary.Contains("1 subgraph", StringComparison.Ordinal));
+                var rows = Find<TextBlock>(window.ChainGrid).Select(t => t.Text).ToList();
+                CheckTrue("the sweep names the merged id",
+                          rows.Any(t => t.Contains("8806872131610908823", StringComparison.Ordinal)));
+                CheckTrue("it names the merged behavior",
+                          rows.Any(t => t.Contains("WeaponOverhaulBehavior.hkx", StringComparison.Ordinal)));
+                CheckTrue("it names the missing clip",
+                          rows.Any(t => t.Contains("WPNReload", StringComparison.Ordinal)));
+                CloseForTest(window);
+            }
+            finally { Directory.Delete(data, true); Directory.Delete(mods, true); }
         }
         finally { System.IO.File.Delete(path); }
     }
