@@ -563,6 +563,8 @@ public sealed class GameData : IDisposable
                 int at = path.IndexOf("Animations\\Weapon\\", StringComparison.OrdinalIgnoreCase);
                 if (at <= 0) continue;
                 string relative = path[at..];
+                int embedded = relative.IndexOf("Actors\\", StringComparison.OrdinalIgnoreCase);
+                if (embedded > 0) relative = relative[..embedded];
                 int typeEnd = relative.IndexOf('\\', "Animations\\Weapon\\".Length);
                 string folder = typeEnd > 0
                     ? relative["Animations\\Weapon\\".Length..typeEnd]
