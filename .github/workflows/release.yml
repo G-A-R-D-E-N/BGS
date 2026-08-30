@@ -82,6 +82,22 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      - name: Verify archive executable is at archive root
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = "BehaviourGraphStudio-${{ github.ref_name }}-${{ matrix.rid }}.zip"
+          $expected = if ("${{ matrix.rid }}" -eq "win-x64") { "BehaviourGraphStudio.exe" } else { "BehaviourGraphStudio" }
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+          try {
+            $root = @($zip.Entries | Where-Object { $_.FullName -eq $expected })
+            if ($root.Count -ne 1) { throw "Expected executable at archive root." }
+            $nested = @($zip.Entries | Where-Object { $_.FullName -match ("(^|[/\\])" + [regex]::Escape($expected) + "$") -and $_.FullName -ne $expected })
+            if ($nested.Count -ne 0) { throw "Found nested copies of the executable." }
+          } finally {
+            $zip.Dispose()
+          }
+
   publish:
     name: Publish GitHub release
     needs: package
