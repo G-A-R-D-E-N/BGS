@@ -168,4 +168,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "Behaviour Graph Studio ${GITHUB_REF_NAME#v}" \
-            --generate-notes
+            --notes-file RELEASE-NOTES.md
