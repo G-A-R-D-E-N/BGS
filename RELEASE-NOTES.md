@@ -72,3 +72,20 @@ The Drop/Recover control is an engineering preview and is explicitly not a full 
 
 These limitations are intentional release boundaries for 1.1.0 and are documented in the UI or
 specialist notes where the relevant tool is opened.
+
+## Manual Windows smoke checklist
+
+CI cannot validate a real Fallout 4 desktop session. Before publishing, run this checklist with
+the packaged Windows build and vanilla Fallout 4 assets:
+
+- [ ] Launch BGS and confirm About / `--version` reports `1.1.0` and the expected build.
+- [ ] Open a vanilla behaviour HKX; browse Tree and Graph.
+- [ ] Open and play an animation; verify skeleton rendering.
+- [ ] Open the physics/ragdoll inspector; verify bodies, constraints, pivots, centre-of-mass and
+      frame data.
+- [ ] Exercise frame-distance/body-frame engineering controls and Drop/Recover; confirm the UI
+      presents Drop/Recover as an engineering preview, not a full solver.
+- [ ] Make one supported behaviour edit, save, reopen, and verify the edit and backup.
+- [ ] Make one supported skeleton or skin edit if exposed by the build, save/reopen, and verify it.
+- [ ] Attempt one unsupported operation and confirm it refuses without changing the source.
+- [ ] Verify Compare and one headless scan command.
