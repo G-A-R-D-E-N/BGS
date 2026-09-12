@@ -15,20 +15,25 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <PublishTrimmed>false</PublishTrimmed>
     <DebugType>embedded</DebugType>
-    <Version>1.0.5</Version>
+    <Version>1.1.0</Version>
+    <BuildCommit Condition="'$(BuildCommit)' == ''">local</BuildCommit>
   </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="BuildCommit" Value="$(BuildCommit)" />
+  </ItemGroup>
   <ItemGroup>
     <Compile Include="*.cs" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.2.3" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
+    <PackageReference Include="Avalonia" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../src/BehaviourGraph.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="uismoke" />
+    <InternalsVisibleTo Include="BehaviourGraph.Tests" />
   </ItemGroup>
 </Project>

@@ -131,6 +131,119 @@ public sealed class BehaviourCompareSessionTests
         Assert.Single(outcome.Value!.Lines);
     }
 
+    [Fact]
+    public void DiffFilterWithoutCriteriaKeepsEveryLine()
+    {
+        var source = FixtureResult();
+
+        var filtered = BehaviourCompareSession.ApplyFilter(
+            source, new BehaviourCompareSession.BehaviourDiffFilter());
+
+        Assert.Equal(source.Lines.Count, filtered.Lines.Count);
+    }
+
+    [Theory]
+    [InlineData(BehaviourDiff.Kind.Added, 1)]
+    [InlineData(BehaviourDiff.Kind.Removed, 1)]
+    [InlineData(BehaviourDiff.Kind.Changed, 2)]
+    public void DiffFilterSelectsOneChangeKind(BehaviourDiff.Kind kind, int expected)
+    {
+        var filtered = BehaviourCompareSession.ApplyFilter(
+            FixtureResult(), new BehaviourCompareSession.BehaviourDiffFilter(kind));
+
+        Assert.Equal(expected, filtered.Lines.Count);
+        Assert.All(filtered.Lines, line => Assert.Equal(kind, line.Kind));
+    }
+
+    [Fact]
+    public void DiffFilterSelectsAnObjectClass()
+    {
+        var filtered = BehaviourCompareSession.ApplyFilter(
+            FixtureResult(), new BehaviourCompareSession.BehaviourDiffFilter(
+                ObjectClass: "hkbClipGenerator"));
+
+        Assert.Equal(3, filtered.Lines.Count);
+        Assert.All(filtered.Lines, line => Assert.Equal("hkbClipGenerator", line.Class));
+    }
+
+    [Fact]
+    public void DiffFilterComposesChangeKindAndObjectClass()
+    {
+        var filtered = BehaviourCompareSession.ApplyFilter(
+            FixtureResult(), new BehaviourCompareSession.BehaviourDiffFilter(
+                BehaviourDiff.Kind.Changed, "hkbClipGenerator"));
+
+        Assert.Equal(2, filtered.Lines.Count);
+        Assert.Equal(new[] { "name", "playbackSpeed" },
+            filtered.Lines.Select(line => line.Where));
+    }
+
+    [Fact]
+    public void DiffExportReportsZeroMatchesForAnActiveFilter()
+    {
+        var export = BehaviourCompareSession.CreateExport(
+            FixtureResult(), new BehaviourCompareSession.BehaviourDiffFilter(
+                ObjectClass: "hkbMissingClass"));
+
+        Assert.Empty(export.Differences);
+        Assert.Equal(4, export.OriginalCount);
+        Assert.True(export.IsFiltered);
+        Assert.Equal("No differences match the current filter.\n",
+            BehaviourCompareSession.ExportText(export));
+    }
+
+    [Fact]
+    public void DiffExportReportsIdenticalFilesOnlyForAnEmptyUnfilteredResult()
+    {
+        var export = BehaviourCompareSession.CreateExport(
+            new BehaviourDiff.Result(), new BehaviourCompareSession.BehaviourDiffFilter());
+
+        Assert.False(export.IsFiltered);
+        Assert.Equal("No differences.\n", BehaviourCompareSession.ExportText(export));
+    }
+
+    [Fact]
+    public void DiffExportsHaveDeterministicJsonAndTextOrdering()
+    {
+        var source = new BehaviourDiff.Result();
+        source.Lines.Add(new BehaviourDiff.Line(
+            BehaviourDiff.Kind.Added, "hkbStateMachine", "#200", "", "name=State"));
+        source.Lines.Add(new BehaviourDiff.Line(
+            BehaviourDiff.Kind.Changed, "hkbClipGenerator", "playbackSpeed", "1.0", "1.5"));
+        source.Lines.Add(new BehaviourDiff.Line(
+            BehaviourDiff.Kind.Removed, "hkbClipGenerator", "Walk", "name=Walk", ""));
+        source.Lines.Add(new BehaviourDiff.Line(
+            BehaviourDiff.Kind.Changed, "hkbClipGenerator", "name", "Walk", "Run"));
+
+        var export = BehaviourCompareSession.CreateExport(
+            source, new BehaviourCompareSession.BehaviourDiffFilter());
+        string json = BehaviourCompareSession.ExportJson(export);
+        string text = BehaviourCompareSession.ExportText(export);
+
+        Assert.Equal(json, BehaviourCompareSession.ExportJson(export));
+        Assert.Equal(text, BehaviourCompareSession.ExportText(export));
+        Assert.Equal(
+            new[] { "name", "playbackSpeed", "Walk", "#200" },
+            export.Differences.Select(line => line.Where));
+        Assert.Contains("\"kind\": \"changed\"", json);
+        Assert.Contains("hkbClipGenerator.name: Walk -> Run", text);
+        Assert.Contains("added hkbStateMachine #200", text);
+    }
+
+    private static BehaviourDiff.Result FixtureResult()
+    {
+        var result = new BehaviourDiff.Result();
+        result.Lines.Add(new BehaviourDiff.Line(
+            BehaviourDiff.Kind.Added, "hkbStateMachine", "#200", "", "name=State"));
+        result.Lines.Add(new BehaviourDiff.Line(
+            BehaviourDiff.Kind.Removed, "hkbClipGenerator", "Walk", "name=Walk", ""));
+        result.Lines.Add(new BehaviourDiff.Line(
+            BehaviourDiff.Kind.Changed, "hkbClipGenerator", "name", "Walk", "Run"));
+        result.Lines.Add(new BehaviourDiff.Line(
+            BehaviourDiff.Kind.Changed, "hkbClipGenerator", "playbackSpeed", "1.0", "1.5"));
+        return result;
+    }
+
     private static string Clip(string name, string speed) => $"""
         <hkobject class="hkbClipGenerator" name="#100">
             <hkparam name="name">{name}</hkparam>

@@ -7,16 +7,29 @@
     <RootNamespace>BehaviourStudio.Tests</RootNamespace>
     <AssemblyName>BehaviourGraph.Tests</AssemblyName>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="*.cs" />
   </ItemGroup>
+
+  <!-- Cache the fidelity manifest in app.Config/ (relative to this project) so
+       dotnet test copies it to the output dir like other config files; leaving
+       it under the default src/*.csproj config path risks dotnet build
+       overwriting the committed fixtures/vanilla/manifest.json. -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
-    <PackageReference Include="xunit" Version="2.9.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <None Include="app.Config/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../symrm/symrm.csproj" />
+    <ProjectReference Include="../../app/BehaviourStudio.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="fixtures/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

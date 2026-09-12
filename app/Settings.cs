@@ -29,7 +29,7 @@ public static class Settings
     public static string Get(string key)
     {
         if (!TryRead(out var all, out _)) return "";
-        return all.TryGetValue(key, out string? value) ? value : "";
+        return all.TryGetValue(key, out string? value) ? value ?? "" : "";
     }
 
     public static void Set(string key, string value)

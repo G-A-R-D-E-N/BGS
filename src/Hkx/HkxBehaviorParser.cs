@@ -46,10 +46,12 @@ public class HkxBehaviorParser
         int dataSection = image.Sections.IndexOf(data);
         if (classNamesSection < 0 || dataSection < 0) return null;
 
+        int pointer = image.Layout.PointerSize;
+
         var fixups = new Dictionary<int, int>();
         foreach (var local in data.Locals())
         {
-            if (!ValidField(local.Source, data.Data.Length, sizeof(long)) ||
+            if (!ValidField(local.Source, data.Data.Length, pointer) ||
                 !ValidOffset(local.Destination, data.Data.Length))
                 continue;
 
@@ -81,7 +83,7 @@ public class HkxBehaviorParser
         foreach (var global in data.Globals())
         {
             if (global.Section != dataSection ||
-                !ValidField(global.Source, data.Data.Length, sizeof(long)) ||
+                !ValidField(global.Source, data.Data.Length, pointer) ||
                 !ValidOffset(global.Destination, data.Data.Length))
                 continue;
 

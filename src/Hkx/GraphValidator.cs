@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 
 namespace OpenCommonwealth.Services.Hkx;
 
 public static class GraphValidator
 {
+    private const int MaxPerWeaponFindings = 6;
+
     public enum Level { Error, Warning }
 
     public sealed class Finding
@@ -44,15 +45,19 @@ public static class GraphValidator
         CheckBlenders(model, found);
         CheckClips(model, found);
         CheckClipAnimations(model, chain, found);
+        if (chain != null) CheckWeaponSubgraphClips(model, chain, found);
         CheckUnattached(model, found);
 
         return found;
     }
 
     private static void Add(List<Finding> found, Level level, string where, string what,
-                            bool blocksSave = false) =>
-        found.Add(new Finding { Level = level, Where = where, What = what, ObjectId = LeadingId(where),
+                            string objectId = "", bool blocksSave = false)
+    {
+        string id = objectId.Length > 0 ? objectId : LeadingId(where);
+        found.Add(new Finding { Level = level, Where = where, What = what, ObjectId = id,
                                 BlocksSave = blocksSave });
+    }
 
     private static string LeadingId(string where)
     {
@@ -416,12 +421,124 @@ public static class GraphValidator
 
             string where = $"#{clip.Id} clip '{clip.Str("name")}'";
 
-            if (!File.Exists(ProjectChain.ResolvePath(chain.Root, anim)))
-                Add(found, Level.Warning, where, $"plays '{anim}', which is not on disk under {chain.Root}");
+            if (!ProjectChain.AnimationExists(chain.Root, anim, chain.Data))
+            {
+                string whereTo = chain.Data != null
+                    ? $"under {chain.Root} nor inside any .ba2 under {chain.Data.DataFolder}"
+                    : $"under {chain.Root}";
+                Add(found, chain.Data != null ? Level.Error : Level.Warning, where,
+                    $"plays '{anim}', which is not on disk {whereTo}");
+            }
             else if (declared.Count > 0 && !declared.Contains(ProjectChain.AnimationKey(anim)))
                 Add(found, Level.Warning, where,
                     $"plays '{anim}', which the character file does not list, so the engine may not load it");
         }
+    }
+
+    private static void CheckWeaponSubgraphClips(BehaviourGraphModel model, ProjectChain chain,
+                                                 List<Finding> found)
+    {
+        if (chain.Data == null || chain.Root.Length == 0) return;
+
+        var clips = model.Objects.Where(o => o.Class == "hkbClipGenerator").ToList();
+        var referencedTypes = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var clip in clips)
+        {
+            string anim = clip.Str("animationName");
+            string[] parts = anim.Replace('\\', '/').Split('/');
+            for (int i = 0; i + 1 < parts.Length; i++)
+                if (parts[i].Equals("Weapon", StringComparison.OrdinalIgnoreCase) && parts[i + 1].Length > 0)
+                    referencedTypes.Add(parts[i + 1]);
+        }
+        if (referencedTypes.Count == 0) return;
+
+        var leafToId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var clip in clips)
+        {
+            string anim = clip.Str("animationName").Replace('\\', '/');
+            if (anim.Split('/').Length != 2 ||
+                !anim.StartsWith("Animations/", StringComparison.OrdinalIgnoreCase)) continue;
+            leafToId[anim[(anim.LastIndexOf('/') + 1)..]] = clip.Id;
+        }
+        var generic = leafToId.Keys.ToList();
+        if (generic.Count == 0) return;
+
+        var sets = chain.Data.WeaponTypeSets;
+        if (sets.Count > 0)
+        {
+            CheckWeaponSubgraphAgainstMap(chain, generic, leafToId, sets, found);
+            return;
+        }
+
+        var weaponFolders = chain.Data.Subfolders(chain.Root, "Animations/Weapon");
+        if (weaponFolders.Count == 0) return;
+
+        var perWeapon = generic.Where(leaf =>
+            weaponFolders.Any(type => ProjectChain.AnimationExists(
+                chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data))).ToList();
+        if (perWeapon.Count == 0) return;
+
+        var messages = new List<(string Leaf, string What)>();
+        foreach (string type in referencedTypes)
+        {
+            foreach (string leaf in perWeapon)
+            {
+                if (ProjectChain.AnimationExists(chain.Root, $"Animations\\Weapon\\{type}\\{leaf}", chain.Data))
+                    continue;
+
+                bool genericExists = ProjectChain.AnimationExists(chain.Root, "Animations\\" + leaf, chain.Data);
+                messages.Add((leaf, genericExists
+                    ? $"per-weapon coverage: '{type}' lacks {leaf} under Animations\\Weapon\\{type}; " +
+                      $"the generic Animations\\{leaf} copy exists, so the engine falls back and the clip " +
+                      "still plays (extract a per-weapon copy to override it)"
+                    : $"per-weapon coverage: '{type}' lacks {leaf} under Animations\\Weapon\\{type}, and no " +
+                      $"generic Animations\\{leaf} copy exists either — playing this clip for this weapon " +
+                      $"type is a crash (extract the animation under Animations\\Weapon\\{type})"));
+            }
+        }
+        ReportWeaponGaps(found, messages, leafToId);
+    }
+
+    private static void CheckWeaponSubgraphAgainstMap(ProjectChain chain,
+                                                      List<string> generic,
+                                                      IReadOnlyDictionary<string, string> leafToId,
+                                                      IReadOnlyList<OpenCommonwealth.Services.Archive.GameData.WeaponTypeSet> sets,
+                                                      List<Finding> found)
+    {
+        var messages = new List<(string Leaf, string What)>();
+        foreach (var set in sets)
+        {
+            if (set.Prefixes.Count == 0) continue;
+
+            foreach (string leaf in generic)
+            {
+                bool inChain = set.Prefixes.Any(prefix =>
+                    ProjectChain.AnimationExists(chain.Root, prefix + "\\" + leaf, chain.Data));
+                if (inChain) continue;
+
+                if (ProjectChain.AnimationExists(chain.Root, "Animations\\" + leaf, chain.Data)) continue;
+
+                messages.Add((leaf, $"per-weapon coverage: '{set.Type}' cannot resolve {leaf}: the engine searched " +
+                                    $"its {set.Prefixes.Count}-prefix chain starting at {set.Prefixes[0]}\\{leaf} and " +
+                                    $"found no copy, and no generic Animations\\{leaf} fallback exists either — " +
+                                    "playing this clip for this weapon type is a crash"));
+            }
+        }
+        ReportWeaponGaps(found, messages, leafToId);
+    }
+
+    private static void ReportWeaponGaps(List<Finding> found, List<(string Leaf, string What)> messages,
+                                         IReadOnlyDictionary<string, string> leafToId)
+    {
+        if (messages.Count == 0) return;
+
+        foreach (var (leaf, message) in messages.Take(MaxPerWeaponFindings))
+            Add(found, Level.Warning, "weapon subgraph", message,
+                leafToId.TryGetValue(leaf, out var id) ? id : "");
+        if (messages.Count > MaxPerWeaponFindings)
+            Add(found, Level.Warning, "weapon subgraph",
+                $"per-weapon coverage: {messages.Count - MaxPerWeaponFindings} more missing clip(s) for " +
+                "other weapon types (extract the named animations under Animations\\Weapon)");
     }
 
     private static void CheckUnattached(BehaviourGraphModel model, List<Finding> found)

@@ -13,17 +13,28 @@ public static class ProjectCheck
         public string Name = "";
         public string Error = "";
         public readonly List<GraphValidator.Finding> Findings = new();
+        public RoundTripReport RoundTrip = new();
 
+        // Per-file display counts include round-trip blockers because the Problems grid renders
+        // every finding in this list. Graph-only counts keep project summary/export categories
+        // separate so a round-trip issue is not counted twice.
         public int Errors => Findings.Count(f => f.Level == GraphValidator.Level.Error);
         public int Warnings => Findings.Count(f => f.Level == GraphValidator.Level.Warning);
+        public int GraphErrors => Findings.Count(f =>
+            !RoundTripFindingAdapter.IsRoundTrip(f) && f.Level == GraphValidator.Level.Error);
+        public int GraphWarnings => Findings.Count(f =>
+            !RoundTripFindingAdapter.IsRoundTrip(f) && f.Level == GraphValidator.Level.Warning);
+        public int RoundTripLosses => RoundTrip.Count;
     }
 
     public sealed class Result
     {
         public readonly List<FileResult> Files = new();
-        public int Errors => Files.Sum(f => f.Errors);
-        public int Warnings => Files.Sum(f => f.Warnings);
+        public int Errors => Files.Sum(f => f.GraphErrors);
+        public int Warnings => Files.Sum(f => f.GraphWarnings);
         public int Unreadable => Files.Count(f => f.Error.Length > 0);
+        public int RoundTripLosses => Files.Sum(f => f.RoundTripLosses);
+        public int FilesWithRoundTripLosses => Files.Count(f => f.RoundTrip.HasLosses);
 
         public override string ToString()
         {
@@ -31,6 +42,9 @@ public static class ProjectCheck
             if (Files.Count == 0) return "no behaviour files were found in this project";
             return $"{read}: {Errors} error{(Errors == 1 ? "" : "s")}, " +
                    $"{Warnings} warning{(Warnings == 1 ? "" : "s")}" +
+                   (RoundTripLosses > 0
+                       ? $", {RoundTripLosses} round-trip issue{(RoundTripLosses == 1 ? "" : "s")} " +
+                         $"in {FilesWithRoundTripLosses} file{(FilesWithRoundTripLosses == 1 ? "" : "s")}" : "") +
                    (Unreadable > 0 ? $", {Unreadable} could not be unpacked" : "");
         }
     }
@@ -66,10 +80,15 @@ public static class ProjectCheck
 
             try
             {
+                file.RoundTrip = RoundTripReport.ForFile(path);
+                file.Findings.AddRange(RoundTripFindingAdapter.For(file.RoundTrip));
+
                 string xml = HkxTextEdit.TextOf(path);
                 if (xml.Length == 0)
                 {
-                    file.Error = "holds a class this build cannot describe";
+                    file.Error = file.RoundTrip.HasLosses
+                        ? "cannot be unpacked safely; " + file.RoundTrip
+                        : "holds a class this build cannot describe";
                     continue;
                 }
 

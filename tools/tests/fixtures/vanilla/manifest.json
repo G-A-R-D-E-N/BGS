@@ -1,0 +1,94 @@
+{
+  "root": "vanilla",
+  "notes": "Committed Fallout 4 vanilla behaviour and character fixtures (base game + DLC03). Extracted from a pristine, unmodded install (D:/Fallout4Backup/Fallout 4, base game + all DLC) with symrm extract, preserving the archive path so provenance is self-documenting. See README.md for the full selection and fidelity rationale.",
+  "files": [
+    {
+      "path": "Meshes/Actors/Character/Behaviors/WeaponBehavior.hkx",
+      "source": "Fallout4 - Animations.ba2",
+      "sha256": "D283E6EAF612E555E23C959F7226AE9447CA93E1989E7E81AEF297E31D2B3D16",
+      "bytes": 1134752,
+      "fidelity": "byte",
+      "note": "Largest character behaviour (hkbBehaviorGraph root); heavy state machine - the biggest layout stress in the corpus."
+    },
+    {
+      "path": "Meshes/Actors/Character/Behaviors/RaiderRootBehavior.hkx",
+      "source": "Fallout4 - Animations.ba2",
+      "sha256": "0F0A5A5BDDDDEA06A761C9D1A9199E50FEB4FBDD0AEA916F1F28AE02DA6D412F",
+      "bytes": 145440,
+      "fidelity": "byte",
+      "note": "The player-character root behaviour."
+    },
+    {
+      "path": "Meshes/Actors/Character/Behaviors/Locomotion_8wayBlend.hkx",
+      "source": "Fallout4 - Animations.ba2",
+      "sha256": "F762E6ED9728B05A2C80F23400E30B98E6FAA20D5E8E487C93FF7AC1D5F4C639",
+      "bytes": 36992,
+      "fidelity": "byte",
+      "note": "8-way blend locomotion behaviour (hkbBlenderGenerator trees)."
+    },
+    {
+      "path": "Meshes/Actors/Character/Behaviors/SingleAnimFurniture.hkx",
+      "source": "Fallout4 - Animations.ba2",
+      "sha256": "CEE537D56B3B05822AF08BEB8C14B28AC16E586717CB52BB87444CED600CE8D4",
+      "bytes": 8624,
+      "fidelity": "byte",
+      "note": "Small single-animation furniture behaviour."
+    },
+    {
+      "path": "Meshes/Actors/Character/Behaviors/SyncedAnimBehavior.hkx",
+      "source": "Fallout4 - Animations.ba2",
+      "sha256": "974DE018792B2DCF82C9A02A1880EFD16F17A4D95997CEBE78DE767995310E5F",
+      "bytes": 144544,
+      "fidelity": "byte",
+      "note": "Synced animation behaviour."
+    },
+    {
+      "path": "Meshes/Actors/RadRoach/Characters/RadRoachCharacter.hkx",
+      "source": "Fallout4 - Animations.ba2",
+      "sha256": "A60109BEDB89C144F3A0EC396E2D322AAD0DD5955BE4E3986F43E39573C4A131",
+      "bytes": 5696,
+      "fidelity": "byte",
+      "note": "Small creature (radroach) behaviour."
+    },
+    {
+      "path": "Meshes/Actors/RadRoach/Animations/TurnLeft90.hkx",
+      "source": "Fallout4 - Animations.ba2",
+      "sha256": "CC95B7E9883018B0D0A1C642503A8C84EC9A92E33AD637DFBC9DD347D8965143",
+      "bytes": 7120,
+      "fidelity": "byte",
+      "note": "Creature turn animation (hkaSplineCompressedAnimation container)."
+    },
+    {
+      "path": "Meshes/Actors/Character/Animations/Paired/PairedKill2HMBashKneeAndHead_AttackerLead.hkx",
+      "source": "Fallout4 - Animations.ba2",
+      "sha256": "9C0AD10944521D5E22CEEF9E06137E7A9FFB254481187C297FC5B5C02553D0D6",
+      "bytes": 55232,
+      "fidelity": "byte",
+      "note": "Lossless-compressed paired kill animation (hkaLosslessCompressedAnimation) - the only lossless-class file in the corpus (the 1,085 vanilla lossless files are mostly paired kill and sync-idle animations)."
+    },
+    {
+      "path": "Meshes/Actors/DLC03/RadChicken/Behaviors/CritterRootBehavior.hkx",
+      "source": "DLCCoast - Main.ba2",
+      "sha256": "F1310189C26DCE42F9D7D1A7FB2A7EDD76FD6EB31F2E7D0086AF0D5FBF11E8DB",
+      "bytes": 3392,
+      "fidelity": "byte",
+      "note": "DLC03 critter root behaviour; the byte-identical copy is shared by DLC03 critters (RadRabbit ships the same file)."
+    },
+    {
+      "path": "Meshes/Actors/Character/CharacterAssets/skeleton.hkx",
+      "source": "Fallout4 - Animations.ba2",
+      "sha256": "C6F795A7615CFA6D9D1E3A70B886306D96D5BBFB9C5EDA778E84F1424EDD7EA5",
+      "bytes": 43296,
+      "fidelity": "structural",
+      "note": "Character skeleton (hkaSkeleton in an hkaAnimationContainer). The no-op save legally re-lays layout: FixupOrder strips 0xFF filler from fixup tables, so bytes differ (first difference at 0xA350, same length) while the object graph is preserved - asserted structurally."
+    },
+    {
+      "path": "Meshes/Actors/Character/CharacterAssets/Hair/Female/FemaleHair04.hkx",
+      "source": "Fallout4 - Animations.ba2",
+      "sha256": "B80DA080B5D427443FDD9D34FDC7D71B157C6320BE4802B1D77886A9510C26D3",
+      "bytes": 27600,
+      "fidelity": "refused",
+      "note": "Cloth hair FK file. The save path refuses it cleanly: it carries hcl* classes this build does not define, so NativeSave.Apply throws before touching any bytes."
+    }
+  ]
+}

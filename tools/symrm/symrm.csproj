@@ -4,10 +4,13 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <AssemblyName>symrm</AssemblyName>
+    <StartupObject>BehaviourStudio.Tools.CliEntry</StartupObject>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <RootNamespace>BehaviourStudio.Tools</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="CliEntry.cs" />
+    <Compile Include="SymrmHelp.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Tests.cs" />
     <Compile Include="Png.cs" />
@@ -15,5 +18,11 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/BehaviourGraph.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Genuine Fallout 4 files used by the end-to-end tests: an np physics skeleton and
+         a small turret animation that poses against it. -->
+    <None Include="samples/TurretStandingSkeleton.hkx" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="samples/TurretIdleWeapReady.hkx" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
