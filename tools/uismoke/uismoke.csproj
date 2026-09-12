@@ -7,19 +7,24 @@
     <RootNamespace>BehaviourStudio.UiSmoke</RootNamespace>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>uismoke</AssemblyName>
-    <StartupObject>BehaviourStudio.UiSmoke.Smoke</StartupObject>
+    <StartupObject>BehaviourStudio.UiSmoke.LifecycleSmoke</StartupObject>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="*.cs" />
     <Compile Include="../../app/*.cs" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.2.3" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
-    <PackageReference Include="Avalonia.Headless" Version="11.2.3" />
+    <PackageReference Include="Avalonia" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Headless" Version="12.1.2" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/BehaviourGraph.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Genuine Fallout 4 samples shared with symrm, used by the packed-playback smoke. -->
+    <None Include="../../tools/symrm/samples/TurretStandingSkeleton.hkx" Link="samples/TurretStandingSkeleton.hkx" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../tools/symrm/samples/TurretIdleWeapReady.hkx" Link="samples/TurretIdleWeapReady.hkx" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

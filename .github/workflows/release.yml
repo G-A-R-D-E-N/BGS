@@ -52,7 +52,7 @@ jobs:
         run: dotnet restore app/BehaviourStudio.csproj --locked-mode
 
       - name: Publish self-contained application
-        run: dotnet publish app/BehaviourStudio.csproj --configuration Release --runtime "${{ matrix.rid }}" --self-contained true --no-restore --output "release/${{ matrix.rid }}"
+        run: dotnet publish app/BehaviourStudio.csproj --configuration Release --runtime "${{ matrix.rid }}" --self-contained true --no-restore --output "release/${{ matrix.rid }}" -p:BuildCommit=${{ github.sha }} -p:DebugType=none -p:DebugSymbols=false
 
       - name: Include release notices
         shell: pwsh
@@ -67,6 +67,23 @@ jobs:
         if: matrix.rid == 'win-x64'
         shell: pwsh
         run: .\release\${{ matrix.rid }}\BehaviourGraphStudio.exe --version
+
+      - name: Verify published build identity
+        shell: pwsh
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          $executable = if ("${{ matrix.rid }}" -eq "win-x64") {
+            ".\release\${{ matrix.rid }}\BehaviourGraphStudio.exe"
+          } else {
+            "./release/${{ matrix.rid }}/BehaviourGraphStudio"
+          }
+          $output = (& $executable --version | Out-String).Trim()
+          $expected = $env:BUILD_COMMIT.Substring(0, 12)
+          if (-not $output.Contains("build $expected")) {
+            throw "Published build identity mismatch: expected $expected, got '$output'"
+          }
+          Write-Host $output
 
       - name: Archive release
         shell: pwsh
@@ -151,4 +168,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "Behaviour Graph Studio ${GITHUB_REF_NAME#v}" \
-            --generate-notes
+            --notes-file RELEASE-NOTES.md

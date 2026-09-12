@@ -378,4 +378,26 @@ public sealed class AuditRegressionTests
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }
     }
+
+    [Fact]
+    public void AParentCycleIsRefusedInsteadOfRecursingForever()
+    {
+        // A custom table whose parents form a loop. CanPlace has to notice the cycle before
+        // deriving alignment: that derivation walks parents itself (NaturalAlign -> Of) and Of
+        // does not cache until it returns, so entering it partway along the loop never comes back.
+        const string json = """
+        {
+          "classes": {
+            "Loopy": { "parent": "Loopier", "signature": "0x11111111", "size": 16, "members": [] },
+            "Loopier": { "parent": "Loopy", "signature": "0x22222222", "size": 16, "members": [] }
+          }
+        }
+        """;
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        var types = HavokClassTypes.Parse(stream);
+
+        Assert.False(LayoutWalker.CanPlace(types, "Loopy"));
+        Assert.False(LayoutWalker.CanPlace(types, "Loopier"));
+        Assert.Null(LayoutWalker.Active(types, "Loopy", 4));
+    }
 }

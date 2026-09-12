@@ -34,8 +34,12 @@ public sealed class Ba2 : IDisposable
         Entries = entries;
     }
 
+    [ThreadStatic]
+    internal static int OpenCountForTest;
+
     public static Ba2 Open(string archivePath)
     {
+        OpenCountForTest++;
         var stream = File.OpenRead(archivePath);
         var reader = new BinaryReader(stream);
         try

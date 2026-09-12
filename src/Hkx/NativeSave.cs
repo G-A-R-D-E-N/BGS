@@ -499,6 +499,14 @@ public static class NativeSave
             throw new InvalidOperationException("This edit cannot be written in place: " + plan.Refusal);
 
         var image = PackfileImage.Read(source);
+
+        // The native writer is 8-byte (64-bit) only: array headers, pointer/struct strides,
+        // wide integers and new-object sizes all assume that layout. Reading a 4-byte file is
+        // supported, but editing one through here would lay 64-bit structures over 32-bit ones.
+        // Refuse until the writer is layout-aware, rather than corrupt the file. This is the one
+        // chokepoint every native edit and authoring plan passes through.
+        NativeLayout.RequireWritable(image);
+
         var objects = new PackfileObjects(image, classes);
 
         var mismatched = HavokClassTypes.Shipped.SignatureProblems(objects.ClassNames());

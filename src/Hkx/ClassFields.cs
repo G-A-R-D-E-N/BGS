@@ -28,12 +28,15 @@ public static class ClassFields
     {
         if (depth > Deepest || !types.Knows(className)) return null;
 
+        var layout = LayoutWalker.Active(types, className, objects.PointerWidth);
+        if (layout == null) return null;
+
         var fields = new List<Field>();
         foreach (var member in types.Members(className))
         {
             if (!member.Written) continue;
 
-            int here = at + member.Offset;
+            int here = at + (layout.OffsetOf(member.Name) ?? member.Offset);
             string path = under.Length == 0 ? member.Name : under + "." + member.Name;
 
             if (member.VType == "TYPE_STRUCT")
@@ -49,7 +52,7 @@ public static class ClassFields
 
             if (member.VType == "TYPE_ARRAY" && member.VSub == "TYPE_STRUCT" && member.CType != null)
             {
-                int? stride = types[member.CType]?.Size;
+                int? stride = LayoutWalker.Active(types, member.CType, objects.PointerWidth)?.Size;
                 if (stride == null || stride <= 0) return null;
 
                 var elements = objects.ArrayAt(here, stride.Value);

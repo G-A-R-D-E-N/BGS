@@ -9,6 +9,8 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
+using OpenCommonwealth.Services.Archive;
 using OpenCommonwealth.Services.Hkx;
 using OpenCommonwealth.Services.Nif;
 using OpenCommonwealth.Services;
@@ -126,14 +128,70 @@ public class MainWindow : Window
     private readonly TextBlock _playbackSummary =
         new() { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _frameLabel = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private readonly TextBlock _scaleStatus = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private Control? _scalePill;
+
+    // The last SetPlaybackSummary text and brush, so the constraint-inspection line can put
+    // the summary back exactly when the hover/pin selection ends.
+    private string _summaryBaseText = "";
+    private IBrush _summaryBaseBrush = Ux.MetaBrush;
+
     private readonly Slider _scrub = new() { Minimum = 0, Maximum = 0, SmallChange = 1, LargeChange = 5 };
     private Button _playButton = Ux.Secondary("Play");
+    private readonly Button _dropButton = Ux.Secondary("Drop");
+    private readonly DispatcherTimer _dropClock =
+        new() { Interval = TimeSpan.FromMilliseconds(16) };
     private HkxSkeleton? _poseSkeleton;
     private HkxAnimationData? _poseAnimation;
     private string _poseSource = "";
 
     private RootMotion.Motion _poseMotion = new();
     private bool _followTravel;
+    private HavokRagdollModel? _ragdoll;
+    private string? _ragdollSourceName;
+    private string? _ragdollSourceNote;
+    private readonly CheckBox _bodiesToggle = new()
+    {
+        Content = "Bodies",
+        Foreground = Ux.MetaBrush,
+        FontSize = 12,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+    private readonly CheckBox _constraintsToggle = new()
+    {
+        Content = "Constraints",
+        Foreground = Ux.MetaBrush,
+        FontSize = 12,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+    private readonly CheckBox _bindingsToggle = new()
+    {
+        Content = "Bone labels",
+        Foreground = Ux.MetaBrush,
+        FontSize = 12,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+    private readonly CheckBox _physicsSkeletonToggle = new()
+    {
+        Content = "Physics skeleton",
+        Foreground = Ux.MetaBrush,
+        FontSize = 12,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+    private readonly CheckBox _framesToggle = new()
+    {
+        Content = "Body frames",
+        Foreground = Ux.MetaBrush,
+        FontSize = 12,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+    private readonly CheckBox _engineerToggle = new()
+    {
+        Content = "Frames only",
+        Foreground = Ux.MetaBrush,
+        FontSize = 12,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
     private readonly PlaybackSession _playback = new();
     private bool _scrubbing;
     private DispatcherTimer? _clock;
@@ -158,6 +216,14 @@ public class MainWindow : Window
             ("In the other file", -4));
     private readonly TextBlock _diffSummary =
         new() { Foreground = Ux.MetaBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap };
+    private readonly ComboBox _diffKind = new()
+        { MinWidth = 130, MaxWidth = 170, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private readonly ComboBox _diffClass = new()
+        { MinWidth = 220, MaxWidth = 340, Foreground = Ux.CodeBrush, FontSize = 12 };
+    private readonly Button _diffExportText = Ux.Secondary("Export text...");
+    private readonly Button _diffExportJson = Ux.Secondary("Export JSON...");
+    private BehaviourDiff.Result? _diffResult;
+    private string _diffOtherName = "";
 
     private readonly HkGrid _problems = new(("", 70), ("Object", -3), ("What is wrong", -7));
     private readonly TextBlock _problemBar = new() { Foreground = Ux.MetaBrush, FontSize = 12, Margin = new Thickness(2, 6, 2, 2) };
@@ -240,6 +306,18 @@ public class MainWindow : Window
     private string _xmlPath = "";
     private string _xmlText = "";
     private ProjectChain? _projectChain;
+    private GameData? _gameData;
+    private readonly TextBox _dataField = Ux.Field("Path to the game Data folder, e.g. .../Fallout 4/Data", 220);
+    private readonly TextBlock _dataSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private readonly TextBox _modsField = Ux.Field("MO2 mods folder, e.g. .../ModOrganizer (optional)", 220);
+    private readonly TextBlock _modsSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private readonly TextBox _crashField = Ux.Field("AnimTextData crash hash, e.g. 10448007347639226270", 220);
+    private readonly TextBlock _crashSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private Border? _crashPanel;
+    private readonly StackPanel _crashPanelBody = new() { Spacing = 6 };
+    private readonly TextBlock _crashPanelTitle = new() { Foreground = Ux.TitleBrush, FontSize = 13 };
+    private readonly TextBlock _sweepSummary = new() { Foreground = Ux.MetaBrush, FontSize = 12 };
+    private bool _sweeping;
     private string _selectedId = "";
     private readonly List<Action> _fieldCommits = new();
     private bool _dirty;
@@ -310,7 +388,7 @@ public class MainWindow : Window
         _tabs.Items.Add(Tab("Tree", BuildTreeTab()));
         _tabs.Items.Add(Tab("Graph", BuildGraphTab()));
         _tabs.Items.Add(Tab("Symbols", BuildSymbolsTab()));
-        _tabs.Items.Add(Tab("Chain", _chain));
+        _tabs.Items.Add(Tab("Chain", BuildChainTab()));
         _tabs.Items.Add(Tab("Project search", BuildProjectSearchTab()));
         _tabs.Items.Add(Tab("Animation", BuildAnimationTab()));
         _tabs.Items.Add(Tab("Playback", BuildPlaybackTab()));
@@ -460,26 +538,37 @@ public class MainWindow : Window
     private static bool Contains(string? text, string needle) =>
         (text ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase);
 
-    private static bool HasDroppedFiles(Avalonia.Input.IDataObject data) =>
-        data.Contains(Avalonia.Input.DataFormats.Files)
-        || data.Contains(Avalonia.Input.DataFormats.FileNames);
+    // Avalonia 12 exposes a single file format, DataFormat.File. The legacy FileNames format
+    // that 11 also carried no longer exists, so the guard and the reader below cannot disagree
+    // about what counts as a file drop -- which is what let a FileNames-only source pass this
+    // check, yield no paths, and drop silently under 11.
+    private static bool HasDroppedFiles(Avalonia.Input.IDataTransfer data) =>
+        Avalonia.Input.DataTransferExtensions.Contains(data, Avalonia.Input.DataFormat.File);
 
     private void BridgeDragOver(object? sender, Avalonia.Input.DragEventArgs e)
     {
-        bool files = HasDroppedFiles(e.Data);
+        bool files = HasDroppedFiles(e.DataTransfer);
         e.DragEffects = files ? Avalonia.Input.DragDropEffects.Copy : Avalonia.Input.DragDropEffects.None;
         e.Handled = true;
-        if (files) ShowDropHint(FirstDroppedFileName(e.Data));
+        if (files) ShowDropHint(FirstDroppedFileName(e.DataTransfer));
         else HideDropHint();
     }
+
+    // Items that carry no local path (a virtual or remote file) are dropped rather than turned
+    // into a bogus path, so a drop of only those still reports zero files to the caller.
+    private static List<string> DroppedPaths(Avalonia.Input.IDataTransfer data) =>
+        (Avalonia.Input.DataTransferExtensions.TryGetFiles(data) ?? Array.Empty<IStorageItem>())
+        .Select(item => item.TryGetLocalPath())
+        .Where(path => !string.IsNullOrEmpty(path))
+        .Select(path => path!)
+        .ToList();
 
     private void BridgeDrop(object? sender, Avalonia.Input.DragEventArgs e)
     {
         HideDropHint();
-        if (!HasDroppedFiles(e.Data)) return;
+        if (!HasDroppedFiles(e.DataTransfer)) return;
 
-        var files = (Avalonia.Input.DataObjectExtensions.GetFileNames(e.Data)
-                     ?? Enumerable.Empty<string>()).ToList();
+        var files = DroppedPaths(e.DataTransfer);
         if (files.Count == 0) return;
         e.Handled = true;
 
@@ -489,11 +578,11 @@ public class MainWindow : Window
                       "path bar or the recent row.", Ux.MetaBrush);
     }
 
-    private static string? FirstDroppedFileName(Avalonia.Input.IDataObject data)
+    private static string? FirstDroppedFileName(Avalonia.Input.IDataTransfer data)
     {
         try
         {
-            return Avalonia.Input.DataObjectExtensions.GetFileNames(data).FirstOrDefault();
+            return DroppedPaths(data).FirstOrDefault();
         }
         catch (Exception)
         {
@@ -1006,7 +1095,10 @@ public class MainWindow : Window
         workspace.ColumnDefinitions.Add(_graphCenterColumn);
         workspace.ColumnDefinitions.Add(_graphRightSplitterColumn);
         workspace.ColumnDefinitions.Add(_graphRightColumn);
-        _graphCanvasHost = Framed(_graph);
+        var canvasLayer = new Grid();
+        canvasLayer.Children.Add(_graph);
+        canvasLayer.Children.Add(BuildCrashPanel());
+        _graphCanvasHost = Framed(canvasLayer);
         _graphCanvasHost.ClipToBounds = true;
         Grid.SetColumn(_graphCanvasHost, 0);
         Grid.SetColumn(_graphRightSplitter, 1);
@@ -1300,7 +1392,10 @@ public class MainWindow : Window
         _pasteInto.ItemsSource = slots;
         _pasteInto.SelectedItem = slots.Contains(chosen) ? chosen : Unattached;
 
-        _pasteButton.IsEnabled = _clip != null && !_readOnly && _hkxPath.Length > 0;
+        // Paste needs a writable native document actually loaded: _bytes is nulled on every
+        // fresh load, so a rejected (e.g. 4-byte) file must never leave Paste enabled against
+        // the clipboard even though the path was remembered.
+        _pasteButton.IsEnabled = _clip != null && _bytes != null && !_readOnly && _hkxPath.Length > 0;
         _applyPredefinedTemplate.IsEnabled = _bytes != null && !_readOnly;
         if (_clip != null && _pasteSummary.Text?.Length == 0) SetPasteSummary(Held(_clip), Ux.MetaBrush);
     }
@@ -2180,7 +2275,26 @@ public class MainWindow : Window
     public Task ScanPapyrusForTest(string folder) => ScanPapyrusFolder(folder, null);
     public void MarkAnimationEditedForTest() => _animationEdited = true;
     public bool IsDirty => _dirty;
+    public int UndoStepsForTest => _undo.Count;
+    public int RedoStepsForTest => _redo.Count;
+    public void UndoForTest() => Undo();
     public string StatusForTest => _status.Text ?? "";
+
+    public string ScaleStatusForTest => _scaleStatus.Text ?? "";
+
+    public bool ScaleStatusVisibleForTest => _scalePill?.IsVisible == true;
+
+    // The ragdoll scale readout reports the small set of view-computed numbers: the fitted
+    // body half-extent and the frame-axis stub length, in the file's own units. Refreshed on
+    // every load so opening another file swaps the numbers (or hides the pill entirely).
+    private void UpdateScaleStatus()
+    {
+        if (_scalePill == null) return;
+        string text = _skeleton.ScaleStatusText;
+        _scaleStatus.Text = text;
+        _scaleStatus.Foreground = Ux.MetaBrush;
+        _scalePill.IsVisible = text.Length > 0;
+    }
     public string PathFieldForTest => _pathField.Text ?? "";
 
     private Control BuildAnimationTab()
@@ -2572,17 +2686,29 @@ public class MainWindow : Window
                       .Colour(0, Ux.MutedBrush).Colour(1, Ux.DisabledBrush);
     }
 
-    private static HkxSkeleton? SiblingSkeleton(string primaryPath, string? fallbackPath = null)
+    // The sibling skeleton file: the first *.hkx under the sibling CharacterAssets folder
+    // that reads as a skeleton, or null. The ragdoll fallback uses the exact same file the
+    // pose pipeline poses with, so the mapper's skeletonA always matches the rig being
+    // played.
+    internal static string? SiblingSkeletonPath(string primaryPath, string? fallbackPath = null)
     {
         string? assets = FindPoseSkeletonFolder(primaryPath, fallbackPath);
         if (assets == null) return null;
 
         foreach (string file in Directory.EnumerateFiles(assets, "*.hkx").OrderBy(f => f))
         {
-            try { return new HkxBinaryReader().ReadSkeleton(file); }
+            try { new HkxBinaryReader().ReadSkeleton(file); return file; }
             catch { }
         }
         return null;
+    }
+
+    private static HkxSkeleton? SiblingSkeleton(string primaryPath, string? fallbackPath = null)
+    {
+        string? file = SiblingSkeletonPath(primaryPath, fallbackPath);
+        if (file == null) return null;
+        try { return new HkxBinaryReader().ReadSkeleton(file); }
+        catch { return null; }
     }
 
     internal static string? FindSiblingSkeletonFolder(string animationPath)
@@ -2639,6 +2765,34 @@ public class MainWindow : Window
         var fit = Ux.Secondary("Fit");
         fit.Click += (_, _) => _skeleton.Frame();
 
+        _dropButton.IsEnabled = false;
+        ToolTip.SetTip(_dropButton, "Release the current ragdoll pose (or the playing frame) and watch a " +
+                                    "gravity-settled approximation of how it would drop - no solver. " +
+                                    "Click again to return to the mapped pose.");
+        _dropClock.Tick += (_, _) =>
+        {
+            _skeleton.AdvanceDrop(0.016f);
+            if (_skeleton.DropResting) _dropClock.Stop();
+        };
+        _dropButton.Click += (_, _) =>
+        {
+            if (_skeleton.IsDropped)
+            {
+                _skeleton.ClearDrop();
+                _dropClock.Stop();
+            }
+            else
+            {
+                _skeleton.StartDrop();
+                if (_skeleton.IsDropped)
+                {
+                    Stop();
+                    _dropClock.Start();
+                }
+            }
+            _dropButton.Content = _skeleton.IsDropped ? "Recover" : "Drop";
+        };
+
         var reference = new CheckBox
         {
             Content = "Reference pose",
@@ -2659,6 +2813,71 @@ public class MainWindow : Window
             FontSize = 12,
             VerticalAlignment = VerticalAlignment.Center,
         };
+
+        _bodiesToggle.IsEnabled = false;
+        ToolTip.SetTip(_bodiesToggle, "Draw the rigid bodies this file measures (hknpRagdollData), " +
+                                      "as a static file-space overlay on the skeleton.");
+        _bodiesToggle.IsCheckedChanged += (_, _) =>
+        {
+            _skeleton.ShowBodies = _bodiesToggle.IsChecked == true;
+            _skeleton.InvalidateVisual();
+        };
+
+        _constraintsToggle.IsEnabled = false;
+        ToolTip.SetTip(_constraintsToggle, "Draw this file's measured ragdoll constraints: body links, " +
+                                          "pivots (transformA/transformB) and the twist/cone/angle limits " +
+                                          "the constraint atoms store.");
+        _constraintsToggle.IsCheckedChanged += (_, _) =>
+        {
+            _skeleton.ShowConstraints = _constraintsToggle.IsChecked == true;
+            _skeleton.InvalidateVisual();
+        };
+
+        _bindingsToggle.IsEnabled = false;
+        ToolTip.SetTip(_bindingsToggle, "Label each bound rigid body with its bone name from the physics " +
+                                        "skeleton (hknpRagdollData.boneToBodyMap). Hover a body to highlight " +
+                                        "the body-to-bone association.");
+        _bindingsToggle.IsCheckedChanged += (_, _) =>
+        {
+            _skeleton.ShowBindings = _bindingsToggle.IsChecked == true;
+            _skeleton.InvalidateVisual();
+        };
+
+        _physicsSkeletonToggle.IsEnabled = false;
+        ToolTip.SetTip(_physicsSkeletonToggle, "Draw the physics skeleton hknpRagdollData references (hkaSkeleton): " +
+                                               "its bone chain and reference pose, composed down the parent " +
+                                               "indices into file space.");
+        _physicsSkeletonToggle.IsCheckedChanged += (_, _) =>
+        {
+            _skeleton.ShowPhysicsSkeleton = _physicsSkeletonToggle.IsChecked == true;
+            _skeleton.InvalidateVisual();
+        };
+
+        _framesToggle.IsEnabled = false;
+        ToolTip.SetTip(_framesToggle, "Draw each rigid body's measured local frame (body cinfo position and " +
+                                      "orientation) as an axis triad, plus a marker at its measured world-space " +
+                                      "center of mass (motionCinfos centerOfMassWorld).");
+        _framesToggle.IsCheckedChanged += (_, _) =>
+        {
+            _skeleton.ShowFrames = _framesToggle.IsChecked == true;
+            _skeleton.InvalidateVisual();
+        };
+
+        _engineerToggle.IsEnabled = false;
+        ToolTip.SetTip(_engineerToggle, "Engineering view: draw only the measured body frames (axis triads + " +
+                                        "center-of-mass markers) over the ground grid - no skeleton, hulls, " +
+                                        "constraints or bindings - and never auto-frame the camera. Fit still " +
+                                        "frames the bodies.");
+        _engineerToggle.IsCheckedChanged += (_, _) =>
+        {
+            _skeleton.EngineeringFrames = _engineerToggle.IsChecked == true;
+            if (_engineerToggle.IsChecked == true)
+                foreach (var other in new[]
+                         { _bodiesToggle, _constraintsToggle, _bindingsToggle, _physicsSkeletonToggle })
+                    other.IsChecked = false;
+            _skeleton.InvalidateVisual();
+        };
+
         ToolTip.SetTip(travel, "Move the character along the path the clip carries, instead of " +
                                "playing it on the spot the way the file stores it.");
         travel.IsCheckedChanged += (_, _) =>
@@ -2684,16 +2903,22 @@ public class MainWindow : Window
         };
 
         _skeleton.BoneHovered += _ => _skeleton.InvalidateVisual();
+        _skeleton.ConstraintSelectionChanged += ShowConstraintInspection;
 
         var transport = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         foreach (var control in new Control[]
-                 { _playButton, first, back, forward, last, fit, reference, travel, reload, mesh, clearMesh })
+                 { _playButton, first, back, forward, last, fit, reference, travel, _bodiesToggle, _constraintsToggle, _bindingsToggle, _physicsSkeletonToggle, _framesToggle, _engineerToggle, _dropButton, reload, mesh, clearMesh })
             transport.Children.Add(control);
 
         var bar = Bar(Ux.Pill(_playbackSummary), transport);
         bar.Margin = new Thickness(0, 0, 0, 8);
 
-        var scrubRow = Bar(_scrub, Ux.Pill(_frameLabel));
+        // The ragdoll scale readout lives on the viewport's status row and is only shown
+        // once a file with rigid bodies is open (see TryLoadRagdoll -> UpdateScaleStatus).
+        _scalePill = Ux.Pill(_scaleStatus);
+        _scalePill.IsVisible = false;
+
+        var scrubRow = Bar(_scrub, Ux.Pill(_frameLabel), _scalePill);
         scrubRow.Margin = new Thickness(0, 8, 0, 0);
 
         var panel = new DockPanel();
@@ -2709,6 +2934,83 @@ public class MainWindow : Window
         SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
                            "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
         return panel;
+    }
+
+    private void TryLoadRagdoll(string path)
+    {
+        byte[] raw;
+        try { raw = File.ReadAllBytes(path); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return; }
+
+        _ragdoll = HavokPhysicsExtractor.TryExtract(raw);
+        bool any = _ragdoll is { Bodies.Count: > 0 };
+        string? ragdollSource = null;
+        if (!any)
+        {
+            // An animation file carries no ragdoll of its own; the character's sibling
+            // skeleton (the same rig the clip poses) does, including the mapper that lets
+            // the overlay follow the clip.
+            string? sibling = SiblingSkeletonPath(path);
+            if (sibling != null)
+            {
+                try
+                {
+                    var siblingModel = HavokPhysicsExtractor.TryExtract(File.ReadAllBytes(sibling));
+                    if (siblingModel is { Bodies.Count: > 0 })
+                    {
+                        _ragdoll = siblingModel;
+                        any = true;
+                        ragdollSource = sibling;
+                    }
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            }
+        }
+        _ragdollSourceName = ragdollSource == null ? null : Path.GetFileName(ragdollSource);
+        _bodiesToggle.IsEnabled = any;
+        _bodiesToggle.IsChecked = any;
+        _constraintsToggle.IsEnabled = any;
+        _constraintsToggle.IsChecked = any && _ragdoll is { Constraints.Count: > 0 };
+        bool bindings = any && _ragdoll is { BoneBindings.Count: > 0, Skeleton: { BoneNames.Count: > 0 } };
+        _bindingsToggle.IsEnabled = bindings;
+        _bindingsToggle.IsChecked = bindings;
+        bool physicsSkeleton = any && _ragdoll is { Skeleton: { ParentIndices.Count: > 0, ReferencePose.Count: > 0 } };
+        _physicsSkeletonToggle.IsEnabled = physicsSkeleton;
+        _physicsSkeletonToggle.IsChecked = physicsSkeleton;
+        _framesToggle.IsEnabled = any;
+        _framesToggle.IsChecked = any;
+        _engineerToggle.IsEnabled = any;
+        _dropButton.IsEnabled = any;
+        if (!any && _skeleton.IsDropped) _skeleton.ClearDrop();
+        _skeleton.SetBodies(any ? _ragdoll : null);
+        UpdateScaleStatus();
+        if (!any) return;
+
+        bool mappings = any && _ragdoll is { Mappings.Count: > 0, AnimationSkeleton: { BoneNames.Count: > 0 } };
+        string source = ragdollSource == null
+            ? "measured from this file"
+            : $"measured from the sibling skeleton {Path.GetFileName(ragdollSource)}";
+        SetPlaybackSummary(
+            $"{_ragdoll!.Bodies.Count} rigid bodies, {_ragdoll.Shapes.Count} shapes, " +
+            $"{_ragdoll.Constraints.Count} constraints, {_ragdoll.BoneBindings.Count} bone bindings " +
+            $"and {_ragdoll.Mappings.Count} animation-to-ragdoll bone mappings {source}. " +
+            "Bodies, Constraints, Bone labels, Physics skeleton and Body frames draw them as a " +
+            (mappings
+                ? "file-space overlay that follows the playing animation through the measured mapper; it is not physics yet."
+                : "static file-space overlay; it is not physics yet."), Ux.MetaBrush);
+
+        // For an animation file the ragdoll summary above is replaced by the clip summary a
+        // moment later, so the sibling-sourced ragdoll gets its note appended there instead.
+        _ragdollSourceNote = ragdollSource == null
+            ? null
+            : $"{_ragdoll.Bodies.Count} rigid bodies and {_ragdoll.Mappings.Count} bone mappings " +
+              $"loaded from the sibling skeleton {_ragdollSourceName}; the ragdoll overlay follows this clip.";
+
+        HkxSkeleton? skeleton = null;
+        try { skeleton = new HkxBinaryReader().ReadSkeleton(path); }
+        catch { skeleton = null; }
+        if (skeleton != null && skeleton.BoneNames.Count > 0)
+            _skeleton.Show(AnimationPose.ReferencePose(skeleton));
     }
 
     private HkxSkeleton? PoseSkeleton(string? animationPath = null)
@@ -2742,28 +3044,49 @@ public class MainWindow : Window
 
         string root = _projectChain?.Root ?? Path.GetDirectoryName(Path.GetFullPath(_hkxPath)) ?? "";
         string path = ProjectChain.ResolvePath(root, animation);
-        if (!File.Exists(path))
+        if (File.Exists(path))
         {
-            if (announce)
-                SetPlaybackSummary($"'{animation}' is not on disk under {root}, so it cannot be played. " +
-                                   "Check graph reports the same thing.", Ux.BadBrush);
+            LoadPose(path, animation);
             return;
         }
 
-        LoadPose(path, animation);
+        var packed = _gameData?.ReadAnimation(root, animation);
+        if (packed == null)
+        {
+            if (announce)
+                SetPlaybackSummary($"'{animation}' is neither loose under {root} nor inside any .ba2 under " +
+                                   "the game data folder, so it cannot be played. Check graph reports " +
+                                   "the same thing.", Ux.BadBrush);
+            return;
+        }
+
+        LoadPose(packed.Bytes, animation, animation, packed.Source, packed.EntryName);
     }
 
     private void LoadPose(string animationPath, string label)
     {
-        if (_poseSource == animationPath) return;
+        byte[] hkx;
+        try { hkx = InputFilePolicy.ReadHkx(animationPath); }
+        catch (Exception ex)
+        {
+            SetPlaybackSummary($"Could not read {label}: {ex.Message.Split('\n')[0]}", Ux.BadBrush);
+            ClearPose();
+            return;
+        }
+        LoadPose(hkx, animationPath, label, "loose", null);
+    }
+
+    private void LoadPose(byte[] hkx, string key, string label, string source, string? archiveEntry)
+    {
+        if (_poseSource == key) return;
 
         Stop();
-        _poseSkeleton = PoseSkeleton(animationPath);
+        _poseSkeleton = PoseSkeleton(archiveEntry == null ? key : null) ?? ArchiveSkeleton(archiveEntry);
 
         HkxAnimationData animation;
         try
         {
-            if (!new HkxBinaryReader().TryReadAnimation(animationPath, out animation))
+            if (!new HkxBinaryReader().TryReadAnimation(hkx, out animation))
             {
                 SetPlaybackSummary($"{label}: {animation.AnimationClass} is not decoded, so it cannot be drawn.",
                                    Ux.BadBrush);
@@ -2792,10 +3115,10 @@ public class MainWindow : Window
         }
 
         _poseAnimation = animation;
-        _poseSource = animationPath;
+        _poseSource = key;
         _playback.Load(animation.NumFrames, animation.FrameDuration);
 
-        try { _poseMotion = RootMotion.Read(animationPath); }
+        try { _poseMotion = RootMotion.Read(hkx); }
         catch { _poseMotion = new RootMotion.Motion(); }
 
         var reference = AnimationPose.ReferencePose(_poseSkeleton!);
@@ -2818,11 +3141,26 @@ public class MainWindow : Window
                   : "")
             : "   stays on the spot";
 
+        string from = source == "loose" ? "" : $"   read from {source}";
         SetPlaybackSummary(
             $"{label}   {animation.NumFrames} frames at {1f / Math.Max(animation.FrameDuration, 0.0001f):F0} fps, " +
             $"{animation.Duration:F2}s   {driven} of {_poseSkeleton!.BoneNames.Count} bones driven   " +
-            $"on {_poseSkeleton.Name}{travelled}", Ux.MetaBrush);
+            $"on {_poseSkeleton.Name}{travelled}{from}", Ux.MetaBrush);
         UpdateFrameLabel();
+    }
+
+    private HkxSkeleton? ArchiveSkeleton(string? animationEntry)
+    {
+        if (_gameData == null || animationEntry == null) return null;
+        byte[]? bytes;
+        try { bytes = _gameData.SkeletonBytes(animationEntry); }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        if (bytes == null) return null;
+        try { return new HkxBinaryReader().ReadSkeleton(bytes); }
+        catch { return null; }
     }
 
     private async Task OpenFromArchive()
@@ -2995,6 +3333,19 @@ public class MainWindow : Window
         _poseSource = "";
         _playback.Clear();
 
+        _ragdoll = null;
+        _ragdollSourceName = null;
+        _ragdollSourceNote = null;
+
+        foreach (var toggle in new[]
+                 { _bodiesToggle, _constraintsToggle, _bindingsToggle,
+                   _physicsSkeletonToggle, _framesToggle, _engineerToggle })
+        {
+            toggle.IsChecked = false;
+            toggle.IsEnabled = false;
+        }
+        _dropButton.IsEnabled = false;
+
         _poseMotion = new RootMotion.Motion();
         _cachedSkeleton = null;
         _cachedSkeletonFor = "";
@@ -3002,8 +3353,11 @@ public class MainWindow : Window
         _scrub.Maximum = 0;
         _scrub.Value = 0;
         _scrubbing = false;
-        _skeleton.Reset();
+        _dropClock.Stop();
+        _dropButton.Content = "Drop";
         _frameLabel.Text = "";
+        _skeleton.Reset();
+        UpdateScaleStatus();
 
         SetPlaybackSummary("Open a behaviour and select a clip to see what it plays. That animates " +
                            "the skeleton; use Mesh... to hang a model on it.", Ux.MutedBrush);
@@ -3174,8 +3528,19 @@ public class MainWindow : Window
 
     private void SetPlaybackSummary(string text, IBrush brush)
     {
+        _summaryBaseText = text;
+        _summaryBaseBrush = brush;
         _playbackSummary.Text = text;
         _playbackSummary.Foreground = brush;
+    }
+
+    // The Playback summary line carries per-constraint limit inspection while a constraint
+    // is hovered or pinned (amber, like the constraint overlay), and restores the previous
+    // summary text and colour when the selection clears.
+    private void ShowConstraintInspection(string? line)
+    {
+        _playbackSummary.Text = line ?? _summaryBaseText;
+        _playbackSummary.Foreground = line == null ? _summaryBaseBrush : Ux.WarnBrush;
     }
 
     public SkeletonView Viewport => _skeleton;
@@ -3353,13 +3718,33 @@ public class MainWindow : Window
         var compare = Ux.Secondary("Compare with...");
         compare.Click += async (_, _) => await CompareWith();
 
-        var bar = Bar(Ux.Pill(_diffSummary), compare);
-        bar.Margin = new Thickness(0, 0, 0, 8);
+        _diffKind.ItemsSource = new[] { "All changes", "Added", "Removed", "Changed" };
+        _diffKind.SelectedIndex = 0;
+        _diffKind.SelectionChanged += (_, _) => RefreshDiff();
+        _diffClass.ItemsSource = new[] { "All classes" };
+        _diffClass.SelectedIndex = 0;
+        _diffClass.SelectionChanged += (_, _) => RefreshDiff();
+        _diffExportText.IsEnabled = false;
+        _diffExportJson.IsEnabled = false;
+        _diffExportText.Click += async (_, _) => await ExportDiff(json: false);
+        _diffExportJson.Click += async (_, _) => await ExportDiff(json: true);
 
-        var panel = new DockPanel();
-        DockPanel.SetDock(bar, Dock.Top);
-        panel.Children.Add(bar);
-        panel.Children.Add(_diff);
+        var summaryBar = Bar(Ux.Pill(_diffSummary), compare);
+        summaryBar.Margin = new Thickness(0, 0, 0, 8);
+
+        var filterBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        filterBar.Children.Add(Ux.Label("Change"));
+        filterBar.Children.Add(_diffKind);
+        filterBar.Children.Add(Ux.Label("Object class"));
+        filterBar.Children.Add(_diffClass);
+        filterBar.Children.Add(_diffExportText);
+        filterBar.Children.Add(_diffExportJson);
+        filterBar.Margin = new Thickness(0, 0, 0, 8);
+
+        var panel = Rows(
+            (summaryBar, false),
+            (filterBar, false),
+            (_diff, true));
 
         _diffSummary.Text = "Open a behaviour, then pick another copy of it to see what differs.";
         _diffSummary.Foreground = Ux.MutedBrush;
@@ -3395,7 +3780,7 @@ public class MainWindow : Window
             return;
         }
 
-        _diff.Clear();
+        ClearDiff();
         SetDiffSummary($"Reading {Path.GetFileName(other)}...", Ux.MutedBrush);
 
         long stamp = CaptureStamp();
@@ -3421,9 +3806,62 @@ public class MainWindow : Window
 
     private void ShowDiff(string otherName, BehaviourDiff.Result result)
     {
+        _diffResult = result;
+        _diffOtherName = otherName;
+        _diffClass.ItemsSource = new[] { "All classes" }
+            .Concat(result.Lines.Select(line => line.Class)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(name => name, StringComparer.Ordinal))
+            .ToList();
+        _diffClass.SelectedIndex = 0;
+        _diffExportText.IsEnabled = true;
+        _diffExportJson.IsEnabled = true;
+        RefreshDiff();
+    }
+
+    private void RefreshDiff()
+    {
+        if (_diffResult is not { } result)
+        {
+            _diff.Clear();
+            return;
+        }
+
+        var filter = SelectedDiffFilter();
+        var export = BehaviourCompareSession.CreateExport(result, filter);
+        var filtered = BehaviourCompareSession.ApplyFilter(result, filter);
+        RenderDiff(_diffOtherName, filtered, export, result.Lines.Count != filtered.Lines.Count);
+    }
+
+    private BehaviourCompareSession.BehaviourDiffFilter SelectedDiffFilter()
+    {
+        BehaviourDiff.Kind? kind = (_diffKind.SelectedItem as string) switch
+        {
+            "Added" => BehaviourDiff.Kind.Added,
+            "Removed" => BehaviourDiff.Kind.Removed,
+            "Changed" => BehaviourDiff.Kind.Changed,
+            _ => null,
+        };
+        string objectClass = _diffClass.SelectedItem as string ?? "";
+        return new BehaviourCompareSession.BehaviourDiffFilter(
+            kind, objectClass == "All classes" ? "" : objectClass);
+    }
+
+    private void RenderDiff(
+        string otherName,
+        BehaviourDiff.Result result,
+        BehaviourCompareSession.BehaviourDiffExport export,
+        bool filtered)
+    {
         _diff.Clear();
-        SetDiffSummary($"{Path.GetFileName(_hkxPath)} against {otherName}: {result}",
-                       result.Identical ? Ux.MetaBrush : Ux.TitleBrush);
+        string suffix = filtered ? $" ({export.Differences.Count} shown)" : "";
+        string comparison = export.Differences.Count == 0
+            ? export.OriginalCount == 0
+                ? "the two files hold the same objects with the same values"
+                : "no differences match the current filter"
+            : result.ToString();
+        SetDiffSummary($"{Path.GetFileName(_hkxPath)} against {otherName}: {comparison}{suffix}",
+                       export.OriginalCount == 0 ? Ux.MetaBrush : Ux.TitleBrush);
 
         foreach (var group in new[] { BehaviourDiff.Kind.Changed, BehaviourDiff.Kind.Removed, BehaviourDiff.Kind.Added })
         {
@@ -3444,9 +3882,61 @@ public class MainWindow : Window
                 _diff.Add(head, "", $"and {lines.Count - 2000} more").Colour(1, Ux.MutedBrush);
         }
 
-        if (result.Identical)
+        if (export.OriginalCount == 0)
             _diff.Add(null, "", "no difference", "the two files hold the same objects with the same values")
                  .Colour(2, Ux.MutedBrush);
+    }
+
+    private async Task ExportDiff(bool json)
+    {
+        if (_diffResult is not { } result)
+        {
+            SetDiffSummary("Compare two files before exporting a diff.", Ux.MutedBrush);
+            return;
+        }
+
+        var export = BehaviourCompareSession.CreateExport(result, SelectedDiffFilter());
+        string extension = json ? ".json" : ".txt";
+        string baseName = Path.GetFileNameWithoutExtension(_hkxPath);
+        var picked = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = json ? "Export behaviour diff as JSON" : "Export behaviour diff as text",
+            SuggestedFileName = (baseName.Length > 0 ? baseName : "behaviour") + "-diff" + extension,
+            SuggestedStartLocation = await StartFolder(),
+            DefaultExtension = extension[1..],
+            FileTypeChoices = new[]
+            {
+                new FilePickerFileType(json ? "JSON" : "Text") { Patterns = new[] { "*" + extension } },
+            },
+        });
+
+        string? path = picked?.TryGetLocalPath();
+        if (path == null) return;
+
+        try
+        {
+            string content = json
+                ? BehaviourCompareSession.ExportJson(export)
+                : BehaviourCompareSession.ExportText(export);
+            await File.WriteAllTextAsync(path, content);
+            SetDiffSummary($"Exported {export.Differences.Count} differences to {Path.GetFileName(path)}.",
+                           Ux.MetaBrush);
+        }
+        catch (Exception error)
+        {
+            SetDiffSummary($"Could not export the diff: {error.Message}", Ux.BadBrush);
+        }
+    }
+
+    private void ClearDiff()
+    {
+        _diffResult = null;
+        _diffOtherName = "";
+        _diff.Clear();
+        _diffClass.ItemsSource = new[] { "All classes" };
+        _diffClass.SelectedIndex = 0;
+        _diffExportText.IsEnabled = false;
+        _diffExportJson.IsEnabled = false;
     }
 
     private void SetDiffSummary(string text, IBrush brush)
@@ -3674,6 +4164,18 @@ public class MainWindow : Window
         _ = CloseAfterDecision();
     }
 
+    // The window owns the GameData, and GameData holds a file handle for every .ba2 it has
+    // opened. BuildChain disposes the previous one when it rebuilds, but nothing released the
+    // last one when the window went away, so the game's archives stayed locked for the life of
+    // the process. Closing is the only point where the window is certainly finished with it --
+    // OnClosing can still be cancelled.
+    protected override void OnClosed(EventArgs e)
+    {
+        _gameData?.Dispose();
+        _gameData = null;
+        base.OnClosed(e);
+    }
+
     private async Task CloseAfterDecision()
     {
         DiscardChoice choice;
@@ -3756,6 +4258,36 @@ public class MainWindow : Window
         _readOnly = false;
         _readOnlyWhy = "";
 
+        // BGS reads and edits the 8-byte (64-bit) layout Fallout 4 ships. A 4-byte file can be
+        // parsed at the low level, but the editor's decode paths and the native writer are still
+        // 8-byte only, so opening one here would show and save the wrong bytes. Refuse it and point
+        // at the converter rather than display a graph built from the wrong offsets.
+        if (NonEightByteLayout(path) is int layoutWidth)
+        {
+            // This is a refusal, not an open: finish replacing the previous document model so it
+            // cannot half-survive with the path now naming a file that was never loaded into it.
+            _hkxPath = path;
+            _root = null;
+            _objects = new List<HkxBehaviorParser.BehaviorNode>();
+            _classWarning = "";
+            _animation.Clear();
+            _animationData = null;
+            _animationSummary.Text = "";
+            RememberRecent(path);
+            RefreshRecents();
+            RememberSetting("last_path", path, "The file opened");
+            SetSummary(
+                $"{Path.GetFileName(path)}   uses the {layoutWidth}-byte pointer layout, which BGS cannot " +
+                "open for editing yet. Convert it to the 8-byte layout first (symrm convert), then open the result.",
+                Ux.WarnBrush);
+            BuildClipList(new BehaviourGraphModel());
+            RefreshPasteSlots();
+            RefreshTemplates();
+            return;
+        }
+
+        TryLoadRagdoll(path);
+
         bool isAnimation = BuildAnimation(path);
 
         var root = HkxBehaviorParser.ParseBehavior(path);
@@ -3775,7 +4307,11 @@ public class MainWindow : Window
 
             BuildClipList(new BehaviourGraphModel());
 
-            if (_animationData != null) LoadPose(path, Path.GetFileName(path));
+            if (_animationData != null)
+            {
+                LoadPose(path, Path.GetFileName(path));
+                AppendRagdollSourceNote();
+            }
             return;
         }
 
@@ -3834,8 +4370,35 @@ public class MainWindow : Window
                                   RememberSetting("last_folder", Path.GetDirectoryName(path) ?? "", "The file opened");
         PrepareEditing();
 
-        if (_animationData != null) LoadPose(path, Path.GetFileName(path));
+        if (_animationData != null)
+        {
+            LoadPose(path, Path.GetFileName(path));
+            AppendRagdollSourceNote();
+        }
         if (settingsWarning != null) SetStatus(settingsWarning, Ux.WarnBrush);
+    }
+
+    // After an animation file loads its clip summary, append the sibling-sourced ragdoll
+    // note so the overlay's origin and follow behaviour stay visible on the summary line.
+    private void AppendRagdollSourceNote()
+    {
+        if (_ragdollSourceNote == null) return;
+        SetPlaybackSummary(_summaryBaseText + "  |  " + _ragdollSourceNote, Ux.MetaBrush);
+    }
+
+    // Returns the file's pointer width when it is a readable packfile that is not 8-byte, or null
+    // when it is 8-byte or not a packfile we can read (the normal open path then reports that).
+    private static int? NonEightByteLayout(string path)
+    {
+        try
+        {
+            int size = PackfileImage.Read(path).Layout.PointerSize;
+            return size == 8 ? null : size;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private BehaviourGraphModel Model() =>
@@ -4081,6 +4644,32 @@ public class MainWindow : Window
     }
 
     public HkGrid TreeGrid => _tree;
+    public HkGrid ChainGrid => _chain;
+    public string GameDataSummary => _dataSummary.Text ?? "";
+    public TextBox CrashHashField => _crashField;
+    public string CrashHashSummary => _crashSummary.Text ?? "";
+    public void ResolveCrashHashForTest() => ResolveCrashHash();
+    public bool CrashPanelVisible => _crashPanel?.IsVisible == true;
+    public string CrashPanelTitle => _crashPanelTitle.Text ?? "";
+    public string CrashPanelBodyText => string.Join("\n", FindPanelTexts(_crashPanelBody));
+    public TextBox ModsField => _modsField;
+    public string ModsSummary => _modsSummary.Text ?? "";
+    public void ApplyModsForTest() => ApplyMods();
+    public string SweepSummary => _sweepSummary.Text ?? "";
+    public void RunSweepForTest()
+    {
+        var data = _gameData;
+        if (data == null) return;
+        RenderSweep(OpenCommonwealth.Services.Archive.SubgraphIndex.Sweep(data));
+    }
+    private static IEnumerable<string> FindPanelTexts(Visual root)
+    {
+        foreach (var child in root.GetVisualChildren())
+        {
+            if (child is TextBlock t && t.Text != null) yield return t.Text;
+            foreach (string s in FindPanelTexts(child)) yield return s;
+        }
+    }
 
     private static bool Matches(HkxBehaviorParser.BehaviorNode o, string needle) =>
         o.ClassName.Contains(needle, StringComparison.OrdinalIgnoreCase)
@@ -4193,10 +4782,12 @@ public class MainWindow : Window
     {
         panel.Clear();
         string className = HkxTextEdit.ClassOf(_xmlText, objectId);
+        panel.SetSchemaClass(className);
         var parameters = PanelValues(objectId, HkxTextEdit.ReadParams(_xmlText, objectId));
 
         int fromXml = parameters.Count(p => p.From == PanelFields.Source.Fallback);
-        var heading = Ux.Label($"#{objectId}   {className}   {parameters.Count} editable fields" +
+        string fieldKind = panel.SchemaReadOnly ? "read-only" : "editable";
+        var heading = Ux.Label($"#{objectId}   {className}   {parameters.Count} {fieldKind} fields" +
                                (fromXml > 0 ? $", {fromXml} from fallback metadata" : ""));
         heading.TextWrapping = TextWrapping.Wrap;
         panel.Add(heading);
@@ -4684,22 +5275,505 @@ public class MainWindow : Window
             .Select(g => g.Count() > 1 ? $"{g.Key} x{g.Count()}" : g.Key).Take(4));
     }
 
+    private Control BuildChainTab()
+    {
+        _dataField.Text = Settings.Get("gameDataFolder");
+        _dataField.KeyDown += (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter) ApplyGameData();
+        };
+        var browse = Ux.Secondary("Browse...");
+        browse.Click += async (_, _) => await PickGameDataFolder();
+
+        _dataSummary.Text = "no game data attached";
+        var bar = Bar(_dataField, browse, Ux.Pill(_dataSummary));
+
+        _modsField.Text = Settings.Get("gameModsFolder");
+        _modsField.KeyDown += (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter) ApplyMods();
+        };
+        var modsBrowse = Ux.Secondary("Browse...");
+        modsBrowse.Click += async (_, _) => await PickModsFolder();
+        ToolTip.SetTip(modsBrowse, "The Mod Organizer 2 instance root (holds mods/, profiles/, overwrite/)");
+        _modsSummary.Text = "no mods layered";
+        var modsBar = Bar(_modsField, modsBrowse, Ux.Pill(_modsSummary));
+
+        _crashField.KeyDown += (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter) ResolveCrashHash();
+        };
+        var resolve = Ux.Secondary("Resolve");
+        resolve.Click += (_, _) => ResolveCrashHash();
+        _crashSummary.Text = "paste a hash and press Resolve";
+        var crashBar = Bar(_crashField, resolve, Ux.Pill(_crashSummary));
+
+        var sweep = Ux.Secondary("Sweep all subgraphs");
+        sweep.Click += (_, _) => RunSweep();
+        ToolTip.SetTip(sweep, "Run the whole-load-order per-weapon check across every AnimationFileData manifest");
+        _sweepSummary.Text = "one-click whole-load-order per-weapon check";
+        var sweepBar = Bar(sweep, Ux.Pill(_sweepSummary));
+
+        var panel = new DockPanel();
+        DockPanel.SetDock(bar, Dock.Top);
+        bar.Margin = new Thickness(0, 0, 0, 8);
+        DockPanel.SetDock(modsBar, Dock.Top);
+        modsBar.Margin = new Thickness(0, 0, 0, 8);
+        DockPanel.SetDock(crashBar, Dock.Top);
+        crashBar.Margin = new Thickness(0, 0, 0, 8);
+        DockPanel.SetDock(sweepBar, Dock.Top);
+        sweepBar.Margin = new Thickness(0, 0, 0, 8);
+        panel.Children.Add(sweepBar);
+        panel.Children.Add(crashBar);
+        panel.Children.Add(modsBar);
+        panel.Children.Add(bar);
+        panel.Children.Add(_chain);
+        return panel;
+    }
+
+    private async Task PickGameDataFolder()
+    {
+        var picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "The game Data folder (holds the .ba2 archives)",
+            AllowMultiple = false,
+        });
+
+        string? folder = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (folder == null) return;
+        _dataField.Text = folder;
+        ApplyGameData();
+    }
+
+    private void ApplyGameData()
+    {
+        string folder = (_dataField.Text ?? "").Trim();
+        if (folder.Length == 0)
+        {
+            Settings.TrySet("gameDataFolder", "", out _);
+            _dataSummary.Text = "no game data attached";
+        }
+        else if (!Directory.Exists(folder))
+        {
+            _dataSummary.Text = "that folder is not there";
+            return;
+        }
+        else
+        {
+            Settings.TrySet("gameDataFolder", folder, out _);
+            _dataSummary.Text = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar));
+        }
+
+        if (_hkxPath.Length > 0) BuildChain();
+    }
+
+    private async Task PickModsFolder()
+    {
+        var picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "The Mod Organizer 2 instance root (holds mods/, profiles/, overwrite/)",
+            AllowMultiple = false,
+        });
+
+        string? folder = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+        if (folder == null) return;
+        _modsField.Text = folder;
+        ApplyMods();
+    }
+
+    private void ApplyMods()
+    {
+        string folder = (_modsField.Text ?? "").Trim();
+        if (folder.Length == 0)
+        {
+            Settings.TrySet("gameModsFolder", "", out _);
+            _modsSummary.Text = "no mods layered";
+        }
+        else if (!Directory.Exists(folder))
+        {
+            _modsSummary.Text = "that folder is not there";
+            return;
+        }
+        else
+        {
+            Settings.TrySet("gameModsFolder", folder, out _);
+        }
+
+        if (_hkxPath.Length > 0) BuildChain();
+    }
+
+    private void ResolveCrashHash()
+    {
+        string input = (_crashField.Text ?? "").Trim();
+        if (input.Length == 0) return;
+
+        var data = _gameData;
+        if (data == null)
+        {
+            _crashSummary.Text = "set a Game Data folder first";
+            return;
+        }
+
+        ulong? id = OpenCommonwealth.Services.Archive.SubgraphIndex.ExtractSubgraphHash(input);
+        if (id == null)
+        {
+            _crashSummary.Text = "no AnimTextData hash in that input";
+            return;
+        }
+
+        var index = OpenCommonwealth.Services.Archive.SubgraphIndex.Discover(data);
+        var sub = index.Find(id.Value);
+        var off = index.FindOffsetData(id.Value);
+        if (sub == null && off == null)
+        {
+            _crashSummary.Text = $"{id.Value}: no manifest or offset data in the game data";
+            return;
+        }
+
+        if (_crashResolved && _hkxPath.Length > 0) BuildChain();
+        _crashResolved = true;
+
+        string primary = sub != null ? sub.PrimaryBehavior : off!.FirstPathHint ?? "";
+        _crashSummary.Text = $"{id.Value} -> {Path.GetFileName(primary)}";
+        var head = _chain.Add(null, "crash hash", $"{id.Value} -> {primary}")
+                         .Colour(0, Ux.MutedBrush).Colour(1, Ux.TitleBrush);
+
+        int present = 0, total = 0;
+        if (sub != null)
+        {
+            foreach (string behavior in sub.BehaviorPaths.Take(4))
+                _chain.Add(head, "behavior", behavior).Colour(1, Ux.CodeBrush);
+
+            total = sub.AnimationPaths.Count;
+            present = sub.AnimationPaths.Count(path =>
+                data.ContainsAnimation(Path.Combine(data.DataFolder, "Meshes"), path));
+            _chain.Add(head, "animations", $"{present} present, {total - present} missing")
+                   .Colour(1, present == total ? Ux.MetaBrush : Ux.BadBrush);
+        }
+        if (off != null)
+            _chain.Add(head, "offset data", $"exists ({off.Bytes} bytes), hint: {off.FirstPathHint}")
+                   .Colour(1, Ux.MetaBrush);
+
+        var behaviorPaths = new List<string>();
+        if (sub != null) behaviorPaths.AddRange(sub.BehaviorPaths);
+        if (off?.FirstPathHint != null &&
+            !behaviorPaths.Contains(off.FirstPathHint, StringComparer.OrdinalIgnoreCase))
+            behaviorPaths.Add(off.FirstPathHint);
+
+        var (weaponSubgraph, gaps) = OpenCommonwealth.Services.Archive.SubgraphIndex.WeaponGapFindings(data, behaviorPaths);
+        if (!weaponSubgraph)
+        {
+            _chain.Add(head, "per-weapon", "not a weapon subgraph").Colour(1, Ux.MetaBrush);
+            ShowCrashPanel(id.Value, primary, behaviorPaths, present, total,
+                           new List<GraphValidator.Finding>());
+        }
+        else if (gaps.Count == 0)
+        {
+            _chain.Add(head, "per-weapon", "every clip resolves for every weapon type").Colour(1, Ux.MetaBrush);
+            ShowCrashPanel(id.Value, primary, behaviorPaths, present, total,
+                           new List<GraphValidator.Finding>());
+        }
+        else
+        {
+            foreach (var f in gaps.Take(6))
+                _chain.Add(head, "per-weapon", f.What).Colour(1, Ux.WarnBrush);
+            ShowCrashPanel(id.Value, primary, behaviorPaths, present, total, gaps);
+        }
+    }
+
+    private async void RunSweep()
+    {
+        var data = _gameData;
+        if (data == null)
+        {
+            _sweepSummary.Text = "set a Game Data folder first";
+            return;
+        }
+        if (_sweeping) return;
+        _sweeping = true;
+        _sweepSummary.Text = "sweeping every subgraph…";
+        try
+        {
+            var result = await Task.Run(() =>
+                OpenCommonwealth.Services.Archive.SubgraphIndex.Sweep(data,
+                    n => Dispatcher.UIThread.Post(() => _sweepSummary.Text = n)));
+            RenderSweep(result);
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException)
+        {
+            _sweepSummary.Text = "the sweep could not read the game data";
+        }
+        finally
+        {
+            _sweeping = false;
+        }
+    }
+
+    private void RenderSweep(OpenCommonwealth.Services.Archive.SubgraphIndex.SweepResult result)
+    {
+        _sweepSummary.Text = result.Failures.Count == 0
+            ? $"{result.ManifestCount} manifests, {result.WeaponSubgraphsChecked} weapon subgraphs, all clean"
+            : $"{result.Failures.Count} subgraph(s) with per-weapon gaps across {result.ManifestCount} manifests";
+
+        var head = _chain.Add(null, "sweep",
+            $"{result.ManifestCount} manifests, {result.ArchiveCount} archives" +
+            (result.ModRootCount > 0 ? $", {result.ModRootCount} mod roots" : ""),
+            $"{result.WeaponSubgraphsChecked} weapon subgraphs checked, {result.Failures.Count} with gaps")
+            .Colour(0, Ux.MutedBrush).Colour(1, Ux.TitleBrush)
+            .Colour(2, result.Failures.Count == 0 ? Ux.MetaBrush : Ux.BadBrush);
+
+        foreach (var fail in result.Failures.Take(20))
+        {
+            var row = _chain.Add(head, "FAIL", $"{fail.Id} ({Path.GetFileName(fail.Behavior)})",
+                                 $"{fail.Gaps.Count} gap(s)")
+                .Colour(0, Ux.BadBrush).Colour(1, Ux.WarnBrush).Colour(2, Ux.BadBrush);
+            foreach (var f in fail.Gaps.Take(6))
+                _chain.Add(row, "per-weapon", f.What).Colour(1, Ux.WarnBrush);
+            if (fail.Gaps.Count > 6)
+                _chain.Add(row, "per-weapon", $"... and {fail.Gaps.Count - 6} more")
+                       .Colour(1, Ux.MutedBrush);
+        }
+        if (result.Failures.Count > 20)
+            _chain.Add(head, "sweep", $"... and {result.Failures.Count - 20} more failing subgraphs")
+                   .Colour(1, Ux.MutedBrush);
+    }
+
+    private Border BuildCrashPanel()
+    {
+        var close = Ux.Secondary("Close");
+        close.Click += (_, _) => _crashPanel!.IsVisible = false;
+
+        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        head.Children.Add(_crashPanelTitle);
+        head.Children.Add(close);
+
+        var root = new StackPanel { Spacing = 6 };
+        root.Children.Add(head);
+        root.Children.Add(new ScrollViewer
+        {
+            MaxHeight = 280,
+            Content = _crashPanelBody,
+        });
+
+        return _crashPanel = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(240, Ux.Card.R, Ux.Card.G, Ux.Card.B)),
+            BorderBrush = Ux.BorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10),
+            MaxWidth = 480,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 10, 10, 0),
+            IsVisible = false,
+            Child = root,
+        };
+    }
+
+    private void ShowCrashPanel(ulong id, string primary, List<string> behaviors,
+                                int present, int total, List<GraphValidator.Finding> gaps)
+    {
+        _crashPanelBody.Children.Clear();
+        _crashPanelTitle.Text = $"crash {id} -> {Path.GetFileName(primary)}";
+
+        var lines = new StackPanel { Spacing = 2 };
+        foreach (string behavior in behaviors.Take(4))
+            lines.Children.Add(new TextBlock
+            {
+                Text = behavior,
+                Foreground = Ux.CodeBrush,
+                FontSize = 11,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+        lines.Children.Add(new TextBlock
+        {
+            Text = $"{present} of {total} animations present",
+            Foreground = present == total ? Ux.MetaBrush : Ux.BadBrush,
+            FontSize = 11,
+        });
+
+        if (gaps.Count == 0)
+        {
+            lines.Children.Add(new TextBlock
+            {
+                Text = "every clip resolves for every weapon type",
+                Foreground = Ux.MetaBrush,
+                FontSize = 11,
+            });
+        }
+        else
+        {
+            lines.Children.Add(new TextBlock
+            {
+                Text = $"{gaps.Count} missing clip(s) — jump to each on the graph",
+                Foreground = Ux.WarnBrush,
+                FontSize = 11,
+            });
+            foreach (var gap in gaps.Take(6))
+                lines.Children.Add(CrashGapRow(gap));
+        }
+
+        _crashPanelBody.Children.Add(lines);
+        _crashPanel!.IsVisible = true;
+    }
+
+    private Control CrashGapRow(GraphValidator.Finding gap)
+    {
+        var text = new TextBlock
+        {
+            Text = gap.What,
+            Foreground = Ux.WarnBrush,
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 330,
+        };
+        var jump = Ux.Secondary(gap.ObjectId.Length > 0 ? "Jump" : "—");
+        jump.IsEnabled = gap.ObjectId.Length > 0;
+        jump.Tag = gap.ObjectId;
+        jump.Click += (_, _) => JumpToClip(gap.ObjectId);
+        ToolTip.SetTip(jump, gap.What);
+        var row = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(jump, Dock.Right);
+        row.Children.Add(jump);
+        row.Children.Add(text);
+        return row;
+    }
+
+    private void JumpToClip(string objectId)
+    {
+        if (objectId.Length == 0) return;
+        GoToTab("Graph");
+        if (_graph.FocusOn(objectId))
+        {
+            SelectObjectId(objectId);
+            HighlightPaths(objectId);
+        }
+        else
+        {
+            SetStatus($"clip #{objectId} is not on the current graph", Ux.MutedBrush);
+        }
+    }
+
+    private bool _crashResolved;
+
     private void BuildChain()
     {
         _chain.Clear();
-        var chain = ProjectChain.Resolve(_hkxPath);
+        _gameData?.Dispose();
+        _gameData = null;
+
+        GameData? data = null;
+        string folder = Settings.Get("gameDataFolder");
+        if (folder.Length > 0 && Directory.Exists(folder))
+        {
+            try
+            {
+                bool modded = false;
+                string mods = Settings.Get("gameModsFolder");
+                if (mods.Length > 0 && Directory.Exists(mods))
+                {
+                    string? profile = GameData.ModlistProfile(mods);
+                    if (profile != null || File.Exists(Path.Combine(mods, "modlist.txt")))
+                    {
+                        data = _gameData = GameData.DiscoverModded(folder, mods, profile);
+                        modded = true;
+                        _modsSummary.Text = profile != null
+                            ? $"{data.ModRoots.Count} mod root(s), profile {profile}"
+                            : $"{data.ModRoots.Count} mod root(s)";
+                    }
+                    else
+                    {
+                        _modsSummary.Text = "no modlist.txt under that folder";
+                    }
+                }
+                else if (mods.Length > 0)
+                {
+                    _modsSummary.Text = "the saved mods folder is not there now";
+                }
+                else
+                {
+                    _modsSummary.Text = "no mods layered";
+                }
+
+                if (data == null)
+                    data = _gameData = GameData.Discover(folder);
+
+                string summary = $"{data.ArchivePaths.Count} .ba2 archive(s)";
+                if (data.PluginsPath != null)
+                    summary += $", ordered by {Path.GetFileName(data.PluginsPath)}";
+                if (modded) summary += " + mods";
+                _dataSummary.Text = summary;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                _dataSummary.Text = "game data could not be read";
+            }
+        }
+        else if (folder.Length > 0)
+        {
+            _dataSummary.Text = "the saved folder is not there now";
+        }
+
+        var chain = ProjectChain.Resolve(_hkxPath, data: data);
         _projectChain = chain;
+
+        if (data != null)
+            _chain.Add(null, "game data", folder, $"{data.ArchivePaths.Count} .ba2 archive(s)",
+                       data.PluginsPath != null ? Path.GetFileName(data.PluginsPath) : "")
+                  .Colour(0, Ux.MutedBrush).Colour(1, Ux.TitleBrush).Colour(2, Ux.MetaBrush);
 
         foreach (var link in chain.Links)
             _chain.Add(null, link.Role, link.Declared, link.Exists ? "found" : "MISSING", link.Note)
                   .Colour(0, Ux.MutedBrush).Colour(1, Ux.TitleBrush)
                   .Colour(2, link.Exists ? Ux.MetaBrush : Ux.BadBrush);
 
-        AddChainGroup("animations", $"{chain.Animations.Count} declared by the character", chain.Animations, Ux.CodeBrush);
+        AddChainAnimations(chain);
         AddChainGroup("bones", $"{chain.Bones.Count} in the skeleton", chain.Bones, Ux.MetaBrush);
 
         foreach (string problem in chain.Problems)
             _chain.Add(null, "problem", problem).Colour(0, Ux.BadBrush).Colour(1, Ux.BadBrush);
+
+        AddWeaponGaps(chain);
+    }
+
+    private void AddWeaponGaps(ProjectChain chain)
+    {
+        if (chain.Data == null || _reading == null) return;
+
+        var gaps = GraphValidator.Check(_reading, chain)
+                                 .Where(f => f.Where == "weapon subgraph")
+                                 .ToList();
+        if (gaps.Count == 0) return;
+
+        var head = _chain.Add(null, "weapon clips",
+                              $"{gaps.Count} per-weapon gap{(gaps.Count == 1 ? "" : "s")} in this behaviour")
+                         .Colour(0, Ux.MutedBrush).Colour(1, Ux.WarnBrush);
+        foreach (var f in gaps)
+            _chain.Add(head, "weapon subgraph", f.What)
+                  .Colour(1, f.Level == GraphValidator.Level.Error ? Ux.BadBrush : Ux.WarnBrush);
+    }
+
+    private void AddChainAnimations(ProjectChain chain)
+    {
+        if (chain.Animations.Count == 0) return;
+
+        var head = _chain.Add(null, "animations", $"{chain.Animations.Count} declared by the character")
+                         .Colour(0, Ux.MutedBrush).Colour(1, Ux.TitleBrush).Collapse();
+        int loose = 0, archived = 0;
+        foreach (string anim in chain.Animations)
+        {
+            string source = chain.AnimationSources.TryGetValue(anim, out string? s) ? s ?? "" : "";
+            if (source == "loose") loose++;
+            else if (source.Length > 0) archived++;
+
+            var row = _chain.Add(head, "", anim, source.Length > 0 ? source : "", "")
+                             .Colour(1, Ux.CodeBrush);
+            if (source.Length > 0) row.Colour(2, Ux.MetaBrush);
+        }
+        if (chain.Data != null)
+            _chain.Add(head, "sources", $"{loose} loose, {archived} inside .ba2 archives")
+                   .Colour(0, Ux.MutedBrush).Colour(1, Ux.MetaBrush);
     }
 
     private void AddChainGroup(string role, string summary, List<string> values, IBrush colour)

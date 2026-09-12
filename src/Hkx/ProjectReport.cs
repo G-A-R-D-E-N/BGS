@@ -85,22 +85,34 @@ public static class ProjectReport
                 unreadable = result.Unreadable,
                 errors = result.Errors,
                 warnings = result.Warnings,
+                roundTripLosses = result.RoundTripLosses,
+                filesWithRoundTripLosses = result.FilesWithRoundTripLosses,
             },
             files = result.Files.Select(file => new
             {
                 path = file.Path,
                 name = file.Name,
                 unreadable = file.Error.Length > 0 ? file.Error : null,
-                errors = file.Errors,
-                warnings = file.Warnings,
-                findings = file.Findings.Select(finding => new
+                errors = file.GraphErrors,
+                warnings = file.GraphWarnings,
+                roundTripLosses = file.RoundTrip.Losses.Select(loss => new
                 {
-                    severity = finding.Level == GraphValidator.Level.Error ? "error" : "warning",
-                    objectId = finding.ObjectId,
-                    where = finding.Where,
-                    message = finding.What,
-                    blocksSave = finding.BlocksSave,
+                    kind = loss.Kind.ToString(),
+                    objectId = loss.ObjectId,
+                    member = loss.Member.Length > 0 ? loss.Member : null,
+                    message = loss.Message,
+                    blocksSave = true,
                 }),
+                findings = file.Findings
+                    .Where(finding => !RoundTripFindingAdapter.IsRoundTrip(finding))
+                    .Select(finding => new
+                    {
+                        severity = finding.Level == GraphValidator.Level.Error ? "error" : "warning",
+                        objectId = finding.ObjectId,
+                        where = finding.Where,
+                        message = finding.What,
+                        blocksSave = finding.BlocksSave,
+                    }),
             }),
         };
 
@@ -114,19 +126,30 @@ public static class ProjectReport
 
         foreach (var file in result.Files)
         {
+            bool wrote = false;
             if (file.Error.Length > 0)
             {
                 Row(output, chain.Root, file.Name, file.Path, "unreadable", "error", "", "", file.Error, "");
-                continue;
+                wrote = true;
             }
 
-            if (file.Findings.Count == 0)
+            foreach (var loss in file.RoundTrip.Losses)
             {
-                Row(output, chain.Root, file.Name, file.Path, "clean", "", "", "", "", "");
-                continue;
+                Row(output,
+                    chain.Root,
+                    file.Name,
+                    file.Path,
+                    "round-trip-loss",
+                    "error",
+                    loss.ObjectId?.ToString() ?? "",
+                    loss.Member,
+                    loss.Message,
+                    "true");
+                wrote = true;
             }
 
-            foreach (var finding in file.Findings)
+            foreach (var finding in file.Findings.Where(finding => !RoundTripFindingAdapter.IsRoundTrip(finding)))
+            {
                 Row(output,
                     chain.Root,
                     file.Name,
@@ -137,6 +160,11 @@ public static class ProjectReport
                     finding.Where,
                     finding.What,
                     finding.BlocksSave ? "true" : "false");
+                wrote = true;
+            }
+
+            if (!wrote)
+                Row(output, chain.Root, file.Name, file.Path, "clean", "", "", "", "", "");
         }
 
         return output.ToString();
@@ -171,19 +199,29 @@ public static class ProjectReport
         var body = new StringBuilder();
         foreach (var file in result.Files)
         {
+            bool wrote = false;
             if (file.Error.Length > 0)
             {
                 HtmlRow(body, file.Name, file.Path, "unreadable", "error", "", "", file.Error, blocks: false);
-                continue;
+                wrote = true;
             }
 
-            if (file.Findings.Count == 0)
+            foreach (var loss in file.RoundTrip.Losses)
             {
-                HtmlRow(body, file.Name, file.Path, "clean", "", "", "", "", blocks: false);
-                continue;
+                HtmlRow(body,
+                        file.Name,
+                        file.Path,
+                        "round-trip-loss",
+                        "error",
+                        loss.ObjectId?.ToString() ?? "",
+                        loss.Member,
+                        loss.Message,
+                        blocks: true);
+                wrote = true;
             }
 
-            foreach (var finding in file.Findings)
+            foreach (var finding in file.Findings.Where(finding => !RoundTripFindingAdapter.IsRoundTrip(finding)))
+            {
                 HtmlRow(body,
                         file.Name,
                         file.Path,
@@ -193,6 +231,11 @@ public static class ProjectReport
                         finding.Where,
                         finding.What,
                         finding.BlocksSave);
+                wrote = true;
+            }
+
+            if (!wrote)
+                HtmlRow(body, file.Name, file.Path, "clean", "", "", "", "", blocks: false);
         }
 
         return """
@@ -227,6 +270,7 @@ public static class ProjectReport
             Card("Unreadable", result.Unreadable) +
             Card("Errors", result.Errors) +
             Card("Warnings", result.Warnings) +
+            Card("Round-trip issues", result.RoundTripLosses) +
             "</div>\n" +
             "<table><thead><tr><th>File</th><th>Status</th><th>Severity</th><th>Object</th>" +
             "<th>Where</th><th>Message</th><th>Blocks save</th></tr></thead><tbody>\n" +
