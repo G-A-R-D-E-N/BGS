@@ -7,14 +7,22 @@ namespace BehaviourStudio.App;
 
 public static class Ux
 {
+    public const double FontTitle = 14;
+    public const double FontBody = 13;
+    public const double FontMeta = 12;
+    public const double FontSmall = 11;
+    public const double ControlHeight = 28;
+    public const double Radius = 4;
+    public const double Space = 8;
     public static readonly Color Base = Color.Parse("#151515");
+    public static readonly Color Rail = Color.Parse("#101010");
     public static readonly Color Card = Color.Parse("#222222");
     public static readonly Color CardHover = Color.Parse("#2C2C2C");
     public static readonly Color Border = Color.Parse("#3A3A3A");
     public static readonly Color Accent = Color.Parse("#0070E0");
     public static readonly Color TextTitle = Color.Parse("#E6E6E6");
-    public static readonly Color TextMeta = Color.Parse("#A0A0A0");
-    public static readonly Color TextMuted = Color.Parse("#787878");
+    public static readonly Color TextMeta = Color.Parse("#B0B0B0");
+    public static readonly Color TextMuted = Color.Parse("#8C8C8C");
     public static readonly Color TextDisabled = Color.Parse("#5A5A5A");
     public static readonly Color TextCode = Color.Parse("#00A0DA");
     public static readonly Color Bad = Color.Parse("#FF5555");
@@ -28,7 +36,9 @@ public static class Ux
     public static readonly Color Casing = Base;
 
     public static readonly IBrush BaseBrush = new SolidColorBrush(Base);
+    public static readonly IBrush RailBrush = new SolidColorBrush(Rail);
     public static readonly IBrush CardBrush = new SolidColorBrush(Card);
+    public static readonly IBrush CardHoverBrush = new SolidColorBrush(CardHover);
     public static readonly IBrush BorderBrush = new SolidColorBrush(Border);
     public static readonly IBrush TitleBrush = new SolidColorBrush(TextTitle);
     public static readonly IBrush MetaBrush = new SolidColorBrush(TextMeta);
@@ -43,13 +53,15 @@ public static class Ux
     {
         Watermark = watermark,
         MinWidth = minWidth,
+        MinHeight = ControlHeight,
         Background = CardBrush,
         Foreground = TitleBrush,
         BorderBrush = BorderBrush,
         BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(3),
-        Padding = new Thickness(7, 4),
-        FontSize = 12,
+        CornerRadius = new CornerRadius(Radius),
+        Padding = new Thickness(8, 5),
+        FontSize = FontBody,
+        VerticalContentAlignment = VerticalAlignment.Center,
     };
 
     public static Button Primary(string text) => Style(new Button { Content = text }, AccentBrush, Brushes.White);
@@ -62,9 +74,12 @@ public static class Ux
         button.Foreground = foreground;
         button.BorderBrush = BorderBrush;
         button.BorderThickness = new Thickness(1);
-        button.CornerRadius = new CornerRadius(3);
-        button.Padding = new Thickness(11, 4);
-        button.FontSize = 12;
+        button.CornerRadius = new CornerRadius(Radius);
+        button.Padding = new Thickness(12, 5);
+        button.MinHeight = ControlHeight;
+        button.FontSize = FontMeta;
+        button.MinWidth = 84;
+        button.HorizontalContentAlignment = HorizontalAlignment.Center;
         button.VerticalAlignment = VerticalAlignment.Center;
         return button;
     }
@@ -73,28 +88,61 @@ public static class Ux
     {
         Text = text.ToUpperInvariant(),
         Foreground = MutedBrush,
-        FontSize = 10,
+        FontSize = FontSmall,
         FontWeight = FontWeight.Bold,
         Margin = new Thickness(1, 2, 0, 2),
     };
+
+    public static Border Group(string title, params Control[] rows)
+    {
+        var body = new StackPanel { Spacing = Space };
+        body.Children.Add(SectionTitle(title));
+        foreach (var row in rows) body.Children.Add(row);
+        return new Border
+        {
+            Background = CardBrush,
+            BorderBrush = BorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(Radius),
+            Padding = new Thickness(10),
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = body,
+        };
+    }
+
+    public static WrapPanel Wrap(params Control[] controls)
+    {
+        var panel = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        foreach (var control in controls)
+        {
+            control.Margin = new Thickness(0, 0, Space, Space);
+            panel.Children.Add(control);
+        }
+        return panel;
+    }
 
     public static TextBlock Label(string text) => new()
     {
         Text = text,
         Foreground = MetaBrush,
-        FontSize = 12,
+        FontSize = FontBody,
         VerticalAlignment = VerticalAlignment.Center,
     };
 
     public static Border Pill(TextBlock content)
     {
         content.Margin = new Thickness(9, 4);
+        content.FontSize = FontMeta;
         return new Border
         {
             Background = CardBrush,
             BorderBrush = BorderBrush,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3),
+            CornerRadius = new CornerRadius(Radius),
             Child = content,
         };
     }

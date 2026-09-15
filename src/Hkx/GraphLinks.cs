@@ -24,7 +24,8 @@ public static class GraphLinks
     {
         ["hkbBehaviorGraph"] = new() { Scalars = new[] { "rootGenerator" } },
         ["hkbStateMachine"] = new() { Scalars = new[] { "wildcardTransitions" }, Arrays = new[] { "states" } },
-        ["hkbStateMachineStateInfo"] = new() { Scalars = new[] { "generator", "transitions" } },
+        ["hkbStateMachineStateInfo"] = new() { Scalars = new[]
+            { "generator", "transitions", "enterNotifyEvents", "exitNotifyEvents" } },
         ["hkbBlenderGenerator"] = new() { Arrays = new[] { "children" } },
         ["hkbBlenderGeneratorChild"] = new() { Scalars = new[] { "generator" } },
         ["hkbManualSelectorGenerator"] = new() { Arrays = new[] { "generators" } },

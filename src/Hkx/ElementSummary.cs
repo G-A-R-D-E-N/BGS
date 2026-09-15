@@ -29,13 +29,13 @@ public static class ElementSummary
             if (row.ArrayId != objectId) continue;
             string flags = elements != null && row.Index < elements.Count
                            && elements[row.Index].TryGetValue("flags", out var f) ? f : "";
-            lines[$"transitions[{row.Index}]"] = Line(row, events, states, flags);
+            lines[$"transitions[{row.Index}]"] = Line(model, row, events, states, flags);
         }
 
         return lines;
     }
 
-    private static string Line(StateEditor.TransitionRow row,
+    private static string Line(BehaviourGraphModel model, StateEditor.TransitionRow row,
                                IReadOnlyList<string> events, IReadOnlyDictionary<int, string> states,
                                string flags)
     {
@@ -58,7 +58,10 @@ public static class ElementSummary
 
         if (row.ToNestedStateId != 0) to += $", then nested {row.ToNestedStateId}";
 
-        return (from.Length > 0 ? from + "  " : "") + on + "  ->  " + to;
+        string condition = row.ConditionId.Length == 0 ? "" :
+            "  if " + (model.Get(row.ConditionId)?.Str("expression") is { Length: > 0 } expression
+                ? BehaviourGraphModel.DecodeXml(expression) : "#" + row.ConditionId);
+        return (from.Length > 0 ? from + "  " : "") + on + condition + "  ->  " + to;
     }
 
     public enum Wildcard { None, Local, Global }

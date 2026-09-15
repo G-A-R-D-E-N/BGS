@@ -199,7 +199,7 @@ public static class NativeSave
                     if (field == IdKey) continue;
 
                     string? refusal = Consider(classes, layout, changes, className, k,
-                                                IdOf(edited[k]), field, value);
+                                                IdOf(edited[k]), field, value, added: true);
                     if (refusal != null) return new Plan(changes, refusal);
                 }
         }
@@ -221,7 +221,7 @@ public static class NativeSave
                 {
                     if (field == IdKey) continue;
                     string? refusal = Consider(classes, layout, changes, className, k,
-                                               IdOf(edited[k]), field, value);
+                                               IdOf(edited[k]), field, value, added: true);
                     if (refusal != null) return new Plan(changes, refusal);
                 }
             }
@@ -232,11 +232,42 @@ public static class NativeSave
 
     private static string? Consider(HavokClasses classes, Dictionary<string, string> layout,
                                     List<Change> changes, string className, int index, int id,
-                                    string field, string now)
+                                    string field, string now, bool added = false)
     {
         if (field.EndsWith(CountKey, StringComparison.Ordinal))
+        {
+            if (added)
+            {
+                string arrayField = field[..^CountKey.Length];
+                if (layout.TryGetValue(arrayField, out string? arrayType) &&
+                    arrayType == "struct" && now == "1")
+                    return null;
+
+                if (arrayType == "array of struct" &&
+                    int.TryParse(now, NumberStyles.Integer, CultureInfo.InvariantCulture, out int count) &&
+                    count >= 0 && ElementClass(className, arrayField) is string elementClass &&
+                    HavokClassTypes.Shipped[elementClass]?.Size is > 0)
+                {
+                    changes.Add(new Change(className, index, arrayField, now, Grow: true, Id: id));
+                    return null;
+                }
+            }
             return $"a new {className} was given {now} element(s) in " +
                    $"{field[..^CountKey.Length]}, which is not written in place yet";
+        }
+
+        int dot = field.IndexOf('.');
+        if (added && dot > 0 &&
+            layout.TryGetValue(field[..dot], out string? structType) && structType == "struct")
+        {
+            string structField = field[..dot];
+            string member = field[(dot + 1)..];
+            string? why = StructElementWritable(classes, className, structField, member, now);
+            if (why != null) return why;
+            changes.Add(new Change(className, index, structField, now,
+                                   Element: 0, Member: member, Id: id));
+            return null;
+        }
 
         int bracket = field.IndexOf('[');
         if (bracket > 0)

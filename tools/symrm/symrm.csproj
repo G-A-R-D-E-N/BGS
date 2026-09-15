@@ -23,6 +23,8 @@
     <!-- Genuine Fallout 4 files used by the end-to-end tests: an np physics skeleton and
          a small turret animation that poses against it. -->
     <None Include="samples/TurretStandingSkeleton.hkx" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="samples/TurretMountedSkeleton.hkx" CopyToOutputDirectory="PreserveNewest" />
     <None Include="samples/TurretIdleWeapReady.hkx" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="samples/Meshes/Actors/Turret/CharacterAssets/TurretMounted.nif" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

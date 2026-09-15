@@ -366,6 +366,236 @@ public sealed class NativeAuthoringTests
             session.RemoveState(NativeGraphModel.FirstId, only.ObjectId));
     }
 
+    [Fact]
+    public void ExpressionConditionIsAssignedAndSurvivesReparse()
+    {
+        var session = new BehaviourAuthoringSession(Source(
+            "hkbStateMachine", "hkbBehaviorGraphStringData", "hkbBehaviorGraphData"));
+        int machine = NativeGraphModel.FirstId;
+        int go = session.AddEvent("Go");
+        var idle = session.AddClip("Idle", "Animations\\Idle.hkx");
+        var walk = session.AddClip("Walk", "Animations\\Walk.hkx");
+        var from = session.AddState(machine, "Idle", idle.Id);
+        var to = session.AddState(machine, "Walk", walk.Id);
+        var condition = session.AddExpressionCondition("bGateOpen > 0");
+        session.AddTransition(machine, from.ObjectId, to.ObjectId, go, conditionId: condition.Id);
+
+        var model = Model(session.Build().Bytes);
+        var route = Assert.Single(StateRoutes.Of(model).Routes);
+        Assert.Equal(condition.Id.ToString(), route.ConditionId);
+        Assert.Equal("hkbExpressionCondition", model.Get(route.ConditionId)!.Class);
+        Assert.True(GraphAuthor.IsNode("hkbExpressionCondition"));
+        Assert.Contains(GraphAuthor.Layout(model, 100), item => item.Node.Id == condition.Id.ToString());
+        Assert.Contains("bGateOpen > 0", ElementSummary.For(model, StateEditor.Transitions(model, machine.ToString())[0].ArrayId)
+            .Values.Single());
+    }
+
+    [Fact]
+    public void TransitionConditionCanBeReplacedAndCleared()
+    {
+        var source = Source("hkbStateMachine", "hkbBehaviorGraphStringData", "hkbBehaviorGraphData");
+        var seed = new BehaviourAuthoringSession(source);
+        int machine = NativeGraphModel.FirstId;
+        int go = seed.AddEvent("Go");
+        var idle = seed.AddClip("Idle", "Animations\\Idle.hkx");
+        var walk = seed.AddClip("Walk", "Animations\\Walk.hkx");
+        var from = seed.AddState(machine, "Idle", idle.Id);
+        var to = seed.AddState(machine, "Walk", walk.Id);
+        var first = seed.AddExpressionCondition("bGateOpen > 0");
+        var transition = seed.AddTransition(machine, from.ObjectId, to.ObjectId, go, conditionId: first.Id);
+        var withFirst = seed.Build().Bytes;
+
+        var replace = new BehaviourAuthoringSession(withFirst);
+        var second = replace.AddExpressionCondition("bGateOpen == 1");
+        replace.SetTransitionCondition(transition.ArrayObjectId, transition.Index, second.Id);
+        var withSecond = replace.Build().Bytes;
+        var replaced = Assert.Single(StateRoutes.Of(Model(withSecond)).Routes);
+        Assert.Equal(second.Id.ToString(), replaced.ConditionId);
+
+        var clear = new BehaviourAuthoringSession(withSecond);
+        clear.SetTransitionCondition(transition.ArrayObjectId, transition.Index, null);
+        Assert.Empty(StateRoutes.Of(Model(clear.Build().Bytes)).Routes.Single().ConditionId);
+    }
+
+    [Fact]
+    public void SharedConditionRemainsOneGraphObject()
+    {
+        var session = new BehaviourAuthoringSession(Source(
+            "hkbStateMachine", "hkbBehaviorGraphStringData", "hkbBehaviorGraphData"));
+        int machine = NativeGraphModel.FirstId;
+        int go = session.AddEvent("Go");
+        var idle = session.AddClip("Idle", "Animations\\Idle.hkx");
+        var walk = session.AddClip("Walk", "Animations\\Walk.hkx");
+        var run = session.AddClip("Run", "Animations\\Run.hkx");
+        var from = session.AddState(machine, "Idle", idle.Id);
+        var walkState = session.AddState(machine, "Walk", walk.Id);
+        var runState = session.AddState(machine, "Run", run.Id);
+        var condition = session.AddExpressionCondition("bGateOpen > 0");
+        session.AddTransition(machine, from.ObjectId, walkState.ObjectId, go, conditionId: condition.Id);
+        session.AddTransition(machine, from.ObjectId, runState.ObjectId, go, conditionId: condition.Id);
+
+        var model = Model(session.Build().Bytes);
+        Assert.Single(model.Objects, o => o.Class == "hkbExpressionCondition");
+        Assert.Equal(2, StateRoutes.Of(model).Routes.Count(route => route.ConditionId == condition.Id.ToString()));
+        Assert.Single(GraphAuthor.Layout(model, 100), item => item.Node.Id == condition.Id.ToString());
+    }
+
+    [Fact]
+    public void NotifyArraysAppendCreateAndRemoveWithoutReordering()
+    {
+        byte[] source = Source(
+            "hkbStateMachine", "hkbBehaviorGraphStringData", "hkbBehaviorGraphData");
+        var seed = new BehaviourAuthoringSession(source);
+        int machine = NativeGraphModel.FirstId;
+        int enter = seed.AddEvent("Enter");
+        int exit = seed.AddEvent("Exit");
+        int third = seed.AddEvent("Third");
+        var clip = seed.AddClip("Idle", "Animations\\Idle.hkx");
+        var state = seed.AddState(machine, "Idle", clip.Id);
+        seed.AddNotifyEvent(state.ObjectId, BehaviourAuthoringSession.NotifyPhase.Enter, enter);
+        seed.AddNotifyEvent(state.ObjectId, BehaviourAuthoringSession.NotifyPhase.Enter, exit);
+        seed.AddNotifyEvent(state.ObjectId, BehaviourAuthoringSession.NotifyPhase.Exit, enter);
+        var first = seed.Build().Bytes;
+
+        var append = new BehaviourAuthoringSession(first);
+        append.AddNotifyEvent(state.ObjectId, BehaviourAuthoringSession.NotifyPhase.Enter, third);
+        var second = append.Build().Bytes;
+        var model = Model(second);
+        var rebuilt = model.Get(state.ObjectId.ToString())!;
+        var enterArray = model.Get(rebuilt.Ref("enterNotifyEvents"))!;
+        var exitArray = model.Get(rebuilt.Ref("exitNotifyEvents"))!;
+        Assert.Equal(new[] { enter, exit, third }, NotifyIds(enterArray));
+        Assert.Equal(new[] { enter }, NotifyIds(exitArray));
+        var drawn = GraphAuthor.Layout(model, 100).Select(item => item.Node.Id).ToHashSet();
+        Assert.Contains(enterArray.Id, drawn);
+        Assert.Contains(exitArray.Id, drawn);
+
+        var remove = new BehaviourAuthoringSession(second);
+        Assert.Equal(exit, remove.RemoveNotifyEvent(state.ObjectId,
+            BehaviourAuthoringSession.NotifyPhase.Enter, 1));
+        var final = Model(remove.Build().Bytes);
+        Assert.Equal(new[] { enter, third }, NotifyIds(final.Get(final.Get(state.ObjectId.ToString())!
+            .Ref("enterNotifyEvents"))!));
+    }
+
+    [Fact]
+    public void NewStateMachineHasProvenDefaultsAndCanAttachToGraph()
+    {
+        var session = new BehaviourAuthoringSession(Source("hkbBehaviorGraph"));
+        var clip = session.AddClip("Idle", "Animations\\Idle.hkx");
+        var machine = session.AddStateMachine("NewMachine", "Idle", clip.Id);
+        session.AttachGenerator(NativeGraphModel.FirstId, "rootGenerator", machine.Id);
+
+        var model = Model(session.Build().Bytes);
+        var built = model.Get(machine.Id.ToString())!;
+        Assert.Equal("NewMachine", built.Str("name"));
+        Assert.Equal(0, built.Int("startStateId"));
+        Assert.Equal("true", built.Str("wrapAroundStateId"));
+        Assert.Equal(32, built.Int("maxSimultaneousTransitions"));
+        Assert.Equal("START_STATE_MODE_DEFAULT", built.Str("startStateMode"));
+        Assert.Single(StateEditor.States(model, machine.Id.ToString()));
+        Assert.Equal("#" + machine.Id, model.Get(NativeGraphModel.FirstId.ToString())!.Str("rootGenerator"));
+    }
+
+    [Fact]
+    public void NotifyEventRequiresADeclaredGlobalEvent()
+    {
+        var session = new BehaviourAuthoringSession(Source("hkbStateMachine"));
+        var clip = session.AddClip("Idle", "Animations\\Idle.hkx");
+        var state = session.AddState(NativeGraphModel.FirstId, "Idle", clip.Id);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.AddNotifyEvent(
+            state.ObjectId, BehaviourAuthoringSession.NotifyPhase.Enter, 0));
+    }
+
+    [Fact]
+    public void SharedNotifyArrayKeepsAppendsFromBothOwners()
+    {
+        var fixture = SharedNotifySource();
+        var session = new BehaviourAuthoringSession(fixture.Bytes);
+        session.AddNotifyEvent(fixture.StateA, BehaviourAuthoringSession.NotifyPhase.Enter, fixture.Events[1]);
+        session.AddNotifyEvent(fixture.StateB, BehaviourAuthoringSession.NotifyPhase.Enter, fixture.Events[2]);
+
+        var model = Model(session.Build().Bytes);
+        var stateA = model.Get(fixture.StateA.ToString())!;
+        var stateB = model.Get(fixture.StateB.ToString())!;
+        Assert.Equal(stateA.Ref("enterNotifyEvents"), stateB.Ref("enterNotifyEvents"));
+        Assert.Equal(fixture.ArrayId.ToString(), stateA.Ref("enterNotifyEvents"));
+        Assert.Equal(new[] { fixture.Events[0], fixture.Events[1], fixture.Events[2] },
+            NotifyIds(model.Get(stateA.Ref("enterNotifyEvents"))!));
+    }
+
+    [Fact]
+    public void SharedNotifyArrayKeepsAppendWhenOtherOwnerRemoves()
+    {
+        var fixture = SharedNotifySource();
+        var session = new BehaviourAuthoringSession(fixture.Bytes);
+        session.AddNotifyEvent(fixture.StateA, BehaviourAuthoringSession.NotifyPhase.Enter, fixture.Events[1]);
+        Assert.Equal(fixture.Events[0], session.RemoveNotifyEvent(
+            fixture.StateB, BehaviourAuthoringSession.NotifyPhase.Enter, 0));
+
+        var model = Model(session.Build().Bytes);
+        var stateA = model.Get(fixture.StateA.ToString())!;
+        var stateB = model.Get(fixture.StateB.ToString())!;
+        Assert.Equal(stateA.Ref("enterNotifyEvents"), stateB.Ref("enterNotifyEvents"));
+        Assert.Equal(new[] { fixture.Events[1] }, NotifyIds(model.Get(stateA.Ref("enterNotifyEvents"))!));
+    }
+
+    [Fact]
+    public void NotifyMutationRefusesUnreadablePayload()
+    {
+        var session = new BehaviourAuthoringSession(Source(
+            "hkbStateMachine", "hkbBehaviorGraphStringData", "hkbBehaviorGraphData"));
+        int machine = NativeGraphModel.FirstId;
+        int eventId = session.AddEvent("Enter");
+        var clip = session.AddClip("Idle", "Animations\\Idle.hkx");
+        var state = session.AddState(machine, "Idle", clip.Id);
+        session.AddNotifyEvent(state.ObjectId, BehaviourAuthoringSession.NotifyPhase.Enter, eventId);
+        var valid = session.Build().Bytes;
+        var model = Model(valid);
+        var array = model.Get(model.Get(state.ObjectId.ToString())!.Ref("enterNotifyEvents"))!;
+        var malformed = NativeSave.Apply(valid, new NativeSave.Plan(new List<NativeSave.Change>
+        {
+            new("hkbStateMachineEventPropertyArray", int.Parse(array.Id) - NativeGraphModel.FirstId,
+                "events", clip.Reference, Element: 0, Member: "payload", Id: int.Parse(array.Id)),
+        }, null));
+        var before = malformed.ToArray();
+
+        var edit = new BehaviourAuthoringSession(malformed);
+        Assert.Throws<ArgumentException>(() => edit.AddNotifyEvent(
+            state.ObjectId, BehaviourAuthoringSession.NotifyPhase.Enter, eventId));
+        Assert.Equal(before, malformed);
+    }
+
+    private sealed record SharedNotifyFixture(byte[] Bytes, int StateA, int StateB, int ArrayId, int[] Events);
+
+    private static SharedNotifyFixture SharedNotifySource()
+    {
+        var seed = new BehaviourAuthoringSession(Source(
+            "hkbStateMachine", "hkbBehaviorGraphStringData", "hkbBehaviorGraphData"));
+        int machine = NativeGraphModel.FirstId;
+        int first = seed.AddEvent("First");
+        int second = seed.AddEvent("Second");
+        int third = seed.AddEvent("Third");
+        var clipA = seed.AddClip("A", "Animations\\A.hkx");
+        var clipB = seed.AddClip("B", "Animations\\B.hkx");
+        var stateA = seed.AddState(machine, "A", clipA.Id);
+        var stateB = seed.AddState(machine, "B", clipB.Id);
+        seed.AddNotifyEvent(stateA.ObjectId, BehaviourAuthoringSession.NotifyPhase.Enter, first);
+        var oneOwner = seed.Build().Bytes;
+
+        var oneModel = Model(oneOwner);
+        int arrayId = int.Parse(oneModel.Get(stateA.ObjectId.ToString())!.Ref("enterNotifyEvents")!);
+        var rewire = new NativeAuthoringPlan(oneOwner);
+        rewire.SetReference(stateB.ObjectId, "enterNotifyEvents", arrayId);
+        return new SharedNotifyFixture(rewire.Apply().Bytes, stateA.ObjectId, stateB.ObjectId, arrayId,
+            new[] { first, second, third });
+    }
+
+    private static int[] NotifyIds(HkObject array) => array.StructLists["events"]
+        .Select(row => int.Parse(row["id"]))
+        .ToArray();
+
     private static byte[] Source(params string[] classes)
     {
         var image = new PackfileImage();

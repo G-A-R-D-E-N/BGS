@@ -8,7 +8,8 @@ public sealed class StateRoutes
 {
 
     public sealed record Route(string MachineId, string FromId, string ToId, string Event,
-                               int EventId, bool Wildcard, string IntoId, bool Global = false)
+                               int EventId, bool Wildcard, string IntoId, bool Global = false,
+                               string ConditionId = "")
     {
         public override string ToString() =>
             $"{(Wildcard ? "any" : "#" + FromId)} -{Event}-> #{ToId}" +
@@ -89,7 +90,8 @@ public sealed class StateRoutes
 
                 routes.Add(new Route(machine.Id, fromId, toId, NameOf(events, row.EventId),
                                      row.EventId, row.Wildcard,
-                                     NestedTarget(model, toId, row.ToNestedStateId)));
+                                     NestedTarget(model, toId, row.ToNestedStateId),
+                                     ConditionId: row.ConditionId));
             }
         }
 

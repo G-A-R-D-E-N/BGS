@@ -1,7 +1,10 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Threading;
 using BehaviourStudio.App;
 using OpenCommonwealth.Services.Hkx;
@@ -12,10 +15,35 @@ public static class LifecycleSmoke
 {
     public static int Main(string[] args)
     {
+        if (args.Contains("--layout-smoke"))
+        {
+            AppBuilder.Configure<HeadlessApp>()
+                .UseHeadless(new AvaloniaHeadlessPlatformOptions())
+                .SetupWithoutStarting();
+            Settings.SettingsPathForTest =
+                Path.Combine(Path.GetTempPath(), $"bgs-layout-{Guid.NewGuid():N}.cfg");
+            Settings.TrySet("tour_done", "1", out _);
+            try { return WorkspaceSmoke.LayoutRun(); }
+            finally
+            {
+                File.Delete(Settings.SettingsPathForTest);
+                Settings.SettingsPathForTest = null;
+            }
+        }
+
+        if (args.Length > 0 && args[0] == "--assistant")
+        {
+            AppBuilder.Configure<HeadlessApp>()
+                .UseHeadless(new AvaloniaHeadlessPlatformOptions())
+                .SetupWithoutStarting();
+            AssistantLifecycleSmoke.Run();
+            return 0;
+        }
         int existing = Smoke.Main(args);
         if (args.Length >= 2 && args[0] == "--png") return existing;
+        int workspace = WorkspaceSmoke.Run();
         int lifecycle = RagdollLifecycle();
-        return existing == 0 && lifecycle == 0 ? 0 : 1;
+        return existing == 0 && workspace == 0 && lifecycle == 0 ? 0 : 1;
     }
 
     private static int RagdollLifecycle()
@@ -50,6 +78,19 @@ public static class LifecycleSmoke
                 window.PlaybackSummary.Contains("loaded from the sibling skeleton", StringComparison.Ordinal),
                 ref failed);
             Check("Drop is enabled for the sibling ragdoll", drop.IsEnabled, ref failed);
+
+            window.Viewport.ToggleBodyPinForTest(model!.Bodies[0].Id);
+            window.Viewport.ToggleBodyPinForTest(model.Bodies[1].Id);
+            Dispatcher.UIThread.RunJobs();
+            Check("production body-frame distance is surfaced",
+                window.FrameDistanceStatusForTest.Contains("file units", StringComparison.Ordinal), ref failed);
+            Check("body-frame distance stays visible until cleared",
+                window.FrameDistanceVisibleForTest, ref failed);
+            Smoke.SelectTab(window, "Playback");
+            Smoke.Click(Smoke.Find<Button>(window)
+                .Single(button => button.Content?.ToString() == "Clear measure"));
+            Check("clearing body-frame distance removes the production status",
+                window.FrameDistanceStatusForTest.Length == 0 && !window.FrameDistanceVisibleForTest, ref failed);
 
             Smoke.Click(play);
             Check("animation playback starts before Drop", window.IsPlaying, ref failed);

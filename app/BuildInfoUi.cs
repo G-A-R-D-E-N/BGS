@@ -48,8 +48,19 @@ public static class BuildInfoUi
             Child = row,
         };
 
-        // The normal app already has NativeAuthoringUi's compact top bar. Put the
-        // version/About affordance into that same row instead of creating a second bar.
+        var editor = EditorShell.Find(current);
+        if (editor != null)
+        {
+            var native = editor.Tools.Children.OfType<NativeAuthoringStrip>().FirstOrDefault();
+            if (native?.Child is Panel nativeRow)
+            {
+                nativeRow.Children.Add(strip);
+                return;
+            }
+            editor.Tools.Children.Add(strip);
+            return;
+        }
+
         if (current is DockPanel shell)
         {
             var native = shell.Children.OfType<NativeAuthoringStrip>().FirstOrDefault();
@@ -59,7 +70,6 @@ public static class BuildInfoUi
                 return;
             }
 
-            // Keep a safe fallback for callers that provide some other LastChildFill shell.
             if (shell.LastChildFill && shell.Children.Count > 0)
             {
                 strip.Background = Ux.BaseBrush;
@@ -71,7 +81,6 @@ public static class BuildInfoUi
             }
         }
 
-        // Standalone fallback for a future app shell that no longer uses a DockPanel.
         strip.Background = Ux.BaseBrush;
         strip.BorderThickness = new Thickness(0, 0, 0, 1);
         strip.Padding = new Thickness(14, 4);
@@ -85,6 +94,7 @@ public static class BuildInfoUi
 
     private static bool AlreadyAttached(Control current)
     {
+        if (EditorShell.Find(current)?.HasTool<BuildInfoStrip>() == true) return true;
         if (current is not DockPanel shell) return false;
         if (shell.Children.Any(child => child is BuildInfoStrip)) return true;
         return shell.Children.OfType<NativeAuthoringStrip>().Any(native =>

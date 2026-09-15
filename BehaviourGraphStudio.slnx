@@ -3,6 +3,7 @@
     <Project Path="app/BehaviourStudio.csproj" />
   </Folder>
   <Folder Name="/tools/">
+    <Project Path="tools/mcp/BehaviourGraph.Mcp.csproj" />
     <Project Path="tools/symrm/symrm.csproj" />
     <Project Path="tools/uismoke/uismoke.csproj" />
   </Folder>

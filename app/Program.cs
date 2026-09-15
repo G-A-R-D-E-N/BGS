@@ -16,6 +16,7 @@ public class App : Application
     {
         var window = new MainWindow();
         NativeAuthoringUi.Attach(window);
+        AdvancedAuthoringUi.Attach(window);
         BuildInfoUi.Attach(window);
         return window;
     }

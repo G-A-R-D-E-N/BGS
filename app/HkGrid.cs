@@ -12,6 +12,7 @@ public sealed class HkGrid : Border
     private readonly TreeView _tree = new() { Background = Brushes.Transparent };
     private readonly (string Title, double Width)[] _columns;
     private readonly Grid _header;
+    private readonly ScrollViewer _hScroll;
 
     public HkGrid(params (string Title, double Width)[] columns)
     {
@@ -19,7 +20,7 @@ public sealed class HkGrid : Border
         Background = Ux.CardBrush;
         BorderBrush = Ux.BorderBrush;
         BorderThickness = new Thickness(1);
-        CornerRadius = new CornerRadius(4);
+        CornerRadius = new CornerRadius(Ux.Radius);
 
         _header = Columns();
         _header.Margin = new Thickness(6, 4, 6, 4);
@@ -29,7 +30,7 @@ public sealed class HkGrid : Border
             {
                 Text = columns[i].Title,
                 Foreground = Ux.MutedBrush,
-                FontSize = 11,
+                FontSize = Ux.FontSmall,
                 FontWeight = FontWeight.SemiBold,
             };
             Grid.SetColumn(title, i);
@@ -38,18 +39,34 @@ public sealed class HkGrid : Border
 
         _tree.SelectionChanged += (_, _) => SelectionChanged?.Invoke();
 
-        var stack = new DockPanel();
+        double min = 0;
+        foreach (var (_, width) in columns)
+            min += width < 0 ? 96 : width;
+        _header.MinWidth = min;
+        _tree.MinWidth = min;
+
+        var body = new ScrollViewer
+        {
+            Content = _tree,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+        };
+
+        var sheet = new DockPanel();
         var rule = new Border { Height = 1, Background = Ux.BorderBrush };
         DockPanel.SetDock(_header, Dock.Top);
         DockPanel.SetDock(rule, Dock.Top);
-        stack.Children.Add(_header);
-        stack.Children.Add(rule);
-        stack.Children.Add(new ScrollViewer
+        sheet.Children.Add(_header);
+        sheet.Children.Add(rule);
+        sheet.Children.Add(body);
+
+        _hScroll = new ScrollViewer
         {
-            Content = _tree,
+            Content = sheet,
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-        });
-        Child = stack;
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+        };
+        Child = _hScroll;
     }
 
     public event Action? SelectionChanged;
@@ -59,6 +76,17 @@ public sealed class HkGrid : Border
     public int RowCount { get; private set; }
 
     public bool HasSelection => _tree.SelectedItem != null;
+
+    public ScrollViewer HorizontalScroll => _hScroll;
+
+    public Grid HeaderGrid => _header;
+
+    public TreeView BodyTree => _tree;
+
+    public Grid? FirstRowGrid =>
+        _tree.Items.Count > 0 && _tree.Items[0] is TreeViewItem item && item.Header is Grid grid
+            ? grid
+            : null;
 
     public void Clear()
     {
@@ -147,7 +175,7 @@ public sealed class HkRow
             {
                 Text = i < cells.Length ? cells[i] : "",
                 Foreground = Ux.MetaBrush,
-                FontSize = 12,
+                FontSize = Ux.FontBody,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),

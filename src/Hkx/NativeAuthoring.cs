@@ -385,6 +385,172 @@ public sealed class BehaviourAuthoringSession
         return new StateRef(state.Id, stateId);
     }
 
+    public NativeAuthoringPlan.ObjectRef AddStateMachine(string name, string firstStateName, int generatorId)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("state machine name is required", nameof(name));
+        if (string.IsNullOrWhiteSpace(firstStateName))
+            throw new ArgumentException("first state name is required", nameof(firstStateName));
+        _plan.RequireAssignable(generatorId, "hkbGenerator", "state machine state generator");
+
+        var machine = _plan.AddObject("hkbStateMachine");
+        _plan.SetString(machine.Id, "name", name);
+        _plan.SetStructMember(machine.Id, "eventToSendWhenStateOrTransitionChanges", 0, "id", "-1");
+        _plan.SetStructMember(machine.Id, "eventToSendWhenStateOrTransitionChanges", 0, "payload", "null");
+        _plan.SetReference(machine.Id, "startStateIdSelector", null);
+        _plan.SetInt(machine.Id, "startStateId", 0);
+        _plan.SetInt(machine.Id, "returnToPreviousStateEventId", -1);
+        _plan.SetInt(machine.Id, "randomTransitionEventId", -1);
+        _plan.SetInt(machine.Id, "transitionToNextHigherStateEventId", -1);
+        _plan.SetInt(machine.Id, "transitionToNextLowerStateEventId", -1);
+        _plan.SetInt(machine.Id, "syncVariableIndex", -1);
+        _plan.SetBool(machine.Id, "wrapAroundStateId", true);
+        _plan.SetInt(machine.Id, "maxSimultaneousTransitions", 32);
+        _plan.SetEnum(machine.Id, "startStateMode", "START_STATE_MODE_DEFAULT");
+        _plan.SetEnum(machine.Id, "selfTransitionMode", "SELF_TRANSITION_MODE_FORCE_TRANSITION_TO_START_STATE");
+        _plan.SetPointerArray(machine.Id, "states", Array.Empty<int>());
+        _plan.SetReference(machine.Id, "wildcardTransitions", null);
+        _statesByMachine[machine.Id] = new List<int>();
+        AddState(machine.Id, firstStateName, generatorId);
+        return machine;
+    }
+
+    public void AttachGenerator(int parentId, string field, int generatorId)
+    {
+        if (string.IsNullOrWhiteSpace(field)) throw new ArgumentException("generator field is required", nameof(field));
+        _plan.RequireAssignable(generatorId, "hkbGenerator", "generator attachment");
+        _plan.SetReference(parentId, field, generatorId);
+    }
+
+    public NativeAuthoringPlan.ObjectRef AddExpressionCondition(string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+            throw new ArgumentException("condition expression is required", nameof(expression));
+        var parsed = Expression.Parse(expression);
+        if (!parsed.Ok || parsed.IsAssignment)
+            throw new ArgumentException(parsed.Problem ?? "a transition condition must be a predicate", nameof(expression));
+
+        var condition = _plan.AddObject("hkbExpressionCondition");
+        _plan.SetString(condition.Id, "expression", expression);
+        return condition;
+    }
+
+    public void SetTransitionCondition(int transitionArrayId, int index, int? conditionId)
+    {
+        var rows = Rows(transitionArrayId);
+        if (index < 0 || index >= rows.Count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        if (conditionId is int condition)
+            _plan.RequireAssignable(condition, "hkbCondition", "transition condition");
+
+        string value = conditionId is int id
+            ? "#" + id.ToString(CultureInfo.InvariantCulture)
+            : "null";
+        rows[index]["condition"] = value;
+        _plan.SetStructMember(transitionArrayId, "transitions", index, "condition", value);
+    }
+
+    public enum NotifyPhase { Enter, Exit }
+
+    public int AddNotifyEvent(int stateObjectId, NotifyPhase phase, int eventId)
+    {
+        ValidateEventId(eventId);
+        int arrayId = NotifyArray(stateObjectId, phase, create: true);
+        var rows = NotifyRows(arrayId);
+        int index = rows.Count;
+        rows.Add(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = eventId.ToString(CultureInfo.InvariantCulture),
+            ["payload"] = "null",
+        });
+        _plan.ResizeStructArray(arrayId, "events", index + 1);
+        foreach (var (member, value) in rows[index])
+            _plan.SetStructMember(arrayId, "events", index, member, value);
+        return index;
+    }
+
+    public int RemoveNotifyEvent(int stateObjectId, NotifyPhase phase, int index)
+    {
+        int arrayId = NotifyArray(stateObjectId, phase, create: false);
+        var rows = NotifyRows(arrayId);
+        if (index < 0 || index >= rows.Count) throw new ArgumentOutOfRangeException(nameof(index));
+
+        int removed = int.Parse(rows[index]["id"], CultureInfo.InvariantCulture);
+        rows.RemoveAt(index);
+        for (int i = 0; i < rows.Count; i++)
+            foreach (var (member, value) in rows[i])
+                _plan.SetStructMember(arrayId, "events", i, member, value);
+        _plan.ResizeStructArray(arrayId, "events", rows.Count);
+        return removed;
+    }
+
+    private readonly Dictionary<(int State, NotifyPhase Phase), int> _notifyArrays = new();
+    private readonly Dictionary<int, List<Dictionary<string, string>>> _notifyRows = new();
+
+    private int NotifyArray(int stateObjectId, NotifyPhase phase, bool create)
+    {
+        if (_plan.ClassOf(stateObjectId) != "hkbStateMachineStateInfo")
+            throw new ArgumentException($"#{stateObjectId} is not a state info object", nameof(stateObjectId));
+
+        string field = phase == NotifyPhase.Enter ? "enterNotifyEvents" : "exitNotifyEvents";
+        var key = (stateObjectId, phase);
+        if (_notifyArrays.TryGetValue(key, out int cached)) return cached;
+
+        string? existing = _model.Get(stateObjectId.ToString(CultureInfo.InvariantCulture))?.Ref(field);
+        if (existing != null && int.TryParse(existing, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
+        {
+            _notifyArrays[key] = parsed;
+            if (!_notifyRows.ContainsKey(parsed)) _notifyRows[parsed] = ReadNotifyRows(parsed);
+            return parsed;
+        }
+        if (!create) throw new InvalidOperationException($"#{stateObjectId}.{field} is null");
+
+        var array = _plan.AddObject("hkbStateMachineEventPropertyArray");
+        _plan.ResizeStructArray(array.Id, "events", 0);
+        _plan.SetReference(stateObjectId, field, array.Id);
+        _notifyArrays[key] = array.Id;
+        _notifyRows[array.Id] = new List<Dictionary<string, string>>();
+        return array.Id;
+    }
+
+    private List<Dictionary<string, string>> NotifyRows(int arrayId) =>
+        _notifyRows.TryGetValue(arrayId, out var rows)
+            ? rows
+            : throw new InvalidOperationException($"#{arrayId} has no event-property rows");
+
+    private List<Dictionary<string, string>> ReadNotifyRows(int arrayId)
+    {
+        var array = _model.Get(arrayId.ToString(CultureInfo.InvariantCulture));
+        if (array == null || array.Class != "hkbStateMachineEventPropertyArray" ||
+            !array.StructLists.TryGetValue("events", out var rows))
+            throw new InvalidOperationException($"#{arrayId} is not a readable event-property array");
+
+        foreach (var row in rows)
+        {
+            if (!row.TryGetValue("id", out var value) || !int.TryParse(value, out _))
+                throw new InvalidOperationException($"#{arrayId}.events contains an unreadable event id");
+            if (!row.TryGetValue("payload", out var payload))
+                throw new InvalidOperationException($"#{arrayId}.events contains an unreadable payload");
+            if (payload != "null")
+            {
+                if (payload.Length <= 1 || payload[0] != '#' ||
+                    !int.TryParse(payload[1..], NumberStyles.Integer, CultureInfo.InvariantCulture, out int payloadId) ||
+                    !_plan.Contains(payloadId))
+                    throw new InvalidOperationException($"#{arrayId}.events contains an unreadable payload");
+                _plan.RequireAssignable(payloadId, "hkbEventPayload", $"#{arrayId}.events.payload");
+            }
+        }
+        return rows.Select(row => new Dictionary<string, string>(row, StringComparer.Ordinal)).ToList();
+    }
+
+    private void ValidateEventId(int eventId)
+    {
+        if (eventId < 0) throw new ArgumentOutOfRangeException(nameof(eventId));
+        int count = (_events ?? SymbolEditor.EventNames(_model)).Count;
+        if (eventId >= count)
+            throw new ArgumentOutOfRangeException(nameof(eventId),
+                $"event {eventId} is not declared; this graph currently has {count} event(s)");
+    }
+
     public int AddEvent(string name)
     {
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("event name is required", nameof(name));
@@ -410,7 +576,7 @@ public sealed class BehaviourAuthoringSession
     }
 
     public TransitionRef AddTransition(int machineId, int? fromStateObjectId, int toStateObjectId,
-                                       int eventId, int? effectId = null)
+                                       int eventId, int? effectId = null, int? conditionId = null)
     {
         var states = EnsureMachine(machineId);
         if (!states.Contains(toStateObjectId))
@@ -425,6 +591,8 @@ public sealed class BehaviourAuthoringSession
                 $"event {eventId} is not declared; this graph currently has {eventCount} event(s)");
         if (effectId.HasValue)
             _plan.RequireAssignable(effectId.Value, "hkbTransitionEffect", "transition effect");
+        if (conditionId.HasValue)
+            _plan.RequireAssignable(conditionId.Value, "hkbCondition", "transition condition");
 
         int owner = fromStateObjectId ?? machineId;
         string field = fromStateObjectId.HasValue ? "transitions" : "wildcardTransitions";
@@ -466,7 +634,9 @@ public sealed class BehaviourAuthoringSession
         SetInterval(arrayId, index, "initiateInterval");
         Record(arrayId, index, "transition",
             effectId.HasValue ? "#" + effectId.Value.ToString(CultureInfo.InvariantCulture) : "null");
-        Record(arrayId, index, "condition", "null");
+        Record(arrayId, index, "condition", conditionId.HasValue
+            ? "#" + conditionId.Value.ToString(CultureInfo.InvariantCulture)
+            : "null");
         Record(arrayId, index, "eventId", eventId.ToString(CultureInfo.InvariantCulture));
         Record(arrayId, index, "toStateId", _stateIds[toStateObjectId].ToString(CultureInfo.InvariantCulture));
         Record(arrayId, index, "fromNestedStateId", "0");
