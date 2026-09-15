@@ -40,29 +40,33 @@ public static class NativeAuthoringUi
 
         var strip = new NativeAuthoringStrip
         {
-            Background = Ux.BaseBrush,
             BorderBrush = Ux.BorderBrush,
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            Padding = new Thickness(14, 5),
+            BorderThickness = new Thickness(1, 0, 0, 0),
+            Padding = new Thickness(10, 0, 0, 0),
             Child = row,
         };
 
-        // The existing content has to leave the window before it joins the dock panel.
-        // Adding it while the window still holds it gives it two logical parents, and
-        // Avalonia refuses the second attach rather than reparenting.
-        window.Content = null;
+        var shell = EditorShell.Find(current);
+        if (shell != null)
+        {
+            shell.Tools.Children.Add(strip);
+            return;
+        }
 
+        window.Content = null;
         var host = new DockPanel { LastChildFill = true };
+        strip.Background = Ux.BaseBrush;
+        strip.BorderThickness = new Thickness(0, 0, 0, 1);
+        strip.Padding = new Thickness(14, 5);
         DockPanel.SetDock(strip, Dock.Top);
         host.Children.Add(strip);
         host.Children.Add(current);
         window.Content = host;
     }
 
-    // Attach wraps the window content in a DockPanel carrying the strip, so a second
-    // attach is visible as a strip already sitting at the top of that panel.
     private static bool AlreadyAttached(Control current) =>
-        current is DockPanel host && host.Children.Any(child => child is NativeAuthoringStrip);
+        EditorShell.Find(current)?.HasTool<NativeAuthoringStrip>() == true
+        || current is DockPanel host && host.Children.Any(child => child is NativeAuthoringStrip);
 
     public static BatchAuthoringWindow OpenBatchAuthoringForTest(MainWindow window)
     {
@@ -425,8 +429,6 @@ public sealed class BatchAuthoringWindow : Window
         }
     }
 
-    // Any change to either queue makes a pending preview stale, so it is dropped rather than
-    // left applicable against a batch it no longer describes.
     private void Invalidate()
     {
         _pending = null;
@@ -515,9 +517,6 @@ public sealed class BatchAuthoringWindow : Window
         if (!string.Equals(before, _owner.LoadedXml, StringComparison.Ordinal))
             throw new InvalidOperationException("the open document no longer matches the file on disk; reload it before authoring");
 
-        // Variables are written first, on their own verified pass, so the clip and state pass
-        // that follows sees a graph that already declares them. Both passes byte-verify and
-        // graph-validate their own output before it is handed on.
         byte[] carried = source;
         IReadOnlyList<NativeVariableBuilder.Created> variables = Array.Empty<NativeVariableBuilder.Created>();
         var findings = new List<GraphValidator.Finding>();

@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Threading;
 using BehaviourStudio.App;
 using AppHost = BehaviourStudio.App.App;
+using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.UiSmoke;
 
@@ -17,6 +18,10 @@ internal static class NativeAuthoringSmoke
     internal static void Run()
     {
         StripAttachesOnceOnTheProductionPath();
+        StructureAuthoringIsReachableFromTheProductionPath();
+        StructureAuthoringConditionRoundTripsThroughSave();
+        StructureAuthoringNotifyRoundTripsThroughSave();
+        StructureAuthoringStateMachineRoundTripsThroughSave();
         BatchAuthoringListsTheMachinesInTheDocument();
         QueueRemovalUsesTheRealUi();
         ApplyIsOneUndoStepAndTouchesNoFile();
@@ -24,6 +29,164 @@ internal static class NativeAuthoringSmoke
         ReopeningTheSourceInvalidatesAPendingPreview();
         SaveAfterApplyStillGoesThroughTheVerifiedTransaction();
         VariablesAreAuthoredInTheSameVerifiedBatch();
+    }
+
+    private static void StructureAuthoringIsReachableFromTheProductionPath()
+    {
+        Console.WriteLine("\nstructure authoring is reachable from the production path");
+        var window = AppHost.CreateMainWindow();
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        Smoke.CheckTrue("the structure authoring button is reachable",
+                        Smoke.Find<Button>(window).Any(b => b.Content?.ToString() == "Structure authoring"));
+        var editor = AdvancedAuthoringUi.OpenForTest(window);
+        Dispatcher.UIThread.RunJobs();
+        var labels = Smoke.Find<Button>(editor).Select(button => button.Content?.ToString()).ToHashSet();
+        Smoke.CheckTrue("the structure editor exposes condition authoring",
+                        labels.Contains("Create / assign condition") && labels.Contains("Clear condition"));
+        Smoke.CheckTrue("the structure editor exposes notify authoring",
+                        labels.Contains("Add enter") && labels.Contains("Add exit") &&
+                        labels.Contains("Remove enter") && labels.Contains("Remove exit"));
+        Smoke.CheckTrue("the structure editor exposes state-machine authoring",
+                        labels.Contains("Create and attach"));
+        editor.Close();
+        Smoke.CloseForTest(window);
+    }
+
+    private static void StructureAuthoringConditionRoundTripsThroughSave()
+    {
+        Console.WriteLine("\nstructure authoring conditions survive Save and reopen");
+        WithFixture(StructureGraphBytes(), (window, path) =>
+        {
+            window.Open(path);
+            Dispatcher.UIThread.RunJobs();
+            var editor = AdvancedAuthoringUi.OpenForTest(window);
+            Dispatcher.UIThread.RunJobs();
+
+            byte[] before = File.ReadAllBytes(path);
+            editor.CreateExpressionConditionForTest("1 > 0");
+            Dispatcher.UIThread.RunJobs();
+            Smoke.CheckTrue("condition create updates the document", window.IsDirty &&
+                window.LoadedXml.Contains("hkbExpressionCondition", StringComparison.Ordinal));
+            Smoke.CheckTrue("condition create leaves source bytes unchanged", File.ReadAllBytes(path).SequenceEqual(before));
+            SaveAndCheck(window, path, before, "condition create");
+
+            editor.Close();
+            window.Open(path);
+            Dispatcher.UIThread.RunJobs();
+            var created = BehaviourGraphModel.Parse(window.LoadedXml);
+            var createdRoute = StateRoutes.Of(created).Routes.Single();
+            Smoke.CheckTrue("reopen keeps the created condition",
+                created.Get(createdRoute.ConditionId)?.Str("expression") == "1 > 0");
+
+            editor = AdvancedAuthoringUi.OpenForTest(window);
+            Dispatcher.UIThread.RunJobs();
+            before = File.ReadAllBytes(path);
+            editor.CreateExpressionConditionForTest("bGateOpen == 1");
+            Dispatcher.UIThread.RunJobs();
+            Smoke.CheckTrue("condition replace leaves source bytes unchanged", File.ReadAllBytes(path).SequenceEqual(before));
+            SaveAndCheck(window, path, before, "condition replace");
+
+            editor.Close();
+            if (window.IsDirty) return;
+            window.Open(path);
+            Dispatcher.UIThread.RunJobs();
+            var replaced = BehaviourGraphModel.Parse(window.LoadedXml);
+            var replacedRoute = StateRoutes.Of(replaced).Routes.Single();
+            Smoke.CheckTrue("reopen keeps the replaced condition",
+                replaced.Get(replacedRoute.ConditionId)?.Str("expression") == "bGateOpen == 1");
+
+            editor = AdvancedAuthoringUi.OpenForTest(window);
+            Dispatcher.UIThread.RunJobs();
+            before = File.ReadAllBytes(path);
+            Smoke.Click(Smoke.Find<Button>(editor).Single(button => button.Content?.ToString() == "Clear condition"));
+            Dispatcher.UIThread.RunJobs();
+            Smoke.CheckTrue("condition clear leaves source bytes unchanged", File.ReadAllBytes(path).SequenceEqual(before));
+            SaveAndCheck(window, path, before, "condition clear");
+
+            editor.Close();
+            window.Open(path);
+            Dispatcher.UIThread.RunJobs();
+            var cleared = BehaviourGraphModel.Parse(window.LoadedXml);
+            Smoke.CheckTrue("reopen keeps the cleared condition",
+                StateRoutes.Of(cleared).Routes.Single().ConditionId.Length == 0);
+        });
+    }
+
+    private static void StructureAuthoringNotifyRoundTripsThroughSave()
+    {
+        Console.WriteLine("\nstructure authoring notify rows survive Save and reopen");
+        byte[] fixture = StructureNotifyBytes();
+        var seeded = BehaviourGraphModel.Parse(NativeXml.From(fixture));
+        var seededState = seeded.Objects.Single(o => o.Class == "hkbStateMachineStateInfo");
+        string payload = seeded.Get(seededState.Ref("enterNotifyEvents")!)!.StructLists["events"][0]["payload"];
+
+        WithFixture(fixture, (window, path) =>
+        {
+            window.Open(path);
+            Dispatcher.UIThread.RunJobs();
+            var editor = AdvancedAuthoringUi.OpenForTest(window);
+            Dispatcher.UIThread.RunJobs();
+
+            byte[] before = File.ReadAllBytes(path);
+            editor.AddEnterNotifyForTest(3);
+            editor.AddExitNotifyForTest(1);
+            Dispatcher.UIThread.RunJobs();
+            Smoke.CheckTrue("notify adds leave source bytes unchanged", File.ReadAllBytes(path).SequenceEqual(before));
+            SaveAndCheck(window, path, before, "notify add");
+
+            editor.Close();
+            window.Open(path);
+            Dispatcher.UIThread.RunJobs();
+            CheckNotifyRows(window.LoadedXml, new[] { 0, 1, 3 }, new[] { 2, 1 }, payload);
+
+            editor = AdvancedAuthoringUi.OpenForTest(window);
+            Dispatcher.UIThread.RunJobs();
+            before = File.ReadAllBytes(path);
+            editor.RemoveEnterNotifyForTest(1);
+            editor.RemoveExitNotifyForTest(0);
+            Dispatcher.UIThread.RunJobs();
+            Smoke.CheckTrue("notify removes leave source bytes unchanged", File.ReadAllBytes(path).SequenceEqual(before));
+            SaveAndCheck(window, path, before, "notify remove");
+
+            editor.Close();
+            window.Open(path);
+            Dispatcher.UIThread.RunJobs();
+            CheckNotifyRows(window.LoadedXml, new[] { 0, 3 }, new[] { 1 }, payload);
+        });
+    }
+
+    private static void StructureAuthoringStateMachineRoundTripsThroughSave()
+    {
+        Console.WriteLine("\nstructure authoring state machines survive Save and reopen");
+        WithFixture(MachineGraphBytes(), (window, path) =>
+        {
+            window.Open(path);
+            Dispatcher.UIThread.RunJobs();
+            var editor = AdvancedAuthoringUi.OpenForTest(window);
+            Dispatcher.UIThread.RunJobs();
+
+            byte[] before = File.ReadAllBytes(path);
+            editor.CreateStateMachineForTest("NestedMachine", "NestedFirst");
+            Dispatcher.UIThread.RunJobs();
+            Smoke.CheckTrue("state-machine create updates the document", window.IsDirty &&
+                window.LoadedXml.Contains("NestedMachine", StringComparison.Ordinal));
+            Smoke.CheckTrue("state-machine create leaves source bytes unchanged", File.ReadAllBytes(path).SequenceEqual(before));
+            SaveAndCheck(window, path, before, "state-machine create");
+
+            editor.Close();
+            window.Open(path);
+            Dispatcher.UIThread.RunJobs();
+            var model = BehaviourGraphModel.Parse(window.LoadedXml);
+            var machine = model.Objects.Single(o => o.Class == "hkbStateMachine" &&
+                o.Str("name") == "NestedMachine");
+            var first = AssertState(model, machine.Id, "NestedFirst");
+            var graph = model.Objects.Single(o => o.Class == "hkbBehaviorGraph");
+            Smoke.CheckTrue("reopen keeps the non-empty state machine", first != null);
+            Smoke.CheckTrue("reopen keeps the first state generator", first!.GeneratorRef.Length > 0);
+            Smoke.Check("reopen keeps the parent reference", "#" + machine.Id, graph.Str("rootGenerator"));
+        });
     }
 
     private static void StripAttachesOnceOnTheProductionPath()
@@ -329,9 +492,33 @@ internal static class NativeAuthoringSmoke
         return batch;
     }
 
+    private static void SaveAndCheck(MainWindow window, string path, byte[] before, string label)
+    {
+        window.SaveForTest();
+        Dispatcher.UIThread.RunJobs();
+        Smoke.CheckTrue($"{label} writes the authored structure: {window.StatusForTest}",
+            !File.ReadAllBytes(path).SequenceEqual(before) && !window.IsDirty);
+    }
+
+    private static void CheckNotifyRows(string xml, int[] enter, int[] exit, string payload)
+    {
+        var model = BehaviourGraphModel.Parse(xml);
+        var state = model.Objects.Single(o => o.Class == "hkbStateMachineStateInfo");
+        var enterRows = model.Get(state.Ref("enterNotifyEvents")!)!.StructLists["events"];
+        var exitRows = model.Get(state.Ref("exitNotifyEvents")!)!.StructLists["events"];
+        Smoke.Check("enter notify row order", string.Join(",", enter),
+            string.Join(",", enterRows.Select(row => row["id"])));
+        Smoke.Check("exit notify row order", string.Join(",", exit),
+            string.Join(",", exitRows.Select(row => row["id"])));
+        Smoke.Check("untouched payload reference", payload, enterRows[0]["payload"]);
+    }
+
+    private static StateEditor.StateRow? AssertState(BehaviourGraphModel model, string machineId, string name) =>
+        StateEditor.States(model, machineId).SingleOrDefault(state => state.Name == name);
+
     // A graph with somewhere to declare variables as well as a machine to hang states on.
     // OneMachineBytes holds only the machine, so variable authoring correctly refuses it.
-    private static byte[] GraphBytes()
+    private static byte[] GraphBytes(params string[] additionalClasses)
     {
         var image = new OpenCommonwealth.Services.Hkx.PackfileImage();
         foreach (string tag in new[] { "__classnames__", "__data__" })
@@ -341,10 +528,62 @@ internal static class NativeAuthoringSmoke
             image.Sections.Add(new OpenCommonwealth.Services.Hkx.PackfileSection { TagBytes = bytes });
         }
         foreach (string className in new[]
-                 { "hkbStateMachine", "hkbBehaviorGraphStringData", "hkbBehaviorGraphData", "hkbVariableValueSet" })
+                 { "hkbStateMachine", "hkbBehaviorGraphStringData", "hkbBehaviorGraphData", "hkbVariableValueSet" }
+                 .Concat(additionalClasses))
             OpenCommonwealth.Services.Hkx.NativeAppend.Object(image, className);
         OpenCommonwealth.Services.Hkx.FixupOrder.Reorder(image);
         return image.Rebuild();
+    }
+
+    private static byte[] StructureNotifyBytes()
+    {
+        var session = new BehaviourAuthoringSession(GraphBytes());
+        int machine = NativeGraphModel.FirstId;
+        int first = session.AddEvent("First");
+        int second = session.AddEvent("Second");
+        int third = session.AddEvent("Third");
+        int fourth = session.AddEvent("Fourth");
+        var clip = session.AddClip("Idle", "Animations\\Idle.hkx");
+        var state = session.AddState(machine, "Idle", clip.Id);
+        session.AddNotifyEvent(state.ObjectId, BehaviourAuthoringSession.NotifyPhase.Enter, first);
+        session.AddNotifyEvent(state.ObjectId, BehaviourAuthoringSession.NotifyPhase.Enter, second);
+        session.AddNotifyEvent(state.ObjectId, BehaviourAuthoringSession.NotifyPhase.Exit, third);
+        var withRows = session.Build().Bytes;
+        var model = BehaviourGraphModel.Parse(NativeXml.From(withRows));
+        var info = model.Get(state.ObjectId.ToString())!;
+        int array = int.Parse(info.Ref("enterNotifyEvents")!);
+        var plan = new NativeAuthoringPlan(withRows);
+        var payload = plan.AddObject("hkbIntEventPayload");
+        plan.SetInt(payload.Id, "data", 42);
+        plan.SetStructMember(array, "events", 0, "payload", payload.Reference);
+        return plan.Apply().Bytes;
+    }
+
+    private static byte[] MachineGraphBytes()
+    {
+        var source = GraphBytes("hkbBehaviorGraph");
+        var sourceModel = BehaviourGraphModel.Parse(NativeXml.From(source));
+        int graph = int.Parse(sourceModel.Objects.Single(o => o.Class == "hkbBehaviorGraph").Id);
+        int machine = int.Parse(sourceModel.Objects.Single(o => o.Class == "hkbStateMachine").Id);
+        var session = new BehaviourAuthoringSession(source);
+        var clip = session.AddClip("Seed", "Animations\\Seed.hkx");
+        session.AddState(machine, "SeedState", clip.Id);
+        session.AttachGenerator(graph, "rootGenerator", machine);
+        return session.Build().Bytes;
+    }
+
+    private static byte[] StructureGraphBytes()
+    {
+        var source = GraphBytes();
+        var session = new OpenCommonwealth.Services.Hkx.BehaviourAuthoringSession(source);
+        int machine = OpenCommonwealth.Services.Hkx.NativeGraphModel.FirstId;
+        int eventId = session.AddEvent("Go");
+        var idle = session.AddClip("Idle", "Animations\\Idle.hkx");
+        var walk = session.AddClip("Walk", "Animations\\Walk.hkx");
+        var from = session.AddState(machine, "Idle", idle.Id);
+        var to = session.AddState(machine, "Walk", walk.Id);
+        session.AddTransition(machine, from.ObjectId, to.ObjectId, eventId);
+        return session.Build().Bytes;
     }
 
     private static void WithFixture(Action<MainWindow, string> test) => WithFixture(Smoke.OneMachineBytes(), test);

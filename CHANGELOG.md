@@ -4,6 +4,30 @@ Changes that affect Behaviour Graph Studio users are documented here.
 
 New to BGS? See the [Getting Started Guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
 
+## Unreleased
+
+* Editor workspace: a left activity rail (Home, Graph, Inspect, Animation, Project) with contextual secondary views, and one command bar for Open, Save, Undo, Redo and validation. Tree expand/collapse and the object filter live on Inspect → Tree. Graph find is a separate field on the Graph toolbar.
+* Batch authoring and About sit in the command bar on the production window path, not on a second top strip.
+* Tree/grid column headers now scroll horizontally with their rows.
+* Added a bounded read-only stdio MCP server for behavior, object, animation, project-chain, project-search, and project-check inspection, plus a side-effect-free clip-animation preview.
+* Added an optional in-app Assistant drawer with an OpenAI-compatible provider boundary, bounded editor context, cancellation, and sequential tool execution.
+* Assistant clip changes require explicit UI approval and remain bound to the exact active-document revision, object, old value, and new value; normal undo and verified save behavior remain in force.
+* External MCP has no write-capable tool, shell/process access, arbitrary filesystem write, or caller-controlled approval path.
+* Bridge layout and drag-and-drop handling are platform-safe alongside the Assistant drawer, with deterministic mounted-turret mesh auto-resolution.
+* Structure authoring now covers supported transition conditions, enter/exit notify events, global events, and non-empty state-machine creation and attachment through the verified save/reopen path.
+* Playback resolves adjacent skeletons and matching mounted-turret meshes deterministically, including platform-safe single-file and multi-file Bridge drops.
+* The ragdoll inspector exposes measured body frames, centres of mass, pivots, limits, engineering labels, and animation-to-ragdoll mapping; pinned body-frame distance measurement refuses self-pairs and stale selections.
+* Drop/Recover remains a constrained engineering preview with lifecycle reset and stale-state protections rather than a full physics simulation.
+* The workspace shell groups existing tools under Home, Graph, Inspect, Animation, and Project activities, keeps contextual secondary views reachable, and keeps command controls accessible at narrow widths.
+
+### Current release boundaries
+
+* Ragdoll support is inspection and constrained preview only: measured bodies, shapes, constraints, bone bindings, frames, and animation mappings are displayed, but ragdoll authoring, body collision solving, and full Havok dynamics are not implemented.
+* Cloth support is inspection and validation only: bounded cloth structures and references can be read and checked, but cloth simulation, mesh deformation, cloth authoring, and cloth save/write-back are not implemented.
+* Drop/Recover follows measured poses as an engineering preview; it is not a Havok solver, body-collision simulation, cloth interaction, or in-game behavior substitute.
+* Skeleton-mapper serialization/write-back and chain mapper authoring remain incomplete; automatic bone pairing is not proven.
+* Havok 2018 support remains incomplete, and unsupported layouts or conversions remain read-only or are refused.
+
 ## 1.1.0
 
 August 27, 2026

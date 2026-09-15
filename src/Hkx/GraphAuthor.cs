@@ -229,5 +229,7 @@ public static class GraphAuthor
         || className == "hkbStateMachine"
         || className == "hkbStateMachineStateInfo"
         || className == "hkbModifierList"
-        || className == "hkbLayer";
+        || className == "hkbLayer"
+        || className == "hkbExpressionCondition"
+        || className == "hkbStateMachineEventPropertyArray";
 }

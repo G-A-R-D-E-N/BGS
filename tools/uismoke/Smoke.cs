@@ -1506,6 +1506,7 @@ public static class Smoke
         CloseDiscardsAfterExplicitChoice();
         CloseSaveCommitsThenCloses();
         CloseSaveRefusalStaysOpen();
+        AuditLifecycleSmoke.Run();
 
         PapyrusScanFailureIsContained();
         StalePapyrusScanFailureIsDiscarded();
