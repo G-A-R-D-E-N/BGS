@@ -17,21 +17,120 @@ internal static class WorkspaceSmoke
     internal static int Run()
     {
         _failed = 0;
+        Settings.SettingsPathForTest = Path.Combine(Path.GetTempPath(), $"bgs-workspace-{Guid.NewGuid():N}.cfg");
+        Settings.TrySet("tour_done", "1", out _);
         ActivityRailSelectsExistingTabs();
         ProductionChromeLivesInTheShell();
+        HomeOpensAuthoringTools();
+        TourGuideSmoke.Run();
         LayoutAndHandlersRemainConnected();
         StandaloneSampleResolvesAdjacentSkeleton();
         TreeFilterDoesNotSilentlyDimTheGraph();
         HkGridHeaderScrollsWithRows();
+        AssistantEditorSmoke.Run();
+        File.Delete(Settings.SettingsPathForTest);
+        Settings.SettingsPathForTest = null;
         return _failed;
     }
 
     internal static int LayoutRun()
     {
         _failed = 0;
+        TopToolbarsLeaveTheWorkspaceClear();
+        HomeOpensAuthoringTools();
         LayoutAndHandlersRemainConnected();
         StandaloneSampleResolvesAdjacentSkeleton();
         return _failed;
+    }
+
+    private static void TopToolbarsLeaveTheWorkspaceClear()
+    {
+        var window = AppHost.CreateMainWindow();
+        window.Width = 1000;
+        window.Height = 740;
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        var shell = EditorShell.Find(window.Content as Control)!;
+        var home = Smoke.Find<Button>(shell).Single(b => b.Content?.ToString() == "Home");
+        CheckTrue("workspace navigation is horizontal at the top",
+            home.Parent is StackPanel navigation && navigation.Orientation == Avalonia.Layout.Orientation.Horizontal);
+        foreach (string header in new[] { "Tree", "Graph", "Symbols", "Chain", "Project search", "Animation", "Playback", "Compare" })
+        {
+            Smoke.SelectTab(window, header);
+            Dispatcher.UIThread.RunJobs();
+            var tabs = Smoke.Find<TabControl>(window).First();
+            CheckTrue($"{header} does not show a duplicate workspace tab strip",
+                tabs.GetVisualDescendants().OfType<Avalonia.Controls.Presenters.ItemsPresenter>()
+                    .Any(items => items.TemplatedParent == tabs && items.ClipToBounds && items.Bounds.Height == 0));
+            CheckTrue($"{header} hidden headers are excluded from keyboard tab navigation",
+                tabs.GetVisualDescendants().OfType<Avalonia.Controls.Presenters.ItemsPresenter>()
+                    .Any(items => items.TemplatedParent == tabs && Avalonia.Input.KeyboardNavigation.GetTabNavigation(items) == Avalonia.Input.KeyboardNavigationMode.None));
+            CheckTrue($"{header} still displays its workspace content",
+                tabs.SelectedContent is Control content && content.GetVisualAncestors().Contains(tabs) && content.Bounds.Height > 0);
+            string command = header switch
+            {
+                "Tree" => "Expand all", "Graph" => "Fit all", "Symbols" => "Rename",
+                "Chain" => "Sweep all subgraphs", "Project search" => "Search project",
+                "Animation" => "Set frame", "Playback" => "Play", _ => "Compare with..."
+            };
+            var button = Smoke.Find<Button>(window).Single(b => b.Content?.ToString() == command);
+            CheckTrue($"{header} commands are outside workspace content",
+                !button.GetVisualAncestors().Contains(tabs));
+            var toolbar = Smoke.Find<Border>(shell).Single(border => border.Name == "WorkspaceToolbar");
+            var scroll = (ScrollViewer)toolbar.Child!;
+            var horizontalBar = scroll.GetVisualDescendants().OfType<Avalonia.Controls.Primitives.ScrollBar>()
+                .Single(bar => bar.TemplatedParent == scroll && bar.Orientation == Avalonia.Layout.Orientation.Horizontal);
+            var presenter = scroll.GetVisualDescendants().OfType<Avalonia.Controls.Presenters.ScrollContentPresenter>()
+                .Single(content => content.TemplatedParent == scroll);
+            double contentBottom = presenter.TranslatePoint(new Point(0, presenter.Bounds.Height), scroll)!.Value.Y;
+            double scrollbarTop = horizontalBar.TranslatePoint(default, scroll)!.Value.Y;
+            CheckTrue($"{header} scrollbar has its own space below toolbar controls", contentBottom <= scrollbarTop + 0.5);
+            CheckTrue($"{header} toolbar starts at its first command", scroll.Offset.X == 0);
+            CheckTrue($"{header} ribbon leaves room for the editor", toolbar.Bounds.Height < 160 && tabs.Bounds.Height > 300);
+            if (scroll.Extent.Width > scroll.Viewport.Width)
+            {
+                scroll.Offset = new Vector(scroll.Extent.Width - scroll.Viewport.Width, 0);
+                Dispatcher.UIThread.RunJobs();
+                CheckTrue($"{header} overflowing commands can be scrolled into view", scroll.Offset.X > 0);
+            }
+        }
+        Smoke.CloseForTest(window);
+    }
+
+    private static void HomeOpensAuthoringTools()
+    {
+        var window = AppHost.CreateMainWindow();
+        window.Width = 1000;
+        window.Height = 740;
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        Click(window, "Home");
+        var home = (Control)Smoke.Find<TabControl>(window).First().SelectedContent!;
+        foreach (var (label, type, tab) in new[] {
+            ("Open skeleton editor", typeof(RigAuthoringWindow), "Skeleton"),
+            ("Open skin editor", typeof(RigAuthoringWindow), "Skin weights"),
+            ("Open physics simulation", typeof(RigAuthoringWindow), "Physics simulation"),
+            ("Open structure authoring", typeof(BehaviourStructureWindow), ""),
+            ("Open batch authoring", typeof(BatchAuthoringWindow), "") })
+        {
+            var button = Smoke.Find<Button>(home).SingleOrDefault(b => b.Content?.ToString() == label);
+            CheckTrue($"Home offers {label}", button != null && button.IsEffectivelyVisible && button.Bounds.Height > 0);
+            if (button == null) continue;
+            var card = button.GetVisualAncestors().OfType<Border>().First();
+            CheckTrue($"{label} fits its Home card",
+                button.TranslatePoint(new Point(button.Bounds.Width, 0), card)!.Value.X <= card.Bounds.Width - 12);
+            Smoke.Click(button);
+            Dispatcher.UIThread.RunJobs();
+            var editor = window.OwnedWindows.Single();
+            Check($"{label} opens its editor", type, editor.GetType());
+            if (tab.Length > 0)
+                Check($"{label} selects its tool", tab,
+                    ((TabItem)Smoke.Find<TabControl>(editor).Single().SelectedItem!).Header?.ToString());
+            editor.Close();
+            Dispatcher.UIThread.RunJobs();
+            Check("opening a tool keeps Home selected", EditorShell.Home, window.SelectedActivity);
+        }
+        Smoke.CloseForTest(window);
     }
 
     private static void StandaloneSampleResolvesAdjacentSkeleton()
@@ -58,12 +157,12 @@ internal static class WorkspaceSmoke
         Dispatcher.UIThread.RunJobs();
 
         var shell = EditorShell.Find(window.Content as Control);
-        CheckTrue("the command area groups file and document actions",
+        CheckTrue("the command area groups file actions and keeps document commands available",
             shell != null && Smoke.Find<TextBlock>(shell).Any(text => text.Text == "OPEN BEHAVIOUR") &&
-            Smoke.Find<TextBlock>(shell).Any(text => text.Text == "DOCUMENT ACTIONS"));
+            Smoke.Find<Button>(shell).Any(button => button.Content?.ToString() == "Save to .hkx"));
         CheckTrue("the status footer remains in the shell",
             shell != null && shell.Children.OfType<Border>().Any(child =>
-                Grid.GetRow(child) == 3 && child.Child is Border));
+                Grid.GetRow(child) == 4 && child.Child is StackPanel));
 
         Smoke.SelectTab(window, "Playback");
         foreach (string section in new[] { "PLAYBACK CONTROLS", "VIEWPORT OVERLAYS", "SCENE TOOLS", "TIMELINE" })
@@ -83,7 +182,7 @@ internal static class WorkspaceSmoke
             CheckTrue($"Chain has the {section.ToLowerInvariant()} section",
                 Smoke.Find<TextBlock>(window).Any(text => text.Text == section));
 
-        Smoke.SelectTab(window, "Bridge");
+        Smoke.SelectTab(window, "Graph");
         Smoke.Click(Smoke.Find<Button>(window).First(button => button.Content?.ToString() == "Check graph"));
         Check("the command Check graph handler still runs", "Nothing loaded to check.", window.StatusForTest);
         Smoke.CloseForTest(window);
@@ -145,7 +244,7 @@ internal static class WorkspaceSmoke
             Smoke.Find<TextBlock>(window).Any(text =>
                 (text.Text ?? "").Contains("Inspect", StringComparison.Ordinal)
                 && (text.Text ?? "").Contains("Tree", StringComparison.Ordinal)
-                && (text.Text ?? "").Contains("left rail", StringComparison.Ordinal)));
+                && (text.Text ?? "").Contains("top toolbar", StringComparison.Ordinal)));
         CheckTrue("Bridge copy no longer says Tree tab",
             !Smoke.Find<TextBlock>(window).Any(text => (text.Text ?? "").Contains("Tree tab")));
         CheckTrue("Bridge copy no longer says bottom bar",

@@ -215,7 +215,7 @@ internal static partial class AssistantLifecycleSmoke
             window.AssistantUiForTest.SetSessionForTest(new AssistantSession(client, new[] { tool }), tools);
 
             pane.Composer.Text = "Look at this.";
-            Smoke.Find<Button>(window).Single(button => button.Content?.ToString() == "Send")
+            Smoke.Find<Button>(window.AssistantUiForTest!.Pane).Single(button => button.Content?.ToString() == "Send")
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Dispatcher.UIThread.RunJobs();
 

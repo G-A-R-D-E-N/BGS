@@ -172,6 +172,9 @@ public static class SaveVerifier
         if (nested == null) return false;
         int offset = start + nested.Value.Offset;
 
+        if (nested.Value.VType is "TYPE_STRINGPTR" or "TYPE_CSTRING")
+            return rebuilt.ReadStringAt(offset) == change.Value;
+
         if (nested.Value.VType == "TYPE_POINTER")
         {
             var read = rebuilt.ReadRefAt(offset, out bool wasNull);
@@ -332,8 +335,7 @@ public static class SaveVerifier
         var array = rebuilt.ArrayAt(offset);
         if (array == null) return false;
 
-        string elementType = type[("array of ").Length..];
-        var intended = NumberCodecs.ArrayBytes(change.Value, elementType, width);
+        var intended = NativeSave.Numbers(change.Value, type, width);
         if (intended == null || array.Count != intended.Length / width) return false;
         if (array.Count == 0) return true;
 

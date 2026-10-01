@@ -105,34 +105,21 @@ public partial class MainWindow : Window
         _drawerButton = Ux.Secondary("Show diagnostics");
         _drawerButton.Click += (_, _) => SetGraphDrawerOpen(!_graphDrawerOpen);
         ToolTip.SetTip(_drawerButton, "Show validation findings and diagnostic output below the graph.");
-        var drawerBar = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 0,
-            Margin = new Thickness(0, 8, 0, 0),
-        };
-        drawerBar.Children.Add(_drawerButton);
+        toolbarLeft.Children.Add(_drawerButton);
+        var graphTools = new StackPanel { Children = { toolbarHost, _graphEditShelf } };
+        RegisterToolbar("Graph", graphTools);
 
         _graphDrawerSplitter = new GridSplitter { Height = 6, Background = Ux.BorderBrush,
             ResizeDirection = GridResizeDirection.Rows, IsVisible = false };
 
         var graphWorkspace = new Grid();
-        graphWorkspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        graphWorkspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         graphWorkspace.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
-        graphWorkspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         graphWorkspace.RowDefinitions.Add(_graphDrawerSplitterRow);
         graphWorkspace.RowDefinitions.Add(_graphDrawerRow);
-        Grid.SetRow(toolbarHost, 0);
-        Grid.SetRow(_graphEditShelf, 1);
-        Grid.SetRow(workspace, 2);
-        Grid.SetRow(drawerBar, 3);
-        Grid.SetRow(_graphDrawerSplitter, 4);
-        Grid.SetRow(drawer, 5);
-        graphWorkspace.Children.Add(toolbarHost);
-        graphWorkspace.Children.Add(_graphEditShelf);
+        Grid.SetRow(workspace, 0);
+        Grid.SetRow(_graphDrawerSplitter, 1);
+        Grid.SetRow(drawer, 2);
         graphWorkspace.Children.Add(workspace);
-        graphWorkspace.Children.Add(drawerBar);
         graphWorkspace.Children.Add(_graphDrawerSplitter);
         graphWorkspace.Children.Add(drawer);
 

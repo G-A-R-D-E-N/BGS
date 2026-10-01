@@ -4,6 +4,23 @@ Changes that affect Behaviour Graph Studio users are documented here.
 
 New to BGS? See the [Getting Started Guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
 
+## 1.3.0
+
+October 1, 2026
+
+* The Home tour includes an AI chat guide for setup, requests, action approval and checking results before saving. The tour can be replayed after finishing or skipping it.
+
+* The assistant can read and propose interactions with editor and authoring controls, including graph and rig viewport gestures, using the existing handlers. Each action and named file/folder operation requires approval; stale actions are refused. Account, password and assistant approval controls are excluded.
+* Top toolbar scrollbars reserve their own space below controls, preventing overlap on all workspace tabs.
+* Rig previews fill the remaining window space and clip zoomed or panned geometry to the viewport. Skeleton, skin and physics tabs each offer Fit preview; settings scroll independently.
+* Home now offers direct buttons for skeleton editing, skin weights, physics simulation, structure authoring and batch authoring. Rig shortcuts open the selected tool immediately.
+* Moved Home, Graph, Inspect, Animation and Project navigation to the top of the window. Each view has its own grouped command toolbar; wide toolbars scroll horizontally, while inspectors and the playback timeline stay beside the content they affect.
+* Removed duplicate workspace tab headers. Graph authoring tools live under Graph, skeleton/skin authoring under Animation, and About and assistant controls remain available in the top bar.
+* Added a Skeleton / skin authoring window with bone names, reference transforms, translation locks, parent changes, validation, undo/redo, and verified HKX save/reopen. Bone addition/removal and reorderings are supported for standalone skeleton files; dependent rigs refuse changes that require asset remapping.
+* Added Fallout 4 NIF vertex influence editing, shape-wide normalization and pruning, bone-weight copying, mirror matching, a mesh preview, and verified weight-only save/reopen with backups and external-change protection.
+* Added interactive BEPU physics preview with measured convex hulls, gravity, ground and body collisions, fixed/ball/hinge/cone/twist preview joints, pause/step/reset, and body impulses. Masses and preview joint limits are explicitly authored in the window; uniform-density inertia and preview settings do not reproduce or modify native Havok solver settings.
+* Added mounted editor and simulation lifecycle checks to both CI platforms.
+
 ## 1.2.0
 
 October 1, 2026

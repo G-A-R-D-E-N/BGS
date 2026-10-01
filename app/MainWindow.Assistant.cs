@@ -32,7 +32,8 @@ public partial class MainWindow : Window, IAssistantEditorDocument
         return new AssistantTools(
             new AssistantInspection(),
             new AssistantClipMutation(this),
-            AuthorizeAssistantPath);
+            AuthorizeAssistantPath,
+            new AssistantEditor(this));
     }
 
     internal AssistantSession CreateAssistantSession(IChatClient client, AssistantTools tools) =>

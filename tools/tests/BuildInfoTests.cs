@@ -8,7 +8,7 @@ public sealed class BuildInfoTests
     [Fact]
     public void ReportCarriesVersionBuildAndRuntime()
     {
-        Assert.Equal("1.2.0", BuildInfo.Version);
+        Assert.Equal("1.3.0", BuildInfo.Version);
         Assert.False(string.IsNullOrWhiteSpace(BuildInfo.Build));
         Assert.False(string.IsNullOrWhiteSpace(BuildInfo.Runtime));
         Assert.Equal(

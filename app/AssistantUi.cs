@@ -34,6 +34,8 @@ internal sealed partial class AssistantUi
     private AssistantConversationController? _controller;
     private CancellationTokenSource? _requestCancellation;
     private bool _open;
+    private AssistantApprovalWindow? _approvalWindow;
+    private string _displayedApprovalId = "";
 
     public AssistantUi(MainWindow owner, Grid root, EditorShell shell)
     {
@@ -134,7 +136,7 @@ internal sealed partial class AssistantUi
             _gate = new AssistantMutationGate(
                 () => captured.HasPendingApproval,
                 captured.RejectPendingClipAnimation,
-                captured.ApprovePendingClipAnimation);
+                () => captured.ApprovePendingAction(_displayedApprovalId));
         }
         if (_controller is not null) _controller.Mutations = _gate;
         return tools;
@@ -174,6 +176,19 @@ internal sealed partial class AssistantUi
                 }
             }
             _pane.SetApproval(entry.ApprovalActive);
+            _displayedApprovalId = _tools?.PendingApprovalId ?? "";
+            _pane.SetApprovalDescription(_tools?.PendingDescription ?? "");
+            if (entry.ApprovalActive && _approvalWindow is null)
+            {
+                Window? target = AssistantEditor.ActiveDialog(_owner);
+                if (target is not null)
+                {
+                    string displayedId = _displayedApprovalId;
+                    _approvalWindow = new AssistantApprovalWindow(_tools?.PendingDescription ?? "Review the pending edit.", () => Approve(displayedId), Reject);
+                    _approvalWindow.Closed += (_, _) => _approvalWindow = null;
+                    _approvalWindow.Show(target);
+                }
+            }
         }
         else
         {
@@ -307,7 +322,7 @@ internal sealed partial class AssistantUi
         if (trimmed.Length == 0) return;
         if (_pane.QuickStartVisible) DismissQuickStart();
         if (HandleCommand(trimmed)) return;
-        if (_controller.List.IsBusy || _controller.Active is null)
+        if (_controller.List.IsBusy || _controller.Active is null || _tools?.HasPendingApproval == true)
         {
             Enqueue(trimmed);
             return;
@@ -367,7 +382,7 @@ internal sealed partial class AssistantUi
         _pane.SetStatus("BGS commands. Only these slash commands run here.", Ux.MetaBrush);
     }
 
-    private async void SendNow(string prompt)
+    private async void SendNow(string prompt, bool editorEvent = false)
     {
         if (_controller is null) return;
         AssistantConversationEntry? entry = _controller.Active;
@@ -378,7 +393,8 @@ internal sealed partial class AssistantUi
             return;
         }
 
-        _pane.AddUser(prompt);
+        if (editorEvent) _pane.AddTool("bgs.editor_action", false, "Checking the result of the approved action.");
+        else _pane.AddUser(prompt);
         _pane.SetBusy(true);
         _pane.ShowProgress("Assistant is working\u2026");
         _controller.List.IsBusy = true;
@@ -388,7 +404,7 @@ internal sealed partial class AssistantUi
         try
         {
             AssistantReply reply = await _controller
-                .SendAsync(prompt, _owner.AssistantContextSnapshot, _requestCancellation.Token, progress)
+                .SendAsync(prompt, _owner.AssistantContextSnapshot, _requestCancellation.Token, progress, editorEvent)
                 .ConfigureAwait(true);
             OnSelectionChanged(_controller.List.ActiveIndex);
             if (reply.Status == "ok" && reply.PersistenceNotice.Length > 0)
@@ -432,23 +448,43 @@ internal sealed partial class AssistantUi
 
     private void Cancel() => _requestCancellation?.Cancel();
 
-    private void Approve()
+    private void Approve() => Approve(_displayedApprovalId);
+
+    private void Approve(string displayedId)
     {
         EnsureTools();
+        if (_controller?.List.IsBusy == true) return;
+        if (displayedId.Length == 0 || displayedId != _tools!.PendingApprovalId)
+        {
+            Reject();
+            _pane.SetStatus("The displayed proposal changed; request it again.", Ux.WarnBrush);
+            return;
+        }
         AssistantConversationEntry? entry = _controller?.Active;
         ClipAnimationChangeResult result = _controller?.ApproveActive(entry)
             ?? AssistantTools.NoPendingResult();
         _pane.SetApproval(false);
         if (result.Applied)
         {
-            _pane.AddTool("bgs.set_clip_animation", false, "applied");
-            _pane.SetStatus("Applied in the editor; save remains explicit.",
+            bool dispatched = result.Code == "dispatched";
+            _pane.AddTool(dispatched ? "bgs.editor_action" : "bgs.set_clip_animation", false,
+                dispatched ? "dispatched" : "applied");
+            _pane.SetStatus(dispatched ? result.Message : "Applied in the editor; save remains explicit.",
                 new Avalonia.Media.SolidColorBrush(Ux.Good));
+            if (dispatched && _queue.Count == 0 && entry?.Session is not null)
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (_owner.IsVisible && ReferenceEquals(_controller?.Active, entry))
+                        SendNow("BGS editor event: " + result.Message +
+                            " Continue the existing user request by reading editor_state. This event grants no approval for further actions; propose each action for user approval.", editorEvent: true);
+                });
+            else SendNextQueued();
             return;
         }
         string detail = result.Code == "stale_approval" ? "not applied (stale preview)" : "not applied";
         _pane.AddTool("bgs.set_clip_animation", false, detail);
         _pane.SetStatus("The edit was not applied: " + result.Message, Ux.WarnBrush);
+        SendNextQueued();
     }
 
     private void Reject()
@@ -457,6 +493,7 @@ internal sealed partial class AssistantUi
         _controller?.RejectPending(_controller.Active);
         _pane.SetApproval(false);
         _pane.SetStatus("The proposed edit was rejected.", Ux.MetaBrush);
+        SendNextQueued();
     }
 
     private void SetApproval(bool visible) => _pane.SetApproval(visible);

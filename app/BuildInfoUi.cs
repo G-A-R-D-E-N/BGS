@@ -51,13 +51,7 @@ public static class BuildInfoUi
         var editor = EditorShell.Find(current);
         if (editor != null)
         {
-            var native = editor.Tools.Children.OfType<NativeAuthoringStrip>().FirstOrDefault();
-            if (native?.Child is Panel nativeRow)
-            {
-                nativeRow.Children.Add(strip);
-                return;
-            }
-            editor.Tools.Children.Add(strip);
+            editor.Help.Children.Add(strip);
             return;
         }
 

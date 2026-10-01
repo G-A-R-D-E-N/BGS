@@ -49,7 +49,7 @@ internal static partial class AssistantLifecycleSmoke
             window.AssistantUiForTest.SetSessionForTest(
                 window.CreateAssistantSession(fake, tools), tools);
             window.AssistantUiForTest.Pane.Composer.Text = "Update the selected clip.";
-            Smoke.Find<Button>(window).Single(button => button.Content?.ToString() == "Send")
+            Smoke.Find<Button>(window.AssistantUiForTest!.Pane).Single(button => button.Content?.ToString() == "Send")
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Dispatcher.UIThread.RunJobs();
             Check("stale scenario starts with a pending preview",
@@ -60,7 +60,7 @@ internal static partial class AssistantLifecycleSmoke
             bool committed = ((IAssistantEditorDocument)window).TryCommit(advanced, out _);
             Check("the active document advanced before approval", committed);
 
-            Smoke.Find<Button>(window).Single(button => button.Content?.ToString() == "Apply approved edit")
+            Smoke.Find<Button>(window).Single(button => button.Content?.ToString() == "Approve action")
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Dispatcher.UIThread.RunJobs();
             Check("a stale approval is reported as not applied",
@@ -224,7 +224,7 @@ internal static partial class AssistantLifecycleSmoke
             AssistantTools tools = window.CreateAssistantTools();
             window.AssistantUiForTest.SetSessionForTest(window.CreateAssistantSession(fake, tools), tools);
             window.AssistantUiForTest.Pane.Composer.Text = "what can you do";
-            Smoke.Find<Button>(window).Single(button => button.Content?.ToString() == "Send")
+            Smoke.Find<Button>(window.AssistantUiForTest!.Pane).Single(button => button.Content?.ToString() == "Send")
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Dispatcher.UIThread.RunJobs();
 
@@ -370,14 +370,14 @@ internal static partial class AssistantLifecycleSmoke
             window.AssistantUiForTest.SetSessionForTest(
                 window.CreateAssistantSession(fake, approvalTools), approvalTools);
             window.AssistantUiForTest.Pane.Composer.Text = "Update the selected clip.";
-            Smoke.Find<Button>(window).Single(button => button.Content?.ToString() == "Send")
+            Smoke.Find<Button>(window.AssistantUiForTest!.Pane).Single(button => button.Content?.ToString() == "Send")
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Dispatcher.UIThread.RunJobs();
             Check("model can invoke the real clip preview tool", fake.CallCount == 2);
             Check("preview waits for explicit approval",
                 window.AssistantUiForTest.ApprovalVisible && !window.IsDirty);
 
-            Smoke.Find<Button>(window).Single(button => button.Content?.ToString() == "Apply approved edit")
+            Smoke.Find<Button>(window).Single(button => button.Content?.ToString() == "Approve action")
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Dispatcher.UIThread.RunJobs();
             Check("approval uses the normal editor commit", window.IsDirty && window.UndoStepsForTest == 1);

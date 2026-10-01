@@ -62,12 +62,8 @@ public partial class MainWindow : Window
 
         bar.Children.Add(Ux.Pill(_symbolAudit));
 
-        var panel = new DockPanel();
-        DockPanel.SetDock(bar, Dock.Top);
-        bar.Margin = new Thickness(0, 0, 0, 8);
-        panel.Children.Add(bar);
-        panel.Children.Add(_symbols);
-        return panel;
+        RegisterToolbar("Symbols", ToolbarGroup("Symbols", bar));
+        return _symbols;
     }
 
     private async Task PickScriptsFolder()

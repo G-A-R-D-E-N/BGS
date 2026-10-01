@@ -37,7 +37,10 @@ internal sealed partial class AssistantPane : Border
         "Choose a model with the Model button; the gear holds the provider and API key.",
         "Type / for commands: /new, /clear, /model, /cancel, /help.",
         "Enter sends and Shift+Enter adds a line; you can queue the next message while it works.",
-        "Any edit BGS proposes waits for your approval before it is applied.",
+        "Describe your goal and name the target bone, node or field; open the relevant file first.",
+        "Each action waits for your approval. Review its target, value and path before choosing Approve action or Reject.",
+        "Check the result after approval; an action is not a confirmed edit or save.",
+        "Home > Take the tour includes the AI chat guide. Keep credentials in Settings, not chat.",
     };
     private readonly StackPanel _commandPanel = new() { Spacing = 1 };
     private readonly List<Border> _commandRows = new();
@@ -66,8 +69,9 @@ internal sealed partial class AssistantPane : Border
     private readonly Button _send = Ux.Primary("Send");
     private readonly Button _cancel = Ux.Secondary("Cancel");
     private readonly Border _approval = new();
+    private readonly TextBlock _approvalDescription = new() { TextWrapping = TextWrapping.Wrap, Foreground = Ux.WarnBrush };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
-    private readonly Button _approve = Ux.Primary("Apply approved edit");
+    private readonly Button _approve = Ux.Primary("Approve action");
     private readonly Button _reject = Ux.Secondary("Reject");
     private readonly TextBlock _chatHeader = new()
     {
@@ -162,6 +166,7 @@ internal sealed partial class AssistantPane : Border
                     Foreground = Ux.WarnBrush,
                     TextWrapping = TextWrapping.Wrap,
                 },
+                new ScrollViewer { MaxHeight = 140, Content = _approvalDescription },
                 approvalButtons,
             },
         };
@@ -329,8 +334,11 @@ internal sealed partial class AssistantPane : Border
         _cancel.IsVisible = busy;
         _modelButton.IsEnabled = !busy;
         _modelReset.IsEnabled = !busy;
+        _approve.IsEnabled = !busy;
+        _reject.IsEnabled = !busy;
     }
     public void SetApproval(bool visible) => _approval.IsVisible = visible;
+    public void SetApprovalDescription(string text) => _approvalDescription.Text = text;
 
     public bool ProgressVisible => _progress.IsVisible;
     public string ProgressText => _progressText.Text ?? "";

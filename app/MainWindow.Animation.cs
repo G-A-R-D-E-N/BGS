@@ -32,7 +32,7 @@ public partial class MainWindow : Window
 
         var panel = new DockPanel();
         AddTop(panel, Ux.Pill(_animationSummary));
-        AddTop(panel, Ux.Group("Frame navigation", Ux.Wrap(Ux.Pill(_framePage), first, earlier, later, last)));
+        var navigation = ToolbarGroup("Frame navigation", first, earlier, later, last, _framePage);
 
         var aim = Ux.Secondary("Find frame");
         aim.Click += (_, _) => AimAtFraction();
@@ -42,7 +42,8 @@ public partial class MainWindow : Window
             if (e.Property == TextBox.TextProperty) ShowAnimationFrames();
         };
 
-        AddTop(panel, Ux.Group("Find a frame", Ux.Wrap(Ux.Pill(_fractionAnswer), _boneFilter, _fraction, aim)));
+        var find = ToolbarGroup("Find a frame", _boneFilter, _fraction, aim);
+        AddTop(panel, _fractionAnswer);
 
         var apply = Ux.Secondary("Set frame");
         apply.Click += (_, _) => SetFrame();
@@ -54,8 +55,9 @@ public partial class MainWindow : Window
 
         _animation.SelectionChanged += ShowSelectedFrame;
 
-        AddTop(panel, Ux.Group("Edit selected frame",
-            Ux.Wrap(_framePosition, _frameRotation, _frameScale, apply, write, Ux.Pill(_frameEditAnswer))));
+        RegisterToolbar("Animation", navigation, find,
+            ToolbarGroup("Edit selected frame", _framePosition, _frameRotation, _frameScale, apply, write));
+        AddTop(panel, _frameEditAnswer);
 
         panel.Children.Add(_animation);
         return panel;

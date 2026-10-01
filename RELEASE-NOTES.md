@@ -1,116 +1,45 @@
-# Behaviour Graph Studio 1.2.0
+# Behaviour Graph Studio 1.3.0
 
-Behaviour Graph Studio 1.2.0 adds persistent multi-provider conversations and is a release-hardening update focused on dependable Fallout 4
-inspection, measured authoring, and safe diagnostics. Unsupported operations remain read-only or
-fail closed instead of writing guessed data.
+This update brings skeleton and skin tools into the editor, adds interactive collision-based physics preview, and lets the assistant propose approved actions across editor workspaces. Home's tour explains how to use the AI chat.
 
 ## Major changes
 
-- Persistent Assistant conversations with separate histories, provider selection, and model selection
-  for Codex, Claude, OpenCode, Gemini, and OpenAI-compatible services.
-- Conservative skeleton hierarchy, mirroring, and skin-weight authoring library tools with validation;
-  editor skeleton/skin editing and save workflows remain unavailable.
-- Headless archive, modlist/load-order, and clip scans for CI and mod validation.
-- Versioned JSON reports, progress reporting, archive indexing/caching, extraction, and deterministic
-  compare exports.
-- Crash-analysis helpers for AnimTextData subgraphs and missing animation coverage.
-- Round-trip diagnostics, save-fidelity fixtures, packfile conversion checks, and stronger save
-  transaction safety.
-- A read-only stdio MCP server with bounded behavior, object, animation, project, and search
-  inspection, plus a side-effect-free clip-animation preview.
-- An optional in-app Assistant drawer with provider integration, bounded editor context, and
-  explicit approval for revision-bound clip changes.
-- A platform-safe Bridge layout with drag-and-drop handling that remains available alongside the
-  Assistant drawer, including deterministic mounted-turret mesh resolution.
-- A workspace shell with Home, Graph, Inspect, Animation, and Project activities, contextual
-  secondary views, grouped command controls, and horizontally aligned grid headers.
-- Measured ragdoll body-frame and centre-of-mass inspection, frame-distance measurement, and
-  constrained Drop/Recover preview controls with lifecycle and stale-state protection.
-- Verified structure-authoring save/reopen coverage for supported graph data, with explicit refusal
-  of unsupported or unverified writes.
-- Self-contained Windows and Linux packages with build identity shown by `--version` and About.
+- Home's tour includes an AI chat guide for provider setup, clear requests, reviewing approvals and verifying edits and saves. Take the tour can be replayed.
 
-## Authoring
+- The assistant can operate editor and authoring controls through approved actions, including graph/rig gestures and explicit file paths. Existing asset checks and save behavior apply. Dispatch means an interaction was sent; the assistant must inspect the resulting editor state before claiming success. Credentials and approval controls are excluded.
+- Top toolbar scrollbars sit below their controls without overlapping buttons or fields.
+- Skeleton, skin and physics previews resize with the window, stay inside their viewport and offer Fit preview. Settings scroll separately from the preview.
+- Home includes an Authoring tools section with direct skeleton, skin, physics, structure and batch editor shortcuts.
+- Top workspace toolbars: Home, Graph, Inspect, Animation and Project select grouped commands above the editing area. Wide command groups scroll horizontally instead of filling the middle of the window.
+- Graph hosts batch and structure authoring; Animation hosts skeleton/skin authoring. Duplicate workspace tab headers are removed; inspectors, results and the playback timeline remain in the workspace.
+- Skeleton authoring: bone names, reference transforms, translation locks, parent changes, validation, mirror-pair inspection, undo/redo and verified save/reopen.
+- Standalone skeletons support bone addition/removal and reordering. Dependent rigs refuse edits that need animation, mapper or physics index remapping.
+- Skin authoring: per-vertex influences, normalization, pruning, bone-weight copying, mirror matching, mesh inspection, undo/redo and weight-only NIF persistence.
+- Interactive physics: gravity, ground and body collisions, preview joints, pause/step/reset and selected-body impulses using BEPU 2.4.0.
 
-- Supported behaviour and animation edits continue to use the verified native save pipeline.
-- Structure authoring supports expression transition conditions, enter/exit notify events, global events, and non-empty state-machine creation and attachment, with verified save/reopen coverage.
-- Native graph authoring, templates, variables, transitions, symbols, and supported arrays are
-  covered by validation and save/reopen checks.
-- Skeleton and skin authoring APIs are library tools; the editor does not expose skeleton/skin
-  editing or a NIF skin-weight save workflow.
-- Simple skeleton-mapper rows can be constructed for explicit caller-provided pairs, with measured
-  validation and conservative refusal of malformed inputs; mapper serialization remains incomplete.
+## Safety and compatibility
 
-## Fallout 4 analysis tools
-
-- Scan archives, enabled modlists, and merged clip resolution without opening the desktop UI.
-- Inspect project chains, animation references, crash-log subgraphs, and machine-readable reports.
-- Read vanilla files directly from BA2 archives while preserving read-only behavior for archive copies.
-- Compare behaviour files with filtering and deterministic exports.
-
-## Animation / skeleton / skin
-
-- Animation playback, frame editing, trimming, retiming, spline diagnostics, and skeleton rendering.
-- Skeleton rendering, retarget/skeleton-mapper reading, and measured simple mapper-row construction.
-- Skeleton hierarchy and skin-weight authoring APIs are library tools without an editor save workflow.
-- Embedded NIF Havok payload reading and bounded Havok tagfile groundwork.
-
-## Physics / ragdoll
-
-- Read-only physics and cloth inspection, including bodies, shapes, constraints, body frames, centre
-  of mass, pivots, limits, engineering labels, and animation-to-ragdoll mapping.
-- Pin two body frames to inspect their measured distance, with self-pair refusal and state that
-  remains stable while inspecting constraints or hovering the viewport.
-- Engineering frame mode and constrained Drop/Recover preview for measured ragdoll data.
-
-The Drop/Recover control is an engineering preview and is explicitly not a full Havok simulation.
-
-## Save safety and compatibility
-
-- Supported saves retain backup and recovery behavior, verify output before publication, and refuse
-  unsafe or unverified writes without modifying the source.
-- Assistant clip changes stay in the active document until explicit UI approval; saving remains a
-  separate verified action with normal undo, backup, and source-stamp guarantees.
-- External MCP remains read-only: it has no write-capable tool, shell access, arbitrary filesystem
-  writes, or caller-controlled approval path.
-- Playback can resolve adjacent skeletons and matching mounted-turret meshes deterministically, and
-  Bridge file drops accept the platform's single-file and multi-file storage payloads.
-- Round-trip and save-fidelity coverage protects unknown data and existing file structure where the
-  current reader/writer can prove preservation.
-- Fallout 4 packfiles are the primary supported Havok target. Self-contained packages target Windows
-  x64 and Linux x64.
+- Skeleton and skin saves retain backups and refuse external file changes. Edits are verified in memory and after rebuilding the native file.
+- NIF saving supports Fallout 4 BSVersion 130 vertex skin payloads. It preserves geometry, binding transforms and every byte outside the owned weight/index slots.
+- Physics uses measured convex vertices and complete joint frames. Users explicitly set simulation masses and preview joint limits; inertia assumes uniform hull density.
+- CI exercises the mounted editor save/reopen and physics reset/close lifecycle on both platforms.
 
 ## Known limitations
 
-- Skeleton-mapper serialization/write-back is not complete, and chain mapper authoring is disabled.
-  Shipped Fallout 4 assets do contain chain mappings and unmapped-bone data; their complete authoring
-  semantics are not yet reduced.
-- Automatic mapper bone pairing is not proven. Simple mapper authoring requires explicit pairs.
-- Reciprocal mapper generation is a construction tool. The measured human fixture reproduces its
-  shipped reciprocal, but shipped mapper pairs are not universally mirror-symmetric.
-- Full ragdoll authoring, body-to-body collision simulation, and a full Havok physics solver are not
-  implemented. Current ragdoll support extracts measured bodies, shapes, constraints, bone
-  bindings, frames, and animation mappings for inspection and a constrained preview; it does not
-  write ragdoll data or run a complete physics simulation.
-- Cloth support is inspection and validation only. BGS can read bounded cloth shapes, particles,
-  buffers, collidables, constraints, operators, states, and simulation-cloth references, but it
-  does not simulate cloth, deform meshes, author cloth data, or save cloth changes.
-- The Drop/Recover control is a static engineering preview that follows measured poses; it is not
-  Havok dynamics, body collision, cloth interaction, or a replacement for in-game validation.
-- Havok 2018 support is incomplete. Current Fallout 76 evidence reflects Havok 2015.1.0, not a
-  completed Havok 2018 implementation.
-- Unsupported Havok layouts/classes and conversion paths remain read-only or are refused. BGS never
-  writes guessed data; unsupported editing reports the reason and leaves the source unchanged.
+- Index-changing edits in dependent rigs require asset remapping and are refused. Skeleton mapper write-back remains unsupported.
+- Physics settings stay in the preview window. Native angular atoms, motors, mass/inertia, collision materials and game solver behavior are not imported or modified.
+- Missing/degenerate hulls, incomplete frames, compound/mesh geometry and unsupported native layouts are refused.
+- The existing Drop/Recover control remains a constrained preview. The Physics simulation tab provides the separate collision-based simulation.
+- Cloth simulation and cloth write-back are not implemented.
 
-These limitations are intentional release boundaries for 1.2.0 and are documented in the UI or
-specialist notes where the relevant tool is opened.
+See the [rig authoring guide](guide/rig-authoring.md) for editor steps and save boundaries.
 
 ## Manual Windows smoke checklist
 
 CI cannot validate a real Fallout 4 desktop session. Before publishing, run this checklist with
 the packaged Windows build and vanilla Fallout 4 assets:
 
-- [ ] Launch BGS and confirm About / `--version` reports `1.2.0` and the expected build.
+- [ ] Launch BGS and confirm About / `--version` reports `1.3.0` and the expected build.
 - [ ] Open a vanilla behaviour HKX; browse Tree and Graph.
 - [ ] Open and play an animation; verify skeleton rendering.
 - [ ] Open the physics/ragdoll inspector; verify bodies, constraints, pivots, centre-of-mass and

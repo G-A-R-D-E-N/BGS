@@ -36,6 +36,12 @@ public partial class MainWindow : Window
         string? archivePath = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
         if (archivePath == null) return;
 
+        await OpenArchive(archivePath);
+    }
+
+    private async Task OpenArchive(string archivePath)
+    {
+
         OpenCommonwealth.Services.Archive.Ba2 archive;
         try
         {

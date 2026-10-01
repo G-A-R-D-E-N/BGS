@@ -27,6 +27,7 @@ internal sealed partial class AssistantUi
 
     private void SendNextQueued()
     {
+        if (_tools?.HasPendingApproval == true || _controller?.List.IsBusy == true) return;
         while (_queue.Count > 0)
         {
             (string chatId, string text) = _queue[0];

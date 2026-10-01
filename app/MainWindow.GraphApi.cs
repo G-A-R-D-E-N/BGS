@@ -201,7 +201,8 @@ public partial class MainWindow : Window
         split.Children.Add(_tree);
         split.Children.Add(splitter);
         split.Children.Add(_treeProps);
-        return Rows((Bar(_filter, expand, collapse), false), (split, true));
+        RegisterToolbar("Tree", ToolbarGroup("Inspect objects", _filter, expand, collapse));
+        return split;
     }
 
     public IReadOnlyList<string> ActivityIds => EditorShell.ActivityNames;

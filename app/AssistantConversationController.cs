@@ -140,7 +140,7 @@ public sealed class AssistantConversationController : IDisposable
 
     public async Task<AssistantReply> SendAsync(
         string prompt, AssistantContext context, CancellationToken cancellationToken = default,
-        IProgress<AssistantProgress>? progress = null)
+        IProgress<AssistantProgress>? progress = null, bool editorEvent = false)
     {
         AssistantConversationEntry? entry = List.Active;
         if (entry is null || entry.Deleted) return BusyReply();
@@ -169,7 +169,10 @@ public sealed class AssistantConversationController : IDisposable
 
         string replay = ComposeReplay(entry.Chat, trimmed);
         DateTime stamp = DateTime.UtcNow;
-        AssistantChat updated = AppendUserMessage(entry.Chat, trimmed, stamp);
+        AssistantChat updated = editorEvent
+            ? AssistantChatStore.AppendMessage(entry.Chat,
+                new AssistantChatMessage(AssistantChatRole.Tool, trimmed, stamp, "bgs.editor_action", "dispatched"))
+            : AppendUserMessage(entry.Chat, trimmed, stamp);
 
         AssistantReply reply;
         if (session is IAssistantProgressSink sink) sink.Progress = progress;

@@ -97,7 +97,7 @@ internal static partial class AssistantLifecycleSmoke
             window.AssistantUiForTest.SetSessionForTest(
                 window.CreateAssistantSession(fake, smokeTools), smokeTools);
             window.AssistantUiForTest.Pane.Composer.Text = "Say hello.";
-            Smoke.Find<Button>(window).Single(button => button.Content?.ToString() == "Send")
+            Smoke.Find<Button>(window.AssistantUiForTest.Pane).Single(button => button.Content?.ToString() == "Send")
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Dispatcher.UIThread.RunJobs();
             Check("send reaches the configured provider", fake.CallCount == 1);

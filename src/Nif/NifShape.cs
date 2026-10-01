@@ -20,6 +20,8 @@ public sealed class NifShape
 
     public readonly List<Matrix4x4> SkinToBone = new();
 
+    internal (int Block, int Start, int Stride, int Weights, int Indices)? SkinSource;
+
     public Vector3 NodeTranslation;
     public float NodeScale = 1;
 
@@ -106,6 +108,8 @@ public static class NifGeometry
             NodeScale = scale,
         };
         var layout = Layout(flags, stride);
+        if (layout.Weights >= 0)
+            shape.SkinSource = (block, at, stride, layout.Weights, layout.Indices);
 
         for (int v = 0; v < vertices; v++)
         {

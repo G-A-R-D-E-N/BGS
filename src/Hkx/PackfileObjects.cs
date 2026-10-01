@@ -431,18 +431,22 @@ public sealed class PackfileObjects
     public bool WriteString(Instance instance, string field, string value)
     {
         int? at = FieldAt(instance, field);
-        if (at == null || at + _pointer > _data.Data.Length) return false;
+        return at != null && WriteStringAt(at.Value, value);
+    }
 
-        if (ReadString(instance, field) == value) return true;
+    internal bool WriteStringAt(int at, string value)
+    {
+        if (at < 0 || at + _pointer > _data.Data.Length || value.Contains('\0')) return false;
+        if (ReadStringAt(at) == value) return true;
 
         var bytes = Encoding.UTF8.GetBytes(value);
         var withTerminator = new byte[bytes.Length + 1];
         bytes.CopyTo(withTerminator, 0);
 
         int landed = _data.AppendAligned(withTerminator, PackfileSection.StringAlignment);
-        _data.SetLocal(at.Value, landed);
+        _data.SetLocal(at, landed);
 
-        _pointsAt[at.Value] = landed;
+        _pointsAt[at] = landed;
         return true;
     }
 

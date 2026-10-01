@@ -15,6 +15,17 @@ public static class LifecycleSmoke
 {
     public static int Main(string[] args)
     {
+        if (args.Contains("--rig-authoring"))
+        {
+            bool render = args.Contains("--render-rig");
+            var builder = AppBuilder.Configure<HeadlessApp>();
+            if (render) builder.UseSkia();
+            builder.UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = !render }).SetupWithoutStarting();
+            Settings.SettingsPathForTest = Path.Combine(Path.GetTempPath(), $"bgs-rig-ui-{Guid.NewGuid():N}.cfg");
+            Settings.TrySet("tour_done", "1", out _);
+            try { RigAuthoringSmoke.Run(render ? args.Last() : null); return 0; }
+            finally { File.Delete(Settings.SettingsPathForTest); Settings.SettingsPathForTest = null; }
+        }
         if (args.Contains("--layout-smoke"))
         {
             AppBuilder.Configure<HeadlessApp>()
@@ -37,6 +48,7 @@ public static class LifecycleSmoke
                 .UseHeadless(new AvaloniaHeadlessPlatformOptions())
                 .SetupWithoutStarting();
             AssistantLifecycleSmoke.Run();
+            AssistantEditorSmoke.Run();
             return 0;
         }
 
@@ -139,7 +151,9 @@ public static class LifecycleSmoke
 
             window.Open(animation);
             Dispatcher.UIThread.RunJobs();
-            string orphan = Path.Combine(Path.GetTempPath(), $"bgs-ragdoll-orphan-{Guid.NewGuid():N}.hkx");
+            string orphanFolder = Path.Combine(Path.GetTempPath(), $"bgs-ragdoll-orphan-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(orphanFolder);
+            string orphan = Path.Combine(orphanFolder, "animation.hkx");
             File.Copy(animation, orphan, true);
             window.Open(orphan);
             Dispatcher.UIThread.RunJobs();
@@ -149,6 +163,7 @@ public static class LifecycleSmoke
 
             TryDelete(refused);
             TryDelete(orphan);
+            Directory.Delete(orphanFolder);
         }
         finally
         {

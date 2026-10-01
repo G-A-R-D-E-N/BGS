@@ -68,6 +68,9 @@ jobs:
       - name: Run layout smoke harness
         run: dotnet run --project tools/uismoke/uismoke.csproj --configuration Release --no-build -- --layout-smoke
 
+      - name: Run rig authoring smoke harness
+        run: dotnet run --project tools/uismoke/uismoke.csproj --configuration Release --no-build -- --rig-authoring
+
       - name: Publish platform package
         run: dotnet publish app/BehaviourStudio.csproj --configuration Release --runtime "${{ matrix.rid }}" --self-contained true --no-restore --output publish-check
 
