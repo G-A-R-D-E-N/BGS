@@ -94,6 +94,7 @@ public sealed class HavokConstraint
     public int ConeTwistAxis { get; init; }
     public int ConeRefAxis { get; init; }
     public int LimitAxis { get; init; }
+    public bool HasPreviewLimits { get; init; }
 
     public float[]? FrameA { get; init; }
     public float[]? FrameB { get; init; }

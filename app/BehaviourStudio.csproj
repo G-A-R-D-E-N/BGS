@@ -15,7 +15,7 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <PublishTrimmed>false</PublishTrimmed>
     <DebugType>embedded</DebugType>
-    <Version>1.1.0</Version>
+    <Version>1.3.0</Version>
     <BuildCommit Condition="'$(BuildCommit)' == ''">local</BuildCommit>
   </PropertyGroup>
   <ItemGroup>
@@ -32,6 +32,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../src/BehaviourGraph.Core.csproj" />
+    <None Include="../licenses/BEPU-LICENSE.md" Link="licenses/BEPU-LICENSE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="uismoke" />

@@ -30,3 +30,11 @@ native metadata and is not a runtime, build, or packaging dependency on hkxpack.
 
 The window is built with Avalonia and a release embeds it along with the .NET runtime, which is
 MIT, Copyright (c) .NET Foundation and Contributors.
+
+## BEPU Physics
+
+- Upstream: https://github.com/bepu/bepuphysics2
+- Licence: Apache-2.0. See [BEPU-LICENSE.md](licenses/BEPU-LICENSE.md).
+
+The interactive physics preview uses BepuPhysics 2.4.0. Its license is included in application
+builds and release packages.

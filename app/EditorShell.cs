@@ -4,6 +4,9 @@ using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Presenters;
+using Avalonia.Controls.Templates;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.VisualTree;
@@ -17,6 +20,9 @@ public sealed class EditorShell : Grid
     public const string Inspect = "Inspect";
     public const string Animation = "Animation";
     public const string Project = "Project";
+
+    public const string ChatGlyph = "\U0001F4AC";
+    public const string SettingsGlyph = "\u2699";
 
     public static readonly string[] ActivityNames = { Home, Graph, Inspect, Animation, Project };
 
@@ -37,17 +43,29 @@ public sealed class EditorShell : Grid
         Spacing = 6,
     };
     private readonly Border _secondaryHost;
-    private readonly WrapPanel _tools = new()
+    private readonly Button _settingsButton;
+    private readonly Button _chatButton;
+    private readonly IReadOnlyDictionary<string, Control> _toolbars;
+    private readonly StackPanel _animationTools = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
+    private readonly StackPanel _help = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
+    private readonly ScrollViewer _toolbarScroll = new()
+    {
+        AllowAutoHide = false,
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+    };
+    private readonly StackPanel _tools = new()
     {
         Orientation = Orientation.Horizontal,
         VerticalAlignment = VerticalAlignment.Center,
         HorizontalAlignment = HorizontalAlignment.Stretch,
     };
 
-    public EditorShell(Control command, Control workspace, Control status)
+    public EditorShell(Control command, Control workspace, Control status, IReadOnlyDictionary<string, Control> toolbars)
     {
-        ColumnDefinitions.Add(new ColumnDefinition(new GridLength(76)));
+        _toolbars = toolbars;
         ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+        RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
@@ -55,8 +73,9 @@ public sealed class EditorShell : Grid
 
         var rail = new StackPanel
         {
+            Orientation = Orientation.Horizontal,
             Spacing = 4,
-            Margin = new Thickness(6, 10, 6, 10),
+            Margin = new Thickness(0, 0, 12, 0),
         };
         foreach (var (activity, _) in Workspaces)
         {
@@ -65,8 +84,8 @@ public sealed class EditorShell : Grid
                 Content = activity,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
-                Padding = new Thickness(4, 10),
-                FontSize = Ux.FontSmall,
+                Padding = new Thickness(12, 6),
+                FontSize = Ux.FontBody,
                 CornerRadius = new CornerRadius(Ux.Radius),
                 BorderThickness = new Thickness(0),
             };
@@ -76,28 +95,37 @@ public sealed class EditorShell : Grid
             rail.Children.Add(button);
         }
 
-        var railHost = new Border
-        {
-            Background = Ux.RailBrush,
-            BorderBrush = Ux.BorderBrush,
-            BorderThickness = new Thickness(0, 0, 1, 0),
-            Child = rail,
-        };
-        SetRowSpan(railHost, 4);
-        Children.Add(railHost);
+        _chatButton = RailIcon(ChatGlyph, "Open the assistant chat");
+        _chatButton.Click += (_, _) => ChatRequested?.Invoke();
 
-        var commandBand = new StackPanel { Spacing = Ux.Space };
+        _settingsButton = RailIcon(SettingsGlyph, "Assistant settings: provider, model and sign-in");
+        _settingsButton.Click += (_, _) => SettingsRequested?.Invoke();
+
+        var footer = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            Children = { _chatButton, _settingsButton },
+        };
+        var commandBand = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Ux.Space };
+        commandBand.Children.Add(rail);
         commandBand.Children.Add(command);
-        commandBand.Children.Add(_tools);
+        commandBand.Children.Add(footer);
+        commandBand.Children.Add(_help);
         var commandHost = new Border
         {
             Background = Ux.BaseBrush,
             BorderBrush = Ux.BorderBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(12, 8, 12, 8),
-            Child = commandBand,
+            Child = new ScrollViewer
+            {
+                AllowAutoHide = false,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Content = commandBand,
+            },
         };
-        SetColumn(commandHost, 1);
         Children.Add(commandHost);
 
         _secondaryHost = new Border
@@ -106,17 +134,30 @@ public sealed class EditorShell : Grid
             Child = _secondary,
             IsVisible = false,
         };
-        SetColumn(_secondaryHost, 1);
         SetRow(_secondaryHost, 1);
         Children.Add(_secondaryHost);
+
+        var ribbon = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Ux.Space };
+        foreach (var toolbar in _toolbars.Values) ribbon.Children.Add(toolbar);
+        ribbon.Children.Add(_tools);
+        ribbon.Children.Add(_animationTools);
+        _toolbarScroll.Content = ribbon;
+        var ribbonHost = new Border
+        {
+            Name = "WorkspaceToolbar", Background = Ux.CardBrush,
+            BorderBrush = Ux.BorderBrush, BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(12, 6),
+            Child = _toolbarScroll,
+        };
+        SetRow(ribbonHost, 2);
+        Children.Add(ribbonHost);
 
         var workspaceHost = new Border
         {
             Padding = new Thickness(12, 8, 12, 8),
             Child = workspace,
         };
-        SetColumn(workspaceHost, 1);
-        SetRow(workspaceHost, 2);
+        SetRow(workspaceHost, 3);
         Children.Add(workspaceHost);
 
         var statusHost = new Border
@@ -127,8 +168,7 @@ public sealed class EditorShell : Grid
             Padding = new Thickness(12, 6, 12, 8),
             Child = status,
         };
-        SetColumn(statusHost, 1);
-        SetRow(statusHost, 3);
+        SetRow(statusHost, 4);
         Children.Add(statusHost);
 
         ShowTab("Bridge");
@@ -136,11 +176,21 @@ public sealed class EditorShell : Grid
 
     public event Action<string>? Navigate;
 
+    public event Action? SettingsRequested;
+
+    public event Action? ChatRequested;
+
+    public Button SettingsButton => _settingsButton;
+
+    public Button ChatButton => _chatButton;
+
     public string Activity { get; private set; } = Home;
 
     public IReadOnlyList<string> ActivityIds => ActivityNames;
 
     public Panel Tools => _tools;
+    public Panel AnimationTools => _animationTools;
+    public Panel Help => _help;
 
     public static EditorShell? Find(Control? root)
     {
@@ -164,7 +214,7 @@ public sealed class EditorShell : Grid
 
     public bool HasTool<T>() where T : Control
     {
-        foreach (var child in _tools.Children)
+        foreach (var child in _tools.Children.Concat(_animationTools.Children).Concat(_help.Children))
         {
             if (child is T) return true;
             if (child is Decorator decorator)
@@ -186,29 +236,52 @@ public sealed class EditorShell : Grid
         _lastTab[Activity] = header;
         PaintRail();
         PaintSecondary(workspace.Value.Tabs, header);
+        foreach (var (tab, toolbar) in _toolbars) toolbar.IsVisible = tab == header;
+        _tools.IsVisible = Activity == Graph;
+        _animationTools.IsVisible = Activity == Animation;
+        _toolbarScroll.Offset = default;
     }
 
     public static void HideStrip(TabControl tabs)
     {
         tabs.Padding = new Thickness(0);
-        void Hide()
+        tabs.Template = new FuncControlTemplate<TabControl>((control, scope) =>
         {
-            foreach (var child in tabs.GetVisualChildren())
-                if (child is TabStrip strip)
-                    strip.IsVisible = false;
-        }
+            var presenter = new ContentPresenter
+            {
+                Name = "PART_SelectedContentHost",
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                VerticalContentAlignment = VerticalAlignment.Stretch,
+            };
+            var items = new ItemsPresenter
+            {
+                Name = "PART_ItemsPresenter", Height = 0, ClipToBounds = true,
+                IsHitTestVisible = false,
+            };
+            KeyboardNavigation.SetTabNavigation(items, KeyboardNavigationMode.None);
+            scope.Register(presenter.Name, presenter);
+            scope.Register(items.Name, items);
+            DockPanel.SetDock(items, Dock.Top);
+            return new DockPanel { Children = { items, presenter } };
+        });
+    }
 
-        tabs.AttachedToVisualTree += (_, _) => Hide();
-        int attempts = 0;
-        EventHandler? once = null;
-        once = (_, _) =>
+    private static Button RailIcon(string glyph, string tip)
+    {
+        var button = new Button
         {
-            Hide();
-            attempts++;
-            if (attempts > 8 || tabs.GetVisualChildren().OfType<TabStrip>().Any(strip => !strip.IsVisible))
-                tabs.LayoutUpdated -= once;
+            Content = glyph,
+            FontSize = 18,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            Padding = new Thickness(4, 8),
+            CornerRadius = new CornerRadius(Ux.Radius),
+            BorderThickness = new Thickness(0),
+            Background = Brushes.Transparent,
+            Foreground = Ux.MetaBrush,
         };
-        tabs.LayoutUpdated += once;
+        ToolTip.SetTip(button, tip);
+        return button;
     }
 
     private string TabFor(string activity)

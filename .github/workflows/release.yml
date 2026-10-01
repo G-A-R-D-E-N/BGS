@@ -58,6 +58,7 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item CHANGELOG.md, LICENSE, THIRD_PARTY_NOTICES.md -Destination "release/${{ matrix.rid }}/"
+          Get-ChildItem -LiteralPath "release/${{ matrix.rid }}" -File -Recurse -Filter '*.pdb' | Remove-Item
 
       - name: Verify Linux executable
         if: matrix.rid == 'linux-x64'
@@ -107,6 +108,9 @@ jobs:
           $expected = if ("${{ matrix.rid }}" -eq "win-x64") { "BehaviourGraphStudio.exe" } else { "BehaviourGraphStudio" }
           $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
           try {
+            if (@($zip.Entries | Where-Object { $_.FullName -match '(?i)\.pdb$' }).Count -ne 0) {
+              throw "Release archive contains debug symbols."
+            }
             $root = @($zip.Entries | Where-Object { $_.FullName -eq $expected })
             if ($root.Count -ne 1) { throw "Expected executable at archive root." }
             $nested = @($zip.Entries | Where-Object { $_.FullName -match ("(^|[/\\])" + [regex]::Escape($expected) + "$") -and $_.FullName -ne $expected })

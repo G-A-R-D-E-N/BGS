@@ -8,6 +8,7 @@ namespace OpenCommonwealth.Services.Hkx;
 
 public static class MeshLookup
 {
+    private const int MaximumSearchEntries = 4096;
     public sealed record Result(string? Path, string Reason)
     {
         public bool Found => Path != null;
@@ -68,20 +69,35 @@ public static class MeshLookup
             : skeletonPath == null ? null : Path.GetDirectoryName(skeletonPath);
         actorRoot ??= Path.GetDirectoryName(behaviourPath);
 
-        return string.IsNullOrEmpty(actorRoot)
-            ? new Result(null, "no model search root is available, so use Mesh... to point at one.")
-            : Find(new[] { actorRoot }, OnDisk);
+        if (string.IsNullOrEmpty(actorRoot))
+            return new Result(null, "no model search root is available, so use Mesh... to point at one.");
+
+        var models = OnDisk(actorRoot, out bool limited);
+        return limited
+            ? new Result(null, "model search limit reached, so use Mesh... to point at one.")
+            : Find(new[] { actorRoot }, _ => models);
     }
 
-    private static IReadOnlyList<string> OnDisk(string folder)
+    private static IReadOnlyList<string> OnDisk(string folder, out bool limited)
     {
+        limited = false;
         try
         {
-            return Directory.Exists(folder)
-                ? Directory.GetFiles(folder, "*.nif", SearchOption.AllDirectories)
-                           .Where(IsMesh)
-                           .ToList()
-                : Array.Empty<string>();
+            if (!Directory.Exists(folder)) return Array.Empty<string>();
+            var entries = Directory.EnumerateFileSystemEntries(folder, "*", new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = false,
+                AttributesToSkip = FileAttributes.ReparsePoint,
+            }).Take(MaximumSearchEntries + 1).ToArray();
+            if (entries.Length > MaximumSearchEntries)
+            {
+                limited = true;
+                return Array.Empty<string>();
+            }
+            return entries.Where(path => string.Equals(Path.GetExtension(path), ".nif",
+                                   StringComparison.OrdinalIgnoreCase))
+                          .Where(IsMesh).ToList();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

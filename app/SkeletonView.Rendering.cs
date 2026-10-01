@@ -47,7 +47,8 @@ public partial class SkeletonView
         bool bodies = ShowBodies && _bodies != null && _bodies.Bodies.Count > 0;
         bool physicsSkeleton = ShowPhysicsSkeleton &&
                                _bodies is { Skeleton: { ParentIndices.Count: > 0, ReferencePose.Count: > 0 } };
-        if ((pose == null || pose.Bones.Count == 0) && !bodies && !physicsSkeleton)
+        bool mesh = _mesh is { Length: > 0 };
+        if ((pose == null || pose.Bones.Count == 0) && !bodies && !physicsSkeleton && !mesh)
         {
             var empty = new FormattedText("No pose to draw.", CultureInfo.InvariantCulture,
                                           FlowDirection.LeftToRight, Typeface.Default, 12, Ux.MutedBrush);
@@ -55,7 +56,7 @@ public partial class SkeletonView
             return;
         }
 
-        if (pose == null || pose.Bones.Count == 0)
+        if ((pose == null || pose.Bones.Count == 0) && !mesh)
         {
             _centre = _bodyCentre;
             _fit = _bodyFit;
@@ -81,7 +82,8 @@ public partial class SkeletonView
                     draw.LineTo(Project(b));
                     draw.EndFigure(false);
                 }
-            ctx.DrawGeometry(null, new Pen(new SolidColorBrush(Ux.TextMeta, 0.28), 0.7), skin);
+            ctx.DrawGeometry(null, bodies ? new Pen(new SolidColorBrush(Ux.Accent, 0.9), 1.2)
+                : new Pen(new SolidColorBrush(Ux.TextMeta, 0.28), 0.7), skin);
         }
 
         if (bodies) DrawBodies(ctx, _bodies!);

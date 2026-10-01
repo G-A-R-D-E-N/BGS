@@ -32,7 +32,8 @@ public partial class MainWindow : Window
         var open = Ux.Secondary("Open result");
         open.Click += (_, _) => OpenProjectSearchResult();
 
-        var bar = Bar(_projectSearchText, search, open, Ux.Pill(_projectSearchSummary));
+        RegisterToolbar("Project search", ToolbarGroup("Search project", _projectSearchText, search, open));
+        var bar = Ux.Pill(_projectSearchSummary);
         bar.Margin = new Thickness(0, 0, 0, 8);
 
         var panel = new DockPanel();
@@ -194,7 +195,7 @@ public partial class MainWindow : Window
         _diffExportText.Click += async (_, _) => await ExportDiff(json: false);
         _diffExportJson.Click += async (_, _) => await ExportDiff(json: true);
 
-        var summaryBar = Bar(Ux.Pill(_diffSummary), compare);
+        var summaryBar = Ux.Pill(_diffSummary);
         summaryBar.Margin = new Thickness(0, 0, 0, 8);
 
         var filterBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -205,10 +206,10 @@ public partial class MainWindow : Window
         filterBar.Children.Add(_diffExportText);
         filterBar.Children.Add(_diffExportJson);
         filterBar.Margin = new Thickness(0, 0, 0, 8);
+        RegisterToolbar("Compare", ToolbarGroup("Compare files", compare), ToolbarGroup("Filter and export", filterBar));
 
         var panel = Rows(
             (summaryBar, false),
-            (filterBar, false),
             (_diff, true));
 
         _diffSummary.Text = "Open a behaviour, then pick another copy of it to see what differs.";
@@ -360,7 +361,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        var export = BehaviourCompareSession.CreateExport(result, SelectedDiffFilter());
         string extension = json ? ".json" : ".txt";
         string baseName = Path.GetFileNameWithoutExtension(_hkxPath);
         var picked = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
@@ -378,11 +378,21 @@ public partial class MainWindow : Window
         string? path = picked?.TryGetLocalPath();
         if (path == null) return;
 
+        await WriteDiff(path, json);
+    }
+
+    private async Task WriteDiff(string path, bool json, bool assistantExport = false)
+    {
+        if (_diffResult is not { } result) throw new InvalidOperationException("Compare two files before exporting a diff.");
+        var export = BehaviourCompareSession.CreateExport(result, SelectedDiffFilter());
+
         try
         {
             string content = json
                 ? BehaviourCompareSession.ExportJson(export)
                 : BehaviourCompareSession.ExportText(export);
+            if (assistantExport && !AssistantExportPathAllowed(path))
+                throw new IOException("Assistant exports must stay inside the active project and cannot traverse links.");
             await File.WriteAllTextAsync(path, content);
             SetDiffSummary($"Exported {export.Differences.Count} differences to {Path.GetFileName(path)}.",
                            Ux.MetaBrush);

@@ -195,16 +195,11 @@ public partial class MainWindow : Window
         Grid.SetRow(summary, 0);
         panel.Children.Add(summary);
 
-        var controls = Ux.Wrap(
-            Ux.Group("Playback controls", ControlStrip(_playButton, first, back, forward, last, fit)),
-            Ux.Group("Viewport overlays",
-                ControlStrip(reference, travel, _bodiesToggle, _constraintsToggle, _bindingsToggle,
-                             _physicsSkeletonToggle, _framesToggle, _engineerToggle)),
-            Ux.Group("Scene tools",
-                ControlStrip(_clearFrameDistanceButton, _dropButton, reload, mesh, clearMesh)));
-        controls.Margin = new Thickness(0, 0, 0, Ux.Space);
-        Grid.SetRow(controls, 1);
-        panel.Children.Add(controls);
+        RegisterToolbar("Playback",
+            ToolbarGroup("Playback controls", _playButton, first, back, forward, last, fit),
+            ToolbarGroup("Viewport overlays", reference, travel, _bodiesToggle, _constraintsToggle, _bindingsToggle,
+                _physicsSkeletonToggle, _framesToggle, _engineerToggle),
+            ToolbarGroup("Scene tools", _clearFrameDistanceButton, _dropButton, reload, mesh, clearMesh));
 
         _skeleton.ClipToBounds = true;
         _playbackViewportHost = Framed(_skeleton);

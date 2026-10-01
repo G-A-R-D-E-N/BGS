@@ -109,6 +109,43 @@ public sealed class AssistantInteractionTests
         Assert.Equal(6, reply.Iterations);
     }
 
+    [Fact]
+    public async Task SessionReportsWorkingThinkingAndToolPhases()
+    {
+        var function = AIFunctionFactory.Create(() => new { status = "ok" }, "bgs.test", "test");
+        var client = new FakeChatClient(
+            new ChatResponse(new ChatMessage(ChatRole.Assistant, new List<AIContent>
+            {
+                new FunctionCallContent("call-1", "bgs.test", new Dictionary<string, object?>()),
+            })),
+            new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done.")));
+        using var session = new AssistantSession(client, new[] { function });
+        var recorder = new RecordingProgress();
+        session.Progress = recorder;
+
+        await session.SendAsync("Check this file.", Context());
+
+        IReadOnlyList<AssistantProgress> seen = recorder.Items;
+        Assert.Equal(AssistantPhase.Working, seen[0].Phase);
+        Assert.Equal(AssistantPhase.Thinking, seen[1].Phase);
+        Assert.Contains(seen, item => item.Phase == AssistantPhase.Tool && item.Detail == "bgs.test");
+        Assert.Equal(AssistantPhase.Thinking, seen[^1].Phase);
+    }
+
+    [Fact]
+    public async Task AProgressSinkThatThrowsDoesNotBreakTheTurn()
+    {
+        var function = AIFunctionFactory.Create(() => new { status = "ok" }, "bgs.test", "test");
+        using var session = new AssistantSession(
+            new FakeChatClient(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done."))),
+            new[] { function });
+        session.Progress = new ThrowingProgress();
+
+        AssistantReply reply = await session.SendAsync("Hello.", Context());
+
+        Assert.Equal("ok", reply.Status);
+    }
+
     private static AssistantContext Context() => new(
         "fixture", "0", "fixture.hkx", "Graph", "1", "hkbClipGenerator", false, false, 0, "", "");
 
@@ -152,6 +189,18 @@ public sealed class AssistantInteractionTests
         }
 
         public void CommitOutsideEditor() => Revision++;
+    }
+
+    private sealed class RecordingProgress : IProgress<AssistantProgress>
+    {
+        public List<AssistantProgress> Items { get; } = new();
+
+        public void Report(AssistantProgress value) => Items.Add(value);
+    }
+
+    private sealed class ThrowingProgress : IProgress<AssistantProgress>
+    {
+        public void Report(AssistantProgress value) => throw new InvalidOperationException("sink failed");
     }
 
     private sealed class FakeChatClient : IChatClient

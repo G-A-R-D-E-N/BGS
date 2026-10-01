@@ -8,16 +8,7 @@ using Microsoft.Extensions.AI;
 
 namespace BehaviourStudio.App;
 
-public sealed record AssistantToolActivity(string Name, bool RequiresApproval);
-
-public sealed record AssistantReply(
-    string Status,
-    string Text,
-    int Iterations,
-    IReadOnlyList<AssistantToolActivity> Tools,
-    bool AwaitingApproval);
-
-public sealed class AssistantSession : IDisposable
+public sealed class AssistantSession : IAssistantSession, IAssistantProgressSink
 {
     public const int MaximumIterationsPerRequest = 6;
     public const int MaximumHistoryTurns = 8;
@@ -80,6 +71,21 @@ public sealed class AssistantSession : IDisposable
 
     public void ClearHistory() => _history.Clear();
 
+    public IProgress<AssistantProgress>? Progress { get; set; }
+
+    private void Report(AssistantPhase phase, string detail)
+    {
+        IProgress<AssistantProgress>? progress = Progress;
+        if (progress is null) return;
+        try
+        {
+            progress.Report(new AssistantProgress(phase, detail));
+        }
+        catch (Exception)
+        {
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -105,9 +111,11 @@ public sealed class AssistantSession : IDisposable
             AllowMultipleToolCalls = false,
         };
         var activity = new List<AssistantToolActivity>();
+        Report(AssistantPhase.Working, "");
 
         for (int iteration = 1; iteration <= MaximumIterationsPerRequest; iteration++)
         {
+            Report(AssistantPhase.Thinking, iteration > 1 ? "step " + iteration : "");
             ChatResponse response = await _client.GetResponseAsync(messages, options, cancellationToken)
                 .ConfigureAwait(false);
             messages.AddRange(response.Messages);
@@ -132,6 +140,7 @@ public sealed class AssistantSession : IDisposable
             object? result;
             try
             {
+                Report(AssistantPhase.Tool, call.Name);
                 result = await function.InvokeAsync(new AIFunctionArguments(call.Arguments), cancellationToken)
                     .ConfigureAwait(false);
             }

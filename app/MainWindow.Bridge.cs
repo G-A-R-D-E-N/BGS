@@ -68,7 +68,18 @@ public partial class MainWindow : Window
             steps.Add((card, title,
                 what + " Press Next to keep walking the deck, or Skip to jump straight in."));
 
-        _tour.Start(steps, MarkTourDone);
+        if (_shell != null)
+        {
+            steps.Add((_shell.SettingsButton, "Set up AI chat",
+                "Open the gear in the top bar to choose your provider and model, then sign in or enter the provider's API key. Keep credentials in Settings, never in a chat message."));
+            steps.Add((_shell.ChatButton, "Ask the assistant",
+                "Open the chat bubble and choose + New chat. Open the file you want to work on, then describe your goal and name the target bone, node or field. Try: 'Explain the selected node' or 'Open the skeleton editor and help me rename a bone.' Enter sends; Shift+Enter adds a line. Type /help for chat commands."));
+            steps.Add((_shell.ChatButton, "Review each proposed action",
+                "The assistant can inspect editor controls and propose clicks, field edits, file operations and viewport gestures. Read the target, value and file path before choosing Approve action or Reject. Each next action needs its own approval. If you change the editor first, ask for a fresh proposal."));
+            steps.Add((_shell.ChatButton, "Check the result and save",
+                "An approved click means the action was sent, not that an edit succeeded or a file was saved. Check the visible result; use Undo when available. Ask the assistant to save when ready and review that proposal too. Pause physics before asking it to select a moving body. Cancel stops the current request; it does not undo completed actions."));
+        }
+        _tour.Start(steps, () => { _tourStarted = false; MarkTourDone(); });
         SetStatus("The tour is showing you around. Press Next to keep going, Skip to stop.", Ux.MetaBrush);
     }
 
@@ -287,10 +298,11 @@ public partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap,
         });
 
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var buttons = new WrapPanel();
         for (int i = 0; i < actions.Length; i++)
         {
             var button = i == 0 ? Ux.Primary(actions[i].Label) : Ux.Secondary(actions[i].Label);
+            button.Margin = new Thickness(0, 0, 6, 0);
             var go = actions[i].Go;
             button.Click += (_, _) => go();
             buttons.Children.Add(button);

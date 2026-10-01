@@ -4,8 +4,38 @@ Changes that affect Behaviour Graph Studio users are documented here.
 
 New to BGS? See the [Getting Started Guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
 
-## Unreleased
+## 1.3.0
 
+October 1, 2026
+
+* The loopback assistant bridge validates and authenticates headers before reading request bodies or sending 100 Continue, rejects malformed content lengths, and bounds concurrent clients and unauthenticated header waits.
+
+* Assistant CLI output is bounded while both streams continue draining, caller cancellation stays distinct from timeout, and Windows npm OpenCode installations resolve their native executable without running a shell shim.
+* Assistant diff exports reject symbolic links and junctions along the destination path and recheck immediately before writing, including filesystem changes made while approval is pending.
+
+* Assistant transcripts and temporary provider bridge configurations use owner-only storage permissions. Failed transcript writes remove their staging files and preserve the previous saved chat.
+* Cancelled provider requests retain the user's prompt, active transcripts follow the saved history limit, unavailable CLI executables report a bounded error, and API key changes refresh the combined model list.
+* Assistant isolation refuses Codex thread responses that omit or misreport workspace roots.
+
+* The Home tour includes an AI chat guide for setup, requests, action approval and checking results before saving. The tour can be replayed after finishing or skipping it.
+
+* The assistant can read and propose interactions with editor and authoring controls, including graph and rig viewport gestures, using the existing handlers. Each action and named file/folder operation requires approval; stale actions are refused. Account, password and assistant approval controls are excluded.
+* Top toolbar scrollbars reserve their own space below controls, preventing overlap on all workspace tabs.
+* Rig previews fill the remaining window space and clip zoomed or panned geometry to the viewport. Skeleton, skin and physics tabs each offer Fit preview; settings scroll independently.
+* Home now offers direct buttons for skeleton editing, skin weights, physics simulation, structure authoring and batch authoring. Rig shortcuts open the selected tool immediately.
+* Moved Home, Graph, Inspect, Animation and Project navigation to the top of the window. Each view has its own grouped command toolbar; wide toolbars scroll horizontally, while inspectors and the playback timeline stay beside the content they affect.
+* Removed duplicate workspace tab headers. Graph authoring tools live under Graph, skeleton/skin authoring under Animation, and About and assistant controls remain available in the top bar.
+* Added a Skeleton / skin authoring window with bone names, reference transforms, translation locks, parent changes, validation, undo/redo, and verified HKX save/reopen. Bone addition/removal and reorderings are supported for standalone skeleton files; dependent rigs refuse changes that require asset remapping.
+* Added Fallout 4 NIF vertex influence editing, shape-wide normalization and pruning, bone-weight copying, mirror matching, a mesh preview, and verified weight-only save/reopen with backups and external-change protection.
+* Added interactive BEPU physics preview with measured convex hulls, gravity, ground and body collisions, fixed/ball/hinge/cone/twist preview joints, pause/step/reset, and body impulses. Masses and preview joint limits are explicitly authored in the window; uniform-density inertia and preview settings do not reproduce or modify native Havok solver settings.
+* Added mounted editor and simulation lifecycle checks to both CI platforms.
+
+## 1.2.0
+
+October 1, 2026
+
+* Assistant conversations persist across sessions, with separate conversation histories, provider selection, and model selection for Codex, Claude, OpenCode, Gemini, and OpenAI-compatible services.
+* Added conservative skeleton hierarchy, mirroring, and skin-weight authoring library tools with validation; these tools do not add an editor skeleton/skin save workflow.
 * Editor workspace: a left activity rail (Home, Graph, Inspect, Animation, Project) with contextual secondary views, and one command bar for Open, Save, Undo, Redo and validation. Tree expand/collapse and the object filter live on Inspect → Tree. Graph find is a separate field on the Graph toolbar.
 * Batch authoring and About sit in the command bar on the production window path, not on a second top strip.
 * Tree/grid column headers now scroll horizontally with their rows.

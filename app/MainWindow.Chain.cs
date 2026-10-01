@@ -30,7 +30,7 @@ public partial class MainWindow : Window
         browse.Click += async (_, _) => await PickGameDataFolder();
 
         _dataSummary.Text = "no game data attached";
-        var bar = Ux.Group("Game data", Ux.Wrap(_dataField, browse), Ux.Wrap(Ux.Pill(_dataSummary)));
+        var bar = ToolbarGroup("Game data", _dataField, browse);
 
         _modsField.Text = Settings.Get("gameModsFolder");
         _modsField.KeyDown += (_, e) =>
@@ -41,8 +41,7 @@ public partial class MainWindow : Window
         modsBrowse.Click += async (_, _) => await PickModsFolder();
         ToolTip.SetTip(modsBrowse, "The Mod Organizer 2 instance root (holds mods/, profiles/, overwrite/)");
         _modsSummary.Text = "no mods layered";
-        var modsBar = Ux.Group("Mod Organizer layer", Ux.Wrap(_modsField, modsBrowse),
-            Ux.Wrap(Ux.Pill(_modsSummary)));
+        var modsBar = ToolbarGroup("Mod Organizer layer", _modsField, modsBrowse);
 
         _crashField.KeyDown += (_, e) =>
         {
@@ -51,19 +50,18 @@ public partial class MainWindow : Window
         var resolve = Ux.Secondary("Resolve");
         resolve.Click += (_, _) => ResolveCrashHash();
         _crashSummary.Text = "paste a hash and press Resolve";
-        var crashBar = Ux.Group("Crash hash", Ux.Wrap(_crashField, resolve), Ux.Wrap(Ux.Pill(_crashSummary)));
+        var crashBar = ToolbarGroup("Crash hash", _crashField, resolve);
 
         var sweep = Ux.Secondary("Sweep all subgraphs");
         sweep.Click += (_, _) => RunSweep();
         ToolTip.SetTip(sweep, "Run the whole-load-order per-weapon check across every AnimationFileData manifest");
         _sweepSummary.Text = "one-click whole-load-order per-weapon check";
-        var sweepBar = Ux.Group("Project sweep", Ux.Wrap(sweep), Ux.Wrap(Ux.Pill(_sweepSummary)));
+        var sweepBar = ToolbarGroup("Project sweep", sweep);
+        RegisterToolbar("Chain", sweepBar, crashBar, modsBar, bar);
 
         var panel = new DockPanel();
-        AddTop(panel, sweepBar);
-        AddTop(panel, crashBar);
-        AddTop(panel, modsBar);
-        AddTop(panel, bar);
+        AddTop(panel, Ux.Wrap(Ux.Pill(_dataSummary), Ux.Pill(_modsSummary),
+            Ux.Pill(_crashSummary), Ux.Pill(_sweepSummary)));
         panel.Children.Add(_chain);
         return panel;
     }

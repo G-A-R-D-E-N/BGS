@@ -418,11 +418,13 @@ public partial class MainWindow : Window
             }
         };
 
-        var command = new StackPanel { Spacing = Ux.Space };
-        command.Children.Add(Ux.Group("Open behaviour", Ux.Wrap(_pathField, browse, archive, open)));
-        command.Children.Add(Ux.Group("Document actions",
-            Ux.Wrap(Ux.Pill(_summary), _undoButton, _redoButton, checkProject, check, _saveButton)));
-        _shell = new EditorShell(command, _tabs, Ux.Pill(_status));
+        RegisterToolbar("Bridge", ToolbarGroup("Open behaviour", _pathField, browse, archive, open));
+        ((Panel)_toolbars["Graph"]).Children.Insert(0, ToolbarGroup("Validation", check));
+        ((Panel)_toolbars["Chain"]).Children.Insert(0, ToolbarGroup("Validation", checkProject));
+        var command = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6,
+            Children = { _undoButton, _redoButton, _saveButton } };
+        var status = new StackPanel { Spacing = 4, Children = { _summary, _status } };
+        _shell = new EditorShell(command, _tabs, status, _toolbars);
         _shell.Navigate += GoToTab;
         var root = new Grid();
         root.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));

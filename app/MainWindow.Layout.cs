@@ -1,3 +1,4 @@
+using System;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -7,6 +8,27 @@ namespace BehaviourStudio.App;
 
 public partial class MainWindow : Window
 {
+    private readonly System.Collections.Generic.Dictionary<string, Control> _toolbars = new(StringComparer.Ordinal);
+
+    private void RegisterToolbar(string tab, params Control[] groups)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Ux.Space };
+        foreach (var group in groups) row.Children.Add(group);
+        _toolbars.Add(tab, row);
+    }
+
+    private static Border ToolbarGroup(string name, params Control[] controls)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        foreach (var control in controls) row.Children.Add(control);
+        return new Border
+        {
+            BorderBrush = Ux.BorderBrush, BorderThickness = new Thickness(0, 0, 1, 0),
+            Padding = new Thickness(4, 2, 12, 2),
+            Child = new StackPanel { Spacing = 4, Children = { Ux.SectionTitle(name), row } },
+        };
+    }
+
     private Border GraphToolbarGroup(string name, params Control[] controls)
     {
         var label = new TextBlock
@@ -88,15 +110,4 @@ public partial class MainWindow : Window
         panel.Children.Add(control);
     }
 
-    private static ScrollViewer ControlStrip(params Control[] controls)
-    {
-        var strip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        foreach (var control in controls) strip.Children.Add(control);
-        return new ScrollViewer
-        {
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden,
-            Content = strip,
-        };
-    }
 }
