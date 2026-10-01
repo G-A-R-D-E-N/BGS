@@ -185,7 +185,7 @@ public sealed class AssistantConversationController : IDisposable
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return new("cancelled", "The request was cancelled.", 0,
+            reply = new("cancelled", "The request was cancelled.", 0,
                 Array.Empty<AssistantToolActivity>(), entry.ApprovalActive);
         }
         finally
@@ -229,7 +229,7 @@ public sealed class AssistantConversationController : IDisposable
 
             try
             {
-                AssistantChatStore.Save(sanitized);
+                entry.Chat = AssistantChatStore.Save(sanitized);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {

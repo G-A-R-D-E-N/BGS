@@ -19,6 +19,9 @@ This update brings skeleton and skin tools into the editor, adds interactive col
 
 ## Safety and compatibility
 
+- Assistant transcripts and provider bridge configs have owner-only permissions. Failed staged saves preserve the previous chat and remove temporary files.
+- Cancelled provider requests retain prompts, active chats respect the saved history limit, missing CLI executables report an error, and API key changes refresh the combined model list. Codex isolation requires an explicitly empty workspace-root list.
+
 - Skeleton and skin saves retain backups and refuse external file changes. Edits are verified in memory and after rebuilding the native file.
 - NIF saving supports Fallout 4 BSVersion 130 vertex skin payloads. It preserves geometry, binding transforms and every byte outside the owned weight/index slots.
 - Physics uses measured convex vertices and complete joint frames. Users explicitly set simulation masses and preview joint limits; inertia assumes uniform hull density.

@@ -101,7 +101,7 @@ internal static class CodexIsolation
             throw new CodexProtocolException(VerificationError);
 
         JsonElement? workspaceRoots = CodexProtocol.Property(result, "runtimeWorkspaceRoots");
-        if (workspaceRoots is { } roots &&
+        if (workspaceRoots is not { } roots ||
             (roots.ValueKind != JsonValueKind.Array || roots.GetArrayLength() != 0))
             throw new CodexProtocolException(VerificationError);
     }

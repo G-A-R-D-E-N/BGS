@@ -12,6 +12,35 @@ namespace BehaviourStudio.Tests;
 public sealed partial class MultiChatControllerTests
 {
     [Fact]
+    public async Task ProviderCancellationStillSavesTheUserPrompt()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var controller = new AssistantConversationController(_ =>
+            new RecordingReplySession(_ =>
+            {
+                cancellation.Cancel();
+                throw new OperationCanceledException(cancellation.Token);
+            }));
+        AssistantReply reply = await controller.SendAsync("keep this prompt",
+            CodexSessionFixture.Context(), cancellation.Token);
+        Assert.Equal("cancelled", reply.Status);
+        AssistantChat saved = AssistantChatStore.Load(controller.Active!.Chat.Id)!;
+        Assert.Equal("keep this prompt", Assert.Single(saved.Messages).Text);
+        Assert.Equal(controller.Active.Chat.Title, saved.Title);
+    }
+
+    [Fact]
+    public async Task ActiveTranscriptUsesThePersistedMessageLimit()
+    {
+        using var controller = new AssistantConversationController(MakeFactory());
+        for (int i = 0; i < AssistantChatStore.MaxMessagesPerChat / 2 + 1; i++)
+            await controller.SendAsync("question " + i, CodexSessionFixture.Context());
+        AssistantChat active = controller.Active!.Chat;
+        Assert.Equal(AssistantChatStore.MaxMessagesPerChat, active.Messages.Count);
+        Assert.Equal(AssistantChatStore.Load(active.Id)!.Messages, active.Messages);
+    }
+
+    [Fact]
     public async Task ClearingChatDisposesItsSessionAndStartsFresh()
     {
         var created = new List<TrackableSession>();

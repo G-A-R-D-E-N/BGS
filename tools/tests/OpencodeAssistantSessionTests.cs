@@ -46,6 +46,8 @@ public sealed class OpencodeAssistantSessionTests
         using BgsMcpBridge bridge = BgsMcpBridge.Start(BgsMcpProtocolTests.Tools());
         Stub((arguments, environment) =>
         {
+            AssistantPrivateFileTests.AssertOwnerOnly(Path.GetDirectoryName(environment!["OPENCODE_CONFIG"])!, true);
+            AssistantPrivateFileTests.AssertOwnerOnly(environment["OPENCODE_CONFIG"], false);
             Assert.Contains("run", arguments);
             Assert.Contains("--format", arguments);
             Assert.Contains("json", arguments);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -60,8 +61,15 @@ public static class AssistantCommandRunner
         foreach (string argument in arguments) info.ArgumentList.Add(argument);
 
         using var process = new Process { StartInfo = info };
-        if (!process.Start())
+        try
+        {
+            if (!process.Start())
+                return new AssistantCommandResult(-1, "", "The command could not be started.");
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+        {
             return new AssistantCommandResult(-1, "", "The command could not be started.");
+        }
 
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(timeout);

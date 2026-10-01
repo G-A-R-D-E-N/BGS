@@ -134,9 +134,14 @@ internal static partial class AssistantLifecycleSmoke
             fetchedUrl = baseUrl;
             return Task.FromResult(new ApiModelList(new[] { "local-a", "local-b" }, ""));
         };
-        AssistantUi.AllAgentsForTest = () => Task.FromResult<IReadOnlyList<CodexModel>>(
-            SmokeCatalog().Concat(
-                AssistantUi.ApiModels(AssistantBackend.Local, new[] { "local-a", "local-b" })).ToList());
+        int catalogReads = 0;
+        AssistantUi.AllAgentsForTest = () =>
+        {
+            catalogReads++;
+            return Task.FromResult<IReadOnlyList<CodexModel>>(
+                SmokeCatalog().Concat(
+                    AssistantUi.ApiModels(AssistantBackend.Local, new[] { "local-a", "local-b" })).ToList());
+        };
         var window = new MainWindow();
         window.Show();
         try
@@ -165,6 +170,7 @@ internal static partial class AssistantLifecycleSmoke
                 settings.NoticeText.Contains("never writes one to disk", StringComparison.Ordinal));
 
             Check("the API key box is masked", settings.ApiKeyForTest.PasswordChar == '\u2022');
+            int readsBeforeKey = catalogReads;
             settings.ApiKeyForTest.Text = "sk-test-secret";
             settings.ApiKeyForTest.RaiseEvent(new KeyEventArgs
             {
@@ -174,12 +180,28 @@ internal static partial class AssistantLifecycleSmoke
             Dispatcher.UIThread.RunJobs();
             Check("the key is held for this session",
                 window.AssistantUiForTest.ApiKeyForTest == "sk-test-secret");
+            Check("changing the key refreshes the aggregate model catalog", catalogReads > readsBeforeKey);
 
             string store = Settings.SettingsPathForTest is { Length: > 0 } path && File.Exists(path)
                 ? File.ReadAllText(path)
                 : "";
             Check("the key is never written to the settings file",
                 !store.Contains("sk-test-secret", StringComparison.Ordinal));
+
+            var heldCatalog = new TaskCompletionSource<IReadOnlyList<CodexModel>>();
+            int overlappingReads = 0;
+            AssistantUi.AllAgentsForTest = () => ++overlappingReads == 1
+                ? heldCatalog.Task
+                : Task.FromResult(AssistantUi.ApiModels(AssistantBackend.Local, new[] { "new-key-model" }));
+            pane.ModelButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+            Check("a catalog request can remain in flight", overlappingReads == 1);
+            window.AssistantUiForTest.ChooseApiKeyForTest("replacement-test-key");
+            heldCatalog.SetResult(AssistantUi.ApiModels(AssistantBackend.Local, new[] { "old-key-model" }));
+            Pump(() => overlappingReads > 1, 1000);
+            pane.ModelPicker.SetAgentFilter("Local");
+            Check("a key change during loading refreshes the visible catalog",
+                pane.ModelPicker.VisibleModels.SequenceEqual(new[] { "new-key-model" }));
 
             Smoke.Find<Button>(settings).Single(button => button.Content?.ToString() == "Sign out")
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

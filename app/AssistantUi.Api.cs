@@ -21,6 +21,7 @@ internal sealed partial class AssistantUi
         RefreshProviderStatus();
         RefreshAccountText();
         _ = RefreshProviderModelsAsync();
+        _ = RefreshCatalogAsync();
     }
 
     private void ChooseBaseUrl(string url)

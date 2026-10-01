@@ -28,8 +28,7 @@ public sealed class ClaudeAssistantSession : IAssistantSession, IAssistantReplay
         _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
         _model = model ?? "";
         _hasPendingApproval = hasPendingApproval ?? (() => false);
-        _root = Path.Combine(Path.GetTempPath(), "BehaviourGraphStudio", "claude-assistant",
-            Guid.NewGuid().ToString("N"));
+        _root = AssistantPrivateFiles.SessionDirectory();
     }
 
     public Task<AssistantReply> SendAsync(
@@ -120,9 +119,9 @@ public sealed class ClaudeAssistantSession : IAssistantSession, IAssistantReplay
 
     private string WriteConfig()
     {
-        Directory.CreateDirectory(_root);
+        AssistantPrivateFiles.EnsureSessionDirectory(_root);
         string path = Path.Combine(_root, "mcp.json");
-        File.WriteAllText(path, ClaudeCli.BuildMcpConfigJson(_bridge.Url, _bridge.Token));
+        AssistantPrivateFiles.WriteAllText(path, ClaudeCli.BuildMcpConfigJson(_bridge.Url, _bridge.Token));
         return path;
     }
 

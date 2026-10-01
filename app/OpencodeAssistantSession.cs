@@ -28,8 +28,7 @@ public sealed class OpencodeAssistantSession : IAssistantSession, IAssistantRepl
         _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
         _model = model ?? "";
         _hasPendingApproval = hasPendingApproval ?? (() => false);
-        _root = Path.Combine(Path.GetTempPath(), "BehaviourGraphStudio", "opencode-assistant",
-            Guid.NewGuid().ToString("N"));
+        _root = AssistantPrivateFiles.SessionDirectory();
     }
 
     public Task<AssistantReply> SendAsync(
@@ -144,9 +143,9 @@ public sealed class OpencodeAssistantSession : IAssistantSession, IAssistantRepl
 
     private string WriteConfig()
     {
-        Directory.CreateDirectory(_root);
+        AssistantPrivateFiles.EnsureSessionDirectory(_root);
         string path = Path.Combine(_root, "opencode.json");
-        File.WriteAllText(path, OpencodeCli.BuildConfigJson(
+        AssistantPrivateFiles.WriteAllText(path, OpencodeCli.BuildConfigJson(
             _bridge.TokenQueryUrl(), _otherServers, _bridge.ToolNames));
         return path;
     }

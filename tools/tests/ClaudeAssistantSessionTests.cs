@@ -181,6 +181,8 @@ public sealed class ClaudeAssistantSessionTests
         {
             string configPath = arguments[arguments.ToList().IndexOf("--mcp-config") + 1];
             string config = File.ReadAllText(configPath);
+            AssistantPrivateFileTests.AssertOwnerOnly(Path.GetDirectoryName(configPath)!, true);
+            AssistantPrivateFileTests.AssertOwnerOnly(configPath, false);
             Assert.Contains(bridge.Url, config, StringComparison.Ordinal);
             Assert.Contains(bridge.Token, config, StringComparison.Ordinal);
             Assert.Contains("mcp__bgs", arguments, StringComparer.Ordinal);

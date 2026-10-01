@@ -20,6 +20,7 @@ internal sealed partial class AssistantUi
     private IReadOnlyList<CodexModel> _providerModels = Array.Empty<CodexModel>();
     private IReadOnlyList<CodexModel> _catalogModels = Array.Empty<CodexModel>();
     private bool _catalogLoading;
+    private bool _catalogRefreshPending;
     private AssistantSettingsWindow? _settingsWindow;
     private readonly AssistantSettingsState _settingsState = new();
     private string _providerDescription = "";
@@ -158,7 +159,11 @@ internal sealed partial class AssistantUi
 
     private async Task RefreshCatalogAsync()
     {
-        if (_catalogLoading) return;
+        if (_catalogLoading)
+        {
+            _catalogRefreshPending = true;
+            return;
+        }
         _catalogLoading = true;
         try
         {
@@ -201,6 +206,11 @@ internal sealed partial class AssistantUi
         finally
         {
             _catalogLoading = false;
+            if (_catalogRefreshPending)
+            {
+                _catalogRefreshPending = false;
+                _ = RefreshCatalogAsync();
+            }
         }
     }
 

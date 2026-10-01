@@ -9,6 +9,22 @@ namespace BehaviourStudio.Tests;
 
 public sealed class CodexIsolationTests
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData("\"runtimeWorkspaceRoots\":null,")]
+    [InlineData("\"runtimeWorkspaceRoots\":{},")]
+    [InlineData("\"runtimeWorkspaceRoots\":[\"/workspace\"],")]
+    public async Task UnverifiedWorkspaceRootsPreventTurnStart(string roots)
+    {
+        using var fixture = new CodexSessionFixture();
+        fixture.Server.Handlers[CodexMethods.ThreadStart] = _ =>
+            fixture.Server.ThreadResult("thread-1").Replace(
+                "\"runtimeWorkspaceRoots\":[],", roots, StringComparison.Ordinal);
+        AssistantReply reply = await fixture.Session.SendAsync("Check it.", CodexSessionFixture.Context());
+        Assert.Equal("provider_error", reply.Status);
+        Assert.Equal(0, fixture.Server.TurnStarts);
+    }
+
     private static readonly string[] DisabledFeatures =
     {
         "features.apps",

@@ -95,7 +95,6 @@ public static class AssistantChatStore
             throw new InvalidOperationException("The chat is too large to persist.");
 
         ScanForForbiddenCredentials(text);
-        SaveFailureForTest?.Invoke();
 
         EnsureFolder();
         string finalPath = FilePathFor(chat.Id);
@@ -115,12 +114,12 @@ public static class AssistantChatStore
                 bool staged = false;
                 try
                 {
-                    using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                                                      4096, FileOptions.WriteThrough))
+                    using (var stream = AssistantPrivateFiles.CreateFile(tempPath))
                     {
+                        staged = true;
+                        SaveFailureForTest?.Invoke();
                         stream.Write(bytes, 0, bytes.Length);
                         stream.Flush(flushToDisk: true);
-                        staged = true;
                     }
                     File.Move(tempPath, finalPath, overwrite: true);
                 }
@@ -294,7 +293,7 @@ public static class AssistantChatStore
 
     internal static void EnsureFolder()
     {
-        Directory.CreateDirectory(Folder);
+        AssistantPrivateFiles.EnsureDirectory(Folder);
         VerifyPathContained(FilePathFor(CreateId()));
     }
 

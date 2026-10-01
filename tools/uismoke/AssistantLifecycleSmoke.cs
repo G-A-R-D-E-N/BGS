@@ -22,7 +22,7 @@ namespace BehaviourStudio.UiSmoke;
 
 internal static partial class AssistantLifecycleSmoke
 {
-    internal static void Run()
+    internal static void Run(bool apiOnly = false)
     {
         string previousFolder = AssistantChatStore.Folder;
         string? previousSettings = Settings.SettingsPathForTest;
@@ -36,7 +36,8 @@ internal static partial class AssistantLifecycleSmoke
         AssistantUi.AllAgentsForTest = () => Task.FromResult(SmokeCatalog());
         try
         {
-            RunInternal();
+            if (apiOnly) ApiProvidersUseASessionKeyAndQueryTheEndpoint();
+            else RunInternal();
         }
         finally
         {

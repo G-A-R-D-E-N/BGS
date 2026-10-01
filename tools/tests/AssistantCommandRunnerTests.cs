@@ -9,6 +9,17 @@ namespace BehaviourStudio.Tests;
 public sealed class AssistantCommandRunnerTests
 {
     [Fact]
+    public async Task MissingExecutableReturnsBoundedFailure()
+    {
+        string missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "missing.exe");
+        AssistantCommandResult result = await AssistantCommandRunner.RunAsync(
+            new AssistantCli(missing, "configured"), Array.Empty<string>(), TimeSpan.FromSeconds(5));
+        Assert.False(result.Succeeded);
+        Assert.Empty(result.StandardOutput);
+        Assert.Equal("The command could not be started.", result.StandardError);
+    }
+
+    [Fact]
     public async Task ShellShimsCannotInterpretPromptTextAsCommands()
     {
         if (!OperatingSystem.IsWindows()) return;
