@@ -17,12 +17,72 @@ internal static class AssistantEditorSmoke
         Settings.SettingsPathForTest = Path.Combine(folder, "settings.cfg");
         AssistantChatStore.Folder = Path.Combine(folder, "chats");
         Settings.TrySet("tour_done", "1", out _);
-        try { RunCore(); }
+        try { RunCore(); ExportPathsStayWithinProject(folder); }
         finally
         {
             Settings.SettingsPathForTest = previous; AssistantChatStore.Folder = previousChats;
             Directory.Delete(folder, true);
         }
+    }
+
+    private static void ExportPathsStayWithinProject(string folder)
+    {
+        string project = Path.Combine(folder, "project");
+        string outside = Path.Combine(folder, "outside");
+        string destination = Path.Combine(project, "destination");
+        Directory.CreateDirectory(destination);
+        Directory.CreateDirectory(outside);
+        string behavior = Path.Combine(project, "behavior.hkx");
+        File.Copy(Path.Combine("tools", "tests", "fixtures", "vanilla", "Meshes", "Actors", "Character",
+            "Behaviors", "SingleAnimFurniture.hkx"), behavior);
+        string report = Path.Combine(destination, "report.json");
+        string outsideReport = Path.Combine(outside, "report.json");
+        File.WriteAllText(outsideReport, "unchanged");
+        var owner = new MainWindow();
+        owner.Show();
+        try
+        {
+            owner.Open(behavior); Pump();
+            owner.CompareLoadedWith(behavior); Pump();
+            var editor = new AssistantEditor(owner);
+            var state = editor.State(query: "MainWindow").GetAwaiter().GetResult();
+            Require("ordinary nested export is accepted", editor.File(state.Snapshot,
+                state.Controls.Single().Id, "export_diff_json", report).GetAwaiter().GetResult().Accepted);
+            Directory.Delete(destination);
+            LinkDirectory(destination, outside);
+            editor.Approve(); Pump();
+            Require("approval-time linked export leaves outside file untouched", File.ReadAllText(outsideReport) == "unchanged");
+            Require("linked parent export is refused", !owner.AssistantExportPathAllowed(report));
+            Directory.Delete(destination);
+            Directory.CreateDirectory(destination);
+            Require("ordinary export remains allowed", owner.AssistantExportPathAllowed(report));
+            Directory.CreateDirectory(project + "-sibling");
+            Require("sibling-prefix export is refused", !owner.AssistantExportPathAllowed(Path.Combine(project + "-sibling", "report.json")));
+            if (!OperatingSystem.IsWindows())
+            {
+                File.CreateSymbolicLink(report, outsideReport);
+                Require("linked destination file is refused", !owner.AssistantExportPathAllowed(report));
+                File.Delete(report);
+            }
+            Directory.Move(project, project + "-original");
+            LinkDirectory(project, outside);
+            Require("linked project root is refused", !owner.AssistantExportPathAllowed(Path.Combine(project, "root-report.json")));
+            Directory.Delete(project);
+            Directory.Move(project + "-original", project);
+        }
+        finally { owner.Close(); Pump(); }
+    }
+
+    private static void LinkDirectory(string path, string target)
+    {
+        if (!OperatingSystem.IsWindows()) { Directory.CreateSymbolicLink(path, target); return; }
+        var start = new System.Diagnostics.ProcessStartInfo("cmd.exe")
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+        foreach (string argument in new[] { "/c", "mklink", "/J", path, target }) start.ArgumentList.Add(argument);
+        using var process = System.Diagnostics.Process.Start(start)!;
+        process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0) throw new IOException("Could not create the export test junction.");
     }
 
     private static void RunCore()

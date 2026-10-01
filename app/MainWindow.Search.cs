@@ -381,7 +381,7 @@ public partial class MainWindow : Window
         await WriteDiff(path, json);
     }
 
-    private async Task WriteDiff(string path, bool json)
+    private async Task WriteDiff(string path, bool json, bool assistantExport = false)
     {
         if (_diffResult is not { } result) throw new InvalidOperationException("Compare two files before exporting a diff.");
         var export = BehaviourCompareSession.CreateExport(result, SelectedDiffFilter());
@@ -391,6 +391,8 @@ public partial class MainWindow : Window
             string content = json
                 ? BehaviourCompareSession.ExportJson(export)
                 : BehaviourCompareSession.ExportText(export);
+            if (assistantExport && !AssistantExportPathAllowed(path))
+                throw new IOException("Assistant exports must stay inside the active project and cannot traverse links.");
             await File.WriteAllTextAsync(path, content);
             SetDiffSummary($"Exported {export.Differences.Count} differences to {Path.GetFileName(path)}.",
                            Ux.MetaBrush);

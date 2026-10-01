@@ -19,6 +19,9 @@ This update brings skeleton and skin tools into the editor, adds interactive col
 
 ## Safety and compatibility
 
+- Assistant CLI output is capped per stream, cancellation is distinguished from timeout, and Windows npm OpenCode launches its native package executable directly.
+- Assistant diff exports refuse linked/reparse-point destinations and ancestors and repeat the check immediately before writing. This validation does not make filesystem inspection and opening atomic against concurrent changes by another process.
+
 - Assistant transcripts and provider bridge configs have owner-only permissions. Failed staged saves preserve the previous chat and remove temporary files.
 - Cancelled provider requests retain prompts, active chats respect the saved history limit, missing CLI executables report an error, and API key changes refresh the combined model list. Codex isolation requires an explicitly empty workspace-root list.
 

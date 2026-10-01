@@ -7,6 +7,22 @@ namespace BehaviourStudio.Tests;
 public sealed class AssistantCliLocatorTests
 {
     [Fact]
+    public void UnsupportedWindowsShimIsNotAdvertisedAsUsable()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        string shim = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+            Guid.NewGuid().ToString("N"), "opencode.cmd");
+        var previousExists = AssistantCliLocator.FileExistsForTest;
+        try
+        {
+            AssistantCliLocator.FileExistsForTest = path => path == shim;
+            Assert.False(AssistantCliLocator.TryLocate(AssistantBackend.Opencode, shim, out _, out string error));
+            Assert.Contains("native executable", error, StringComparison.Ordinal);
+        }
+        finally { AssistantCliLocator.FileExistsForTest = previousExists; }
+    }
+
+    [Fact]
     public void LocatingABackendAsksOnlyForThatBackendsCandidates()
     {
         var previousCandidates = AssistantCliLocator.CandidatePathsForTest;

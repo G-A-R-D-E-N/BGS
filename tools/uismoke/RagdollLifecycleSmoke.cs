@@ -42,13 +42,13 @@ public static class LifecycleSmoke
             }
         }
 
-        if (args.Length > 0 && (args[0] == "--assistant" || args[0] == "--assistant-api"))
+        if (args.Length > 0 && (args[0] == "--assistant" || args[0] == "--assistant-api" || args[0] == "--assistant-editor"))
         {
             AppBuilder.Configure<HeadlessApp>()
                 .UseHeadless(new AvaloniaHeadlessPlatformOptions())
                 .SetupWithoutStarting();
-            AssistantLifecycleSmoke.Run(apiOnly: args[0] == "--assistant-api");
-            if (args[0] == "--assistant") AssistantEditorSmoke.Run();
+            if (args[0] != "--assistant-editor") AssistantLifecycleSmoke.Run(apiOnly: args[0] == "--assistant-api");
+            if (args[0] != "--assistant-api") AssistantEditorSmoke.Run();
             return 0;
         }
 

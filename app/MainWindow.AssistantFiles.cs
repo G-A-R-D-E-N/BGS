@@ -7,8 +7,23 @@ public partial class MainWindow
 {
     internal bool AssistantExportPathAllowed(string path)
     {
-        string root = _projectChain?.Root ?? Path.GetDirectoryName(_hkxPath) ?? "";
-        return root.Length > 0 && Within(root, path);
+        try
+        {
+            string root = _projectChain?.Root ?? Path.GetDirectoryName(_hkxPath) ?? "";
+            string canonical = Path.GetFullPath(path);
+            if (root.Length == 0 || !Within(root, canonical) || Directory.Exists(canonical)) return false;
+            var file = new FileInfo(canonical);
+            if (file.LinkTarget is not null || file.Exists && file.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                return false;
+            for (DirectoryInfo? parent = file.Directory; parent is not null; parent = parent.Parent)
+                if (!parent.Exists || parent.LinkTarget is not null || parent.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                    return false;
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     internal async void AssistantFile(Window target, string operation, string path)
@@ -35,8 +50,8 @@ public partial class MainWindow
                 case "scripts": await ScanPapyrusFolder(path, RememberSetting("scripts", path, "The scripts folder was selected")); break;
                 case "game_data": _dataField.Text = path; ApplyGameData(); break;
                 case "mods": _modsField.Text = path; ApplyMods(); break;
-                case "export_diff_text": await WriteDiff(path, false); break;
-                case "export_diff_json": await WriteDiff(path, true); break;
+                case "export_diff_text": await WriteDiff(path, false, true); break;
+                case "export_diff_json": await WriteDiff(path, true, true); break;
                 default: throw new ArgumentException("Unknown file operation.");
             }
         }

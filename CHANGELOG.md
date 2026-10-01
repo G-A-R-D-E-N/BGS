@@ -8,6 +8,9 @@ New to BGS? See the [Getting Started Guide](https://prisma-user-interface-framew
 
 October 1, 2026
 
+* Assistant CLI output is bounded while both streams continue draining, caller cancellation stays distinct from timeout, and Windows npm OpenCode installations resolve their native executable without running a shell shim.
+* Assistant diff exports reject symbolic links and junctions along the destination path and recheck immediately before writing, including filesystem changes made while approval is pending.
+
 * Assistant transcripts and temporary provider bridge configurations use owner-only storage permissions. Failed transcript writes remove their staging files and preserve the previous saved chat.
 * Cancelled provider requests retain the user's prompt, active transcripts follow the saved history limit, unavailable CLI executables report a bounded error, and API key changes refresh the combined model list.
 * Assistant isolation refuses Codex thread responses that omit or misreport workspace roots.

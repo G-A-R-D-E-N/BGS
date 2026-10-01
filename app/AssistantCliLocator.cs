@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics.X86;
 
 namespace BehaviourStudio.App;
 
@@ -96,8 +98,14 @@ public static class AssistantCliLocator
             string explicitPath = configured.Trim();
             if (FileExistsForTest(explicitPath))
             {
-                cli = new AssistantCli(explicitPath, "configured");
-                return true;
+                string? executable = ResolveExecutable(new AssistantCli(explicitPath, "configured"));
+                if (executable is not null)
+                {
+                    cli = new AssistantCli(executable, "configured");
+                    return true;
+                }
+                error = $"The configured {name} shim has no supported native executable.";
+                return false;
             }
             error = $"The configured {name} path was not found.";
             return false;
@@ -107,7 +115,9 @@ public static class AssistantCliLocator
         {
             if (string.IsNullOrWhiteSpace(candidate)) continue;
             if (!FileExistsForTest(candidate)) continue;
-            cli = new AssistantCli(candidate, "detected");
+            string? executable = ResolveExecutable(new AssistantCli(candidate, "detected"));
+            if (executable is null) continue;
+            cli = new AssistantCli(executable, "detected");
             return true;
         }
 
@@ -118,6 +128,31 @@ public static class AssistantCliLocator
     public static bool TryLocateFromSettings(
         AssistantBackend backend, out AssistantCli? cli, out string error) =>
         TryLocate(backend, Settings.Get(SettingsKey(backend)), out cli, out error);
+
+    internal static string? ResolveExecutable(AssistantCli cli)
+    {
+        if (!cli.NeedsShell) return cli.Path;
+        if (!OperatingSystem.IsWindows()) return null;
+        string modules = Path.Combine(Path.GetDirectoryName(cli.Path) ?? "", "node_modules");
+        string name = Path.GetFileNameWithoutExtension(cli.Path);
+        if (name.Equals("claude", StringComparison.OrdinalIgnoreCase))
+        {
+            string native = Path.Combine(modules, "@anthropic-ai", "claude-code", "bin", "claude.exe");
+            return FileExistsForTest(native) ? native : null;
+        }
+        if (!name.Equals("opencode", StringComparison.OrdinalIgnoreCase)) return null;
+        string package = "opencode-windows-" + RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
+        string[] packages = RuntimeInformation.ProcessArchitecture == Architecture.X64
+            ? Avx2.IsSupported ? new[] { package, package + "-baseline" } : new[] { package + "-baseline", package }
+            : new[] { package };
+        foreach (string parent in new[] { Path.Combine(modules, "opencode-ai", "node_modules"), modules })
+            foreach (string candidate in packages)
+            {
+                string native = Path.Combine(parent, candidate, "bin", "opencode.exe");
+                if (FileExistsForTest(native)) return native;
+            }
+        return null;
+    }
 
     internal static IReadOnlyList<string> ExecutableNames(string name) =>
         IsWindowsForTest()
