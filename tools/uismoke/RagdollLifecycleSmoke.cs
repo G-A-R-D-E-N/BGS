@@ -39,6 +39,15 @@ public static class LifecycleSmoke
             AssistantLifecycleSmoke.Run();
             return 0;
         }
+
+        if (args.Length > 0 && args[0] == "--multichat")
+        {
+            AppBuilder.Configure<HeadlessApp>()
+                .UseHeadless(new AvaloniaHeadlessPlatformOptions())
+                .SetupWithoutStarting();
+            MultiChatSmoke.Run();
+            return 0;
+        }
         int existing = Smoke.Main(args);
         if (args.Length >= 2 && args[0] == "--png") return existing;
         int workspace = WorkspaceSmoke.Run();

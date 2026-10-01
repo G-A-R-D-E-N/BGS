@@ -38,6 +38,17 @@ public partial class MainWindow : Window, IAssistantEditorDocument
     internal AssistantSession CreateAssistantSession(IChatClient client, AssistantTools tools) =>
         new(client, tools.Functions, () => tools.HasPendingApproval);
 
+    internal CodexAssistantConnection CreateCodexConnection(
+        AssistantProviderOptions options, CodexTransportFactory? transportFactory = null)
+    {
+        var connection = new CodexAssistantConnection(options, transportFactory);
+        Closed += (_, _) => connection.Dispose();
+        return connection;
+    }
+
+    internal CodexAssistantSession CreateCodexSession(CodexAssistantConnection connection, AssistantTools tools) =>
+        new(connection, tools.Functions, () => tools.HasPendingApproval);
+
     AssistantEditorSnapshot IAssistantEditorDocument.Snapshot() => new(
         _hkxPath.Length == 0 ? "" : Path.GetFullPath(_hkxPath),
         _documentStamp,

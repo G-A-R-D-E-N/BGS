@@ -18,6 +18,9 @@ public sealed class EditorShell : Grid
     public const string Animation = "Animation";
     public const string Project = "Project";
 
+    public const string ChatGlyph = "\U0001F4AC";
+    public const string SettingsGlyph = "\u2699";
+
     public static readonly string[] ActivityNames = { Home, Graph, Inspect, Animation, Project };
 
     private static readonly (string Activity, string[] Tabs)[] Workspaces =
@@ -37,6 +40,8 @@ public sealed class EditorShell : Grid
         Spacing = 6,
     };
     private readonly Border _secondaryHost;
+    private readonly Button _settingsButton;
+    private readonly Button _chatButton;
     private readonly WrapPanel _tools = new()
     {
         Orientation = Orientation.Horizontal,
@@ -76,12 +81,30 @@ public sealed class EditorShell : Grid
             rail.Children.Add(button);
         }
 
+        var railStack = new DockPanel { LastChildFill = false };
+        DockPanel.SetDock(rail, Dock.Top);
+        railStack.Children.Add(rail);
+
+        _chatButton = RailIcon(ChatGlyph, "Open the assistant chat");
+        _chatButton.Click += (_, _) => ChatRequested?.Invoke();
+
+        _settingsButton = RailIcon(SettingsGlyph, "Assistant settings: provider, model and sign-in");
+        _settingsButton.Click += (_, _) => SettingsRequested?.Invoke();
+
+        var footer = new StackPanel
+        {
+            Spacing = 4,
+            Children = { _chatButton, _settingsButton },
+        };
+        DockPanel.SetDock(footer, Dock.Bottom);
+        railStack.Children.Add(footer);
+
         var railHost = new Border
         {
             Background = Ux.RailBrush,
             BorderBrush = Ux.BorderBrush,
             BorderThickness = new Thickness(0, 0, 1, 0),
-            Child = rail,
+            Child = railStack,
         };
         SetRowSpan(railHost, 4);
         Children.Add(railHost);
@@ -135,6 +158,14 @@ public sealed class EditorShell : Grid
     }
 
     public event Action<string>? Navigate;
+
+    public event Action? SettingsRequested;
+
+    public event Action? ChatRequested;
+
+    public Button SettingsButton => _settingsButton;
+
+    public Button ChatButton => _chatButton;
 
     public string Activity { get; private set; } = Home;
 
@@ -209,6 +240,24 @@ public sealed class EditorShell : Grid
                 tabs.LayoutUpdated -= once;
         };
         tabs.LayoutUpdated += once;
+    }
+
+    private static Button RailIcon(string glyph, string tip)
+    {
+        var button = new Button
+        {
+            Content = glyph,
+            FontSize = 18,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            Padding = new Thickness(4, 8),
+            CornerRadius = new CornerRadius(Ux.Radius),
+            BorderThickness = new Thickness(0),
+            Background = Brushes.Transparent,
+            Foreground = Ux.MetaBrush,
+        };
+        ToolTip.SetTip(button, tip);
+        return button;
     }
 
     private string TabFor(string activity)

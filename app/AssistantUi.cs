@@ -1,358 +1,478 @@
 using System;
-using System.Collections.Generic;
+using System.Globalization;
 using System.Threading;
-using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Layout;
-using Avalonia.Media;
-using Microsoft.Extensions.AI;
+using Avalonia.Threading;
+using OpenCommonwealth.Services.Hkx;
 
 namespace BehaviourStudio.App;
 
-internal sealed class AssistantPane : Border
+internal sealed partial class AssistantUi
 {
-    private readonly TextBlock _provider = new() { TextWrapping = TextWrapping.Wrap };
-    private readonly StackPanel _messages = new() { Spacing = 6 };
-    private readonly TextBox _composer = new()
-    {
-        AcceptsReturn = true,
-        TextWrapping = TextWrapping.Wrap,
-        MinHeight = 70,
-        MaxHeight = 150,
-    };
-    private readonly Button _send = Ux.Primary("Send");
-    private readonly Button _cancel = Ux.Secondary("Cancel");
-    private readonly Border _approval = new();
-    private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
-    private readonly Button _approve = Ux.Primary("Apply approved edit");
-    private readonly Button _reject = Ux.Secondary("Reject");
-    private int _messageCount;
+    private const double DefaultWidth = 760;
+    private const double MinimumWidth = 520;
+    private const double MaximumWidth = 1120;
+    private const double SidebarWidth = 220;
+    private const double SidebarMinWidth = 160;
+    private const double SidebarMaxWidth = 280;
+    private const string WidthSetting = "assistant.drawer_width";
+    private const string ActiveChatSetting = "assistant.active_chat_id";
+    private const string QuickStartSetting = "assistant.quick_start_done";
 
-    public AssistantPane()
-    {
-        Background = Ux.RailBrush;
-        BorderBrush = Ux.BorderBrush;
-        BorderThickness = new Thickness(1, 0, 0, 0);
-        Padding = new Thickness(12);
-
-        var title = new TextBlock
-        {
-            Text = "Assistant",
-            FontSize = Ux.FontTitle,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = Ux.TitleBrush,
-        };
-        var newChat = Ux.Secondary("New chat");
-        var close = Ux.Secondary("Close");
-        newChat.Click += (_, _) => NewChatRequested?.Invoke();
-        close.Click += (_, _) => CloseRequested?.Invoke();
-        var header = new DockPanel { LastChildFill = false };
-        DockPanel.SetDock(close, Dock.Right);
-        DockPanel.SetDock(newChat, Dock.Right);
-        header.Children.Add(close);
-        header.Children.Add(newChat);
-        header.Children.Add(title);
-
-        _provider.Foreground = Ux.MetaBrush;
-        _provider.FontSize = Ux.FontSmall;
-        _provider.Margin = new Thickness(0, 4, 0, 0);
-
-        var notice = new TextBlock
-        {
-            Text = "Sends only your prompt, bounded editor context, and BGS tool results when you press Send. Opening this drawer makes no provider request.",
-            Foreground = Ux.MutedBrush,
-            FontSize = Ux.FontSmall,
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 6, 0, 8),
-        };
-
-        var conversation = new ScrollViewer
-        {
-            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-            Content = _messages,
-        };
-
-        _approval.Background = Ux.CardBrush;
-        _approval.BorderBrush = Ux.WarnBrush;
-        _approval.BorderThickness = new Thickness(1);
-        _approval.Padding = new Thickness(8);
-        _approval.Margin = new Thickness(0, 8, 0, 0);
-        _approval.IsVisible = false;
-        var approvalButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        _approve.Click += (_, _) => ApproveRequested?.Invoke();
-        _reject.Click += (_, _) => RejectRequested?.Invoke();
-        approvalButtons.Children.Add(_approve);
-        approvalButtons.Children.Add(_reject);
-        _approval.Child = new StackPanel
-        {
-            Spacing = 6,
-            Children =
-            {
-                new TextBlock
-                {
-                    Text = "BGS has a pending active-editor preview. Review it before applying.",
-                    Foreground = Ux.WarnBrush,
-                    TextWrapping = TextWrapping.Wrap,
-                },
-                approvalButtons,
-            },
-        };
-
-        _status.Foreground = Ux.MetaBrush;
-        _status.FontSize = Ux.FontSmall;
-        _status.Margin = new Thickness(0, 6, 0, 0);
-        _cancel.IsVisible = false;
-        _send.Click += (_, _) => SendComposer();
-        _cancel.Click += (_, _) => CancelRequested?.Invoke();
-        var composerButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        composerButtons.Children.Add(_send);
-        composerButtons.Children.Add(_cancel);
-
-        var body = new Grid();
-        body.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        body.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
-        body.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        var top = new StackPanel { Children = { header, _provider, notice } };
-        Grid.SetRow(top, 0);
-        Grid.SetRow(conversation, 1);
-        var bottom = new StackPanel { Children = { _approval, _composer, composerButtons, _status } };
-        Grid.SetRow(bottom, 2);
-        body.Children.Add(top);
-        body.Children.Add(conversation);
-        body.Children.Add(bottom);
-        Child = body;
-    }
-
-    public event Action<string>? SendRequested;
-    public event Action? CancelRequested;
-    public event Action? NewChatRequested;
-    public event Action? CloseRequested;
-    public event Action? ApproveRequested;
-    public event Action? RejectRequested;
-
-    public int MessageCount => _messageCount;
-    public string ProviderStatus => _provider.Text ?? "";
-    public string Status => _status.Text ?? "";
-    public bool ApprovalVisible => _approval.IsVisible;
-    public bool IsBusy => !_send.IsVisible;
-    public TextBox Composer => _composer;
-
-    public void SetProvider(string text) => _provider.Text = text;
-
-    public void AddUser(string text) => AddMessage("You", text, Ux.CardBrush);
-
-    public void AddAssistant(string text)
-    {
-        if (text.Length > 0) AddMessage("Assistant", text, Ux.BaseBrush);
-    }
-
-    public void AddTool(string name, bool requiresApproval, string detail = "") =>
-        AddMessage("BGS", $"{name}{(requiresApproval ? " (approval pending)" : "")}" +
-            (detail.Length == 0 ? "" : $": {detail}"),
-            Ux.RailBrush, Ux.MetaBrush, Ux.FontSmall);
-
-    public void SetStatus(string text, IBrush brush)
-    {
-        _status.Text = text;
-        _status.Foreground = brush;
-    }
-
-    public void SetBusy(bool busy)
-    {
-        _composer.IsEnabled = !busy;
-        _send.IsVisible = !busy;
-        _cancel.IsVisible = busy;
-    }
-
-    public void SetApproval(bool visible) => _approval.IsVisible = visible;
-
-    public void Clear()
-    {
-        _messages.Children.Clear();
-        _messageCount = 0;
-        SetApproval(false);
-        SetStatus("New chat.", Ux.MetaBrush);
-    }
-
-    private void SendComposer()
-    {
-        string text = (_composer.Text ?? "").Trim();
-        if (text.Length == 0) return;
-        _composer.Text = "";
-        SendRequested?.Invoke(text);
-    }
-
-    private void AddMessage(string speaker, string text, IBrush background,
-                            IBrush? foreground = null, double? fontSize = null)
-    {
-        var label = new TextBlock
-        {
-            Text = speaker,
-            Foreground = Ux.TitleBrush,
-            FontSize = Ux.FontSmall,
-            FontWeight = FontWeight.SemiBold,
-        };
-        var content = new TextBlock
-        {
-            Text = text,
-            Foreground = foreground ?? Ux.MetaBrush,
-            FontSize = fontSize ?? Ux.FontBody,
-            TextWrapping = TextWrapping.Wrap,
-        };
-        _messages.Children.Add(new Border
-        {
-            Background = background,
-            BorderBrush = Ux.BorderBrush,
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(8),
-            Child = new StackPanel { Spacing = 3, Children = { label, content } },
-        });
-        _messageCount++;
-    }
-}
-
-internal sealed class AssistantUi
-{
-    private const double DefaultWidth = 420;
     private readonly MainWindow _owner;
     private readonly AssistantPane _pane = new();
+    private readonly AssistantConversationSidebar _sidebar = new();
     private readonly ColumnDefinition _splitterColumn = new(new GridLength(0, GridUnitType.Pixel));
+    private readonly ColumnDefinition _sidebarColumn =
+        new(new GridLength(SidebarWidth, GridUnitType.Pixel)) { MinWidth = SidebarMinWidth, MaxWidth = SidebarMaxWidth };
     private readonly ColumnDefinition _drawerColumn =
-        new(new GridLength(0, GridUnitType.Pixel)) { MinWidth = 0, MaxWidth = 520 };
+        new(new GridLength(0, GridUnitType.Pixel)) { MinWidth = 0, MaxWidth = MaximumWidth };
     private readonly GridSplitter _splitter;
     private AssistantTools? _tools;
-    private AssistantSession? _session;
+    private AssistantMutationGate? _gate;
+    private AssistantConversationController? _controller;
     private CancellationTokenSource? _requestCancellation;
     private bool _open;
 
     public AssistantUi(MainWindow owner, Grid root, EditorShell shell)
     {
         _owner = owner ?? throw new ArgumentNullException(nameof(owner));
+        root.ColumnDefinitions.Add(_sidebarColumn);
         root.ColumnDefinitions.Add(_splitterColumn);
         root.ColumnDefinitions.Add(_drawerColumn);
         _splitter = new GridSplitter
         {
             Width = 6,
-            Background = Brushes.Transparent,
+            Background = Avalonia.Media.Brushes.Transparent,
             IsVisible = false,
         };
-        Grid.SetColumn(_splitter, 1);
-        Grid.SetColumn(_pane, 2);
+        Grid.SetColumn(_sidebar, 1);
+        Grid.SetColumn(_splitter, 2);
+        Grid.SetColumn(_pane, 3);
+        root.Children.Add(_sidebar);
         root.Children.Add(_splitter);
         root.Children.Add(_pane);
+        _sidebar.IsVisible = false;
 
-        var toggle = Ux.Secondary("Assistant");
-        ToolTip.SetTip(toggle, "Open the AI assistant drawer.");
-        toggle.Click += (_, _) => SetOpen(!_open);
-        shell.Tools.Children.Add(toggle);
-        _pane.NewChatRequested += NewChat;
+        shell.ChatRequested += OpenAsChat;
+        shell.SettingsRequested += OpenSettings;
+
+        RestoreChats();
+
+        _sidebar.NewChatRequested += NewChatInternal;
+        _sidebar.ConversationSelected += Select;
+        _sidebar.RenameCommitted += RenameCommitted;
+        _sidebar.DeleteRequested += Delete;
+
+        _pane.NewChatRequested += NewChatInternal;
         _pane.CloseRequested += () => SetOpen(false);
         _pane.CancelRequested += Cancel;
         _pane.SendRequested += Send;
         _pane.ApproveRequested += Approve;
         _pane.RejectRequested += Reject;
-        _pane.SetProvider(ProviderText(AssistantProviderOptions.FromSettings()));
-        _pane.SetStatus("Ready. Opening the drawer makes no provider request.", Ux.MetaBrush);
+
+        _pane.ModelSelected += SelectCatalogModel;
+        _pane.ModelResetRequested += ResetModel;
+        _pane.ModelControlOpened += () => _ = RefreshCatalogAsync();
+        _pane.QueuedRemoved += index =>
+        {
+            if (index < 0 || index >= _queue.Count) return;
+            _queue.RemoveAt(index);
+            _pane.ShowQueue(QueueTexts());
+        };
+        _pane.CommandSource = () => AssistantCommands.All;
+        _pane.QuickStartDismissed += DismissQuickStart;
+
+        _pane.SetStatus("Pick a chat or click + New chat to start.", Ux.MetaBrush);
+        InitializeProvider();
         SetOpen(false);
     }
 
     public bool IsOpen => _open;
     public bool IsBusy => _pane.IsBusy;
     public int MessageCount => _pane.MessageCount;
-    public string ProviderStatus => _pane.ProviderStatus;
+    public string ProviderStatus => _settingsState.Description;
+    public string AccountStatus => _settingsState.Account;
+    public string NoticeText => _settingsState.CodexManaged
+        ? AssistantSettingsWindow.CodexNotice
+        : AssistantSettingsWindow.CliNotice;
     public string Status => _pane.Status;
     public bool ApprovalVisible => _pane.ApprovalVisible;
+    public bool SignInVisible => _settingsState.CodexManaged && !_settingsState.SignedIn;
     public AssistantPane Pane => _pane;
 
-    internal void SetClientForTest(IChatClient client)
+    private void RestoreChats()
     {
-        _tools ??= _owner.CreateAssistantTools();
-        _session?.Dispose();
-        _session = _owner.CreateAssistantSession(client, _tools);
+        IReadOnlyList<AssistantChatSummary> summaries = AssistantChatStore.All();
+        var loaded = new List<AssistantChat>(summaries.Count);
+        foreach (AssistantChatSummary summary in summaries)
+        {
+            AssistantChat? chat = AssistantChatStore.Load(summary.Id);
+            if (chat != null) loaded.Add(chat);
+        }
+        loaded = loaded.OrderByDescending(c => c.UpdatedUtc).Take(AssistantChatStore.MaxConversations).ToList();
+
+        string? activeId = Settings.Get(ActiveChatSetting);
+
+        var sessionFactory = new Func<string, IAssistantSession?>(chatId => CreateSessionForChat(chatId));
+        _controller = new AssistantConversationController(sessionFactory, loaded, activeId);
+        EnsureTools();
+        _controller.Mutations = _gate;
+        _controller.List.StructureChanged += RefreshSidebar;
+        _controller.List.SelectionChanged += OnSelectionChanged;
+        RefreshSidebar();
+        OnSelectionChanged(_controller.List.ActiveIndex);
+    }
+
+    private AssistantTools EnsureTools()
+    {
+        AssistantTools tools = _tools ?? (_tools = _owner.CreateAssistantTools());
+        if (_gate is null)
+        {
+            AssistantTools captured = tools;
+            _gate = new AssistantMutationGate(
+                () => captured.HasPendingApproval,
+                captured.RejectPendingClipAnimation,
+                captured.ApprovePendingClipAnimation);
+        }
+        if (_controller is not null) _controller.Mutations = _gate;
+        return tools;
+    }
+
+    private void RefreshSidebar()
+    {
+        if (_controller is null) return;
+        IReadOnlyList<AssistantChatSummary> summaries = _controller.List.Summaries();
+        _sidebar.Bind(summaries, _controller.List.ActiveChatId);
+    }
+
+    private void OnSelectionChanged(int index)
+    {
+        if (_controller is null) return;
+        AssistantConversationEntry? entry = _controller.Active;
+        _pane.Clear();
+        if (entry is not null)
+        {
+            _pane.ChatTitle = entry.Chat.Title;
+            foreach (AssistantChatMessage message in entry.Chat.Messages)
+            {
+                switch (message.Role)
+                {
+                    case AssistantChatRole.User:
+                        _pane.AddUser(message.Text);
+                        break;
+                    case AssistantChatRole.Assistant:
+                        _pane.AddAssistant(message.Text);
+                        break;
+                    case AssistantChatRole.Tool:
+                        _pane.AddTool(
+                            message.ToolName ?? "tool",
+                            false,
+                            message.ToolStatus ?? "");
+                        break;
+                }
+            }
+            _pane.SetApproval(entry.ApprovalActive);
+        }
+        else
+        {
+            _pane.ChatTitle = "(no chat selected)";
+        }
+        RefreshSidebar();
+        SaveActiveChatId();
+    }
+
+    private void SaveActiveChatId()
+    {
+        if (_controller is null) return;
+        Settings.TrySet(ActiveChatSetting, _controller.List.ActiveChatId ?? "", out _);
     }
 
     private void SetOpen(bool open)
     {
+        if (open)
+        {
+            double stored = ReadStoredWidth();
+            _drawerColumn.Width = new GridLength(stored, GridUnitType.Pixel);
+            _sidebarColumn.MinWidth = SidebarMinWidth;
+            _sidebarColumn.MaxWidth = SidebarMaxWidth;
+            _sidebarColumn.Width = new GridLength(SidebarWidth, GridUnitType.Pixel);
+        }
+        else
+        {
+            if (_open) StoreWidth(_drawerColumn.Width.Value);
+            _drawerColumn.Width = new GridLength(0, GridUnitType.Pixel);
+            _sidebarColumn.Width = new GridLength(0, GridUnitType.Pixel);
+            _sidebarColumn.MinWidth = 0;
+            _sidebarColumn.MaxWidth = 0;
+        }
         _open = open;
-        _drawerColumn.Width = new GridLength(open ? DefaultWidth : 0, GridUnitType.Pixel);
         _splitterColumn.Width = new GridLength(open ? 6 : 0, GridUnitType.Pixel);
         _pane.IsVisible = open;
         _splitter.IsVisible = open;
+        _sidebar.IsVisible = open;
     }
 
-    private async void Send(string prompt)
+    private void OpenAsChat()
     {
-        if (_pane.IsBusy) return;
+        SetOpen(true);
+        if (Settings.Get(QuickStartSetting).Length == 0) _pane.ShowQuickStart();
+        _pane.SetStatus("Ready. Type below to send to the selected chat.", Ux.MetaBrush);
+        Dispatcher.UIThread.Post(() => _pane.Composer.Focus());
+    }
+
+    private void DismissQuickStart()
+    {
+        _pane.HideQuickStart();
+        Settings.TrySet(QuickStartSetting, "1", out _);
+    }
+
+    private void NewChatInternal()
+    {
+        if (_controller is null) return;
+        if (_controller.List.IsBusy)
+        {
+            _pane.SetStatus("Wait for the current request to finish before starting a new chat.", Ux.MetaBrush);
+            return;
+        }
+        AssistantConversationEntry? entry = _controller.NewChat();
+        if (entry is null)
+        {
+            _pane.SetStatus("BGS kept your existing chats (max reached). Try renaming instead.", Ux.MetaBrush);
+            return;
+        }
+        RefreshSidebar();
+        OnSelectionChanged(_controller.List.ActiveIndex);
+        _queue.Clear();
+        _pane.ShowQueue(QueueTexts());
+        if (AssistantChatStore.Exists(entry.Chat.Id))
+            _pane.SetStatus("Started a new chat. Type below to send.", Ux.MetaBrush);
+        else
+            _pane.SetStatus("Started a new chat, but BGS could not save it to disk yet.", Ux.WarnBrush);
+    }
+
+    private void Select(string chatId)
+    {
+        if (_controller is null || string.IsNullOrEmpty(chatId)) return;
+        if (_controller.List.IsBusy)
+        {
+            _pane.SetStatus("Wait for the current request to finish before switching chats.", Ux.MetaBrush);
+            return;
+        }
+        if (!_controller.TrySelectById(chatId)) return;
+        _queue.Clear();
+        _pane.ShowQueue(QueueTexts());
+        OnSelectionChanged(_controller.List.ActiveIndex);
+    }
+
+    private void RenameCommitted(string chatId, string newTitle)
+    {
+        if (_controller is null) return;
+        int idx = _controller.List.IndexOf(chatId);
+        if (idx < 0) return;
+        if (!_controller.Rename(idx, newTitle))
+        {
+            _pane.SetStatus("BGS could not rename that chat. The previous name is kept.", Ux.WarnBrush);
+            RefreshSidebar();
+            return;
+        }
+        RefreshSidebar();
+        if (_controller.List.ActiveChatId == chatId)
+            _pane.ChatTitle = _controller.List.Active!.Chat.Title;
+    }
+
+    private void Delete(string chatId)
+    {
+        if (_controller is null) return;
+        int idx = _controller.List.IndexOf(chatId);
+        if (idx < 0) return;
+        if (_controller.List.IsBusy && _controller.List.ActiveChatId == chatId) _requestCancellation?.Cancel();
+        AssistantConversationEntry? after = _controller.Delete(idx);
+        if (after is null)
+        {
+            _pane.SetStatus("BGS could not delete that chat from disk, so it was kept.", Ux.WarnBrush);
+            return;
+        }
+        _queue.RemoveAll(entry => string.Equals(entry.ChatId, chatId, StringComparison.Ordinal));
+        _pane.ShowQueue(QueueTexts());
+        RefreshSidebar();
+        OnSelectionChanged(_controller.List.ActiveIndex);
+    }
+
+    private void Send(string prompt)
+    {
+        if (_controller is null) return;
+        string trimmed = (prompt ?? "").Trim();
+        if (trimmed.Length == 0) return;
+        if (_pane.QuickStartVisible) DismissQuickStart();
+        if (HandleCommand(trimmed)) return;
+        if (_controller.List.IsBusy || _controller.Active is null)
+        {
+            Enqueue(trimmed);
+            return;
+        }
+        SendNow(trimmed);
+    }
+
+    private bool HandleCommand(string text)
+    {
+        if (!AssistantCommands.TryParse(text, out string name, out _)) return false;
+        if (!AssistantCommands.IsBgsCommand(name))
+        {
+            _pane.SetStatus("Unknown BGS command. Use /help to list available commands.", Ux.WarnBrush);
+            return true;
+        }
+        switch (name)
+        {
+            case "new":
+                NewChatInternal();
+                break;
+            case "clear":
+                ClearActiveChat();
+                break;
+            case "model":
+                _pane.OpenModelPicker();
+                break;
+            case "cancel":
+                Cancel();
+                break;
+            case "help":
+                ShowCommandHelp();
+                break;
+        }
+        return true;
+    }
+
+    private void ClearActiveChat()
+    {
+        if (_controller?.ClearActive() != true)
+        {
+            _pane.SetStatus(_controller?.List.IsBusy == true
+                ? "Only an idle chat can be cleared."
+                : "The chat could not be cleared; its messages and session were kept.", Ux.WarnBrush);
+            return;
+        }
+        _queue.Clear();
+        _pane.ShowQueue(QueueTexts());
+        OnSelectionChanged(_controller.List.ActiveIndex);
+        _pane.SetStatus("Cleared this chat.", Ux.MetaBrush);
+    }
+
+    private void ShowCommandHelp()
+    {
+        _pane.AddUser("/help");
+        foreach (AssistantCommand command in AssistantCommands.All)
+            _pane.AddTool("/" + command.Name, false, command.Description);
+        _pane.SetStatus("BGS commands. Only these slash commands run here.", Ux.MetaBrush);
+    }
+
+    private async void SendNow(string prompt)
+    {
+        if (_controller is null) return;
+        AssistantConversationEntry? entry = _controller.Active;
+        if (entry is null) return;
+        if (_controller.List.IsBusy)
+        {
+            Enqueue(prompt);
+            return;
+        }
+
         _pane.AddUser(prompt);
         _pane.SetBusy(true);
+        _pane.ShowProgress("Assistant is working\u2026");
+        _controller.List.IsBusy = true;
         _requestCancellation?.Dispose();
         _requestCancellation = new CancellationTokenSource();
+        var progress = new Progress<AssistantProgress>(OnAssistantProgress);
         try
         {
-            if (!EnsureSession()) return;
-            var reply = await _session!.SendAsync(prompt, _owner.AssistantContextSnapshot,
-                _requestCancellation.Token).ConfigureAwait(true);
-            foreach (var tool in reply.Tools) _pane.AddTool(tool.Name, tool.RequiresApproval);
-            _pane.AddAssistant(reply.Text);
-            _pane.SetApproval(reply.AwaitingApproval);
-            _pane.SetStatus(reply.Status == "ok" ? "Ready." : reply.Text,
-                reply.Status == "ok" ? new SolidColorBrush(Ux.Good) : Ux.WarnBrush);
+            AssistantReply reply = await _controller
+                .SendAsync(prompt, _owner.AssistantContextSnapshot, _requestCancellation.Token, progress)
+                .ConfigureAwait(true);
+            OnSelectionChanged(_controller.List.ActiveIndex);
+            if (reply.Status == "ok" && reply.PersistenceNotice.Length > 0)
+            {
+                _pane.SetStatus(reply.PersistenceNotice, Ux.WarnBrush);
+                return;
+            }
+            string statusText = reply.Status switch
+            {
+                "ok" => "Ready.",
+                "cancelled" => "Cancelled.",
+                "busy" => "BGS is processing another request.",
+                "signed_out" => "Sign in with ChatGPT to use the assistant.",
+                _ => reply.Text.Length > 0
+                    ? CodexProtocol.Scrub(reply.Text, 300)
+                    : "The assistant did not return a reply.",
+            };
+            _pane.SetStatus(statusText,
+                reply.Status == "ok" ? new Avalonia.Media.SolidColorBrush(Ux.Good) : Ux.WarnBrush);
+        }
+        catch (OperationCanceledException)
+        {
+            OnSelectionChanged(_controller.List.ActiveIndex);
+            _pane.SetStatus("Cancelled.", Ux.MetaBrush);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            OnSelectionChanged(_controller.List.ActiveIndex);
+            _pane.SetStatus("BGS could not finish the request, but the chat is still usable.", Ux.WarnBrush);
         }
         finally
         {
+            _controller.List.IsBusy = false;
             _pane.SetBusy(false);
+            _pane.HideProgress();
             _requestCancellation?.Dispose();
             _requestCancellation = null;
+            SendNextQueued();
         }
-    }
-
-    private bool EnsureSession()
-    {
-        if (_session != null) return true;
-        var options = AssistantProviderOptions.FromSettings();
-        if (!AssistantProvider.TryCreate(options, out IChatClient? client, out string error))
-        {
-            _pane.SetStatus("Disconnected: " + error, Ux.WarnBrush);
-            return false;
-        }
-        _tools = _owner.CreateAssistantTools();
-        _session = _owner.CreateAssistantSession(client!, _tools);
-        _pane.SetProvider(ProviderText(options));
-        return true;
     }
 
     private void Cancel() => _requestCancellation?.Cancel();
 
-    private void NewChat()
-    {
-        _session?.ClearHistory();
-        _tools?.RejectPendingClipAnimation();
-        _pane.Clear();
-    }
-
     private void Approve()
     {
-        if (_tools == null) return;
-        var result = _tools.ApprovePendingClipAnimation();
+        EnsureTools();
+        AssistantConversationEntry? entry = _controller?.Active;
+        ClipAnimationChangeResult result = _controller?.ApproveActive(entry)
+            ?? AssistantTools.NoPendingResult();
         _pane.SetApproval(false);
-        _pane.AddTool("bgs.set_clip_animation", false, result.Applied ? "applied" : result.Message);
-        _pane.SetStatus(result.Applied ? "Applied in the editor; save remains explicit." : result.Message,
-            result.Applied ? new SolidColorBrush(Ux.Good) : Ux.WarnBrush);
+        if (result.Applied)
+        {
+            _pane.AddTool("bgs.set_clip_animation", false, "applied");
+            _pane.SetStatus("Applied in the editor; save remains explicit.",
+                new Avalonia.Media.SolidColorBrush(Ux.Good));
+            return;
+        }
+        string detail = result.Code == "stale_approval" ? "not applied (stale preview)" : "not applied";
+        _pane.AddTool("bgs.set_clip_animation", false, detail);
+        _pane.SetStatus("The edit was not applied: " + result.Message, Ux.WarnBrush);
     }
 
     private void Reject()
     {
-        _tools?.RejectPendingClipAnimation();
+        EnsureTools();
+        _controller?.RejectPending(_controller.Active);
         _pane.SetApproval(false);
         _pane.SetStatus("The proposed edit was rejected.", Ux.MetaBrush);
     }
 
-    private static string ProviderText(AssistantProviderOptions options)
+    private void SetApproval(bool visible) => _pane.SetApproval(visible);
+
+    private static double ReadStoredWidth()
     {
-        string location = Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out Uri? uri) &&
-                          uri.IsLoopback ? "local" : "remote";
-        return $"OpenAI-compatible · {options.Model} · {location} · {options.BaseUrl}";
+        string stored = Settings.Get(WidthSetting);
+        if (double.TryParse(stored, NumberStyles.Float, CultureInfo.InvariantCulture, out double width) &&
+            width >= MinimumWidth && width <= MaximumWidth)
+            return width;
+        return DefaultWidth;
+    }
+
+    private static void StoreWidth(double width)
+    {
+        if (width < MinimumWidth || width > MaximumWidth) return;
+        Settings.TrySet(WidthSetting, width.ToString("R", CultureInfo.InvariantCulture), out _);
     }
 }

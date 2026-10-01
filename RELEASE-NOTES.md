@@ -1,11 +1,15 @@
-# Behaviour Graph Studio 1.1.0
+# Behaviour Graph Studio 1.2.0
 
-Behaviour Graph Studio 1.1.0 is a release-hardening update focused on dependable Fallout 4
+Behaviour Graph Studio 1.2.0 adds persistent multi-provider conversations and is a release-hardening update focused on dependable Fallout 4
 inspection, measured authoring, and safe diagnostics. Unsupported operations remain read-only or
 fail closed instead of writing guessed data.
 
 ## Major changes
 
+- Persistent Assistant conversations with separate histories, provider selection, and model selection
+  for Codex, Claude, OpenCode, Gemini, and OpenAI-compatible services.
+- Conservative skeleton hierarchy, mirroring, and skin-weight authoring library tools with validation;
+  editor skeleton/skin editing and save workflows remain unavailable.
 - Headless archive, modlist/load-order, and clip scans for CI and mod validation.
 - Versioned JSON reports, progress reporting, archive indexing/caching, extraction, and deterministic
   compare exports.
@@ -32,9 +36,10 @@ fail closed instead of writing guessed data.
 - Structure authoring supports expression transition conditions, enter/exit notify events, global events, and non-empty state-machine creation and attachment, with verified save/reopen coverage.
 - Native graph authoring, templates, variables, transitions, symbols, and supported arrays are
   covered by validation and save/reopen checks.
-- Skeleton editing and validation, skin-weight editing, and NIF skin-weight persistence are included.
-- Simple skeleton-mapper row authoring is included for explicit caller-provided pairs, with measured
-  validation and conservative refusal of malformed or unsafe inputs.
+- Skeleton and skin authoring APIs are library tools; the editor does not expose skeleton/skin
+  editing or a NIF skin-weight save workflow.
+- Simple skeleton-mapper rows can be constructed for explicit caller-provided pairs, with measured
+  validation and conservative refusal of malformed inputs; mapper serialization remains incomplete.
 
 ## Fallout 4 analysis tools
 
@@ -46,9 +51,8 @@ fail closed instead of writing guessed data.
 ## Animation / skeleton / skin
 
 - Animation playback, frame editing, trimming, retiming, spline diagnostics, and skeleton rendering.
-- Skeleton hierarchy editing and validation, retarget/skeleton-mapper reading, and measured simple
-  mapper-row construction.
-- Skin influence inspection/editing and verified NIF weight persistence.
+- Skeleton rendering, retarget/skeleton-mapper reading, and measured simple mapper-row construction.
+- Skeleton hierarchy and skin-weight authoring APIs are library tools without an editor save workflow.
 - Embedded NIF Havok payload reading and bounded Havok tagfile groundwork.
 
 ## Physics / ragdoll
@@ -98,7 +102,7 @@ The Drop/Recover control is an engineering preview and is explicitly not a full 
 - Unsupported Havok layouts/classes and conversion paths remain read-only or are refused. BGS never
   writes guessed data; unsupported editing reports the reason and leaves the source unchanged.
 
-These limitations are intentional release boundaries for 1.1.0 and are documented in the UI or
+These limitations are intentional release boundaries for 1.2.0 and are documented in the UI or
 specialist notes where the relevant tool is opened.
 
 ## Manual Windows smoke checklist
@@ -106,7 +110,7 @@ specialist notes where the relevant tool is opened.
 CI cannot validate a real Fallout 4 desktop session. Before publishing, run this checklist with
 the packaged Windows build and vanilla Fallout 4 assets:
 
-- [ ] Launch BGS and confirm About / `--version` reports `1.1.0` and the expected build.
+- [ ] Launch BGS and confirm About / `--version` reports `1.2.0` and the expected build.
 - [ ] Open a vanilla behaviour HKX; browse Tree and Graph.
 - [ ] Open and play an animation; verify skeleton rendering.
 - [ ] Open the physics/ragdoll inspector; verify bodies, constraints, pivots, centre-of-mass and

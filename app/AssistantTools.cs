@@ -101,6 +101,10 @@ public sealed class AssistantTools
 
     public void RejectPendingClipAnimation() => _pendingClipAnimation = null;
 
+    public static ClipAnimationChangeResult NoPendingResult() =>
+        new(false, false, "error", "no_pending_approval",
+            "there is no pending clip-animation approval", "", 0, false, 0, "", "", "", null);
+
     private T Call<T>(string path, Func<string, T> operation,
                       Func<string, string, T> failure)
         where T : AssistantInspectionResult
@@ -108,5 +112,50 @@ public sealed class AssistantTools
         if (!_authorize(path, out string canonical, out string code, out string message))
             return failure(code, message);
         return operation(canonical);
+    }
+}
+
+public sealed class AssistantMutationGate
+{
+    private readonly Func<bool> _hasPending;
+    private readonly Action _reject;
+    private readonly Func<ClipAnimationChangeResult> _approve;
+    private string? _ownerChatId;
+
+    public AssistantMutationGate(
+        Func<bool> hasPending,
+        Action reject,
+        Func<ClipAnimationChangeResult> approve)
+    {
+        _hasPending = hasPending ?? throw new ArgumentNullException(nameof(hasPending));
+        _reject = reject ?? throw new ArgumentNullException(nameof(reject));
+        _approve = approve ?? throw new ArgumentNullException(nameof(approve));
+    }
+
+    public string? OwnerChatId => _ownerChatId;
+
+    public void MarkOwner(string chatId)
+    {
+        if (!string.IsNullOrEmpty(chatId)) _ownerChatId = chatId;
+    }
+
+    public void Reject()
+    {
+        try { _reject(); }
+        catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException) { }
+        _ownerChatId = null;
+    }
+
+    public ClipAnimationChangeResult Approve(string chatId)
+    {
+        if (string.IsNullOrEmpty(chatId) || !string.Equals(_ownerChatId, chatId, StringComparison.Ordinal) ||
+            !_hasPending())
+        {
+            Reject();
+            return AssistantTools.NoPendingResult();
+        }
+
+        _ownerChatId = null;
+        return _approve();
     }
 }

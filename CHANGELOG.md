@@ -4,8 +4,12 @@ Changes that affect Behaviour Graph Studio users are documented here.
 
 New to BGS? See the [Getting Started Guide](https://prisma-user-interface-framework.github.io/Prisma2.0/tools/behaviourgraphstudio/guide/getting-started).
 
-## Unreleased
+## 1.2.0
 
+October 1, 2026
+
+* Assistant conversations persist across sessions, with separate conversation histories, provider selection, and model selection for Codex, Claude, OpenCode, Gemini, and OpenAI-compatible services.
+* Added conservative skeleton hierarchy, mirroring, and skin-weight authoring library tools with validation; these tools do not add an editor skeleton/skin save workflow.
 * Editor workspace: a left activity rail (Home, Graph, Inspect, Animation, Project) with contextual secondary views, and one command bar for Open, Save, Undo, Redo and validation. Tree expand/collapse and the object filter live on Inspect → Tree. Graph find is a separate field on the Graph toolbar.
 * Batch authoring and About sit in the command bar on the production window path, not on a second top strip.
 * Tree/grid column headers now scroll horizontally with their rows.

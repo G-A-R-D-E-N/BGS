@@ -15,7 +15,7 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <PublishTrimmed>false</PublishTrimmed>
     <DebugType>embedded</DebugType>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <BuildCommit Condition="'$(BuildCommit)' == ''">local</BuildCommit>
   </PropertyGroup>
   <ItemGroup>
