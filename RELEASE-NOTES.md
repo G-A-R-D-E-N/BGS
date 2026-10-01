@@ -19,6 +19,8 @@ This update brings skeleton and skin tools into the editor, adds interactive col
 
 ## Safety and compatibility
 
+- The loopback assistant bridge authenticates before accepting bodies or sending 100 Continue. Invalid content lengths are refused, active clients are bounded, and unauthenticated header waits have a short deadline.
+
 - Assistant CLI output is capped per stream, cancellation is distinguished from timeout, and Windows npm OpenCode launches its native package executable directly.
 - Assistant diff exports refuse linked/reparse-point destinations and ancestors and repeat the check immediately before writing. This validation does not make filesystem inspection and opening atomic against concurrent changes by another process.
 

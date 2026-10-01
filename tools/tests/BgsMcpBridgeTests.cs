@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -145,6 +147,73 @@ public sealed class BgsMcpProtocolTests
 
 public sealed class BgsMcpBridgeTests
 {
+    [Theory]
+    [InlineData("/mcp", "POST", "1048576", false, 401)]
+    [InlineData("/mcp", "POST", "-1", false, 400)]
+    [InlineData("/mcp", "POST", "1", true, 401)]
+    [InlineData("/other", "POST", "1", false, 404)]
+    [InlineData("/mcp", "GET", "1", false, 405)]
+    [InlineData("/mcp", "POST", "invalid", false, 400)]
+    [InlineData("/mcp", "POST", "2147483648", false, 400)]
+    [InlineData("/mcp", "POST", "1\r\nContent-Length: 1", false, 400)]
+    public async Task InvalidOrUnauthenticatedHeadersAreRejectedBeforeReadingTheBody(
+        string path, string method, string length, bool expectContinue, int status)
+    {
+        using BgsMcpBridge bridge = BgsMcpBridge.Start(BgsMcpProtocolTests.Tools());
+        using var client = new TcpClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await client.ConnectAsync(IPAddress.Loopback, new Uri(bridge.Url).Port, timeout.Token);
+        using NetworkStream stream = client.GetStream();
+        string header = $"{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {length}\r\n" +
+            (expectContinue ? "Expect: 100-continue\r\n" : "") + "\r\n";
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(header), timeout.Token);
+        using var reader = new StreamReader(stream, Encoding.ASCII);
+        string response = await reader.ReadLineAsync(timeout.Token) ?? "";
+        Assert.StartsWith($"HTTP/1.1 {status} ", response, StringComparison.Ordinal);
+        Assert.DoesNotContain("100 Continue", response, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AuthorizedContinueReceivesTheBodyAndCompletesTheCall()
+    {
+        using BgsMcpBridge bridge = BgsMcpBridge.Start(BgsMcpProtocolTests.Tools());
+        using var client = new TcpClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await client.ConnectAsync(IPAddress.Loopback, new Uri(bridge.Url).Port, timeout.Token);
+        using NetworkStream stream = client.GetStream();
+        using var reader = new StreamReader(stream, Encoding.ASCII);
+        byte[] body = Encoding.UTF8.GetBytes("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}");
+        string header = $"POST /mcp HTTP/1.1\r\nHost: localhost\r\nContent-Length: {body.Length}\r\n" +
+            $"Authorization: Bearer {bridge.Token}\r\nExpect: 100-continue\r\n\r\n";
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(header), timeout.Token);
+        Assert.Equal("HTTP/1.1 100 Continue", await reader.ReadLineAsync(timeout.Token));
+        Assert.Equal("", await reader.ReadLineAsync(timeout.Token));
+        await stream.WriteAsync(body, timeout.Token);
+        Assert.Equal("HTTP/1.1 200 OK", await reader.ReadLineAsync(timeout.Token));
+    }
+
+    [Fact]
+    public async Task UnfinishedClientsCannotExceedTheConnectionLimit()
+    {
+        using BgsMcpBridge bridge = BgsMcpBridge.Start(BgsMcpProtocolTests.Tools());
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var clients = new List<TcpClient>();
+        try
+        {
+            for (int index = 0; index < BgsMcpBridge.MaximumClients; index++)
+            {
+                var client = new TcpClient();
+                clients.Add(client);
+                await client.ConnectAsync(IPAddress.Loopback, new Uri(bridge.Url).Port, timeout.Token);
+                await client.GetStream().WriteAsync(new byte[] { (byte)'P' }, timeout.Token);
+            }
+            using var excess = new TcpClient();
+            await excess.ConnectAsync(IPAddress.Loopback, new Uri(bridge.Url).Port, timeout.Token);
+            Assert.Equal(0, await excess.GetStream().ReadAsync(new byte[1], timeout.Token));
+        }
+        finally { foreach (TcpClient client in clients) client.Dispose(); }
+    }
+
     private static StringContent Json(string body) => new(body, Encoding.UTF8, "application/json");
 
     [Fact]

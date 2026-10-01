@@ -8,6 +8,8 @@ New to BGS? See the [Getting Started Guide](https://prisma-user-interface-framew
 
 October 1, 2026
 
+* The loopback assistant bridge validates and authenticates headers before reading request bodies or sending 100 Continue, rejects malformed content lengths, and bounds concurrent clients and unauthenticated header waits.
+
 * Assistant CLI output is bounded while both streams continue draining, caller cancellation stays distinct from timeout, and Windows npm OpenCode installations resolve their native executable without running a shell shim.
 * Assistant diff exports reject symbolic links and junctions along the destination path and recheck immediately before writing, including filesystem changes made while approval is pending.
 

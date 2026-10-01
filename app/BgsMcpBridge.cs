@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -17,6 +18,8 @@ public sealed class BgsMcpBridge : IDisposable
 
     private const int MaximumHeaderBytes = 16 * 1024;
     private const int MaximumBodyBytes = 1 * 1024 * 1024;
+    internal const int MaximumClients = 16;
+    private static readonly TimeSpan HeaderTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(5);
 
     private readonly TcpListener _listener;
@@ -71,6 +74,7 @@ public sealed class BgsMcpBridge : IDisposable
     }
 
     private int _disposed;
+    private int _activeClients;
 
     private async Task AcceptAsync()
     {
@@ -87,30 +91,35 @@ public sealed class BgsMcpBridge : IDisposable
                 return;
             }
 
+            if (Interlocked.Increment(ref _activeClients) > MaximumClients)
+            {
+                Interlocked.Decrement(ref _activeClients);
+                client.Dispose();
+                continue;
+            }
             _ = ServeAsync(client);
         }
     }
 
     private async Task ServeAsync(TcpClient client)
     {
-        using (client)
-        using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token))
+        try
         {
-            timeout.CancelAfter(RequestTimeout);
-            NetworkStream stream = client.GetStream();
-            try
+            using (client)
+            using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token))
             {
-                await RespondAsync(stream, timeout.Token).ConfigureAwait(false);
-            }
-            catch (Exception exception) when (exception is IOException or OperationCanceledException
-                or ObjectDisposedException or SocketException)
-            {
+                timeout.CancelAfter(HeaderTimeout);
+                await RespondAsync(client.GetStream(), timeout).ConfigureAwait(false);
             }
         }
+        catch (Exception exception) when (exception is IOException or OperationCanceledException
+            or ObjectDisposedException or SocketException) { }
+        finally { Interlocked.Decrement(ref _activeClients); }
     }
 
-    private async Task RespondAsync(NetworkStream stream, CancellationToken cancellationToken)
+    private async Task RespondAsync(NetworkStream stream, CancellationTokenSource timeout)
     {
+        CancellationToken cancellationToken = timeout.Token;
         byte[]? header = await ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
         if (header is null)
         {
@@ -119,13 +128,6 @@ public sealed class BgsMcpBridge : IDisposable
         }
 
         Request request = Parse(Encoding.ASCII.GetString(header));
-        if (request.ExpectContinue)
-            await WriteRawAsync(stream, "HTTP/1.1 100 Continue\r\n\r\n", cancellationToken).ConfigureAwait(false);
-
-        string body = request.ContentLength == 0
-            ? ""
-            : await ReadBodyAsync(stream, request.ContentLength, cancellationToken).ConfigureAwait(false);
-
         if (request.Path != EndpointPath)
         {
             await WriteAsync(stream, 404, "Not Found", "", false, cancellationToken).ConfigureAwait(false);
@@ -136,14 +138,34 @@ public sealed class BgsMcpBridge : IDisposable
             await WriteAsync(stream, 405, "Method Not Allowed", "", false, cancellationToken).ConfigureAwait(false);
             return;
         }
+        if (request.ContentLength < 0)
+        {
+            await WriteAsync(stream, 400, "Bad Request", "", false, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (request.ContentLength > MaximumBodyBytes)
+        {
+            await WriteAsync(stream, 413, "Payload Too Large", "", false, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         if (!IsAuthorized(request.Authorization, request.QueryToken))
         {
             await WriteAsync(stream, 401, "Unauthorized", "", false, cancellationToken).ConfigureAwait(false);
             return;
         }
-        if (request.ContentLength > MaximumBodyBytes || body.Length == 0)
+        if (request.ContentLength == 0)
         {
             await WriteAsync(stream, 413, "Payload Too Large", "", false, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        timeout.CancelAfter(RequestTimeout);
+        if (request.ExpectContinue)
+            await WriteRawAsync(stream, "HTTP/1.1 100 Continue\r\n\r\n", cancellationToken).ConfigureAwait(false);
+        string body = await ReadBodyAsync(stream, request.ContentLength, cancellationToken).ConfigureAwait(false);
+        if (body.Length == 0)
+        {
+            await WriteAsync(stream, 400, "Bad Request", "", false, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -232,7 +254,7 @@ public sealed class BgsMcpBridge : IDisposable
         }
 
         string authorization = "";
-        int contentLength = 0;
+        int? contentLength = null;
         bool expectContinue = false;
         for (int index = 1; index < lines.Length; index++)
         {
@@ -242,15 +264,16 @@ public sealed class BgsMcpBridge : IDisposable
             string value = lines[index][(separator + 1)..].Trim();
             if (string.Equals(name, "Authorization", StringComparison.OrdinalIgnoreCase))
                 authorization = value;
-            else if (string.Equals(name, "Content-Length", StringComparison.OrdinalIgnoreCase) &&
-                     int.TryParse(value, out int parsed))
-                contentLength = parsed;
+            else if (string.Equals(name, "Content-Length", StringComparison.OrdinalIgnoreCase))
+                contentLength = !contentLength.HasValue &&
+                    int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int parsed)
+                    ? parsed : -1;
             else if (string.Equals(name, "Expect", StringComparison.OrdinalIgnoreCase) &&
                      value.Contains("100-continue", StringComparison.OrdinalIgnoreCase))
                 expectContinue = true;
         }
 
-        return new Request(method, path, authorization, queryToken, contentLength, expectContinue);
+        return new Request(method, path, authorization, queryToken, contentLength ?? 0, expectContinue);
     }
 
     private static string QueryValue(string query, string name)
